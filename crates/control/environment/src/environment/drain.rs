@@ -93,7 +93,7 @@ pub async fn drain(
     .await?;
     if !stranded.is_empty() {
         let recovery = if target.is_some() {
-            "`env rollback` brings hosts that can claim them"
+            "`env rollback` brings hosts that can lease them"
         } else {
             "apply a document that names their release again"
         };
@@ -150,7 +150,7 @@ pub async fn stranded(
     transaction
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
-        .context("claim the tenant")?;
+        .context("bind the tenant identity")?;
     let stranded = transaction
         .query(
             STRANDED_SQL,

@@ -23,14 +23,14 @@ use wamn_control_provision::sql::{
     ensure_db_owner_role_sql, prepare_workload_generation_sql, record_generation_password_sql,
     revoke_public_connect_floor_sql,
 };
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
 };
 use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::SessionJwks;
-use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
@@ -47,7 +47,7 @@ const ENV_KEY: &str = "session-tenant-a";
 const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-const SCOPES: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
+const TARGETS: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
 /// Bounds a wait for an observed backend state. A wait ends when PostgreSQL
 /// shows that state, never after a fixed delay. This bound only stops a test
 /// that would otherwise hang because of a defect, so machine load cannot reach it.
@@ -169,14 +169,14 @@ async fn verify_response(
         .iter()
         .find(|key| key.kid == kid)
         .expect_redacted("key from actual public JWKS");
-    let scope = Scope {
+    let coordinate = Audience {
         issuer: ISSUER,
         org: &target.triple().org,
         audience: target.audience(),
     };
-    let claims = verify(token, key, scope, unix_seconds())
+    let claims = verify(token, key, coordinate, unix_seconds())
         .await
-        .expect_redacted("public signature and exact scope");
+        .expect_redacted("public signature and exact coordinate");
     assert!(claims.sub == *principal.id(), "exact authenticated subject");
     assert!(
         claims.roles
@@ -189,22 +189,22 @@ async fn verify_response(
     assert_eq!(body["expires_at"].as_i64(), Some(claims.exp));
     assert_eq!(body["sub"], serde_json::to_value(claims.sub).unwrap());
     for wrong in [
-        Scope {
+        Audience {
             issuer: "https://wrong-issuer.invalid",
-            ..scope
+            ..coordinate
         },
-        Scope {
+        Audience {
             org: "wrong-org",
-            ..scope
+            ..coordinate
         },
-        Scope {
+        Audience {
             audience: "wrong-audience",
-            ..scope
+            ..coordinate
         },
     ] {
         assert!(
             verify(token, key, wrong, unix_seconds()).await.is_err(),
-            "signed claims cannot change configured scope"
+            "signed JWT claims cannot change configured coordinate"
         );
     }
     claims
@@ -272,7 +272,7 @@ async fn setup(raw: &str) -> Fixture {
     ];
     roles.extend(["wamn_app", "wamn_platform", "wamn_run_retention"].map(str::to_owned));
     let mut targets = Vec::new();
-    for (org, env) in SCOPES {
+    for (org, env) in TARGETS {
         let triple = Triple {
             org: org.into(),
             project: "widgets".into(),
@@ -281,7 +281,7 @@ async fn setup(raw: &str) -> Fixture {
         let name = project_env_database_name(org, "widgets", env, SUFFIX);
         let role = workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org,
                 project: "widgets",
                 environment: env,
@@ -473,7 +473,7 @@ async fn start_config(config: IdentityConfig) -> Https {
     assert!(!format!("{config:?}").contains(PASSWORD));
     let service = IdentityService::connect(config)
         .await
-        .expect_redacted("production scoped service");
+        .expect_redacted("production targeted service");
     assert!(!format!("{service:?}").contains(PASSWORD));
     let (certificate, private, ca) = certificates();
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -523,7 +523,7 @@ async fn connect(url: &str) -> Database {
 fn login_url(admin: &url::Url, database: &str, role: &str) -> String {
     let mut url = admin.clone();
     url.set_path(&format!("/{database}"));
-    url.set_username(role).expect_redacted("scoped role");
+    url.set_username(role).expect_redacted("targeted role");
     url.set_password(Some(PASSWORD))
         .expect_redacted("fixture password");
     url.set_query(None);

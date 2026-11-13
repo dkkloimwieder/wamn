@@ -230,7 +230,7 @@ impl ServingComponent {
     ) -> Result<Self, CatalogIdentityError> {
         ArtifactHash::parse(fact.component_digest.clone())?;
         Ok(Self {
-            package_id: fact.scope.package_id.clone(),
+            package_id: fact.target.package_id.clone(),
             runtime_schema: None,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
             statement_instances: BTreeMap::new(),
@@ -1531,7 +1531,7 @@ mod tests {
         operations: Vec<(&str, crate::AdmittedComponentOperation)>,
     ) -> AdmittedComponent {
         AdmittedComponent {
-            scope: crate::ComponentPackageScope {
+            target: crate::ComponentPackageCoordinate {
                 env_key: "t1".into(),
                 package_id: package_id.into(),
                 package_version: package_version.into(),
@@ -1668,7 +1668,7 @@ mod tests {
     }
 
     #[test]
-    fn statement_lookup_is_operation_scoped_and_revalidates_its_key() {
+    fn statement_lookup_is_operation_targeted_and_revalidates_its_key() {
         let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
         let path = "generated/sql/widget/get.sql".to_owned();
@@ -1705,7 +1705,7 @@ mod tests {
             routes(),
             BTreeMap::from([("orders".to_string(), attachment())]),
         )
-        .expect("an exact operation-scoped statement enters the serving manifest");
+        .expect("an exact operation-targeted statement enters the serving manifest");
         let admitted = manifest
             .components
             .iter()

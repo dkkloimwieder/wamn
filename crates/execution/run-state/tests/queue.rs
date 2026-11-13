@@ -3,8 +3,9 @@
 use serde_json::json;
 use wamn_run_state::invariants::{self, QueueState};
 use wamn_run_state::queue::{
-    ClaimPlan, ClaimState, JanitorVerdict, Millis, ProductionClaimClass, QueueEntry, claim_state,
-    classify_production_claim, janitor_verdict, lease_deadline, lease_live, should_renew,
+    JanitorVerdict, LeasePlan, LeaseState, Millis, ProductionLeaseClass, QueueEntry,
+    classify_production_lease, janitor_verdict, lease_deadline, lease_live, lease_state,
+    should_renew,
 };
 
 // ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
@@ -18,8 +19,8 @@ use wamn_run_state::queue::{
 const GRACE: Millis = 50;
 
 /// Assert the RUN-* invariants over the rows a step left behind. `plan` is the
-/// claim taken at that step, if any, with the batch limit it was taken with.
-fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&ClaimPlan, usize)>, now: Millis) {
+/// lease taken at that step, if any, with the batch limit it was taken with.
+fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&LeasePlan, usize)>, now: Millis) {
     let (plan, limit) = plan.map_or((None, 0), |(plan, limit)| (Some(plan), limit));
     let state = QueueState {
         rows,
@@ -34,16 +35,16 @@ fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&ClaimPlan, usize)>, n
 }
 
 #[test]
-fn claim_state_preserves_budget() {
+fn lease_state_preserves_budget() {
     let ready = QueueEntry::ready("t1", "ready", 50, 2);
-    assert_eq!(claim_state(&ready, 100), ClaimState::Ready);
+    assert_eq!(lease_state(&ready, 100), LeaseState::Ready);
     run_invariants_hold(std::slice::from_ref(&ready), None, 100);
 
     let parked = QueueEntry {
         available_at: 101,
         ..ready.clone()
     };
-    assert_eq!(claim_state(&parked, 100), ClaimState::Parked);
+    assert_eq!(lease_state(&parked, 100), LeaseState::Parked);
     run_invariants_hold(std::slice::from_ref(&parked), None, 100);
 
     let leased = QueueEntry {
@@ -51,7 +52,7 @@ fn claim_state_preserves_budget() {
         lease_expires_at: Some(200),
         ..ready.clone()
     };
-    assert_eq!(claim_state(&leased, 100), ClaimState::Leased);
+    assert_eq!(lease_state(&leased, 100), LeaseState::Leased);
     run_invariants_hold(std::slice::from_ref(&leased), None, 100);
 
     let exhausted = QueueEntry {
@@ -59,19 +60,19 @@ fn claim_state_preserves_budget() {
         attempts: 2,
         ..ready
     };
-    assert_eq!(claim_state(&exhausted, 100), ClaimState::Exhausted);
+    assert_eq!(lease_state(&exhausted, 100), LeaseState::Exhausted);
     run_invariants_hold(std::slice::from_ref(&exhausted), None, 100);
 }
 
 #[test]
-fn reclaim_classifier_has_exact_two_actions() {
+fn recover_classifier_has_exact_two_actions() {
     assert_eq!(
-        classify_production_claim(false),
-        ProductionClaimClass::Ordinary
+        classify_production_lease(false),
+        ProductionLeaseClass::Ordinary
     );
     assert_eq!(
-        classify_production_claim(true),
-        ProductionClaimClass::ExpiredPreEffect
+        classify_production_lease(true),
+        ProductionLeaseClass::ExpiredPreEffect
     );
 }
 
@@ -96,7 +97,7 @@ fn lease_arithmetic_remains_stable() {
     assert!(!lease_live(1_250, Some(1_250)));
     assert!(should_renew(1_200, 1_250, 100));
     // The same deadline as a queue row, swept either side of expiry: RUN-7 is
-    // exactly the claim of a crashed owner's row waiting out its lease.
+    // exactly the lease of a crashed owner's row waiting out its lease.
     let held = QueueEntry {
         lease_owner: Some("runner-a".into()),
         lease_expires_at: Some(lease_deadline(1_000, 250)),

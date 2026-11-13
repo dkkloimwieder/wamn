@@ -21,7 +21,7 @@ mod router_delivery;
 pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    OperationScope, component_invocation, invocation_span, node_trace_context,
+    OperationHostConfig, component_invocation, invocation_span, node_trace_context,
     remote_trace_context,
 };
 pub use readiness::{

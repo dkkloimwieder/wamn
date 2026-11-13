@@ -5,7 +5,7 @@ import { hasNumber } from "@wamn/web-runtime";
 it("waits to copy a number until a feed change supplies it", async () => {
   type Row = { id: string; number?: string };
   const copy = vi.fn();
-  const scope = createRoot((dispose) => {
+  const filter = createRoot((dispose) => {
     const [row, setRow] = createSignal<Row>({ id: "019fd531-287b-7000-8000-00000000abcd" });
     const copyNumber = action(function* () {
       yield until(() => hasNumber(row(), "number"));
@@ -14,15 +14,15 @@ it("waits to copy a number until a feed change supplies it", async () => {
     return { dispose, row, setRow, copyNumber };
   });
   try {
-    const copying = scope.copyNumber();
+    const copying = filter.copyNumber();
     flush();
     await Promise.resolve();
     expect(copy).not.toHaveBeenCalled();
-    scope.setRow({ ...scope.row(), number: "PO-0042" });
+    filter.setRow({ ...filter.row(), number: "PO-0042" });
     flush();
     await copying;
     expect(copy).toHaveBeenCalledExactlyOnceWith("PO-0042");
   } finally {
-    scope.dispose();
+    filter.dispose();
   }
 });

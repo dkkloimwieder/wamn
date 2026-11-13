@@ -10,8 +10,8 @@
 use tokio_postgres::GenericClient;
 
 use crate::{
-    IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, checked_scope_segment, control,
-    database_error,
+    IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, checked_target_segment,
+    control, database_error,
 };
 use wamn_broker::auth_changes::AuthDrops;
 
@@ -56,7 +56,7 @@ pub async fn activate_org_membership(
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     client
         .execute(
             ACTIVATE_MEMBERSHIP_SQL,
@@ -107,7 +107,7 @@ pub async fn grant_project_admin(
     project: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
-    let project = checked_scope_segment("project", project)?;
+    let project = checked_target_segment("project", project)?;
     let in_org: bool = client
         .query_one(PROJECT_IN_ORG_SQL, &[&org, &project])
         .await
@@ -150,8 +150,8 @@ pub async fn grant_member(
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = checked_target_segment("project", project)?;
+    let env = checked_target_segment("env", env)?;
     let found: bool = client
         .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
         .await
@@ -184,9 +184,9 @@ pub async fn revoke_member(
     env: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     lock_membership(client, principal_id, &org).await?;
-    let project = checked_scope_segment("project", project)?;
+    let project = checked_target_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
     let covered: bool = client
         .query_one(
@@ -227,9 +227,9 @@ pub async fn revoke_project_admin(
     project: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     lock_membership(client, principal_id, &org).await?;
-    let project = checked_scope_segment("project", project)?;
+    let project = checked_target_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
     drops.identity(principal_id.to_string().as_str());
     client
@@ -302,10 +302,10 @@ pub async fn materialize_admin_grants(
     project: &str,
     env: &str,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     lock_org_memberships(client, &org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = checked_target_segment("project", project)?;
+    let env = checked_target_segment("env", env)?;
     client
         .execute(
             ORG_ADMINS_PROJECT_ADMIN_SQL,
@@ -338,9 +338,9 @@ pub async fn create_project(
     org: &str,
     project: &str,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     lock_org_memberships(client, &org).await?;
-    let project = checked_scope_segment("project", project)?;
+    let project = checked_target_segment("project", project)?;
     let created = client
         .execute(CREATE_PROJECT_SQL, &[&org, &project])
         .await
@@ -373,7 +373,7 @@ pub(crate) async fn active_member(
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<String, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     let active = lock_membership(client, principal_id, &org)
         .await?
         .is_some_and(|status| status == "active");
@@ -504,7 +504,7 @@ pub async fn revoke_org_admin(
     org: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     lock_membership(client, principal_id, &org).await?;
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
@@ -557,7 +557,7 @@ pub async fn org_users_page(
     after_id: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<OrgUser>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     client
         .query(
             ORG_USERS_SQL,
@@ -587,9 +587,9 @@ pub async fn org_environments(
     org: &str,
     project: Option<&str>,
 ) -> Result<Vec<(String, String)>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     let project = project
-        .map(|project| checked_scope_segment("project", project))
+        .map(|project| checked_target_segment("project", project))
         .transpose()?;
     Ok(client
         .query(ORG_ENVIRONMENTS_SQL, &[&org, &project])
@@ -640,8 +640,8 @@ pub async fn status_environments(
     project: &str,
     env: Option<&str>,
 ) -> Result<Vec<String>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
     let Some(env) = env else {
         let in_org: bool = client
             .query_one(PROJECT_IN_ORG_SQL, &[&org, &project])
@@ -661,7 +661,7 @@ pub async fn status_environments(
             .map(|entry| entry.name)
             .collect());
     };
-    let env = checked_scope_segment("env", env)?;
+    let env = checked_target_segment("env", env)?;
     let found: bool = client
         .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
         .await
@@ -689,8 +689,8 @@ pub async fn set_environment_status(
     environments: &[String],
     status: EnvironmentStatus,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
     client
         .execute(
             ENVIRONMENT_STATUS_SQL,
@@ -752,8 +752,8 @@ pub async fn project_envs_page(
     after: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
     Ok(client
         .query(PROJECT_ENVS_SQL, &[&org, &project, &after, &limit])
         .await
@@ -823,10 +823,10 @@ pub async fn project_members_page(
     after_id: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
     let environment = environment
-        .map(|environment| checked_scope_segment("environment", environment))
+        .map(|environment| checked_target_segment("environment", environment))
         .transpose()?;
     client
         .query(
@@ -864,7 +864,7 @@ async fn member(
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<String, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     let found = lock_membership(client, principal_id, &org).await?.is_some();
     if !found {
         return Err(IdentityError::refused(

@@ -27,7 +27,7 @@ pub async fn delete_registry_rows(
     transaction
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
-        .context("claim the tenant")?;
+        .context("bind the tenant identity")?;
     let credentials: i64 = transaction
         .query_one(
             wamn_control_registry::sql::delete_environment_connections_sql(),

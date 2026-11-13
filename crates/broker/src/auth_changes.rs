@@ -67,7 +67,7 @@ impl AuthDrops {
 pub const BUCKET: &str = "wamn-auth";
 
 /// The key of the grants of `principal` in the environment named `env_key`.
-/// This shared cache key stays scoped after the table tenant columns leave.
+/// This shared cache key stays targeted after the table tenant columns leave.
 pub fn principal_key(env_key: &str, principal: &str) -> String {
     format!("{env_key}.{principal}")
 }

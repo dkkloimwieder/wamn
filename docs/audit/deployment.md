@@ -460,7 +460,7 @@ Area: crates/control/lib/src/owned_command.rs; kubectl.rs; platform/provider.rs;
 Evidence: `crates/control/lib/src/owned_command.rs:35`, `crates/control/lib/src/owned_command.rs:58`, `crates/control/lib/src/kubectl.rs:78`, `crates/control/lib/src/platform/provider.rs:195`, `crates/control/lib/src/platform_build.rs:1423`, `crates/control/lib/src/upgrade_environment.rs:249`, `crates/control/lib/src/environment/lock.rs:87`.  
 Problem: The shared executor owns process groups, deadlines, signals, and cleanup. Kubernetes, provider, Helm, and platform-build helpers instead await subprocess completion directly. An outer readiness deadline cannot bound a subprocess that never returns, and an environment verb retains its lifecycle lock. The older upgrade timeout also kills only its direct child through `kill_on_drop`.  
 Proposal: Route every command that survives Group 1 through `owned_command.rs` with an operation deadline. Do not build a second executor.  
-Deletes: Duplicate `output`, `run`, and command-timeout implementations. Most listed owners (`upgrade_environment.rs`, the kubectl wrappers, the duplicate Helm runners) are already deleted by Group 1, so the scope is what survives.
+Deletes: Duplicate `output`, `run`, and command-timeout implementations. Most listed owners (`upgrade_environment.rs`, the kubectl wrappers, the duplicate Helm runners) are already deleted by Group 1, so the target is what survives.
 Risk: Some commands need cleanup time after cancellation. Extend `stuck_children_cancel_and_reap_descendants_with_diagnostics` to exercise each retained command adapter and prove lock release.
 
 ## Finding D2-5: Deployment ownership is spread across CLI tools and Helm history
@@ -601,7 +601,7 @@ Problem: Kubernetes resources come from Helm templates, committed YAML with Rust
 
 Proposal: Recommend Helm plus KCL. KCL compiles and constrains inputs, while Helm alone renders WAMN Kubernetes resources. Rust retains lifecycle decisions, database transactions, credential operations, and bounded execution.
 
-Use one WAMN chart package with explicit platform and environment scopes. Install separate instances for cluster services and each environment, so environment removal cannot remove shared services. Fold the WAMN-owned templates (identity, edge, CDC, control) and the plugins and NATS values into that package. Per alignment R9, the operator, its CRDs, the `WorkloadDeployment`s and the subchart host Deployment stay as they are. Retain upstream runtime-operator, CloudNativePG, and cert-manager as pinned dependencies with explicit installation order.
+Use one WAMN chart package with explicit platform and environment targets. Install separate instances for cluster services and each environment, so environment removal cannot remove shared services. Fold the WAMN-owned templates (identity, edge, CDC, control) and the plugins and NATS values into that package. Per alignment R9, the operator, its CRDs, the `WorkloadDeployment`s and the subchart host Deployment stay as they are. Retain upstream runtime-operator, CloudNativePG, and cert-manager as pinned dependencies with explicit installation order.
 
 A Rust operator offers continuous repair and Kubernetes status conditions. It also requires custom resources, upgrades, watches, permissions, and deletion finalizers. The current lifecycle already supplies observation-based recovery through a bounded command, so that trade adds maintenance without a named requirement.
 
@@ -653,7 +653,7 @@ Problem: Platform installation locks a file in a local work directory. Different
 
 Proposal: A Kubernetes Lease held by the installer, released on exit, refused while held. Keep the existing environment locks for their database lifecycle. The installer stops when it loses the Lease. Retain Helm as deployment history.
 
-Owner review 2026-10-31: re-scoped to the Lease. No deployment queue, no promotion job, no protected selection. Severity lowered from medium to low.
+Owner review 2026-10-31: re-targeted to the Lease. No deployment queue, no promotion job, no protected selection. Severity lowered from medium to low.
 
 Deletes: The local file lock as the authority for cluster installation, and duplicated manual deployment writers in the runbook.
 

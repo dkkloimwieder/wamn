@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, PackageCoordinate,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
@@ -69,7 +69,7 @@ async fn connect(url: &str) -> Client {
 /// One release whose application serves one registered operation.
 fn release() -> ServingManifest {
     let fact = AdmittedComponent {
-        scope: ComponentPackageScope {
+        target: ComponentPackageCoordinate {
             env_key: ENV_KEY.to_owned(),
             package_id: APPLICATION.to_owned(),
             package_version: "1.0.0".to_owned(),
@@ -643,16 +643,16 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         stream_replicas: 1,
         dup_window_secs: 120,
     };
-    let scope = triple();
+    let target = triple();
     let broker = async_nats::jetstream::new(events.nats.connect().await.unwrap());
-    let config = source_stream_config(&scope, 1, Duration::from_secs(120));
+    let config = source_stream_config(&target, 1, Duration::from_secs(120));
     let name = config.name.clone();
     let mut stream = broker.create_stream(config).await.unwrap();
     let subject = format!(
         "evt.{}.{}.{}.order.update",
-        scope.org,
-        scope.project,
-        scope.env.as_str()
+        target.org,
+        target.project,
+        target.env.as_str()
     );
     let consumer = materializer_consumer_config("unread", &subject, Duration::from_secs(30), 5);
     let mut consumer = stream.create_consumer(consumer).await.unwrap();
@@ -672,7 +672,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     assert_eq!(consumer.info().await.unwrap().delivered.stream_sequence, 0);
     enable_workflow(
         &fixture.project_url,
-        &scope,
+        &target,
         &mut fixture.project,
         &key("changed", 1),
         ALICE,
@@ -707,7 +707,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     assert_eq!(stream.info().await.unwrap().state.consumer_count, 1);
     disable_workflow(
         &fixture.project_url,
-        &scope,
+        &target,
         &mut fixture.project,
         &key("changed", 1),
     )
@@ -733,7 +733,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .unwrap();
     enable_workflow(
         &fixture.project_url,
-        &scope,
+        &target,
         &mut fixture.project,
         &key("changed", 1),
         ALICE,

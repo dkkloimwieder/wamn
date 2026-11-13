@@ -369,7 +369,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         validate_nonempty_string(value, key)?;
     }
     // The tenant is the environment coordinate's (owner ruling of 2026-10-09
-    // on `wamn-snz0`): the host derives the same value from its own scope.
+    // on `wamn-snz0`): the host derives the same value from its own target.
     let activation_identity = DevActivationIdentity {
         catalog,
         environment,

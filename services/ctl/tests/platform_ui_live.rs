@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::{PlatformComponent, WorkloadRoleFamily};
 use wamn_dev_control::dev::environment::{
-    DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, generation_args,
+    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, generation_args,
     install_journey_platform_floor, reconcile_journey_run_plane,
 };
 use wamn_environment_control::provision_project_env::{
@@ -77,16 +77,16 @@ async fn provision_browser_environment(
     let (target, driver) =
         tokio_postgres::connect(target_url.as_str(), tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(driver);
-    let scope = JourneyScope {
+    let coordinate = JourneyTarget {
         org: ORG.to_owned(),
         project: BROWSER_PROJECT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
     };
     install_journey_platform_floor(&target, "example.invalid").await?;
-    reconcile_journey_run_plane(&scope, system_url, target_url.as_str()).await?;
+    reconcile_journey_run_plane(&coordinate, system_url, target_url.as_str()).await?;
     let secret = output.join("administration.json");
     run_workload_action(&generation_args(
-        &scope,
+        &coordinate,
         WorkloadRoleFamily::Administration,
         system_url,
         Some(target_url.as_str()),

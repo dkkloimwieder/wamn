@@ -3,19 +3,20 @@
 //!
 //! A workflow is a row of `catalog.workflows`, not a member of the release.
 //! The host reads the enabled version of a workflow when `workflow.start`
-//! admits a run, and the queue resolves a claimed run from its row: the graph
+//! admits a run, and the queue resolves a bound run from its row: the graph
 //! from `catalog.workflows` under the run's workflow id and version, and each
 //! node from the component digest admission froze on the run, checked against
 //! the descriptors of the release the run pins. Nodes come from that release
 //! only in this epic.
 //!
-//! A workflow run resolves its pinned version on every claim.
+//! A workflow run resolves its pinned version on every identity.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use wamn_catalog::{
-    ComponentPackageScope, ServingManifest, WiringDocument, validate_resolved_wiring_compatibility,
+    ComponentPackageCoordinate, ServingManifest, WiringDocument,
+    validate_resolved_wiring_compatibility,
 };
 use wamn_run_state::AuthorityClass;
 
@@ -184,7 +185,7 @@ pub fn resolve_workflow_in_release(
         component
             .descriptor
             .clone()
-            .into_admitted(ComponentPackageScope {
+            .into_admitted(ComponentPackageCoordinate {
                 env_key: run.env_key.to_owned(),
                 package_id: component.package_id.clone(),
                 package_version: versions
@@ -312,7 +313,7 @@ impl WamnPostgres {
         .await
     }
 
-    /// Resolve one claimed workflow run from its row
+    /// Resolve one bound workflow run from its row
     /// ([`resolve_workflow_in_release`]).
     pub async fn resolve_workflow(
         &self,
@@ -350,10 +351,10 @@ impl WamnPostgres {
                 let manifest = if let Some(local) = local {
                     local.require_instance(connection).await?;
                     anyhow::ensure!(
-                        local.scope.env_key == run.env_key
-                            && local.scope.environment == run.environment
+                        local.target.env_key == run.env_key
+                            && local.target.environment == run.environment
                             && local.facts.manifest_digest.as_str() == run.manifest_digest,
-                        "local release scope mismatch"
+                        "local release target mismatch"
                     );
                     local.manifest.clone()
                 } else {
@@ -400,7 +401,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 true,
@@ -447,7 +448,7 @@ mod tests {
 
     fn manifest() -> ServingManifest {
         let fact = AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "t1".to_owned(),
                 package_id: APPLICATION.to_owned(),
                 package_version: "1.0.0".to_owned(),

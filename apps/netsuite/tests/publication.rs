@@ -10,7 +10,7 @@ mod consumer_live;
 mod support;
 
 use std::collections::BTreeSet;
-use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
+use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
@@ -18,7 +18,7 @@ struct Fixture {
     args: PublishReleaseRequest,
     roots: Vec<std::path::PathBuf>,
     admissions: Vec<wamn_package_control::component_admission::ComponentAdmission>,
-    documents: Vec<(ComponentPackageScope, WiringDocument)>,
+    documents: Vec<(ComponentPackageCoordinate, WiringDocument)>,
 }
 
 fn fixture() -> Fixture {
@@ -64,7 +64,7 @@ fn fixture() -> Fixture {
             BTreeSet::new(),
         ),
     ];
-    let scope = ComponentPackageScope {
+    let target = ComponentPackageCoordinate {
         env_key: "rest--publication--test".into(),
         package_id: "netsuite".into(),
         package_version: "0.1.1".into(),
@@ -88,7 +88,7 @@ fn fixture() -> Fixture {
             .unwrap(),
         )
         .unwrap();
-        (scope.clone(), document)
+        (target.clone(), document)
     })
     .collect();
     let args = PublishReleaseRequest {
@@ -169,7 +169,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
 fn gate_documents(
     args: &PublishReleaseRequest,
     manifest: &wamn_catalog::ServingManifest,
-    documents: &[(ComponentPackageScope, WiringDocument)],
+    documents: &[(ComponentPackageCoordinate, WiringDocument)],
 ) -> anyhow::Result<()> {
     let packages = args
         .packages

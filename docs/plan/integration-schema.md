@@ -2,7 +2,7 @@
 
 ## Model
 
-Integrations are configured per project, connections per project environment, and an application uses a connection through a release-scoped binding.
+Integrations are configured per project, connections per project environment, and an application uses a connection through a release-targeted binding.
 
 - **integration\_type** is the platform catalog of integration code (`http`, `s3`, `gcs`, `disk`, `modbus`, `netsuite_rest`, …). Every build or parameter-shape change is an **integration\_type\_version**.
 - **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `hmac`, `oauth2_client_credentials`, `oauth2_client_credentials_jwt`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
@@ -285,7 +285,7 @@ A resource is a physical thing one holder may use at a time on a target, such as
 - Static check: the unique index on active connections per (target, resource\_key). Disabling a connection frees the resource; re-enabling it is refused while an active replacement holds the same key.
 - Runtime lease: a Postgres session advisory lock in the system database (two envs may share a target, and advisory locks are per database), taken on a dedicated session on a 64-bit `hashtextextended` of (target, resource\_key). The holder is the host process. It serializes calls on the connection, so several components (for example a reader and a writer) may share one exclusive connection; whether the resource stays open between calls is the integration code's choice (a wasm guest with a fresh store per call reopens it). A call on an exclusive connection waits for the lease up to 30 s, then fails with unavailable. If the lease session drops, calls fail with unavailable until the host holds the lease again. A crashed or killed pod drops its session and the lock. On a local box the lease is in-process, because one host serves every env there.
 - Lease key: hashtextextended('resource:' || target_id || ':' || resource_key, 0), in the system database, on one dedicated session per host shared by every lease the host holds. Local targets use an in-process lease with the same key.
-- One replica: an env that binds an exclusive connection runs one host replica. Replicas share the run queue (fact: `run-queue.sql`), so a second replica would claim runs it cannot serve while the first holds the lease. Apply reads the count from the host group body it takes from `WAMN_RELEASE_HOST_GROUP` (fact: `environment/mod.rs` `host_group`, `release_chart.rs`); with an exclusive binding it refuses unless that body names `replicas: 1`, and it never falls back to the chart default. No per-call locking and no routing to the holder.
+- One replica: an env that binds an exclusive connection runs one host replica. Replicas share the run queue (fact: `run-queue.sql`), so a second replica would lease runs it cannot serve while the first holds the lease. Apply reads the count from the host group body it takes from `WAMN_RELEASE_HOST_GROUP` (fact: `environment/mod.rs` `host_group`, `release_chart.rs`); with an exclusive binding it refuses unless that body names `replicas: 1`, and it never falls back to the chart default. No per-call locking and no routing to the holder.
 - During a rollout the new pod waits for the lease until the draining pod exits. A pod's readiness never depends on acquiring a lease, so the wait cannot block the rollout.
 - Disabling a connection releases the lease: on the connection key delete each host stops new calls, lets calls in flight finish, closes the resource and drops the lock. A replacement waits for the lock; it never takes it over.
 
@@ -318,7 +318,7 @@ world client {
 
 ## Parameters
 
-Every parameter is connection-scoped, set per env on the connection generation. A change in one env never reaches another. The copy action copies parameters from another env as a new generation in the target env; it never copies credentials.
+Every parameter is connection-targeted, set per env on the connection generation. A change in one env never reaches another. The copy action copies parameters from another env as a new generation in the target env; it never copies credentials.
 
 - An edit appends a generation and makes it active; every bound release sees it on its next request. No deployment, no restart.
 - Validation is wamn's own. The schema is a flat object, with custom keywords on top-level properties only. Values must validate against every version a live release uses of the connection (both, during a rollout). Fields declared only by other published versions are accepted as staged; fields unknown to every published version are refused. Per-version `additionalProperties: false` is not used, because staging validates against the union.
@@ -394,13 +394,13 @@ applications = {
 
 Everything has a headless interface. Every live action is a control host route; the UI, `wamn-ctl` and scripts call the same routes, in main's `noun.verb` style (`crates/catalog/model/src/host_route.rs`). Authority moves from org admin to project admin (org admins hold it implicitly).
 
-On main (fact): five control routes (`external_system.write`, `connection.write`, `project_connection.enable`, `project_connection.disable`, `integration_allow.allow`), all org-admin and write-only; `connection rotate` and `import-credentials` exist only as `wamn-ctl` verbs over SQL functions; `wamn-ctl bind-connection` writes a release-scoped binding; `wamn-ctl integration build` and `publish` handle wasm artifacts.
+On main (fact): five control routes (`external_system.write`, `connection.write`, `project_connection.enable`, `project_connection.disable`, `integration_allow.allow`), all org-admin and write-only; `connection rotate` and `import-credentials` exist only as `wamn-ctl` verbs over SQL functions; `wamn-ctl bind-connection` writes a release-targeted binding; `wamn-ctl integration build` and `publish` handle wasm artifacts.
 
 | Operation | `wamn-ctl` | On main |
 | --- | --- | --- |
 | `integration_type.list` (get) | `integration-type list` | new |
 | `integration_type.publish` (platform) | `integration publish` | exists; now records a version with its schema and world |
-| `external_system.write`, `.list`, `.delete` | `external-system …` | write exists (becomes project-scoped, identity only); list, delete new |
+| `external_system.write`, `.list`, `.delete` | `external-system …` | write exists (becomes project-targeted, identity only); list, delete new |
 | `integration.write`, `.list`, `.get` | `integration …` | new; replaces org `connection.write` |
 | `integration.disable`, `.enable`, `.delete` | `integration …` | new |
 | `connection.write` | `connection write` | reshaped: per env, all parameters; the first write carries the credential and creates the principal |
@@ -456,7 +456,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 ### Auth runs in the host
 
 - The host applies auth on the outbound call, as it handles application auth today; integration code never holds the secret, except with `custom`, which hands it over through `bound.credential()`.
-- `http_basic`, `api_key`, `hmac`, the three OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`. `oauth2_client_credentials_jwt` authenticates to the token endpoint with a signed JWT (RFC 7523 client assertion, the NetSuite machine-to-machine form) instead of a client secret. Its parameters.auth names the algorithm (PS256, ES256 or RS256) and the scope separator (space by default, comma for NetSuite).
+- `http_basic`, `api_key`, `hmac`, the three OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`. `oauth2_client_credentials_jwt` authenticates to the token endpoint with a signed JWT (RFC 7523 client assertion, the NetSuite machine-to-machine form) instead of a client secret. Its parameters.auth names the algorithm (PS256, ES256 or RS256) and the target separator (space by default, comma for NetSuite).
 - Auth type sits on the integration, so every env of an integration uses the same auth; a different auth is a different integration.
 - The host keeps each credential's secret under its credential id. A rotation makes a new credential id, so the new generation's key delete is enough. A 401 or 403 drops the secret and the connection fact and reads both again; the host sends once more only when the fact names a new generation or credential, so a repeated send never carries the credential that was just refused. No strict emergency revocation.
 - The token endpoint's origin is the connection's authority or parameters.auth.token_authority; any other origin is refused. OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` to `failing`; calls fail with `credential-unavailable`, and the next call tries again once `updated_at` is 30 s old; `connection.get` shows `refresh_status`. The host keeps the decrypted token in memory under (connection, generation) until 60 s before it expires; the connection key delete for a new generation drops it.
@@ -477,7 +477,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 | --- | --- |
 | `registry.integrations` | `integration_type` + `integration_type_version` |
 | `registry.integration_digest` | `integration_type_version.digest` |
-| `registry.external_system`, `platform.external_system` | kept, identity only, project-scoped |
+| `registry.external_system`, `platform.external_system` | kept, identity only, project-targeted |
 | `registry.connection` (org-level) | `integration` (identity and type) + `connection` (env instance, all configuration) |
 | `registry.connection_generation`, `catalog.connection_generations` | `connection_generation` (parameters and credential reference; no version) |
 | `catalog.connection_instances` | `connection` |

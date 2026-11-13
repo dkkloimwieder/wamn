@@ -313,22 +313,22 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
             workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
         assert_eq!(lifecycle.family, family);
         assert_eq!(lifecycle.database(), "wamn-db-demo--billing--dev");
-        // The scope grain is the family's own declaration, so a family can
+        // The target grain is the family's own declaration, so a family can
         // never be paired with the wrong one here.
-        assert_eq!(lifecycle.scope, {
+        assert_eq!(lifecycle.target, {
             let probe =
                 workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
-            probe.scope
+            probe.target
         });
         let a = lifecycle.role(CredentialGeneration::A);
         let b = lifecycle.role(CredentialGeneration::B);
         assert_ne!(a, b, "{family:?}");
         assert!(is_workload_generation_role(family, &a), "{family:?}: {a}");
         assert!(a.len() <= 63, "{family:?}: {a}");
-        // Only a CONTROL-scoped family records a login-to-tenant mapping.
+        // Only a CONTROL-targeted family records a login-to-tenant mapping.
         assert_eq!(
             lifecycle.control_env_key.is_some(),
-            family.scope_kind() == WorkloadRoleScopeKind::Control,
+            family.identity_kind() == WorkloadRoleIdentityKind::Control,
             "{family:?}"
         );
     }
@@ -838,7 +838,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth,
     // and `wamn-emtx.13` adds audit retention as the fourteenth.
     // `wamn-0h0g.10.15` removes the effect writer, leaving thirteen.
-    // `label` reads only the family, so the scope is deliberately uniform.
+    // `label` reads only the family, so the target is deliberately uniform.
     let expected = [
         (WorkloadRoleFamily::ServiceReader, "service-reader"),
         (WorkloadRoleFamily::App, "app"),
@@ -859,7 +859,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     for (family, label) in expected {
         let lifecycle = WorkloadLifecycle {
             family,
-            scope: WorkloadRoleScope::EnvKey {
+            target: WorkloadRoleIdentity::EnvKey {
                 env_key: "t",
                 database: "db",
             },
@@ -875,7 +875,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
 }
 
 #[test]
-fn stable_acl_role_members_are_only_scoped_generation_roles() {
+fn stable_acl_role_members_are_only_targeted_generation_roles() {
     assert!(is_workload_generation_role(
         WorkloadRoleFamily::RegistryReader,
         "wamn_registry_reader_0123456789abcdef0123456789abcdef01234567_b"
@@ -917,7 +917,7 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
 }
 
 #[tokio::test]
-async fn env_key_projection_and_instance_claim_hold_on_postgres() {
+async fn env_key_projection_and_instance_assignment_hold_on_postgres() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let url = database.url();
@@ -1046,7 +1046,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         )
         .await;
     }
-    claim_environment_instance(&mut connect().await, "tenant-a", "16384")
+    assign_environment_instance(&mut connect().await, "tenant-a", "16384")
         .await
         .unwrap();
     first
@@ -1134,16 +1134,16 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
-    claim_environment_instance(&mut connect().await, "tenant-a", "")
+    assign_environment_instance(&mut connect().await, "tenant-a", "")
         .await
         .unwrap();
-    let absent = claim_environment_instance(&mut connect().await, "tenant-unprojected", "16384")
+    let absent = assign_environment_instance(&mut connect().await, "tenant-unprojected", "16384")
         .await
         .unwrap_err();
     assert!(
         absent
             .to_string()
-            .contains("environment-instance-claim-without-projection")
+            .contains("environment-instance-assignment-without-projection")
     );
     assert!(
         absent
@@ -1164,19 +1164,16 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
             .unwrap()
             .get::<_, i64>(0),
         0,
-        "the claimed tenant cannot read another tenant"
+        "the bound tenant cannot read another tenant"
     );
     let foreign = first
         .execute(
-            wamn_schema_control::claim_environment_instance_sql(),
+            wamn_schema_control::assign_environment_instance_sql(),
             &[&"tenant-b", &"foreign"],
         )
         .await
         .unwrap();
-    assert_eq!(
-        foreign, 0,
-        "the claimed tenant cannot change another tenant"
-    );
+    assert_eq!(foreign, 0, "the bound tenant cannot change another tenant");
 
     let lock = first.transaction().await.unwrap();
     lock.query_one(sql::read_env_key_environment_sql(), &[&"tenant-a"])

@@ -58,5 +58,5 @@ The deferred part 1 runs stay as the first step of part 2.
 
 ## Open items
 
-- The comment at `crates/control/lib/src/platform/web.rs:188` still says receipt. The amended scope allowed identifier changes only, so part 2 changes it.
+- The comment at `crates/control/lib/src/platform/web.rs:188` still says receipt. The amended target allowed identifier changes only, so part 2 changes it.
 - `crates/control/lib/src/dev/coordinator.rs` receives one added argument line from `wamn-ms1sn.2`. The branch that merges second rebases over it.

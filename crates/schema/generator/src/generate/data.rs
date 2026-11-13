@@ -788,8 +788,8 @@ fn emit_feed(
          pub limit: i64,\n\
          }}\n\n\
          /// `{model_name}.query` with a feed part: the rows that changed in the\n\
-         /// scope of the list's filters since the cursor, one entry per row.\n\
-         ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
+         /// target of the list's filters since the cursor, one entry per row.\n\
+         ///\n/// A row that left the target, or was deleted, is a change with no data.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<feed::id::Changes<{model_type}FeedRow, {id_type}>, Error> {{\n\
          let cursor = part.cursor.as_deref().map(|encoded| feed::id::decode::<{id_type}>(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\

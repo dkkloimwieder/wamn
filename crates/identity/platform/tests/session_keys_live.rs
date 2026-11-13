@@ -10,7 +10,7 @@ use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_identity_protocol::keys::PublicSessionKey;
-use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
@@ -606,7 +606,7 @@ async fn assert_token(token: &IssuedSessionToken, key: &PublicSessionKey) {
     let verified = verify(
         token.token(),
         key,
-        Scope {
+        Audience {
             issuer: ISSUER,
             org: "org-a",
             audience: "environment-id-a-dev",

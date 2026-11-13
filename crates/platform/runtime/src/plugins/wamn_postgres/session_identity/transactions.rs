@@ -14,7 +14,9 @@ use super::super::resources::{
 use super::super::statements::VerifiedStatement;
 use super::super::types::map_pg_error;
 use super::super::{PgError, RowSet, SqlValue, StatementError};
-use super::{OneShotResult, WamnPostgres, refuse_unattributed_statement, validate_claims};
+use super::{
+    OneShotResult, WamnPostgres, refuse_unattributed_statement, validate_session_identity,
+};
 
 /// The transactional `wamn.causation` logical-message emit appended to a
 /// run-owned transaction's BEGIN batch (l5i9.12.2). The [`Causation`] is
@@ -54,14 +56,14 @@ pub(in super::super) async fn finish_transaction(
     }
 }
 
-/// The fully-bound claim statement run inside the plugin-managed transaction
-/// (R2/R16). Every claim value travels as a bind parameter (`$1..$8`) — there is
+/// The fully-bound identity statement run inside the plugin-managed transaction
+/// (R2/R16). Every identity value travels as a bind parameter (`$1..$8`) — there is
 /// NO string-interpolation path, so an injection-shaped tenant / schema / runner
 /// / role / user id is *unrepresentable* as SQL, not merely rejected by
 /// validation. `set_config` with `is_local => true` is the exact `SET LOCAL`
-/// equivalent (scoped to the current transaction). Parameter order:
+/// equivalent (transaction-local). Parameter order:
 ///
-/// - `$1` `app.env_key` — the RLS claim (always present).
+/// - `$1` `app.env_key` — the RLS identity (always present).
 /// - `$2` `statement_timeout` — as TEXT (a bare-integer string = milliseconds).
 /// - `$3` `search_path` — `COALESCE($3, current_setting('search_path'))`, so a
 ///   NULL bind (absent schema) preserves the server's default search_path; the
@@ -69,10 +71,10 @@ pub(in super::super) async fn finish_transaction(
 /// - `$4` `app.runner` — `COALESCE($4, current_setting('app.runner', true))`, so
 ///   a NULL bind (absent runner) re-asserts the current value (a no-op), exactly
 ///   like the pre-fqg.4 "no `app.runner` statement" path.
-/// - `$5` `app.role` / `$6` `app.user_id` — the per-role RLS claim the
+/// - `$5` `app.role` / `$6` `app.user_id` — the per-role RLS identity the
 ///   compiled policies key on (wamn-0h0g.23.1), and the executing principal
 ///   the record-history triggers stamp. Bound UNCONDITIONALLY, not
-///   COALESCEd to the current value like `$3`/`$4`: an absent claim binds `''`,
+///   COALESCEd to the current value like `$3`/`$4`: an absent identity binds `''`,
 ///   which is exactly the deny floor
 ///   `COALESCE(current_setting('app.role', true), '')` and
 ///   `NULLIF(current_setting('app.user_id', true), '')::uuid` use in the static
@@ -93,9 +95,9 @@ pub(in super::super) async fn finish_transaction(
 ///   unconditionally like `$7`, and an absent application binds `''`.
 ///
 /// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
-/// separate prepared emit pipelined by [`begin_with_claims`]
+/// separate prepared emit pipelined by [`begin_with_identity`]
 /// only for a run-owned transaction.
-pub(super) const CLAIM_SQL: &str = "SELECT \
+pub(super) const IDENTITY_SQL: &str = "SELECT \
      set_config('app.env_key', $1, true), \
      set_config('statement_timeout', $2, true), \
      set_config('search_path', COALESCE($3, current_setting('search_path')), true), \
@@ -105,10 +107,10 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
      set_config('app.operation', $7, true), \
      set_config('app.application', $8, true)";
 
-/// The GUEST claim statement: [`CLAIM_SQL`] WITHOUT `app.env_key`
+/// The GUEST identity statement: [`IDENTITY_SQL`] WITHOUT `app.env_key`
 /// (`wamn-0h0g.22.6.7`).
 ///
-/// *** THE GUEST'S TENANT IS ITS LOGIN, NOT A CLAIM. *** Every relation the
+/// *** THE GUEST'S TENANT IS ITS LOGIN, NOT A IDENTITY. *** Every relation the
 /// guest can reach now keys on
 /// `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
 /// which reads `current_user` — so injecting `app.env_key` here would set a GUC
@@ -118,13 +120,13 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// would have two boundaries to choose between.
 ///
 /// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
-/// per-user policies, a different claim class layered INSIDE the tenant floor
-/// and explicitly outside `wamn-0h0g.22.6`'s scope. `app.operation` stays with
+/// per-user policies, a different identity class layered INSIDE the tenant floor
+/// and explicitly outside the work of `wamn-0h0g.22.6`. `app.operation` stays with
 /// them: the record-history log records it. `app.application` stays too,
 /// for logging only.
-/// The SESSION-scoped settings an autocommit read still needs.
+/// The session-wide settings an autocommit read still needs.
 ///
-/// `search_path` and `statement_timeout` are not claims -- they are how the
+/// `search_path` and `statement_timeout` are not identity -- they are how the
 /// connection resolves this package's unqualified relations and how long it may
 /// run. A read outside a transaction cannot take them transaction-locally, and
 /// without `search_path` every generated statement fails to resolve its own
@@ -134,9 +136,9 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 ///
 /// `app.role`, `app.user_id`, `app.operation`, and `app.application` are
 /// deliberately ABSENT.
-/// Those are per-caller claims, and a session-scoped claim would outlive the
+/// Those are per-caller identity, and a session-wide identity would outlive the
 /// request and reach the next borrower of the pooled connection -- the exact
-/// leak the claim model exists to prevent. A request carrying `app.role` takes
+/// leak the identity model exists to prevent. A request carrying `app.role` takes
 /// the transactional path instead. A read needs no `app.user_id` and no
 /// `app.operation`: only the record-history triggers read them, and a read
 /// that writes nothing fires no trigger.
@@ -173,7 +175,7 @@ pub(in super::super) async fn prepare_session_settings(
         .map_err(|error| map_pg_error(&error))
 }
 
-/// Install only connection configuration. Caller claims stay transaction-local.
+/// Install only connection configuration. Caller identity stay transaction-local.
 pub(in super::super) async fn bind_session_settings(
     connection: &Object,
     policy: &ProjectPool,
@@ -205,7 +207,7 @@ pub(in super::super) async fn bind_session_settings(
     Ok(())
 }
 
-const GUEST_CLAIM_SQL: &str = "SELECT \
+const GUEST_IDENTITY_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, true), \
      set_config('search_path', COALESCE($2, current_setting('search_path')), true), \
      set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), true), \
@@ -214,17 +216,17 @@ const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('app.operation', $6, true), \
      set_config('app.application', $7, true)";
 
-/// The bound claim statement one authority class binds. ONE function, so the
+/// The bound identity statement one authority class binds. ONE function, so the
 /// pipelined path's warm-up and the transaction that follows it cannot disagree
 /// about which cache entry they mean (wamn-0h0g.17.33).
-const fn claim_sql(class: AuthorityClass) -> &'static str {
+const fn identity_sql(class: AuthorityClass) -> &'static str {
     match class {
-        AuthorityClass::GuestSql => GUEST_CLAIM_SQL,
-        _ => CLAIM_SQL,
+        AuthorityClass::GuestSql => GUEST_IDENTITY_SQL,
+        _ => IDENTITY_SQL,
     }
 }
 
-/// The statement that opens every claimed transaction of this plugin, except
+/// The statement that opens every bound transaction of this plugin, except
 /// a guest transaction of a read invocation.
 const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
 
@@ -232,9 +234,9 @@ const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
 /// statement in it reads one snapshot and none writes.
 const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 
-/// Prepared claims whose first poll sends BEGIN before the bound settings.
+/// Prepared identity whose first poll sends BEGIN before the bound settings.
 #[derive(Debug)]
-pub(in super::super) struct BoundClaims {
+pub(in super::super) struct BoundIdentity {
     begin: tokio_postgres::Statement,
     pub(in super::super) causation: Option<(tokio_postgres::Statement, String)>,
     statement: tokio_postgres::Statement,
@@ -242,10 +244,10 @@ pub(in super::super) struct BoundClaims {
     class: AuthorityClass,
 }
 
-impl BoundClaims {
+impl BoundIdentity {
     pub(in super::super) async fn bind(&self, conn: &Object) -> Result<(), PgError> {
         async {
-            let (begin, causation, claims) = tokio::join!(biased;
+            let (begin, causation, identity) = tokio::join!(biased;
                 conn.execute(&self.begin, &[]),
                 async {
                     if let Some((statement, json)) = &self.causation {
@@ -256,11 +258,11 @@ impl BoundClaims {
                 conn.execute_raw(&self.statement, self.params.iter()));
             begin.map_err(|error| map_pg_error(&error))?;
             causation.map_err(|error| map_pg_error(&error))?;
-            claims.map_err(|error| map_pg_error(&error))?;
+            identity.map_err(|error| map_pg_error(&error))?;
             Ok(())
         }
         .instrument(tracing::info_span!(
-            "wamn.postgres.bind_claims",
+            "wamn.postgres.bind_identity",
             wamn.authority_class = self.class.as_str()
         ))
         .await
@@ -268,8 +270,8 @@ impl BoundClaims {
 }
 
 impl WamnPostgres {
-    /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
-    /// bound statement ([`CLAIM_SQL`]) whose every value travels as a bind
+    /// `BEGIN` + identity/limit injection. The identity are injected by ONE fully
+    /// bound statement ([`IDENTITY_SQL`]) whose every value travels as a bind
     /// parameter — there is no interpolation path (R2/R16). `env_key` is always
     /// present; `schema`/`runner` bind NULL when absent (COALESCE-to-current
     /// preserves the server default / prior value — the S2/pgbench path is
@@ -278,16 +280,16 @@ impl WamnPostgres {
     /// `application` also binds `''`. A run-owned transaction also
     /// appends the transactional `wamn.causation` emit (l5i9.12.2).
     ///
-    /// Cost: `BEGIN` and the bound claim statement are pipelined (issued without
+    /// Cost: `BEGIN` and the bound identity statement are pipelined (issued without
     /// an await between them; tokio-postgres preserves FIFO order so `BEGIN`
     /// opens the txn before the transaction-LOCAL `set_config`s apply), and the
-    /// claim statement is `prepare_cached`, so the steady-state round-trip count
+    /// identity statement is `prepare_cached`, so the steady-state round-trip count
     /// on a pooled connection matches the pre-R2 single batch.
     #[expect(
         clippy::too_many_arguments,
-        reason = "every claim this transaction binds is an independently trusted input"
+        reason = "every identity this transaction binds is an independently trusted input"
     )]
-    pub(in super::super) async fn begin_with_claims(
+    pub(in super::super) async fn begin_with_identity(
         &self,
         conn: &Object,
         class: AuthorityClass,
@@ -302,7 +304,7 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
-        self.prepare_claims(
+        self.prepare_identity(
             conn,
             class,
             read,
@@ -323,9 +325,9 @@ impl WamnPostgres {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "every claim this transaction binds is an independently trusted input"
+        reason = "every identity this transaction binds is an independently trusted input"
     )]
-    pub(in super::super) async fn prepare_claims(
+    pub(in super::super) async fn prepare_identity(
         &self,
         conn: &Object,
         class: AuthorityClass,
@@ -339,11 +341,11 @@ impl WamnPostgres {
         application: Option<&str>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
-    ) -> Result<BoundClaims, PgError> {
+    ) -> Result<BoundIdentity, PgError> {
         // The tenant is still VALIDATED on the guest path even though it is no
         // longer bound: it selected the credential this connection was checked
         // out with, so a malformed one is a bug worth failing on.
-        validate_claims(
+        validate_session_identity(
             env_key,
             schema,
             runner,
@@ -356,7 +358,7 @@ impl WamnPostgres {
         // Prepare every statement before a caller polls the pipeline. A cache
         // miss must not let the application statement run ahead of BEGIN.
         let stmt = conn
-            .prepare_cached(claim_sql(class))
+            .prepare_cached(identity_sql(class))
             .await
             .map_err(|e| map_pg_error(&e))?;
         let mut params = vec![
@@ -372,7 +374,7 @@ impl WamnPostgres {
             params.insert(0, Some(env_key.to_owned()));
         }
         // The isolation level is stated, not inherited from a session default:
-        // the write log's retry reads the claim that its insert waited on, and
+        // the write log's retry reads the identity that its insert waited on, and
         // only a fresh READ COMMITTED snapshot sees it
         // (docs/architecture/execution.md#native-dispatch). A guest has no way
         // to name the level through `begin`; the guest transaction of a read
@@ -394,7 +396,7 @@ impl WamnPostgres {
             ),
             None => None,
         };
-        Ok(BoundClaims {
+        Ok(BoundIdentity {
             begin,
             causation,
             statement: stmt,
@@ -403,7 +405,7 @@ impl WamnPostgres {
         })
     }
 
-    /// Single statement in an implicit transaction: claims injected,
+    /// Single statement in an implicit transaction: identity injected,
     /// committed on success, rolled back on statement failure.
     pub(in super::super) async fn one_shot(
         &self,
@@ -419,7 +421,7 @@ impl WamnPostgres {
 
     /// Execute one statement using an explicitly selected named-import
     /// project. Named `wamn:postgres` interfaces must not fall back to the
-    /// component's single `wamn.project` claim.
+    /// component's single `wamn.project` identity.
     pub(in super::super) async fn one_shot_for_project(
         &self,
         component_id: &str,
@@ -440,7 +442,7 @@ impl WamnPostgres {
             .checkout_workload(component_id, project, &env_key)
             .await?;
         if let Err(e) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &conn,
                 authority,
                 false,
@@ -456,7 +458,7 @@ impl WamnPostgres {
             )
             .await
         {
-            // Claim injection failed: connection state is unknown — destroy.
+            // Identity injection failed: connection state is unknown — destroy.
             self.destroy(conn);
             return Err(e);
         }
@@ -489,7 +491,7 @@ impl WamnPostgres {
         }
     }
 
-    /// Execute one admitted statement in an implicit claim-aware transaction.
+    /// Execute one admitted statement in an implicit identity-aware transaction.
     /// Contract drift rolls the transaction back before any mutation commits.
     pub(in super::super) async fn one_shot_statement(
         &self,
@@ -531,11 +533,11 @@ impl WamnPostgres {
         // AUTOCOMMIT WHEN THE SERVER SAYS NO TRANSACTION IS NEEDED. PostgreSQL
         // classified this statement at generation time: it neither writes nor
         // takes a row lock, so BEGIN and COMMIT are ceremony around a read.
-        // Measured cost of that ceremony: bind_claims 0.45-0.89 ms plus a
+        // Measured cost of that ceremony: bind_identity 0.45-0.89 ms plus a
         // COMMIT of 2.1-3.8 ms, around a 0.6 ms statement
         // (measurement records in commits 494b5b8d5595 and 3659506bdeef).
         //
-        // A read carrying a role claim keeps the transaction: a session-scoped
+        // A read carrying a role identity keeps the transaction: a session-wide
         // app.role would outlive the request and reach the next borrower of
         // this pooled connection. A bound executing principal or operation does
         // not: the read skips app.user_id and app.operation, which only the
@@ -567,9 +569,9 @@ impl WamnPostgres {
         }
 
         // Prepare before polling the application query, including on a cold
-        // connection. The biased join sends BEGIN and claims first.
-        let claims = self
-            .prepare_claims(
+        // connection. The biased join sends BEGIN and identity first.
+        let identity = self
+            .prepare_identity(
                 connection.connection(),
                 authority,
                 false,
@@ -585,9 +587,9 @@ impl WamnPostgres {
             )
             .await
             .map_err(StatementError::Postgres)?;
-        let (claims, wal, result) = tokio::join!(
+        let (identity, wal, result) = tokio::join!(
             biased;
-            claims.bind(connection.connection()),
+            identity.bind(connection.connection()),
             read_wal_position(connection.connection(), wal_statement.as_ref()),
             run_verified_query(
                 connection.connection(),
@@ -597,7 +599,7 @@ impl WamnPostgres {
                 policy.row_limit,
             ),
         );
-        if let Err(error) = claims {
+        if let Err(error) = identity {
             // The statement rode the same flight into a transaction that never
             // opened, so its own error is a consequence, not the cause.
             if connection
@@ -606,7 +608,7 @@ impl WamnPostgres {
                 .await
                 .is_err()
             {
-                tracing::warn!("rollback after failed claim binding also failed");
+                tracing::warn!("rollback after failed identity binding also failed");
             }
             return Err(StatementError::Postgres(error));
         }

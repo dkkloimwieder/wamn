@@ -17,7 +17,7 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use wamn_control_provision::{
-    CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, WorkloadRoleScope,
+    CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, WorkloadRoleIdentity,
     project_env_database_name, sql, workload_generation_role,
 };
 use wamn_test_infrastructure::locked_database;
@@ -47,7 +47,7 @@ fn database(instance: &str) -> String {
 fn generation_role(generation: CredentialGeneration) -> String {
     workload_generation_role(
         WorkloadRoleFamily::SessionRoleReader,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
@@ -55,7 +55,7 @@ fn generation_role(generation: CredentialGeneration) -> String {
         },
         generation,
     )
-    .expect("session reader has project-environment scope")
+    .expect("session reader has project-environment target")
 }
 
 fn database_url(raw: &str, name: &str) -> anyhow::Result<String> {

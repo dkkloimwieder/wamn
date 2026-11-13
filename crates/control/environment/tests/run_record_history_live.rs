@@ -79,7 +79,7 @@ async fn policy_projection_stamps_the_provisioning_actor() {
 }
 
 #[tokio::test]
-async fn env_key_projection_and_instance_claim_stamp_provisioning() {
+async fn env_key_projection_and_instance_assignment_stamp_provisioning() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
@@ -113,7 +113,7 @@ async fn env_key_projection_and_instance_claim_stamp_provisioning() {
         .await
         .unwrap()
         .get(0);
-    wamn_environment_control::provision_project_env::claim_environment_instance(
+    wamn_environment_control::provision_project_env::assign_environment_instance(
         &mut client,
         "history",
         "instance",

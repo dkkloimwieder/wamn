@@ -209,7 +209,7 @@ DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_publication WHERE pubname = '{cdc}') = 1,
     'the publication exists exactly once (idempotent re-apply)';
   ASSERT (SELECT puballtables FROM pg_publication WHERE pubname = '{cdc}') = false,
-    'the publication is schema-scoped, never FOR ALL TABLES';
+    'the publication is schema-targeted, never FOR ALL TABLES';
   ASSERT (SELECT pubinsert AND pubupdate AND pubdelete AND NOT pubtruncate
             FROM pg_publication WHERE pubname = '{cdc}'),
     'the publication carries insert/update/delete and EXCLUDES truncate';

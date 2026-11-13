@@ -26,7 +26,7 @@ use wamn_identity_client::PatIssuerConfig;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const CERTIFICATE_LIFETIME: Duration = Duration::from_secs(3600);
 
-/// One temporary identity process and its scoped database authority.
+/// One temporary identity process and its targeted database authority.
 pub struct Bootstrap {
     pub args: PatIssuerConfig,
     child: Option<Child>,

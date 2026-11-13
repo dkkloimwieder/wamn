@@ -18,8 +18,8 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: the production claim selector
-//! passed every pure test while the real statement over-claimed on a
+//! correctly here and still misbehave live: the production lease selector
+//! passed every pure test while the real statement over-acquired on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
@@ -49,9 +49,9 @@ pub mod run_store;
 /// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;
-/// The framed scope digest and the guest-SQL tenant key.
+/// The framed target digest and the guest-SQL tenant key.
 #[cfg(feature = "tenant-key")]
-pub mod tenant_scope;
+pub mod tenant_identity;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
@@ -61,4 +61,4 @@ pub use intent_store::IntentStore;
 pub use run_store::RunStore;
 pub use status::{FailType, NodeErrorType, NodeRunStatus, RunStatus};
 #[cfg(feature = "tenant-key")]
-pub use tenant_scope::app_scope_hash;
+pub use tenant_identity::app_identity_hash;

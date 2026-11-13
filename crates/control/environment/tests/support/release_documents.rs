@@ -53,7 +53,7 @@ pub fn release(
     if let Some(device) = device {
         let fact = device
             .clone()
-            .into_admitted(wamn_catalog::ComponentPackageScope {
+            .into_admitted(wamn_catalog::ComponentPackageCoordinate {
                 env_key: String::new(),
                 package_id: PACKAGE.to_owned(),
                 package_version: version.to_owned(),
@@ -255,7 +255,7 @@ pub mod http {
     use std::collections::BTreeSet;
     use std::path::Path;
     use wamn_catalog::{
-        ComponentDescriptor, ComponentPackageScope, ServingComponent, ServingManifest,
+        ComponentDescriptor, ComponentPackageCoordinate, ServingComponent, ServingManifest,
         WiringDocument,
     };
     use wamn_environment_control::environment::document::EnvironmentDocument;
@@ -382,7 +382,7 @@ pub mod http {
         _version: &str,
         components: Vec<ComponentDescriptor>,
     ) -> anyhow::Result<Vec<u8>> {
-        let scope = ComponentPackageScope {
+        let target = ComponentPackageCoordinate {
             env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
             package_id: "http_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
@@ -390,7 +390,7 @@ pub mod http {
         let facts: Vec<_> = components
             .iter()
             .cloned()
-            .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
+            .map(|descriptor| descriptor.into_admitted(target.clone()).component)
             .collect();
         let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
         manifest
@@ -565,7 +565,7 @@ pub mod workflow {
     pub struct WorkflowEnvironment<'a> {
         pub system_url: &'a str,
         pub project_url: &'a str,
-        pub scope: &'a wamn_control_registry::Triple,
+        pub target: &'a wamn_control_registry::Triple,
         pub env_key: &'a str,
         /// The release the environment serves.
         pub digest: &'a str,
@@ -582,9 +582,9 @@ pub mod workflow {
             workflow_id: &'a str,
         ) -> WorkflowVersion<'a> {
             WorkflowVersion {
-                org: &self.scope.org,
-                project: &self.scope.project,
-                environment: &self.scope.env,
+                org: &self.target.org,
+                project: &self.target.project,
+                environment: &self.target.env,
                 application,
                 workflow_id,
                 version: 1,
@@ -663,9 +663,9 @@ pub mod workflow {
             wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "manual fixture workflow",
-                wamn_engine::release_manifest::ReleaseScope::new(
+                wamn_engine::release_manifest::ReleaseTarget::new(
                     environment.env_key,
-                    environment.scope.env.as_str(),
+                    environment.target.env.as_str(),
                 )
                 .with_applications(environment.applications.clone()),
             )?,
@@ -744,7 +744,7 @@ pub mod workflow {
     /// Admit a manual fixture run as `workflow.start` admits it, for a release
     /// that serves no application host routes. The HTTP environment has no
     /// session issuer, so its release cannot serve them. The run records the
-    /// served release, so the deployed executor claims it.
+    /// served release, so the deployed executor leases it.
     pub async fn admit_workflow(
         work: &Path,
         environment: &WorkflowEnvironment<'_>,
@@ -801,7 +801,7 @@ pub mod workflow {
             .enabled_workflow(
                 "default",
                 environment.env_key,
-                environment.scope.env.as_str(),
+                environment.target.env.as_str(),
                 application,
                 workflow_id,
             )
@@ -834,7 +834,7 @@ pub mod workflow {
                 &ManualRunAdmission {
                     package_id: application,
                     manifest_digest: environment.digest,
-                    environment: environment.scope.env.as_str(),
+                    environment: environment.target.env.as_str(),
                     workflow_id,
                     workflow_version: workflow.version,
                     wiring_hash: &workflow.wiring_hash,
@@ -960,9 +960,9 @@ pub mod workflow {
         author_workflow_in_databases(
             environment.project_url,
             &AuthorWorkflowRequest {
-                org: &environment.scope.org,
-                project: &environment.scope.project,
-                environment: &environment.scope.env,
+                org: &environment.target.org,
+                project: &environment.target.project,
+                environment: &environment.target.env,
                 application,
                 declared: environment.applications,
                 document,
@@ -975,7 +975,7 @@ pub mod workflow {
         .await?;
         enable_workflow(
             environment.system_url,
-            environment.scope,
+            environment.target,
             &mut project,
             &environment.version(application, &document.wiring_id),
             ENABLER,
@@ -998,7 +998,7 @@ pub mod workflow {
         let (mut project, project_task) = connect_owned(environment.project_url).await?;
         disable_workflow(
             environment.system_url,
-            environment.scope,
+            environment.target,
             &mut project,
             &environment.version(application, workflow_id),
         )

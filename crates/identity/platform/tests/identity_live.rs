@@ -796,6 +796,6 @@ async fn route_principal_id(
     reads
         .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
         .await
-        .expect("read route PAT and scope in one statement")
+        .expect("read route PAT and target in one statement")
         .map(|authenticated| authenticated.principal().id().to_string())
 }

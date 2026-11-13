@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use wamn_control_provision::PlatformComponent;
 use wamn_dev_control::dev::environment::{
-    JourneyScope, connect, provision_journey_control, provision_route,
+    JourneyTarget, connect, provision_journey_control, provision_route,
 };
 use wamn_platform_identity::{PrincipalType, authenticate_pat};
 
@@ -127,7 +127,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .mode(0o700)
         .create(&files.0)
         .expect("create private test directory");
-    provision_journey_control(&JourneyScope::receiving(), &url, admin.as_ref())
+    provision_journey_control(&JourneyTarget::receiving(), &url, admin.as_ref())
         .await
         .expect(
             "provision system authority; it requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY",
@@ -148,7 +148,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .await
         .expect("install test-only writer observation");
     let route = provision_route(
-        &JourneyScope::receiving(),
+        &JourneyTarget::receiving(),
         &url,
         admin.as_ref(),
         &files.0,
@@ -172,7 +172,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         let writer: String = writer.get(0);
         assert!(
             writer.starts_with("wamn_identity_issuer_") && writer.ends_with('a'),
-            "PAT minting bypassed the scoped identity process"
+            "PAT minting bypassed the targeted identity process"
         );
     }
     for token in [
@@ -318,7 +318,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
     use wamn_dev_control::dev::environment::{
-        DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, provision,
+        DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, provision,
         reconcile_journey_run_plane,
     };
     use wamn_platform_identity::{
@@ -408,7 +408,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .ok()
     .expect("assign the existing application role");
     reconcile_journey_run_plane(
-        &JourneyScope::receiving(),
+        &JourneyTarget::receiving(),
         system.url(),
         &environment.route.database_url,
     )
@@ -483,7 +483,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .await
         .unwrap();
     reconcile_journey_run_plane(
-        &JourneyScope::receiving(),
+        &JourneyTarget::receiving(),
         system.url(),
         &environment.route.database_url,
     )

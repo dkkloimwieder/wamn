@@ -26,7 +26,7 @@ pub fn run(args: &DevEdgeBundleArgs) -> anyhow::Result<()> {
         &local.directory,
         &local.flow_http_component,
         &args.out,
-        wamn_dev_control::dev::edge_bundle::EdgeScope {
+        wamn_dev_control::dev::edge_bundle::EdgeTarget {
             org: &identity.org,
             project: &identity.project,
             environment: &identity.environment,

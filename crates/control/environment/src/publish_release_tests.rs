@@ -26,7 +26,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
             model.owner = package.to_owned();
         }
         let mut component = closure_component("application", None);
-        component.scope.package_id = package.to_owned();
+        component.target.package_id = package.to_owned();
         component.component_digest = format!("sha256:{}", digest_byte.to_string().repeat(64));
         let operation = format!("{package}:job/run@1.0.0");
         let mut export = component.operations.remove("run").unwrap();

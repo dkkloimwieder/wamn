@@ -1,4 +1,4 @@
-//! Resolve project integrations and write release-scoped environment bindings.
+//! Resolve project integrations and write release-targeted environment bindings.
 
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;

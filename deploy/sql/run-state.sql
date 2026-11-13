@@ -13,7 +13,7 @@
 -- (`wamn-0h0g.22.17`) and the `runs` grants target the second
 -- (`wamn-0h0g.12.69`) -- and naming a role that may not exist is an apply-time
 -- failure rather than a degradation. Role and
--- scoped LOGIN credential-generation lifecycle is provisioning-owned.
+-- targeted LOGIN credential-generation lifecycle is provisioning-owned.
 --
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
 -- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
@@ -22,7 +22,7 @@
 -- and carries the matching `<table>_tkey` expression index; CHECK
 -- (env_key <> '') forbids a ''-tenant row, so the floor is structural.
 --
--- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
+-- TARGET (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases (5.14) co-transact with these INSERTs but own
 -- their own table; the run-level I/O CAPTURE policy (9.6) is fixed at admission
 -- and full capture fills scrubbed `input_json`/`output_json` plus the output
@@ -58,7 +58,7 @@ END $platform_group$;
 -- a `GRANT ... TO` a role that does not exist fails the whole apply, and every
 -- in-tree applier of this artifact -- a dozen live gates plus the production
 -- reconcile path -- would otherwise acquire a new precondition. The stable role
--- is a grant carrier only; its scoped A/B LOGIN generations, their CONNECT and
+-- is a grant carrier only; its targeted A/B LOGIN generations, their CONNECT and
 -- their Secret are provisioning-owned.
 --
 -- EXCEPTION-guarded under the shared advisory lock, the same shape and for the
@@ -81,7 +81,7 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
 -- ---------------------------------------------------------------------------
 -- The per-database authority derivations every tenant policy below calls
 -- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
--- from a claim the session can set: a session that can set its own tenant can
+-- from an identity the session can set: a session that can set its own tenant can
 -- read every tenant.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
@@ -107,7 +107,7 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
         || int8send(7::bigint) || convert_to('env_key', 'UTF8')
         || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
@@ -151,7 +151,7 @@ END
 $$;
 
 -- Admission pins, including the release's `manifest_digest`, never change
--- (docs/architecture/overview.md#release-identity). A claiming pod shows it carries that
+-- (docs/architecture/overview.md#release-identity). A leasing pod shows it carries that
 -- release by its digest. A candidate run carries no release pin.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
@@ -294,7 +294,7 @@ CREATE TABLE wamn_run.runs (
     -- (component-digest, store-alias); callers never author this value.
     binding_world_json jsonb,
     -- Admission pins the exact release by its manifest digest, the SHA-256 of
-    -- its RFC 8785 canonical manifest. At claim, the worker shows its mounted
+    -- its RFC 8785 canonical manifest. At lease, the worker shows its mounted
     -- release has that digest. A candidate run carries no pin.
     manifest_digest text,
     input_json      jsonb,
@@ -491,7 +491,7 @@ CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
--- The guard is column-scoped, so the claim-time record columns must be named
+-- The guard is column-targeted, so the lease-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF package_id, environment,
@@ -504,7 +504,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
 BEFORE DELETE ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
--- Hot HTTP and stream delivery no longer author runs, and executor claim/reap
+-- Hot HTTP and stream delivery no longer author runs, and executor lease/reap
 -- no longer belongs to the guest ACL. `wamn_app` therefore retains only the
 -- read and terminal-history pruning surface; private management INSERT and
 -- executor UPDATE grants are provisioned to their dedicated authorities by
@@ -513,7 +513,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- `wamn_run_retention` (`wamn-0h0g.12.69`) is run history pruning's OWN
 -- principal, and the grant below is its ENTIRE authority anywhere in the
 -- cluster: `DELETE`, plus `SELECT` on EXACTLY the three columns the prune
--- statement's WHERE clause reads. The `SELECT` is COLUMN-SCOPED and that is
+-- statement's WHERE clause reads. The `SELECT` is COLUMN-TARGETED and that is
 -- load bearing, not tidiness. `wamn_run_retention` is a member of
 -- `wamn_platform`, whose one permissive floor arm is `USING (true)`, so a
 -- table-level `SELECT` here would let a retention credential read EVERY

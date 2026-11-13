@@ -45,7 +45,7 @@ pub(crate) async fn invoke_route(
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let components = host.release_components().await?;
     let component = authorized_component(&components, &route)?;
-    let release = host.release.scope();
+    let release = host.release.target();
     let span = invocation_span(
         &InvocationSite {
             env_key: &release.env_key,
@@ -79,7 +79,7 @@ pub(crate) async fn invoke_route(
             config: "null".to_owned(),
         };
         let acquisition = NodeAcquisition {
-            claims: host.claims(&release.env_key, Some(host.release_identity())),
+            identity: host.identity(&release.env_key, Some(host.release_identity())),
             invocation: component_invocation(
                 component,
                 route.operation,
@@ -142,7 +142,7 @@ fn authorized_component<'a>(
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use wamn_catalog::{AdmittedComponentOperation, ComponentPackageScope};
+    use wamn_catalog::{AdmittedComponentOperation, ComponentPackageCoordinate};
     use wamn_engine::flow_http_routing::CredentialType;
     use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 
@@ -152,7 +152,7 @@ mod tests {
 
     fn component() -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".into(),
                 package_id: "fixture".into(),
                 package_version: "1.0.0".into(),

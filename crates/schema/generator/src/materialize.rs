@@ -550,7 +550,7 @@ pub async fn materialize_package_verified(database_url: &str, package_root: &Pat
 /// A caller that shares one database across several packages must supply its
 /// own catalog, narrowed to what this package owns. Re-introspecting here would
 /// hand the package every relation and field its neighbours installed, and the
-/// generated artifacts would claim them.
+/// generated artifacts would declare them.
 pub async fn materialize_package_verified_with_catalog(
     catalog: &CatalogIr,
     database_url: &str,

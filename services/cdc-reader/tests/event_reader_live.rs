@@ -572,10 +572,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         js.get_stream(&stream_name).await.is_err(),
         "reader must not create its missing stream"
     );
-    let scope = wamn_control_registry::Triple::new(ORG, PROJECT, ENV);
+    let coordinate = wamn_control_registry::Triple::new(ORG, PROJECT, ENV);
     let source_config =
-        wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
-    let advisory_config = wamn_broker::events::advisory_stream_config(&scope, 1);
+        wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
+    let advisory_config = wamn_broker::events::advisory_stream_config(&coordinate, 1);
     let advisory_name = advisory_config.name.clone();
     let _ = js.delete_stream(&advisory_name).await;
     js.create_stream(source_config)

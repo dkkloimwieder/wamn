@@ -62,7 +62,7 @@ pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservat
 /// merely add the intended one — and BOTH a column-wide and a table-wide
 /// `REVOKE` are issued, because a table-level `GRANT SELECT` and a per-column
 /// one are separate ACL entries and revoking either alone leaves the other
-/// standing. The re-grant is column-scoped to exactly the three columns the
+/// standing. The re-grant is column-targeted to exactly the three columns the
 /// prune statement's `WHERE` clause reads: retention is a `wamn_platform`
 /// member, that group's floor arm is `USING (true)`, and a table-level `SELECT`
 /// would therefore expose every tenant's run payload columns.
@@ -412,7 +412,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
         // Direct REVOKEs cannot safely repair an unrelated inherited group or
         // table ownership. Verify the effective postcondition and fail loudly
-        // instead of claiming convergence while either boundary role retains
+        // instead of reporting convergence while either boundary role retains
         // authority outside its spec.
         let mut forbidden_checks = Vec::new();
         for grantee in effective_grantees.iter().copied() {

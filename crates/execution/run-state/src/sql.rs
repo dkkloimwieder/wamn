@@ -4,7 +4,7 @@
 //! (`deploy/sql/run-state.sql`), in the house shape: values are ALWAYS `$n`
 //! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
 //! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
-//! and the tenant comes from the session claim
+//! and the tenant comes from the session identity
 //! (`current_setting('app.env_key', true)`). These are run-level statements.
 //! Status literals interpolate from [`crate::RunStatus`] so the builders cannot
 //! drift from the model (the same discipline this crate's `queue` module uses).
@@ -29,16 +29,16 @@ use crate::status::RunStatus;
 /// This predicate used to read `current_setting('app.env_key', true)`, which is
 /// the RETIRED tenant keying: `wamn-0h0g.22.6` re-keyed `runs`' floor onto
 /// `wamn_authority.tenant_key(env_key) =
-/// wamn_authority.current_tenant_key()`, and the `app.env_key` claim survives
+/// wamn_authority.current_tenant_key()`, and the `app.env_key` identity survives
 /// only on `run_queue`. A GUC-shaped predicate has one failure mode no amount
 /// of care removes: `current_setting(_, true)`
-/// returns NULL when the claim was never injected, `env_key = NULL` is NULL,
+/// returns NULL when the identity was never injected, `env_key = NULL` is NULL,
 /// and the statement reports ZERO ROWS DELETED with no error — measured on
 /// PostgreSQL 18.6 as `DELETE 0` under the dedicated retention role
 /// (`wamn-0h0g.12.69`). A bound parameter cannot be forgotten: it is either
 /// supplied or the statement does not execute.
 ///
-/// Dropping the claim costs nothing the cascade needs. Measured on the same
+/// Dropping the identity costs nothing the cascade needs. Measured on the same
 /// server: the `run_queue` `ON DELETE CASCADE` fires as an internal
 /// referential-integrity trigger that consults neither the deleter's table
 /// grants nor `run_queue`'s FORCE-RLS `app.env_key` policy, so the queue row

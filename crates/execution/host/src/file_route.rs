@@ -167,7 +167,7 @@ impl From<FileStorageError> for FileError {
     }
 }
 
-/// One generation selected by the scoped registry reader, never by the caller.
+/// One generation selected by the targeted registry reader, never by the caller.
 #[derive(Debug, Clone)]
 pub struct FileConnection {
     pub id: String,
@@ -180,7 +180,7 @@ pub struct FileConnection {
 /// The registry authority needed by native file handlers.
 #[async_trait::async_trait]
 pub trait FileConnections: Send + Sync + fmt::Debug {
-    /// Enumerate immutable store generations using the same scoped registry reader.
+    /// Enumerate immutable store generations using the same targeted registry reader.
     async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
         Err(failed(
             "collector",
@@ -197,7 +197,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
     ) -> Result<FileConnection, FileError>;
 }
 
-/// Login-scoped registry lookup of active store generations.
+/// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
     pub client: Option<Arc<tokio_postgres::Client>>,
@@ -260,7 +260,7 @@ impl FileConnections for RegistryFileConnections {
                         binding.name == name
                             && pinned.is_none_or(|id| id == binding.connection_id.to_string())
                             && wamn_catalog::application_for_package(
-                                &self.release.scope().applications,
+                                &self.release.target().applications,
                                 &binding.package_id,
                             ) == Some(application)
                     })
@@ -417,7 +417,7 @@ impl FileRoutes {
     ) -> Result<(FileConnection, FileStore), FileError> {
         let app = self
             .release
-            .scope()
+            .target()
             .applications
             .get(application)
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
@@ -450,7 +450,7 @@ impl FileRoutes {
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
-        if !self.release.scope().applications.contains_key(application) {
+        if !self.release.target().applications.contains_key(application) {
             return Err(refused(FileRefusal::NotFound, "file_id"));
         }
         let sql = format!(
@@ -459,7 +459,7 @@ impl FileRoutes {
         self.postgres
             .administration_transaction(
                 &self.project,
-                &self.release.scope().env_key,
+                &self.release.target().env_key,
                 principal,
                 &format!(
                     "wamn-control:file/{action}@{}",
@@ -495,7 +495,7 @@ impl FileRoutes {
         let id = Uuid::new_v4();
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
-        self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        self.postgres.administration_transaction(&self.project, &self.release.target().env_key, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
                 client.execute("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
                     &[&id.to_string(), &application, &connection.id, &name, &media_type, &size, &staged.sha256, &staged.blob_key]).await?;
@@ -561,7 +561,7 @@ impl FileRoutes {
                 true,
             )
             .await?;
-        self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        self.postgres.administration_transaction(&self.project, &self.release.target().env_key, &principal,
             &format!("wamn-control:file/delete@{}", wamn_catalog::host_route_version()), async |client| {
                 let deleted = client.execute("DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2", &[&request.file_id.to_string(), &request.application]).await?;
                 if deleted != 1 { return Err(refused(FileRefusal::NotFound, "file_id")); }
@@ -615,7 +615,7 @@ impl FileRoutes {
             request.exposure,
         )
         .await?;
-        let written = self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        let written = self.postgres.administration_transaction(&self.project, &self.release.target().env_key, &principal,
             &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()), async |client| {
                 let updated = client.execute("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)",
                     &[&request.file_id.to_string(), &request.application, &request.exposure.literal(), &url]).await?;
@@ -653,7 +653,7 @@ impl FileRoutes {
             return Err(refused(FileRefusal::PermissionDenied, "operation"));
         }
         let application = wamn_catalog::application_for_package(
-            &self.release.scope().applications,
+            &self.release.target().applications,
             &invocation.package_id,
         )
         .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
@@ -895,7 +895,7 @@ fn require_binding(
     write: bool,
 ) -> Result<(), FileError> {
     let app = release
-        .scope()
+        .target()
         .applications
         .get(application)
         .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
@@ -1120,7 +1120,7 @@ mod tests {
     use wamn_engine::flow_http_routing::{
         AuthRejection, AuthenticationRequest, RouteAuthenticator, RouteInFlightLimit, unauthorized,
     };
-    use wamn_engine::release_manifest::ReleaseScope;
+    use wamn_engine::release_manifest::ReleaseTarget;
     use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::connection_facts::ConnectionFacts;
     use wamn_runtime::connection_memory::ConnectionMemory;
@@ -1167,7 +1167,7 @@ mod tests {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "files-test",
-                ReleaseScope::new("acme", "dev").with_applications(BTreeMap::from([(
+                ReleaseTarget::new("acme", "dev").with_applications(BTreeMap::from([(
                     "orders".into(),
                     ApplicationDefinition {
                         packages: BTreeSet::from(["app".into()]),
@@ -1606,7 +1606,7 @@ mod tests {
             }];
             let request = AuthenticationRequest {
                 manifest: release.manifest(),
-                scope: release.scope(),
+                target: release.target(),
                 attachment_id: &id,
                 attachment,
                 policy: wamn_catalog::parse_attachment_auth_policy(attachment.auth_policy())

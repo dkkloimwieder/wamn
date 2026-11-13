@@ -45,7 +45,7 @@ pub(super) fn signed(header: &Value, claims: &Value) -> String {
     let message = format!(
         "{}.{}",
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(header).expect("header bytes")),
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).expect("claim bytes")),
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).expect("JWT claim bytes")),
     );
     let signature = pair().sign(message.as_bytes());
     format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
@@ -170,7 +170,7 @@ impl Server {
     pub(super) fn verifier(&self) -> (SessionVerifier<IssuerKeys>, SessionTestClock, TestClock) {
         let (keys, key_clock) = self.cache();
         let (verifier, token_clock) = SessionVerifier::with_test_clock(keys, ORG, AUDIENCE, 1000)
-            .expect("trusted verifier scope");
+            .expect("trusted verifier audience");
         (verifier, token_clock, key_clock)
     }
 

@@ -9,7 +9,7 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnectionRequirement, ManifestDigest, ServingManifest,
     WiringDocument,
 };
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 
 fn deserialize_manifest_digest<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -42,7 +42,7 @@ pub struct LocalBindingFacts {
 #[derive(Clone, Debug)]
 pub struct LocalApplication {
     pub(crate) manifest: ServingManifest,
-    pub(crate) scope: ReleaseScope,
+    pub(crate) target: ReleaseTarget,
     pub(crate) facts: LocalApplicationFacts,
     instance: u32,
     credentials: std::sync::Arc<std::sync::RwLock<Option<LocalConnectionReader>>>,
@@ -58,14 +58,14 @@ struct LocalConnectionReader {
 pub async fn load_local_application(
     directory: &Path,
     manifest: &ServingManifest,
-    scope: ReleaseScope,
+    target: ReleaseTarget,
     database_url: &str,
 ) -> anyhow::Result<LocalApplication> {
-    let instance = read_local_target(database_url, &scope.env_key, &scope.environment).await?;
-    let facts = load_local_facts(directory, manifest, &scope.env_key)?;
+    let instance = read_local_target(database_url, &target.env_key, &target.environment).await?;
+    let facts = load_local_facts(directory, manifest, &target.env_key)?;
     Ok(LocalApplication {
         manifest: manifest.clone(),
-        scope,
+        target,
         facts,
         instance,
         credentials: std::sync::Arc::default(),
@@ -95,14 +95,14 @@ impl LocalApplication {
             .context("local bindings require the connection reader")
     }
 
-    fn binding_scope<'a>(
+    fn binding_target<'a>(
         &'a self,
         package: &'a str,
         reader: &'a LocalConnectionReader,
-    ) -> LocalBindingScope<'a> {
-        LocalBindingScope {
-            env_key: &self.scope.env_key,
-            environment: &self.scope.environment,
+    ) -> LocalBindingTarget<'a> {
+        LocalBindingTarget {
+            env_key: &self.target.env_key,
+            environment: &self.target.environment,
             manifest_digest: self.facts.manifest_digest.as_str(),
             package_id: package,
             project: &reader.project,
@@ -145,7 +145,7 @@ impl LocalApplication {
             let reader = self.connection_reader()?;
             let current = read_local_binding(
                 client,
-                &self.binding_scope(&binding.package_id, &reader),
+                &self.binding_target(&binding.package_id, &reader),
                 &binding.requirement,
                 &binding.selection.instance_id,
                 &reader.credentials,
@@ -166,18 +166,18 @@ impl LocalApplication {
     ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
         self.require_instance(client).await?;
         anyhow::ensure!(
-            env_key == self.scope.env_key
-                && lookup.environment == self.scope.environment
+            env_key == self.target.env_key
+                && lookup.environment == self.target.environment
                 && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
-            "local connection release scope mismatch"
+            "local connection release target mismatch"
         );
         let Some((wiring_hash, entry_permitted)) =
-            entry_facts(client, &self.manifest, &self.scope, &self.facts, lookup).await?
+            entry_facts(client, &self.manifest, &self.target, &self.facts, lookup).await?
         else {
             return Ok(None);
         };
         let Some(component) = self.facts.components.iter().find(|component| {
-            component.scope.package_id == lookup.package_id
+            component.target.package_id == lookup.package_id
                 && component.component_digest == lookup.component_digest
         }) else {
             return Ok(None);
@@ -192,7 +192,7 @@ impl LocalApplication {
         let reader = self.connection_reader()?;
         let (current, definition, active_generation) = read_binding(
             client,
-            &self.binding_scope(&binding.package_id, &reader),
+            &self.binding_target(&binding.package_id, &reader),
             &binding.requirement,
             &binding.selection.instance_id,
             &reader.credentials,
@@ -245,12 +245,12 @@ impl LocalApplication {
 async fn entry_facts(
     client: &tokio_postgres::Client,
     manifest: &ServingManifest,
-    scope: &ReleaseScope,
+    target: &ReleaseTarget,
     facts: &LocalApplicationFacts,
     lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
 ) -> anyhow::Result<Option<(Option<String>, bool)>> {
     let origin_exports = |origin: &AdmittedComponent| {
-        origin.scope.package_id == lookup.origin_package_id
+        origin.target.package_id == lookup.origin_package_id
             && origin.component_digest == lookup.origin_component_digest
             && origin.component == lookup.origin_component
             && origin.interface_version == lookup.origin_interface_version
@@ -271,15 +271,15 @@ async fn entry_facts(
         Some(position) => {
             let Some(row) = client.query_opt(
                 "SELECT graph_json::text FROM catalog.workflows WHERE env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
-                &[&scope.env_key, &scope.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
+                &[&target.env_key, &target.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
             ).await? else { return Ok(None); };
             let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
             let document = WiringDocument::parse(&value)?;
-            let Some(application) = scope.applications.get(lookup.entry.package_id) else {
+            let Some(application) = target.applications.get(lookup.entry.package_id) else {
                 return Ok(None);
             };
             let components = wamn_catalog::resolve_workflow_components(
-                &scope.env_key,
+                &target.env_key,
                 &application.packages,
                 manifest,
                 &document,
@@ -290,7 +290,7 @@ async fn entry_facts(
                     .get(position.node_id)
                     .is_some_and(|node| node.operation == lookup.origin_operation);
             // The cluster snapshot derives the hash from the graph too
-            // (claims.rs); wamn_http_admitter holds no grant on wiring_hash.
+            // (session_identity.rs); wamn_http_admitter holds no grant on wiring_hash.
             (Some(document.wiring_hash().as_str().to_owned()), permitted)
         }
     }))
@@ -340,7 +340,7 @@ pub fn selection(
 
 /// The exact release and package that own a local binding.
 #[derive(Debug)]
-pub struct LocalBindingScope<'a> {
+pub struct LocalBindingTarget<'a> {
     pub env_key: &'a str,
     pub environment: &'a str,
     pub manifest_digest: &'a str,
@@ -351,26 +351,26 @@ pub struct LocalBindingScope<'a> {
 /// Resolve a local selection from the same catalog records as released calls.
 pub async fn read_local_binding(
     client: &tokio_postgres::Client,
-    scope: &LocalBindingScope<'_>,
+    target: &LocalBindingTarget<'_>,
     requirement: &ComponentConnectionRequirement,
     connection: &str,
     credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<CandidateConnectionBinding> {
-    read_binding(client, scope, requirement, connection, credentials)
+    read_binding(client, target, requirement, connection, credentials)
         .await
         .map(|(binding, _, _)| binding)
 }
 
 async fn read_binding(
     client: &tokio_postgres::Client,
-    scope: &LocalBindingScope<'_>,
+    target: &LocalBindingTarget<'_>,
     requirement: &ComponentConnectionRequirement,
     connection: &str,
     credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
     let row=client.query_opt(
         "SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'",
-        &[&scope.env_key,&scope.package_id,&requirement.component_digest(),&requirement.store_alias(),&scope.manifest_digest,&connection],
+        &[&target.env_key,&target.package_id,&requirement.component_digest(),&requirement.store_alias(),&target.manifest_digest,&connection],
     ).await?.context("local connection binding unavailable")?;
     let integration_type: String = row.get(0);
     let descriptor = wamn_catalog::RequirementType::for_integration(&integration_type)
@@ -382,14 +382,14 @@ async fn read_binding(
     );
     let id = connection.parse()?;
     let fact = credentials
-        .connection_fact(scope.project, scope.environment, &id)
+        .connection_fact(target.project, target.environment, &id)
         .await?
         .filter(|fact| fact.status == crate::connection_memory::ConnectionStatus::Active)
         .context("local connection is absent or disabled")?;
     let configuration = credentials
         .connection_generation(
-            scope.project,
-            scope.environment,
+            target.project,
+            target.environment,
             &id,
             fact.active_generation,
         )
@@ -473,7 +473,7 @@ pub fn load_local_facts(
 
 /// Refuse missing, additional, or mismatched facts before a native host starts.
 ///
-/// `env_key` is the tenant of the host scope: the manifest names none.
+/// `env_key` is the tenant of the host target: the manifest names none.
 pub fn validate_local_facts(
     facts: &LocalApplicationFacts,
     manifest: &ServingManifest,
@@ -491,27 +491,27 @@ pub fn validate_local_facts(
     for fact in &facts.components {
         anyhow::ensure!(
             seen.insert((
-                &fact.scope.package_id,
+                &fact.target.package_id,
                 &fact.component,
                 &fact.interface_version
             )),
             "local component is repeated"
         );
         anyhow::ensure!(
-            fact.scope.env_key == env_key
+            fact.target.env_key == env_key
                 && manifest
                     .release
                     .packages
                     .iter()
-                    .any(|package| package.package_id() == fact.scope.package_id
-                        && package.package_version() == fact.scope.package_version),
+                    .any(|package| package.package_id() == fact.target.package_id
+                        && package.package_version() == fact.target.package_version),
             "local component package is outside the manifest"
         );
         let projected = manifest
             .components
             .iter()
             .find(|component| {
-                component.package_id == fact.scope.package_id
+                component.package_id == fact.target.package_id
                     && component.descriptor.component == fact.component
                     && component.descriptor.interface_version == fact.interface_version
             })
@@ -583,7 +583,7 @@ pub fn validate_local_facts(
                 .iter()
                 .any(
                     |component| component.component_digest == requirement.component_digest()
-                        && component.scope.package_id == binding.package_id
+                        && component.target.package_id == binding.package_id
                 ),
             "local requirement is outside the component closure"
         );
@@ -726,7 +726,7 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
-            "scope": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
+            "target": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
         })).unwrap(), format!("sha256:{}", "7".repeat(64)), Vec::new(), Vec::new()).unwrap().component;
         let manifest = ServingManifest::new(
             ServingRelease {
@@ -755,7 +755,7 @@ mod tests {
             .await
             .unwrap();
         let task = tokio::spawn(connection);
-        let scope = wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "dev");
+        let target = wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "dev");
         let (facts, manifest) = fixture();
         let digest = facts.components[0].component_digest.clone();
         let route = ConnectionEffectLookup {
@@ -777,7 +777,7 @@ mod tests {
             candidate_binding: None,
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &scope, &facts, &route)
+            super::entry_facts(&client, &manifest, &target, &facts, &route)
                 .await
                 .unwrap(),
             Some((None, true))
@@ -787,7 +787,7 @@ mod tests {
             ..route
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &scope, &facts, &unexported)
+            super::entry_facts(&client, &manifest, &target, &facts, &unexported)
                 .await
                 .unwrap(),
             Some((None, false))
@@ -800,7 +800,7 @@ mod tests {
             ..route
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &scope, &facts, &foreign)
+            super::entry_facts(&client, &manifest, &target, &facts, &foreign)
                 .await
                 .unwrap(),
             None
@@ -852,7 +852,7 @@ mod tests {
             wamn_catalog::ConnectionTypeDescriptor::http_v1(),
         );
         facts.bindings.push(super::LocalBindingFacts {
-            package_id: facts.components[0].scope.package_id.clone(),
+            package_id: facts.components[0].target.package_id.clone(),
             requirement: requirement.clone(),
             selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {
                 read_only: false,
@@ -908,7 +908,7 @@ mod tests {
         let credentials = std::sync::Arc::new(authority.reader("project-a").await);
         let selection = super::read_local_binding(
             &client,
-            &super::LocalBindingScope {
+            &super::LocalBindingTarget {
                 env_key: "tenant-a",
                 environment: "dev",
                 manifest_digest: facts.manifest_digest.as_str(),
@@ -928,13 +928,13 @@ mod tests {
             requirement,
             selection: selection.clone(),
         });
-        let scope = wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "dev")
+        let target = wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "dev")
             .with_applications(
                 serde_json::from_value(serde_json::json!({"app":{"packages":["orders"]}})).unwrap(),
             );
         let local = super::LocalApplication {
             manifest,
-            scope,
+            target,
             facts,
             instance: client
                 .query_one(
@@ -1006,7 +1006,7 @@ mod tests {
             wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
         );
         facts.bindings.push(super::LocalBindingFacts {
-            package_id: facts.components[0].scope.package_id.clone(),
+            package_id: facts.components[0].target.package_id.clone(),
             requirement: requirement.clone(),
             selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {
                 read_only: false,

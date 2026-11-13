@@ -93,7 +93,7 @@ describe("the load state", () => {
     const capped = startLoad(state, 50);
     expect(capped.cap).toBe(50);
     expect(capped.generation).toBe(state.generation + 1);
-    // A scope change or a refresh starts a load with the cap in force.
+    // A filter change or a refresh starts a load with the cap in force.
     const again = startLoad(capped);
     expect(again.cap).toBe(50);
     expect(again.generation).toBe(capped.generation + 1);

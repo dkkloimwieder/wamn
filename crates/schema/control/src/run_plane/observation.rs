@@ -21,7 +21,7 @@ pub struct RowSecurityObservation {
     pub policies: BTreeMap<String, RowPolicyObservation>,
 }
 
-/// What the driver observed live, scoped to ONE project-env schema (plus the
+/// What the driver observed live, targeted to ONE project-env schema (plus the
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]

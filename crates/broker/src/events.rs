@@ -15,16 +15,16 @@ pub const MATERIALIZER_MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
 
 /// Declare the source stream with explicit broker defaults.
 pub fn source_stream_config(
-    scope: &Triple,
+    target: &Triple,
     replicas: usize,
     duplicate_window: Duration,
 ) -> stream::Config {
     stream::Config {
-        name: wamn_event_wire::stream_name(&scope.org, &scope.project, scope.env.as_str()),
+        name: wamn_event_wire::stream_name(&target.org, &target.project, target.env.as_str()),
         subjects: vec![stream_subjects(
-            &scope.org,
-            &scope.project,
-            scope.env.as_str(),
+            &target.org,
+            &target.project,
+            target.env.as_str(),
         )],
         storage: StorageType::File,
         num_replicas: replicas,
@@ -41,9 +41,9 @@ pub fn source_stream_config(
 }
 
 /// Declare bounded broker advisories for the same source stream.
-pub fn advisory_stream_config(scope: &Triple, replicas: usize) -> stream::Config {
+pub fn advisory_stream_config(target: &Triple, replicas: usize) -> stream::Config {
     let age = Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS);
-    let source = source_stream_config(scope, replicas, age);
+    let source = source_stream_config(target, replicas, age);
     stream::Config {
         name: delivery_advisory_stream(&source.name),
         subjects: delivery_advisory_subjects(&source.name).to_vec(),
@@ -55,7 +55,7 @@ pub fn advisory_stream_config(scope: &Triple, replicas: usize) -> stream::Config
 
 /// One durable consumer per captured package and entity, independent of workflows.
 pub fn entity_consumers<'a>(
-    scope: &Triple,
+    target: &Triple,
     entities: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Vec<pull::Config> {
     let entities = entities
@@ -72,9 +72,9 @@ pub fn entity_consumers<'a>(
             );
             let filter = format!(
                 "evt.{}.{}.{}.{}.>",
-                scope.org,
-                scope.project,
-                scope.env.as_str(),
+                target.org,
+                target.project,
+                target.env.as_str(),
                 wamn_event_wire::subject_token(entity)
             );
             materializer_consumer_config(&durable, &filter, Duration::from_secs(30), 5)
@@ -350,10 +350,10 @@ mod tests {
 
     #[test]
     fn stream_comparison_accepts_server_annotations() {
-        let scope = Triple::new("acme", "widgets", "dev");
+        let target = Triple::new("acme", "widgets", "dev");
         for expected in [
-            source_stream_config(&scope, 3, Duration::from_secs(120)),
-            advisory_stream_config(&scope, 3),
+            source_stream_config(&target, 3, Duration::from_secs(120)),
+            advisory_stream_config(&target, 3),
         ] {
             assert!(stream_config_matches(
                 &expected,

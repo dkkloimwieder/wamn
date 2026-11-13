@@ -227,18 +227,18 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let triple = Triple::new("acme", "app", "dev");
     let other = Triple::new("acme", "app", "prod");
     let transaction = provisioning_transaction(&mut system).await?;
-    for scope in [&triple, &other] {
+    for target in [&triple, &other] {
         transaction
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    &scope.org,
-                    &scope.project,
-                    &scope.env,
+                    &target.org,
+                    &target.project,
+                    &target.env,
                 ),
             )
             .await?;
         let env_key =
-            wamn_control_provision::project_env_key(&scope.org, &scope.project, &scope.env);
+            wamn_control_provision::project_env_key(&target.org, &target.project, &target.env);
         transaction
             .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
             .await?;

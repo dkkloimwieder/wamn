@@ -22,7 +22,7 @@ struct RecordingStore(Mutex<Vec<Vec<u8>>>);
 impl Store for RecordingStore {
     async fn put(
         &self,
-        _scope: &wamn_control_registry::Triple,
+        _target: &wamn_control_registry::Triple,
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, wamn_kubernetes::Error> {

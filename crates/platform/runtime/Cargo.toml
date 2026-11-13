@@ -42,7 +42,7 @@ wamn-identity-protocol = { workspace = true }
 postgres-protocol = { workspace = true }
 # The one parser of document-number patterns, which the renderer renders.
 wamn-number-pattern = { workspace = true }
-# `tenant-key`: the shipped runtime needs the framed scope digest to check a
+# `tenant-key`: the shipped runtime needs the framed target digest to check a
 # guest credential against the tenant it will serve (wamn-0h0g.22.6.7).
 wamn-run-state = { workspace = true, features = ["tenant-key"] }
 anyhow = { workspace = true }

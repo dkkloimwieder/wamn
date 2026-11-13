@@ -70,22 +70,22 @@ it("round-trips widget list pages, changes, signal and cursor expiry", async () 
   } as Transport;
   const signal = new AbortController().signal;
   const feed = widgetFeed(transport);
-  const scope = { filter: { code: ["priority"] } };
-  const page = await feed.list(scope, signal);
+  const target = { filter: { code: ["priority"] } };
+  const page = await feed.list(target, signal);
   expect(page).toMatchObject({ cursor: "c1", complete: true });
   expect(page.rows).toHaveLength(2);
   expect(page.rows[0]).toMatchObject({ id, editVersion: 4 });
   expect(seen.map((request) => request.items)).toEqual([
-    [{ ...scope, limit: 100 }],
-    [{ ...scope, limit: 100, cursor: "p2" }],
+    [{ ...target, limit: 100 }],
+    [{ ...target, limit: 100, cursor: "p2" }],
   ]);
-  const changes = await feed.changes(scope, page.cursor, 50, signal);
-  expect(seen[2]?.items).toEqual([{ ...scope, feed: { cursor: "c1", limit: 50 } }]);
+  const changes = await feed.changes(target, page.cursor, 50, signal);
+  expect(seen[2]?.items).toEqual([{ ...target, feed: { cursor: "c1", limit: 50 } }]);
   expect(changes).toMatchObject({ next_cursor: "c3", complete: false });
   expect(changes.rows[0]).toMatchObject({ id, row_version: 4001, data: { rowVersion: "4001", editVersion: 5 } });
   expect(changes.rows[1]).toEqual({ id: "second", row_version: 4001, deleted: true });
   expect(signals).toEqual([signal, signal, signal]);
-  await expect(feed.changes(scope, "expired")).rejects.toMatchObject({ name: "CursorExpired" });
+  await expect(feed.changes(target, "expired")).rejects.toMatchObject({ name: "CursorExpired" });
 });
 
 it("reports an incomplete widget list at the cap", async () => {
@@ -103,7 +103,7 @@ it("reports an incomplete widget list at the cap", async () => {
 it("lists an authored view, follows an equal snapshot and deletes by the root id", async () => {
   const seen: WireRequest[] = [];
   const signals: (AbortSignal | undefined)[] = [];
-  const scope = { orderId: id };
+  const target = { orderId: id };
   const line = {
     id,
     order_id: id,
@@ -133,7 +133,7 @@ it("lists an authored view, follows an equal snapshot and deletes by the root id
     },
   } as Transport;
   const feed = screenFeed(transport, 1);
-  const c = screenCollection(feed, scope, { pollMs: 60_000 });
+  const c = screenCollection(feed, target, { pollMs: 60_000 });
   try {
     await c.preload();
     expect(c.size).toBe(2);
@@ -151,9 +151,9 @@ it("lists an authored view, follows an equal snapshot and deletes by the root id
       [{ order_id: id, feed: { cursor: "c2" } }],
     ]);
     expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
-    expect(screenKey(scope)).not.toBe(screenKey({ orderId: "other" }));
+    expect(screenKey(target)).not.toBe(screenKey({ orderId: "other" }));
     const signal = new AbortController().signal;
-    await expect(feed.changes(scope, "expired", 50, signal)).rejects.toMatchObject({ name: "CursorExpired" });
+    await expect(feed.changes(target, "expired", 50, signal)).rejects.toMatchObject({ name: "CursorExpired" });
     expect(seen[3]?.items).toEqual([{ order_id: id, feed: { cursor: "expired", limit: 50 } }]);
     expect(signals[3]).toBe(signal);
   } finally {

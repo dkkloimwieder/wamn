@@ -9,7 +9,7 @@ use wamn_broker::auth_changes::AuthDrops;
 /// A failed projection with its project environment and original cause.
 #[derive(Debug)]
 pub struct ProjectionError {
-    scope: String,
+    target: String,
     source: anyhow::Error,
 }
 
@@ -18,7 +18,7 @@ impl std::fmt::Display for ProjectionError {
         write!(
             formatter,
             "connection projection {}: {}",
-            self.scope, self.source
+            self.target, self.source
         )
     }
 }
@@ -31,7 +31,7 @@ impl std::error::Error for ProjectionError {
 
 fn failure(org: &str, project: &str, env: &str, source: anyhow::Error) -> ProjectionError {
     ProjectionError {
-        scope: format!("{org}/{project}/{env}"),
+        target: format!("{org}/{project}/{env}"),
         source,
     }
 }

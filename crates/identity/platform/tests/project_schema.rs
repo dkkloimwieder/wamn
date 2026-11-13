@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, platform_principals_sql, sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, platform_principals_sql, sql,
     workload_generation_role,
 };
 use wamn_identity_protocol::PlatformComponent;
@@ -61,14 +61,14 @@ fn current_database(url: &str) -> String {
 fn app_generation(database: &str, env_key: &str) -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey { env_key, database },
+        WorkloadRoleIdentity::EnvKey { env_key, database },
         CredentialGeneration::A,
     )
-    .expect("App accepts tenant scope")
+    .expect("App accepts tenant target")
 }
 
 /// Apply `deploy/sql/app-schema.sql` to a test database and assert the live,
-/// DB-enforced behavior, as the superuser (the harness prepares tenant-scoped
+/// DB-enforced behavior, as the superuser (the harness prepares tenant-targeted
 /// App generations).
 #[test]
 fn app_schema_applies_and_enforces_isolation_on_postgres() {
@@ -136,7 +136,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');\n\
          INSERT INTO platform.permission (role_name, permission) VALUES ('clerk','platform-fixture:widget/get');\n\
          INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
+         INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
 
@@ -169,7 +169,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         "         BEGIN;\n\
          SET LOCAL ROLE {env_key_1_app};\n\
          SET LOCAL app.env_key = '{ENV_KEY_2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant identity cannot spoof tenant 2'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
@@ -486,7 +486,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
            ('{U1}', 'admin'), ('{U3}', 'admin');\n\
          INSERT INTO platform.permission (role_name, permission) VALUES \
            ('auditor', 'platform-fixture:widget/get');\n\
-         INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES \
+         INSERT INTO platform.setting (target_type, target_id, key, value) VALUES \
            ('org', 'acme', 'display.theme', '\"dark\"');\n\
          INSERT INTO platform.api_key (id, user_id, name, key_hash, prefix) VALUES \
            ('{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\

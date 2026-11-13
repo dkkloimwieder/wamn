@@ -18,7 +18,7 @@ use wamn_control_registry::Triple;
 /// Read the publication-order boundary from stream info without changing broker state.
 pub async fn last_published_sequence(
     connection: &crate::nats::PlatformNats,
-    scope: &Triple,
+    target: &Triple,
 ) -> anyhow::Result<u64> {
     let broker = async_nats::jetstream::new(
         connection
@@ -26,7 +26,7 @@ pub async fn last_published_sequence(
             .await
             .context("connect to the environment event broker")?,
     );
-    let name = wamn_event_wire::stream_name(&scope.org, &scope.project, scope.env.as_str());
+    let name = wamn_event_wire::stream_name(&target.org, &target.project, target.env.as_str());
     let mut stream = broker
         .get_stream(&name)
         .await
@@ -41,8 +41,8 @@ pub async fn last_published_sequence(
 
 /// Discard only the stopped environment's backlog, retaining its stream declarations.
 /// The caller excludes writers and waits for CDC publishers before this operation.
-pub async fn discard(context: &Context, scope: &Triple) -> anyhow::Result<()> {
-    let source = wamn_event_wire::stream_name(&scope.org, &scope.project, &scope.env);
+pub async fn discard(context: &Context, target: &Triple) -> anyhow::Result<()> {
+    let source = wamn_event_wire::stream_name(&target.org, &target.project, &target.env);
     for name in [wamn_event_wire::delivery_advisory_stream(&source), source] {
         let stream = context
             .get_stream(&name)
@@ -60,14 +60,14 @@ pub async fn discard(context: &Context, scope: &Triple) -> anyhow::Result<()> {
 /// Existing objects must match the fields their declaration owns before attachment.
 pub async fn provision(
     context: &Context,
-    scope: &Triple,
+    target: &Triple,
     replicas: usize,
     duplicate_window: Duration,
     consumers: &[pull::Config],
 ) -> anyhow::Result<()> {
-    validate_inputs(scope, replicas, duplicate_window, consumers)?;
-    let source_config = source_stream_config(scope, replicas, duplicate_window);
-    let advisory_config = advisory_stream_config(scope, replicas);
+    validate_inputs(target, replicas, duplicate_window, consumers)?;
+    let source_config = source_stream_config(target, replicas, duplicate_window);
+    let advisory_config = advisory_stream_config(target, replicas);
     let source = context
         .get_or_create_stream(source_config.clone())
         .await
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
-        let scope = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "fixture", "dev");
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.fixture.dev.widget.>",
@@ -133,7 +133,7 @@ mod tests {
             5,
         );
         validate_inputs(
-            &scope,
+            &target,
             3,
             Duration::from_secs(120),
             std::slice::from_ref(&expected),
@@ -148,11 +148,11 @@ mod tests {
                 filter_subject: filter.into(),
                 ..expected.clone()
             };
-            assert!(validate_inputs(&scope, 3, Duration::from_secs(120), &[config]).is_err());
+            assert!(validate_inputs(&target, 3, Duration::from_secs(120), &[config]).is_err());
         }
         assert!(
             validate_inputs(
-                &scope,
+                &target,
                 3,
                 Duration::from_secs(120),
                 &[expected.clone(), expected]
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
-        let scope = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "fixture", "dev");
         let config = materializer_consumer_config(
             "mat_t_pkg_r1",
             "evt.example.fixture.dev.widget.>",
@@ -171,9 +171,9 @@ mod tests {
             5,
         );
         for replicas in [0, 6] {
-            assert!(validate_inputs(&scope, replicas, Duration::from_secs(120), &[]).is_err());
+            assert!(validate_inputs(&target, replicas, Duration::from_secs(120), &[]).is_err());
         }
-        assert!(validate_inputs(&scope, 3, Duration::ZERO, &[]).is_err());
+        assert!(validate_inputs(&target, 3, Duration::ZERO, &[]).is_err());
         for changed in [
             pull::Config {
                 max_deliver: -1,
@@ -188,7 +188,7 @@ mod tests {
                 ..config
             },
         ] {
-            assert!(validate_inputs(&scope, 3, Duration::from_secs(120), &[changed]).is_err());
+            assert!(validate_inputs(&target, 3, Duration::from_secs(120), &[changed]).is_err());
         }
     }
 }

@@ -186,8 +186,12 @@ fn component_id_of<'a, P: InvocationPolicy>(
 }
 
 /// Unique process-local application and invocation scope identifiers.
-static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
+static NEXT_TARGET: AtomicU64 = AtomicU64::new(0);
 
 pub fn next_scope(component: &str) -> Box<str> {
-    format!("{component}#{}", NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)).into()
+    format!(
+        "{component}#{}",
+        NEXT_TARGET.fetch_add(1, Ordering::Relaxed)
+    )
+    .into()
 }

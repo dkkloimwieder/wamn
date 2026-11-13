@@ -682,7 +682,7 @@ fn extra_record_trigger_is_removed_but_floor_trigger_is_untouched() {
 fn queue_missing_plans_only_the_queue_creates() {
     let mut obs = observation_at_record();
     obs.tables.remove("run_queue");
-    obs.indexes.remove("run_queue_claimable");
+    obs.indexes.remove("run_queue_leasable");
     let plan = plan_run_plane(&schema("poc_f1"), &obs);
     let creates: Vec<&str> = plan
         .actions

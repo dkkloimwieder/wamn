@@ -172,7 +172,7 @@ pub async fn reconcile_run_plane(
     reconcile_run_plane_with_migrations(
         args,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -273,7 +273,7 @@ pub async fn reconcile_run_plane_with_migrations(
         {
             wamn_package_control::schema_baseline::observe(
                 &client,
-                wamn_control_provision::schema_migrations::MigrationScope::Project,
+                wamn_control_provision::schema_migrations::MigrationDatabase::Project,
                 sources,
             )
             .await?;
@@ -306,7 +306,7 @@ pub async fn reconcile_run_plane_with_migrations(
                 read_env_key_identity_source(&authority, &args.org, &args.project, &args.env)
                     .await?;
             let env_key = args.env_key();
-            let scope = wamn_platform_identity::application::ApplicationScope {
+            let target = wamn_platform_identity::application::ApplicationTarget {
                 org: &args.org,
                 project: &args.project,
                 env: &args.env,
@@ -319,7 +319,7 @@ pub async fn reconcile_run_plane_with_migrations(
                 !args.dry_run,
                 &args.changes,
                 &authority,
-                scope,
+                target,
             )
             .await?;
             authority.commit().await?;
@@ -521,7 +521,7 @@ async fn converge_env_key_identity(
     apply: bool,
     changes: &wamn_broker::Publisher,
     system: &tokio_postgres::Transaction<'_>,
-    scope: wamn_platform_identity::application::ApplicationScope<'_>,
+    target: wamn_platform_identity::application::ApplicationTarget<'_>,
 ) -> anyhow::Result<EnvKeyIdentityOutcome> {
     anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
     let mut outcome = EnvKeyIdentityOutcome::default();
@@ -682,7 +682,7 @@ async fn converge_env_key_identity(
             .context("record the project schema baseline")?;
         if let Some(pending) = crate::provision_project_env::registry::pending_database(
             system,
-            &Triple::new(scope.org, scope.project, scope.env),
+            &Triple::new(target.org, target.project, target.env),
         )
         .await?
         {
@@ -737,7 +737,7 @@ async fn converge_env_key_identity(
             wamn_platform_identity::application::project_authority(
                 system,
                 &transaction,
-                scope,
+                target,
                 &principal,
                 &mut drops,
             )
@@ -758,7 +758,7 @@ async fn converge_env_key_identity(
 /// exist.
 ///
 /// `expected_environment` is the environment's name, which the run plane
-/// and publish compare with the scope. The policy the environment row names
+/// and publish compare with the target. The policy the environment row names
 /// supplies the source identity
 /// (docs/architecture/overview.md#environment-lifecycle).
 pub(crate) async fn converge_environment_policy(

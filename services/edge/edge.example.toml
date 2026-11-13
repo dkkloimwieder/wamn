@@ -2,7 +2,7 @@
 # WAMN_EDGE_CONFIG to the path. Each key has one variable that replaces it,
 # named in services/edge/src/config.rs.
 
-[scope]
+[target]
 # The environment coordinate of the box. The env_key is <org>--<project>--<environment>.
 # The variables of org and project are WAMN_ORG and WAMN_PROJECT. The
 # environment has no variable.
@@ -16,7 +16,7 @@ dir = "/var/lib/wamn-edge/release"
 digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [session]
-# The session key file that the release installs, and the scope that a
+# The session key file that the release installs, and the target that a
 # session must name. The organization is also the tenant of every intent.
 keys = "/var/lib/wamn-edge/release/session-keys.json"
 issuer = "https://identity.example.test"

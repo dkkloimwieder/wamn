@@ -386,7 +386,7 @@ async fn host_authentication_reaches_the_peer_without_changing_the_guest_request
     .unwrap();
     let response = execute(
         &server.transport(),
-        scope(1),
+        identity(1),
         decision,
         &request,
         credentials,
@@ -404,9 +404,9 @@ async fn host_authentication_reaches_the_peer_without_changing_the_guest_request
     assert!(request.headers.is_empty());
 }
 
-fn scope(generation: i64) -> ClientScope {
-    ClientScope {
-        connection: ConnectionScope {
+fn identity(generation: i64) -> ClientIdentity {
+    ClientIdentity {
+        connection: ConnectionIdentity {
             env_key: "tenant".into(),
             project: "project".into(),
             environment: "environment".into(),
@@ -476,7 +476,7 @@ async fn warm_http_reuses_only_the_pinned_peer_and_never_caches_credentials() {
             .headers_mut()
             .insert(header::AUTHORIZATION, auth.parse().expect("test auth"));
         let response = transport
-            .execute(scope(1), &decision, request)
+            .execute(identity(1), &decision, request)
             .await
             .expect("pinned HTTP");
         assert_eq!(response.body(), "ok");
@@ -507,7 +507,7 @@ async fn tls_http1_and_http2_keep_logical_identity_and_reuse_connections() {
         let decision = server.decision();
         for _ in 0..2 {
             let response = transport
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await
                 .expect("verified TLS");
             assert_eq!(
@@ -535,7 +535,7 @@ async fn tls_http1_and_http2_keep_logical_identity_and_reuse_connections() {
         let untrusted = HttpTransport::new().expect("platform verifier");
         assert!(
             untrusted
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await
                 .is_err()
         );
@@ -579,7 +579,7 @@ async fn one_shot_token_and_head_use_fresh_tls_without_retained_state() {
             );
             let state = transport.inner.state.lock().unwrap();
             assert!(state.clients.is_empty());
-            assert!(state.scopes.is_empty());
+            assert!(state.identities.is_empty());
         }
         assert_eq!(server.accepts.load(Ordering::SeqCst), 4);
         {
@@ -630,7 +630,7 @@ async fn trusted_certificate_for_a_different_logical_name_is_rejected() {
     };
     assert!(
         transport
-            .execute(scope(1), &decision, request(&decision))
+            .execute(identity(1), &decision, request(&decision))
             .await
             .is_err()
     );
@@ -644,30 +644,30 @@ async fn http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ni
     let decision = server.decision();
     server.gate.add_permits(1);
     transport
-        .execute(scope(1), &decision, request(&decision))
+        .execute(identity(1), &decision, request(&decision))
         .await
         .expect("warm H2");
     let mut requests = JoinSet::new();
-    for _ in 0..MAX_SCOPE_REQUESTS {
+    for _ in 0..MAX_CONNECTION_REQUESTS {
         let transport = transport.clone();
         let decision = decision.clone();
         requests.spawn(async move {
             transport
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await
         });
     }
-    wait_for(|| server.requests.load(Ordering::SeqCst) == MAX_SCOPE_REQUESTS + 1).await;
+    wait_for(|| server.requests.load(Ordering::SeqCst) == MAX_CONNECTION_REQUESTS + 1).await;
     assert_eq!(server.accepts.load(Ordering::SeqCst), 1);
     assert_eq!(transport.inner.sockets.available_permits(), MAX_SOCKETS - 1);
     assert!(
         transport
-            .execute(scope(1), &decision, request(&decision))
+            .execute(identity(1), &decision, request(&decision))
             .await
-            .expect_err("scoped H2 requests full")
+            .expect_err("connection H2 requests full")
             .is_before_dispatch()
     );
-    server.gate.add_permits(MAX_SCOPE_REQUESTS);
+    server.gate.add_permits(MAX_CONNECTION_REQUESTS);
     while let Some(result) = requests.join_next().await {
         result.expect("request task").expect("H2 response");
     }
@@ -683,7 +683,7 @@ async fn deadline_while_waiting_for_a_response_head_refunds_request_admission() 
     let task_decision = decision.clone();
     let pending = tokio::spawn(async move {
         task_transport
-            .execute(scope(1), &task_decision, request(&task_decision))
+            .execute(identity(1), &task_decision, request(&task_decision))
             .await
     });
     wait_for(|| server.requests.load(Ordering::SeqCst) == 1).await;
@@ -707,7 +707,7 @@ async fn every_client_identity_field_and_peer_separates_pools() {
     let second_server = Server::start(Reply::Ok, None).await;
     let transport = server.transport();
     let mut decision = server.decision();
-    let initial = scope(1);
+    let initial = identity(1);
     let mut variants = vec![initial.clone()];
     let mut changed = initial.clone();
     changed.generation = 2;
@@ -765,7 +765,7 @@ async fn mutation_disconnect_status_and_redirect_never_replay() {
             let transport = server.transport();
             let decision = server.decision();
             let result = transport
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await;
             match reply {
                 Reply::Disconnect => {
@@ -813,7 +813,7 @@ async fn oversized_requests_refuse_before_connecting() {
         .expect("test request");
     assert!(
         transport
-            .execute(scope(1), &decision, oversized)
+            .execute(identity(1), &decision, oversized)
             .await
             .expect_err("body limit")
             .is_before_dispatch()
@@ -835,7 +835,7 @@ async fn oversized_requests_refuse_before_connecting() {
         }
         assert!(
             transport
-                .execute(scope(1), &decision, request)
+                .execute(identity(1), &decision, request)
                 .await
                 .expect_err("header limit")
                 .is_before_dispatch()
@@ -853,7 +853,7 @@ async fn response_body_headers_and_trailers_are_bounded_while_reading() {
             let transport = server.transport();
             let decision = server.decision();
             let error = transport
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await
                 .expect_err("response limit");
             assert!(!error.is_before_dispatch());
@@ -867,7 +867,7 @@ async fn response_body_headers_and_trailers_are_bounded_while_reading() {
     let decision = server.decision();
     assert!(
         transport
-            .execute(scope(1), &decision, request(&decision))
+            .execute(identity(1), &decision, request(&decision))
             .await
             .expect_err("trailer limit")
             .is_response_lost()
@@ -875,33 +875,36 @@ async fn response_body_headers_and_trailers_are_bounded_while_reading() {
 }
 
 #[tokio::test]
-async fn scoped_requests_are_shared_across_generations_until_bodies_finish() {
+async fn connection_requests_are_shared_across_generations_until_bodies_finish() {
     let server = Server::start(Reply::HeldBody, None).await;
     let transport = server.transport();
     let decision = server.decision();
     let mut requests = JoinSet::new();
-    for generation in 0..MAX_SCOPE_REQUESTS {
+    for generation in 0..MAX_CONNECTION_REQUESTS {
         let generation = i64::try_from(generation).expect("test generation fits i64");
         let transport = transport.clone();
         let decision = decision.clone();
         requests.spawn(async move {
             transport
-                .execute(scope(generation), &decision, request(&decision))
+                .execute(identity(generation), &decision, request(&decision))
                 .await
         });
     }
-    wait_for(|| server.requests.load(Ordering::SeqCst) == MAX_SCOPE_REQUESTS).await;
+    wait_for(|| server.requests.load(Ordering::SeqCst) == MAX_CONNECTION_REQUESTS).await;
     let error = transport
-        .execute(scope(99), &decision, request(&decision))
+        .execute(identity(99), &decision, request(&decision))
         .await
-        .expect_err("scoped requests full");
+        .expect_err("connection requests full");
     assert!(error.is_before_dispatch());
-    assert_eq!(server.accepts.load(Ordering::SeqCst), MAX_SCOPE_REQUESTS);
+    assert_eq!(
+        server.accepts.load(Ordering::SeqCst),
+        MAX_CONNECTION_REQUESTS
+    );
     assert_eq!(
         transport.inner.requests.available_permits(),
-        MAX_REQUESTS - MAX_SCOPE_REQUESTS
+        MAX_REQUESTS - MAX_CONNECTION_REQUESTS
     );
-    server.gate.add_permits(MAX_SCOPE_REQUESTS);
+    server.gate.add_permits(MAX_CONNECTION_REQUESTS);
     while let Some(result) = requests.join_next().await {
         result.expect("task").expect("body complete");
     }
@@ -915,13 +918,14 @@ async fn global_requests_refuse_without_queued_work_or_client_creation() {
     let decision = server.decision();
     let mut requests = JoinSet::new();
     for index in 0..MAX_REQUESTS {
-        let mut scope = scope(i64::try_from(index).expect("test index fits i64"));
-        scope.connection.instance = format!("connection-{}", index / MAX_SCOPE_REQUESTS).into();
+        let mut identity = identity(i64::try_from(index).expect("test index fits i64"));
+        identity.connection.instance =
+            format!("connection-{}", index / MAX_CONNECTION_REQUESTS).into();
         let transport = transport.clone();
         let decision = decision.clone();
         requests.spawn(async move {
             transport
-                .execute(scope, &decision, request(&decision))
+                .execute(identity, &decision, request(&decision))
                 .await
         });
     }
@@ -929,7 +933,7 @@ async fn global_requests_refuse_without_queued_work_or_client_creation() {
     let retained = transport.inner.clients.available_permits();
     assert!(
         transport
-            .execute(scope(99), &decision, request(&decision))
+            .execute(identity(99), &decision, request(&decision))
             .await
             .expect_err("global requests full")
             .is_before_dispatch()
@@ -947,21 +951,21 @@ async fn socket_limits_include_idle_connections_and_all_generations() {
     let transport = server.transport();
     let decision = server.decision();
     for index in 0..MAX_SOCKETS {
-        let mut client_scope = scope(i64::try_from(index).expect("test index fits i64"));
-        client_scope.connection.instance =
-            format!("connection-{}", index / MAX_SCOPE_SOCKETS).into();
+        let mut client_identity = identity(i64::try_from(index).expect("test index fits i64"));
+        client_identity.connection.instance =
+            format!("connection-{}", index / MAX_CONNECTION_SOCKETS).into();
         transport
-            .execute(client_scope, &decision, request(&decision))
+            .execute(client_identity, &decision, request(&decision))
             .await
             .expect("socket admitted");
-        if index + 1 == MAX_SCOPE_SOCKETS {
-            let mut scope = scope(1000);
-            scope.connection.instance = "connection-0".into();
+        if index + 1 == MAX_CONNECTION_SOCKETS {
+            let mut identity = identity(1000);
+            identity.connection.instance = "connection-0".into();
             assert!(
                 transport
-                    .execute(scope, &decision, request(&decision))
+                    .execute(identity, &decision, request(&decision))
                     .await
-                    .expect_err("scoped sockets full")
+                    .expect_err("connection sockets full")
                     .is_before_dispatch()
             );
         }
@@ -969,7 +973,7 @@ async fn socket_limits_include_idle_connections_and_all_generations() {
     assert_eq!(transport.inner.sockets.available_permits(), 0);
     assert!(
         transport
-            .execute(scope(2000), &decision, request(&decision))
+            .execute(identity(2000), &decision, request(&decision))
             .await
             .expect_err("global sockets full")
             .is_before_dispatch()
@@ -988,7 +992,7 @@ async fn idle_pool_retains_two_sockets_then_expires_them() {
         let decision = decision.clone();
         requests.spawn(async move {
             transport
-                .execute(scope(1), &decision, request(&decision))
+                .execute(identity(1), &decision, request(&decision))
                 .await
         });
     }
@@ -1014,7 +1018,7 @@ async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
     let task_decision = decision.clone();
     let request_task = tokio::spawn(async move {
         task_transport
-            .execute(scope(0), &task_decision, request(&task_decision))
+            .execute(identity(0), &task_decision, request(&task_decision))
             .await
     });
     wait_for(|| server.requests.load(Ordering::SeqCst) == 1).await;
@@ -1022,11 +1026,11 @@ async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
     for generation in 1..MAX_CLIENTS {
         let generation = i64::try_from(generation).expect("test generation fits i64");
         transport
-            .client(scope(generation), target.clone())
+            .client(identity(generation), target.clone())
             .expect("retain client");
     }
     assert_eq!(transport.inner.clients.available_permits(), 0);
-    assert!(transport.client(scope(200), target.clone()).is_err());
+    assert!(transport.client(identity(200), target.clone()).is_err());
     assert_eq!(
         transport.inner.state.lock().expect("state").clients.len(),
         MAX_CLIENTS - 1
@@ -1038,11 +1042,11 @@ async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
     wait_for(|| transport.inner.sockets.available_permits() == MAX_SOCKETS).await;
     wait_for(|| transport.inner.clients.available_permits() == 1).await;
     transport
-        .client(scope(200), target)
+        .client(identity(200), target)
         .expect("admit after actual drain");
     let state = transport.inner.state.lock().expect("state");
     assert!(state.clients.len() <= MAX_CLIENTS);
-    assert!(state.scopes.len() <= MAX_CLIENTS);
+    assert!(state.identities.len() <= MAX_CLIENTS);
 }
 
 #[test]
@@ -1071,7 +1075,7 @@ async fn denied_peer_refuses_before_transport_admission() {
     ] {
         let decision = decision(peer.parse().unwrap(), false);
         let error = transport
-            .execute(scope(1), &decision, request(&decision))
+            .execute(identity(1), &decision, request(&decision))
             .await
             .unwrap_err();
         assert!(error.is_before_dispatch());

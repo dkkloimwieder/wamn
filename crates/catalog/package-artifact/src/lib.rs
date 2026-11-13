@@ -33,7 +33,8 @@ use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::{
-    AdmittedComponent, ComponentDescriptor, ComponentPackageScope, parse_component_artifact_base,
+    AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate,
+    parse_component_artifact_base,
 };
 use wamn_digest::bytes_sha256;
 
@@ -491,7 +492,7 @@ pub async fn read_descriptors(
 }
 
 /// The admitted component facts of one package, for wiring authorship and the
-/// management gate (R2): the descriptors of its package artifact, in `scope`.
+/// management gate (R2): the descriptors of its package artifact, in `target`.
 ///
 /// # Errors
 ///
@@ -499,23 +500,23 @@ pub async fn read_descriptors(
 /// effect projection.
 pub async fn load_component_facts(
     registry: &PackageRegistry,
-    scope: &ComponentPackageScope,
+    target: &ComponentPackageCoordinate,
 ) -> anyhow::Result<Vec<AdmittedComponent>> {
-    read_descriptors(registry, &scope.package_id, &scope.package_version)
+    read_descriptors(registry, &target.package_id, &target.package_version)
         .await
         .with_context(|| {
             format!(
                 "read the component facts of {}@{}",
-                scope.package_id, scope.package_version
+                target.package_id, target.package_version
             )
         })?
         .into_iter()
         .map(|descriptor| {
-            let component = descriptor.into_admitted(scope.clone()).component;
+            let component = descriptor.into_admitted(target.clone()).component;
             wamn_catalog::verify_stored_effect_projection(&component).with_context(|| {
                 format!(
                     "component {:?} of package {}@{} carries an invalid effect projection",
-                    component.component, scope.package_id, scope.package_version
+                    component.component, target.package_id, target.package_version
                 )
             })?;
             Ok(component)

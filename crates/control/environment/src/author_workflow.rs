@@ -31,7 +31,7 @@ use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workfl
 
 use std::path::Path;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Params: `$1` `env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
@@ -327,9 +327,9 @@ pub async fn author_workflow(
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&request.env_key()])
+        .query_one(ASSIGN_ENV_KEY_SQL, &[&request.env_key()])
         .await
-        .map_err(|error| storage("claim the authoring tenant", error))?;
+        .map_err(|error| storage("bind the authoring tenant identity", error))?;
     let Some(declared) = request.declared.get(request.application) else {
         return Err(AuthorWorkflowError::new(
             AuthorWorkflowErrorType::Application,

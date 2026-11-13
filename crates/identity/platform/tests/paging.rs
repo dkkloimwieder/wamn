@@ -5,7 +5,7 @@ use wamn_digest::canonical_json_bytes;
 use wamn_platform_identity::IdentityRefusal;
 use wamn_platform_identity::paging::{ListPage, Order};
 
-fn scope() -> Value {
+fn binding() -> Value {
     json!({"principal": "00000000-0000-0000-0000-000000000001", "org": "acme", "project": null})
 }
 
@@ -46,7 +46,7 @@ fn control_lists_first_next_last_and_legacy() {
             ],
         ),
     ] {
-        let first = ListPage::new(&json!({"limit":1}), operation, scope(), order).unwrap();
+        let first = ListPage::new(&json!({"limit":1}), operation, binding(), order).unwrap();
         assert_eq!(first.read_limit(), Some(2));
         assert_eq!(first.after(0), None);
         let answer = first.answer("rows", keys[..2].to_vec(), Clone::clone);
@@ -55,7 +55,7 @@ fn control_lists_first_next_last_and_legacy() {
         let next = ListPage::new(
             &json!({"limit":1,"cursor":answer["next_cursor"]}),
             operation,
-            scope(),
+            binding(),
             order,
         )
         .unwrap();
@@ -65,7 +65,7 @@ fn control_lists_first_next_last_and_legacy() {
         let last = ListPage::new(
             &json!({"cursor":answer["next_cursor"]}),
             operation,
-            scope(),
+            binding(),
             order,
         )
         .unwrap();
@@ -74,7 +74,7 @@ fn control_lists_first_next_last_and_legacy() {
         let answer = last.answer("rows", vec![keys[2].clone()], Clone::clone);
         assert!(answer["next_cursor"].is_null());
         assert!(answer["total"].is_null()); // A suffix does not establish the full count.
-        let all = ListPage::new(&json!({}), operation, scope(), order).unwrap();
+        let all = ListPage::new(&json!({}), operation, binding(), order).unwrap();
         assert_eq!(all.read_limit(), None);
         let many = all.answer("rows", (0..101).collect::<Vec<_>>(), |row| json!([row]));
         assert_eq!(many["rows"].as_array().unwrap().len(), 101);
@@ -83,7 +83,7 @@ fn control_lists_first_next_last_and_legacy() {
         assert_eq!(answer["rows"], json!(keys));
         assert_eq!(answer["total"], 3);
         assert!(answer["next_cursor"].is_null());
-        let first = ListPage::new(&json!({"limit":3}), operation, scope(), order).unwrap();
+        let first = ListPage::new(&json!({"limit":3}), operation, binding(), order).unwrap();
         assert_eq!(first.answer("rows", keys, Clone::clone)["total"], 3);
         assert_eq!(
             first.answer("rows", Vec::<Value>::new(), Clone::clone)["total"],
@@ -94,7 +94,7 @@ fn control_lists_first_next_last_and_legacy() {
 
 #[test]
 fn refuses_bad_limits_and_cursors() {
-    let parse = |input: Value| ListPage::new(&input, "project.list", scope(), Order::Project);
+    let parse = |input: Value| ListPage::new(&input, "project.list", binding(), Order::Project);
     for limit in [
         json!(null),
         json!(0),
@@ -126,7 +126,7 @@ fn refuses_bad_limits_and_cursors() {
     for (field, value) in [
         ("v", json!(2)),
         ("operation", json!("control.mine")),
-        ("scope", json!({})),
+        ("binding", json!({})),
         ("order", json!("Environment")),
         ("key", json!([1])),
         ("key", json!([])),

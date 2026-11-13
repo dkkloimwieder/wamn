@@ -1,4 +1,4 @@
--- Environment declarations and scoped reader authority in the control database.
+-- Environment declarations and targeted reader authority in the control database.
 -- Apply after system-schema.sql as wamn_system.
 CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION wamn_system;
 REVOKE ALL ON SCHEMA catalog FROM PUBLIC;
@@ -27,7 +27,7 @@ REVOKE ALL ON SCHEMA catalog FROM PUBLIC;
 -- `environment_instance` is the tenant's CURRENT creation of the project
 -- database, and it is what every fact above keys on (wamn-10yt.52). Provisioning
 -- projects it EMPTY, because provisioning does not recreate anything; the
--- development loop's recreate then claims the instance it just minted through
+-- development loop's recreate then assigns the instance it just minted through
 -- the Rust development coordinator.
 --
 -- `disposable` STAYS, though the three overwrites it used to gate are gone. It

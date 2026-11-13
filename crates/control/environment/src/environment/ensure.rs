@@ -532,7 +532,7 @@ pub async fn ensure_project_database(
         admin,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -886,7 +886,7 @@ pub(crate) async fn ensure_cdc_inputs(
 }
 
 /// Provision the environment's source and advisory streams, with the same
-/// scope, consumers and duplicate window as [`enable_cdc`], and no slot,
+/// target, consumers and duplicate window as [`enable_cdc`], and no slot,
 /// publication or reader. Without an event broker there is nothing to provision.
 async fn ensure_streams(
     platform: &Platform,

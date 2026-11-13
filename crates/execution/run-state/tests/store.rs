@@ -6,7 +6,7 @@ use std::process::{Command as Proc, Stdio};
 
 use serde_json::json;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
     workload_generation_role,
 };
 use wamn_run_state::{FailType, RunStatus};
@@ -126,7 +126,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let database = live_database(&url);
     let app_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: "t1",
             database: &database,
         },
@@ -199,7 +199,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
             'fixture-wiring',1,'running','k-b');\n",
     );
     // The generation's `current_user` derives tenant t1 and sees only that
-    // tenant's run without trusting a settable claim.
+    // tenant's run without trusting a settable identity.
     writeln!(
         script,
         "BEGIN;\n\

@@ -13,8 +13,8 @@
 //! cheapest entry that still exercises the whole chain from
 //! `remote_trace_context` to `inject_trace_context`.
 //!
-//! Hot route only. The queue leg is a ratified host-scoped re-root
-//! (`queue_delivery_span_is_an_explicit_host_scoped_root`) and the stream leg
+//! Hot route only. The queue leg is a ratified host-targeted re-root
+//! (`queue_delivery_span_is_an_explicit_host_targeted_root`) and the stream leg
 //! sends no trace at all, so "all under the incoming trace" is true of this leg
 //! and of no other.
 //!

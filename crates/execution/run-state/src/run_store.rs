@@ -1,8 +1,8 @@
 //! The queued-run lifecycle as a storage trait, and its decision types.
 //!
 //! The host-owned Postgres adapter (`WamnPostgres` in `wamn-runtime`) is the
-//! first implementation. The claim result stays with the adapter as
-//! [`RunStore::ClaimResult`], because a candidate claim carries the adapter's
+//! first implementation. The lease result stays with the adapter as
+//! [`RunStore::LeaseResult`], because a candidate lease carries the adapter's
 //! frozen connection-binding world.
 
 use std::fmt::{Display, Formatter};
@@ -11,21 +11,21 @@ use async_trait::async_trait;
 
 use crate::{FailType, RunStatus};
 
-/// The queued-run lifecycle: claim, lease renewal, completion with caller
+/// The queued-run lifecycle: lease, lease renewal, completion with caller
 /// release, the exhausted-run reap, and deadline reports.
 #[async_trait]
 pub trait RunStore: Send + Sync {
-    /// The result of one claim turn.
-    type ClaimResult: Send;
+    /// The result of one lease turn.
+    type LeaseResult: Send;
 
-    /// Grant a lease to the next claimable run.
-    async fn claim_next(
+    /// Grant a lease to the next leasable run.
+    async fn lease_next(
         &self,
         component_id: &str,
         package_ids: &[String],
         environment: &str,
         lease_ttl_ms: i64,
-    ) -> Result<Self::ClaimResult, ProductionClaimError>;
+    ) -> Result<Self::LeaseResult, ProductionLeaseError>;
 
     /// Extend a held lease, fenced by lease generation.
     async fn renew(
@@ -34,7 +34,7 @@ pub trait RunStore: Send + Sync {
         run_id: &str,
         lease_generation: i64,
         lease_ttl_ms: i64,
-    ) -> Result<ProductionLeaseRenewal, ProductionClaimError>;
+    ) -> Result<ProductionLeaseRenewal, ProductionLeaseError>;
 
     /// Record the outcome and release a waiting caller.
     async fn complete(
@@ -43,7 +43,7 @@ pub trait RunStore: Send + Sync {
         run_id: &str,
         lease_generation: i64,
         completion: &ProductionCompletion,
-    ) -> Result<ProductionCompletionResult, ProductionClaimError>;
+    ) -> Result<ProductionCompletionResult, ProductionLeaseError>;
 
     /// Reap at most one run whose crash budget is exhausted.
     async fn reap_exhausted(
@@ -52,7 +52,7 @@ pub trait RunStore: Send + Sync {
         package_ids: &[String],
         environment: &str,
         grace_ms: i64,
-    ) -> Result<ProductionReapResult, ProductionClaimError>;
+    ) -> Result<ProductionReapResult, ProductionLeaseError>;
 
     /// Record host deadline adjustments for a held run. Returns false when the
     /// run no longer belongs to this lease.
@@ -62,35 +62,35 @@ pub trait RunStore: Send + Sync {
         run_id: &str,
         lease_generation: i64,
         adjustments: &serde_json::Value,
-    ) -> Result<bool, ProductionClaimError>;
+    ) -> Result<bool, ProductionLeaseError>;
 }
 
-/// Stable category for a production-claim failure.
+/// Stable category for a production-lease failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionClaimErrorType {
+pub enum ProductionLeaseErrorType {
     /// Required host identity or database role authority was absent.
     Identity,
     /// The admitted run has no complete, valid frozen wiring identity.
     WiringIdentity,
     /// PostgreSQL checkout, transaction, query, or commit failed.
     Storage,
-    /// Stored data or a typed database result violated the claim contract.
+    /// Stored data or a typed database result violated the lease contract.
     Contract,
 }
 
-/// Contextual failure from the host-only production claim boundary.
+/// Contextual failure from the host-only production lease boundary.
 #[derive(Debug)]
-pub struct ProductionClaimError {
-    type_: ProductionClaimErrorType,
+pub struct ProductionLeaseError {
+    type_: ProductionLeaseErrorType,
     operation: &'static str,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-impl ProductionClaimError {
+impl ProductionLeaseError {
     /// Build a failure of `kind` for the named `operation`.
     pub fn new(
-        type_: ProductionClaimErrorType,
+        type_: ProductionLeaseErrorType,
         operation: &'static str,
         detail: impl Into<String>,
     ) -> Self {
@@ -104,7 +104,7 @@ impl ProductionClaimError {
 
     /// Retain the underlying failure at a host admission boundary.
     pub fn with_source(
-        type_: ProductionClaimErrorType,
+        type_: ProductionLeaseErrorType,
         operation: &'static str,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
@@ -118,7 +118,7 @@ impl ProductionClaimError {
     }
 
     /// Return the stable failure category.
-    pub fn error_type(&self) -> ProductionClaimErrorType {
+    pub fn error_type(&self) -> ProductionLeaseErrorType {
         self.type_
     }
 
@@ -128,17 +128,17 @@ impl ProductionClaimError {
     }
 }
 
-impl Display for ProductionClaimError {
+impl Display for ProductionLeaseError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "production claim {} failed: {}",
+            "production lease {} failed: {}",
             self.operation, self.detail
         )
     }
 }
 
-impl std::error::Error for ProductionClaimError {
+impl std::error::Error for ProductionLeaseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.as_deref().map(|source| source as _)
     }

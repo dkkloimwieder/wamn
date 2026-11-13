@@ -129,7 +129,7 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
     assert_eq!(
         first, second,
         "the same commit produced different guest digests in two checkouts, so a component \
-         digest is still a claim about the build directory rather than about the source \
+         digest is still a assertion about the build directory rather than about the source \
          (wamn-10yt.10.29)"
     );
 }

@@ -1,6 +1,6 @@
 //! The janitor — pure classification for the host-owned exhausted-run reaper.
 //! A run whose runner died mid-dispatch leaves a `dispatched`/`running` run with
-//! an expired lease. If retries remain it is simply reclaimable; once the
+//! an expired lease. If retries remain it is simply recoverable; once the
 //! redelivery budget is spent and a grace period has elapsed, the janitor gives
 //! up and the run becomes `infrastructure-failure` (its queue row removed).
 
@@ -12,8 +12,8 @@ pub enum JanitorVerdict {
     /// A runner still holds a live lease — leave it.
     Live,
     /// The lease has expired (or was never taken) but retries remain — another
-    /// replica can reclaim it. Not the janitor's business.
-    Reclaimable,
+    /// replica can recover it. Not the janitor's business.
+    Recoverable,
     /// The lease expired more than `grace` ago and the redelivery budget is spent
     /// — give up: the run is `infrastructure-failure`, the queue row removed.
     Orphaned,
@@ -28,7 +28,7 @@ pub fn janitor_verdict(entry: &QueueEntry, now: Millis, grace: Millis) -> Janito
         Some(t) if t + grace <= now && entry.attempts >= entry.max_attempts => {
             JanitorVerdict::Orphaned
         }
-        _ => JanitorVerdict::Reclaimable,
+        _ => JanitorVerdict::Recoverable,
     }
 }
 

@@ -290,13 +290,13 @@ Effort: M
 Area: docs/plan, docs/architecture  
 Evidence: `docs/plan/integrations.md:118`, `docs/plan/integration-schema.md:5`, `docs/architecture/data-access.md:1250`, `docs/plan/write-log.md:7`, `docs/architecture/data-access.md:375`, `docs/operations/observability.md:3`.
 
-Problem: The integration plan declares org-scoped connections, while the schema plan and architecture describe project integrations with environment connections. The write-log plan excludes update and delete, while architecture includes both. These competing rules can lead an agent to implement the wrong credential boundary or retry behavior.
+Problem: The integration plan declares org-targeted connections, while the schema plan and architecture describe project integrations with environment connections. The write-log plan excludes update and delete, while architecture includes both. These competing rules can lead an agent to implement the wrong credential boundary or retry behavior.
 
 Proposal: Assign each implemented topic one reference owner. Plans contain only proposed changes and unresolved decisions.
 
 | Duplicated topic | Pages that repeat it | One reference owner |
 | --- | --- | --- |
-| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `plan/integration-schema.md` until C1 to C3 land, then `architecture/data-access.md#project-integrations-and-credentials`. `plan/integrations.md` is the older, contradicting plan (org-scoped connections) and is deleted now. |
+| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `plan/integration-schema.md` until C1 to C3 land, then `architecture/data-access.md#project-integrations-and-credentials`. `plan/integrations.md` is the older, contradicting plan (org-targeted connections) and is deleted now. |
 | Transactions, composition and write-log retries | `write-log.md`, `trx-pkg-plan.md`, `routes-router.md`, `data-access.md` | `architecture/data-access.md#inputs-queries-and-transactions`. The write-log plan closed (`wamn-z7uv`), so `plan/write-log.md` is deleted, not reconciled. |
 | Request authentication and revocation | `request-round-trips.md`, `platform-ui.md`, `platform-config.md`, `execution.md` | `architecture/execution.md#caller-authentication` |
 | Workflow identity and execution | `routes-router.md`, `workflow-feature.md`, `workflows.md`, `execution.md` | `architecture/execution.md#environment-workflows` |
@@ -319,7 +319,7 @@ Effort: M
 Area: docs/plan/README.md  
 Evidence: `docs/README.md:8`, `docs/plan/README.md:4`, `docs/plan/request-round-trips.md:3`, `docs/plan/platform-deploy.md:5`, `.beads/issues.jsonl:625`, `.beads/issues.jsonl:2179`, `.beads/issues.jsonl:3501`.
 
-Problem: The documentation index defines plans as work that is not built, but the plan index includes completed programs. The retained Beads export records the scoped work below as closed. Live status remains unconfirmed because read-only `bd show` cannot open embedded Dolt without creating its lock file.
+Problem: The documentation index defines plans as work that is not built, but the plan index includes completed programs. The retained Beads export records the targeted work below as closed. Live status remains unconfirmed because read-only `bd show` cannot open embedded Dolt without creating its lock file.
 
 Proposal: Delete the eleven completed plans from `docs/plan`. The history index gets one line each: bead and commit.
 
@@ -397,14 +397,14 @@ Effort: S
 Area: docs/plan, docs/history  
 Evidence: `docs/plan/wamn-sync.md:521`, `docs/plan/wamn-sync.md:586`, `docs/plan/wamn-sync.md:863`, `docs/plan/wamn-sync.md:872`, `docs/plan/wamn-sync.md:903`, `docs/plan/integrations.md:20`, `docs/plan/platform-config.md:358`.
 
-Problem: A local scan of 105 scoped Markdown files found 27 links to absent paths and three links to absent headings. Five missing-path occurrences are in the active sync plan. All three missing headings use the retired org-connections anchor.
+Problem: A local scan of 105 targeted Markdown files found 27 links to absent paths and three links to absent headings. Five missing-path occurrences are in the active sync plan. All three missing headings use the retired org-connections anchor.
 
 Proposal: Repair retained links against their actual owners.
 
 | Broken references | Target treatment |
 | --- | --- |
-| Five sync links to `packaging-feed.ts`, `shell-status.ts`, `location-feed.ts`, and `saved-user.ts` | Locate the current implementation owner or remove the obsolete implementation claim |
-| `integrations.md:20`, `integrations.md:124`, `platform-config.md:358` | Use `data-access.md#project-integrations-and-credentials` and correct the associated org-scoped wording |
+| Five sync links to `packaging-feed.ts`, `shell-status.ts`, `location-feed.ts`, and `saved-user.ts` | Locate the current implementation owner or remove the obsolete implementation statement |
+| `integrations.md:20`, `integrations.md:124`, `platform-config.md:358` | Use `data-access.md#project-integrations-and-credentials` and correct the associated org-targeted wording |
 | `history/deterministic-testing-spec.md:5` | The retained file is `history/wamn_testing_spec.md` |
 | `history/operator-ui.md:10` | Use `../plan/platform-ui-app.md` |
 | Three links in `history/wamn_base_application_poc_revised.md`, starting at line 54 | Use the relevant `architecture/naming.md` section, or the historical source revision |
@@ -413,13 +413,13 @@ Proposal: Repair retained links against their actual owners.
 
 The remaining twelve missing paths are evidence artifacts covered by H2-6.
 
-Deletes: Obsolete source claims and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links.
+Deletes: Obsolete source statements and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links.
 
 Risk: A replacement link can point to a related but different contract. Repeat the path scan, resolve headings, and inspect each replacement’s meaning. External links were not tested.
 
 Owner review 2026-10-31: the five `wamn-sync.md` links are fixed now, because it is an active plan. The rest die with the H2-2 and H2-7 deletions or are repaired In passing.
 
-## Finding H2-6: Historical proof claims point to absent evidence
+## Finding H2-6: Historical proof statements point to absent evidence
 
 Severity: medium  
 Effort: M  
@@ -428,7 +428,7 @@ Evidence: `docs/history/consolidation-findings.md:139`, `docs/history/consolidat
 
 Problem: Twelve historical links target absent files under `evidence/perf/2026.09`. Their surrounding text presents those files as proof of baselines, authenticated behavior, deployed results, and source decisions. Readers cannot inspect that proof from this checkout.
 
-Proposal: Delete the twelve links and the proof wording. Keep each claim with its bead reference and the note "evidence not retained".
+Proposal: Delete the twelve links and the proof wording. Keep each statement with its bead reference and the note "evidence not retained".
 
 Deletes: Unsupported proof wording and dead artifact links when no retained source exists. Do not add placeholder evidence files.
 
@@ -472,7 +472,7 @@ Effort: S
 Area: docs/README.md, docs/plan/README.md  
 Evidence: `docs/plan/alignment.md:163`, `docs/plan/alignment.md:165`, `docs/plan/README.md:3`, `docs/README.md:9`, measurements.md section 9.
 
-Problem: The plan index omits `alignment.md`, although that page names a scoped epic and later work. History navigation leads to a directory rather than a map from retired documents to current owners. Measurements.md section 9 also records substantial churn in the documentation indexes and operating guides.
+Problem: The plan index omits `alignment.md`, although that page names a targeted epic and later work. History navigation leads to a directory rather than a map from retired documents to current owners. Measurements.md section 9 also records substantial churn in the documentation indexes and operating guides.
 
 Proposal: Keep the existing architecture, operations, and testing split. Use this target structure:
 
@@ -534,7 +534,7 @@ All three questions were answered on 2026-10-31.
 
 1. The agent runs `bd show` live for each candidate before deleting it. The passive export is not a status source (H2-2).
 2. Yes. The untrimmed-plan rule is superseded by the standing rules and is deleted (H2-8).
-3. Nowhere. The twelve links and the proof wording go, and each claim keeps its bead reference with the note "evidence not retained" (H2-6).
+3. Nowhere. The twelve links and the proof wording go, and each statement keeps its bead reference with the note "evidence not retained" (H2-6).
 
 <!-- report H3, bead wamn-lt36n.3 -->
 
@@ -546,7 +546,7 @@ Read-only audit at `8c831349d3116aac27d9ca6f59a499da1c87efc7`. No files changed.
 
 The six first-party Cargo lockfiles have live owners. Keep the native, guest, and isolated `no_std` lockfiles (`Cargo.toml:1`, `apps/Cargo.toml:1`, `apps/platform/no-std/Cargo.toml:3`). Keep the Modbus lockfile and both fixture lockfiles because tests copy or build those independent projects (`crates/control/lib/tests/connector_restart_live.rs:60`, `crates/control/lib/tests/integration_artifact.rs:17`, `crates/control/lib/tests/support/http-fixture/Dockerfile:3`). The seventh tracked lockfile belongs to vendored code (`vendor/pg-walstream/Cargo.lock:1`).
 
-No byte-identical tracked files appeared within the scoped first-party web packages. The duplication consists of near-identical tests, browser support functions, and configuration.
+No byte-identical tracked files appeared within the targeted first-party web packages. The duplication consists of near-identical tests, browser support functions, and configuration.
 
 ## Finding H3-1: The parent install omits wfe dependency repairs
 
@@ -602,7 +602,7 @@ Evidence: `web/shell/vite.ts:122`, `apps/platform_ui/vite.config.ts:5`, `apps/wa
 
 Problem: Three application configurations repeat Solid setup, browser resolution, deduplication, and test environment rules. Platform and Receiving separately implement checks for the bundled Solid version. Receiving and sync-bench separately define worker entry naming. The shared helper supplies an empty deduplication list and makes applications reconstruct the common policy.
 
-Proposal: One shared Vite owner must supply Solid compilation, resolution policy, runtime identity assertions, test defaults, and the worker build recipe. It must retain the existing development proxy, scope response, output handling, and precache support. Applications supply their entries, ports, output locations, public assets, and application-specific middleware.
+Proposal: One shared Vite owner must supply Solid compilation, resolution policy, runtime identity assertions, test defaults, and the worker build recipe. It must retain the existing development proxy, target response, output handling, and precache support. Applications supply their entries, ports, output locations, public assets, and application-specific middleware.
 
 Deletes: Repeated Solid-version plugins, resolution blocks, test defaults, and worker filename callbacks. Replace manually restated Vite interface shapes with Vite’s own types.
 

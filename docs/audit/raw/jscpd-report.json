@@ -359,7 +359,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                        .with_class(AuthorityClass::GuestSql, &guest_url)\n                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),\n                    guest_pool_max_size: 2,\n                    platform_pool_max_size: 2,\n                    wait_timeout_ms: 5000,\n                    statement_timeout_ms: 10000,\n                    row_limit: 1000,\n                },\n            )]),\n            None,\n        ),\n    )));\n    let host = OperationHost::new(\n        Arc::new(wamn_engine::build_engine(&[])?),\n        Arc::clone(&postgres),\n        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            postgres,\n            ENV_KEY,\n            \"test\",\n            \"test\",\n        )),\n        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),\n        Arc::from([]),\n        release,\n        Arc::new(LocalComponentSource::new(PathBuf::new())),\n        OperationScope {\n            project: \"test\".into(),\n            schema: Some(\"wamn_integration\".into()),\n            owner_prefix: \"netsuite-checkpoint-live\".into(),",
+      "fragment": "                        .with_class(AuthorityClass::GuestSql, &guest_url)\n                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),\n                    guest_pool_max_size: 2,\n                    platform_pool_max_size: 2,\n                    wait_timeout_ms: 5000,\n                    statement_timeout_ms: 10000,\n                    row_limit: 1000,\n                },\n            )]),\n            None,\n        ),\n    )));\n    let host = OperationHost::new(\n        Arc::new(wamn_engine::build_engine(&[])?),\n        Arc::clone(&postgres),\n        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            postgres,\n            ENV_KEY,\n            \"test\",\n            \"test\",\n        )),\n        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),\n        Arc::from([]),\n        release,\n        Arc::new(LocalComponentSource::new(PathBuf::new())),\n        OperationHostConfig {\n            project: \"test\".into(),\n            schema: Some(\"wamn_integration\".into()),\n            owner_prefix: \"netsuite-checkpoint-live\".into(),",
       "isNew": false,
       "kind": "exact",
       "lines": 33,
@@ -473,7 +473,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        base,\n        destination,\n        component,\n        support::admit(\n            &connector,\n            \"http-page\",\n            Some(\"apps/platform/no-std/http-page/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n        support::admit(\n            &connector,\n            \"jsonata\",\n            Some(\"apps/platform/execution/jsonata/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n    ];\n    let scope = ComponentPackageScope {\n        env_key: \"rest--publication--test\".into(),\n        package_id: \"netsuite\".into(),",
+      "fragment": "        base,\n        destination,\n        component,\n        support::admit(\n            &connector,\n            \"http-page\",\n            Some(\"apps/platform/no-std/http-page/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n        support::admit(\n            &connector,\n            \"jsonata\",\n            Some(\"apps/platform/execution/jsonata/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n    ];\n    let target = ComponentPackageCoordinate {\n        env_key: \"rest--publication--test\".into(),\n        package_id: \"netsuite\".into(),",
       "isNew": false,
       "kind": "exact",
       "lines": 19,
@@ -511,7 +511,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    ]\n    .into_iter()\n    .map(|name| {\n        let document: WiringDocument = serde_json::from_value(\n            read_authored_document(\n                &connector.join(format!(\"publication/wirings/{name}.json\")),\n                AuthoredDocument::Wiring,\n            )\n            .unwrap(),\n        )\n        .unwrap();\n        (scope.clone(), document)\n    })\n    .collect();\n    let args = PublishReleaseRequest {\n        applications: serde_json::from_value(serde_json::json!({\"netsuite\": {\"packages\": [\"wamn_integration\", \"netsuite\", \"rest_consumer_fixture\"]}})).unwrap(),",
+      "fragment": "    ]\n    .into_iter()\n    .map(|name| {\n        let document: WiringDocument = serde_json::from_value(\n            read_authored_document(\n                &connector.join(format!(\"publication/wirings/{name}.json\")),\n                AuthoredDocument::Wiring,\n            )\n            .unwrap(),\n        )\n        .unwrap();\n        (target.clone(), document)\n    })\n    .collect();\n    let args = PublishReleaseRequest {\n        applications: serde_json::from_value(serde_json::json!({\"netsuite\": {\"packages\": [\"wamn_integration\", \"netsuite\", \"rest_consumer_fixture\"]}})).unwrap(),",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -2107,7 +2107,7 @@
         }
       },
       "format": "tsx",
-      "fragment": "      page = createServerPage<string>(() => new Promise((resolve, reject) => waiting.push({ resolve, reject })));\n      return (\n        <Records\n          id=\"scope\"\n          title=\"Scope\"\n          rows={page.rows()}\n          paging={page}\n          refresh={page.refresh}\n          rowKey={(row) => row}\n          columns={[{ id: \"id\", header: \"ID\", accessorFn: (row) => row }]}\n        />\n      );\n    }\n    render(() => <Harness />);",
+      "fragment": "      page = createServerPage<string>(() => new Promise((resolve, reject) => waiting.push({ resolve, reject })));\n      return (\n        <Records\n          id=\"target\"\n          title=\"Target\"\n          rows={page.rows()}\n          paging={page}\n          refresh={page.refresh}\n          rowKey={(row) => row}\n          columns={[{ id: \"id\", header: \"ID\", accessorFn: (row) => row }]}\n        />\n      );\n    }\n    render(() => <Harness />);",
       "isNew": false,
       "kind": "exact",
       "lines": 14,
@@ -3323,7 +3323,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        &scope,\n        inputs.environment.stream_replicas,\n        Duration::from_secs(inputs.environment.dup_window_secs),\n        &[],\n    )\n    .await?;\n    std::fs::write(\n        root.join(\"environment.k\"),\n        include_str!(concat!(\n            env!(\"CARGO_MANIFEST_DIR\"),\n            \"/../../../tests/integration/fixtures/local-environments/acme-receiving.k\"\n        )),\n    )?;\n    let config = write_dev_config(\n        root,\n        &system_url,\n        &environment.template,\n        &environment.route,\n        &environment.credentials,\n        &inputs.environment,\n        &environment.identity,\n    )?;\n    let mut watch = Watch::start(&inputs.wamn_binary, &repository, &config)?;\n    let result = async {\n        let first = watch.served().await?;",
+      "fragment": "        &target,\n        inputs.environment.stream_replicas,\n        Duration::from_secs(inputs.environment.dup_window_secs),\n        &[],\n    )\n    .await?;\n    std::fs::write(\n        root.join(\"environment.k\"),\n        include_str!(concat!(\n            env!(\"CARGO_MANIFEST_DIR\"),\n            \"/../../../tests/integration/fixtures/local-environments/acme-receiving.k\"\n        )),\n    )?;\n    let config = write_dev_config(\n        root,\n        &system_url,\n        &environment.template,\n        &environment.route,\n        &environment.credentials,\n        &inputs.environment,\n        &environment.identity,\n    )?;\n    let mut watch = Watch::start(&inputs.wamn_binary, &repository, &config)?;\n    let result = async {\n        let first = watch.served().await?;",
       "isNew": false,
       "kind": "exact",
       "lines": 25,
@@ -4957,7 +4957,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {\n    wamn_test_postgres::require_prerequisites(&[\n        \"WAMN_APPLICATION_COMPONENTS\",\n        \"WAMN_FLOW_HTTP_COMPONENT\",\n        \"WAMN_NATIVE_C_NATS_BIN\",\n        \"node\",\n    ]);\n    let _lock = wamn_test_postgres::lock();\n    let system = wamn_test_postgres::database();\n    let project = wamn_test_postgres::database();\n    let scratch = ScratchRoot::create()?;\n    let app = PathBuf::from(env!(\"CARGO_MANIFEST_DIR\"))\n        .parent()\n        .context(\"the WMS test crate has an application parent\")?\n        .to_owned();\n    let attachments: BTreeMap<String, ServingAttachment> =\n        wamn_schema_generator::route_schema::read_package_attachments(&app)?;\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        env_key: crate::environment::identity().env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let scope = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &scope.org,\n            &scope.project,\n            &scope.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                scope.org.clone(),\n                scope.project.clone(),\n                scope.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;",
+      "fragment": "async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {\n    wamn_test_postgres::require_prerequisites(&[\n        \"WAMN_APPLICATION_COMPONENTS\",\n        \"WAMN_FLOW_HTTP_COMPONENT\",\n        \"WAMN_NATIVE_C_NATS_BIN\",\n        \"node\",\n    ]);\n    let _lock = wamn_test_postgres::lock();\n    let system = wamn_test_postgres::database();\n    let project = wamn_test_postgres::database();\n    let scratch = ScratchRoot::create()?;\n    let app = PathBuf::from(env!(\"CARGO_MANIFEST_DIR\"))\n        .parent()\n        .context(\"the WMS test crate has an application parent\")?\n        .to_owned();\n    let attachments: BTreeMap<String, ServingAttachment> =\n        wamn_schema_generator::route_schema::read_package_attachments(&app)?;\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        env_key: crate::environment::identity().env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let target = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &target.org,\n            &target.project,\n            &target.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                target.org.clone(),\n                target.project.clone(),\n                target.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;",
       "isNew": false,
       "kind": "exact",
       "lines": 73,
@@ -4995,7 +4995,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let scope = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &scope.org,\n            &scope.project,\n            &scope.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                scope.org.clone(),\n                scope.project.clone(),\n                scope.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;\n        let bench = app.join(\"../../web/sync-bench\").canonicalize()?;",
+      "fragment": "        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let target = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &target.org,\n            &target.project,\n            &target.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                target.org.clone(),\n                target.project.clone(),\n                target.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;\n        let bench = app.join(\"../../web/sync-bench\").canonicalize()?;",
       "isNew": false,
       "kind": "exact",
       "lines": 39,
@@ -5109,7 +5109,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            serde_json::from_value(json!({\n                \"scope\": {\"env_key\": \"tenant-a\", \"package-id\": \"orders\", \"package-version\": \"1.0.0\"},\n                \"component\": \"transform\", \"interface-version\": \"0.1.0\",\n                \"operations\": {\"run\": {\n                    \"registered-operation\": null, \"committed-result-schema\": null,\n                    \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n                    \"output-ports\": [], \"parameters\": []\n                }},\n                \"connections\": []\n            })).unwrap(),\n            format!(\"sha256:{}\", \"7\".repeat(64)),\n            Vec::new(),\n            Vec::new(),",
+      "fragment": "            serde_json::from_value(json!({\n                \"target\": {\"env_key\": \"tenant-a\", \"package-id\": \"orders\", \"package-version\": \"1.0.0\"},\n                \"component\": \"transform\", \"interface-version\": \"0.1.0\",\n                \"operations\": {\"run\": {\n                    \"registered-operation\": null, \"committed-result-schema\": null,\n                    \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n                    \"output-ports\": [], \"parameters\": []\n                }},\n                \"connections\": []\n            })).unwrap(),\n            format!(\"sha256:{}\", \"7\".repeat(64)),\n            Vec::new(),\n            Vec::new(),",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -5310,7 +5310,7 @@
           "line": 289,
           "position": 11686
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 271,
         "startLoc": {
           "column": 52,
@@ -6173,7 +6173,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    async fn interrupted_acknowledgement_redelivers_and_allows_later_messages() -> anyhow::Result<()>\n    {\n        scoped_broker_behavior(async |fixture| {\n            let server = &fixture.server;\n            let broker = &fixture.brokers[0];\n            let (source, _, _, consumers) = &fixture.declarations[0];\n            let publisher = async_nats::jetstream::new(\n                wamn_test_infrastructure::event_broker::connect(&broker.publisher, server).await?,\n            );",
+      "fragment": "    async fn interrupted_acknowledgement_redelivers_and_allows_later_messages() -> anyhow::Result<()>\n    {\n        targeted_broker_behavior(async |fixture| {\n            let server = &fixture.server;\n            let broker = &fixture.brokers[0];\n            let (source, _, _, consumers) = &fixture.declarations[0];\n            let publisher = async_nats::jetstream::new(\n                wamn_test_infrastructure::event_broker::connect(&broker.publisher, server).await?,\n            );",
       "isNew": false,
       "kind": "exact",
       "lines": 9,
@@ -7085,7 +7085,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .context(\"read connected audit retention identity\")?;\n    let role: String = row.get(\"role\");\n    let database: String = row.get(\"database\");\n    let scope = WorkloadRoleScope::EnvKey {\n        env_key,\n        database: &database,\n    };\n    let mut expected = Vec::new();\n    for generation in [CredentialGeneration::A, CredentialGeneration::B] {\n        expected.push(\n            workload_generation_role(WorkloadRoleFamily::AuditRetention, scope, generation)",
+      "fragment": "        .context(\"read connected audit retention identity\")?;\n    let role: String = row.get(\"role\");\n    let database: String = row.get(\"database\");\n    let target = WorkloadRoleIdentity::EnvKey {\n        env_key,\n        database: &database,\n    };\n    let mut expected = Vec::new();\n    for generation in [CredentialGeneration::A, CredentialGeneration::B] {\n        expected.push(\n            workload_generation_role(WorkloadRoleFamily::AuditRetention, target, generation)",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -7161,7 +7161,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    fn base_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {\n        let base_operation = \"base:stock/record-widget@1.0.0\";\n        let overlay_operation = \"overlay:stock/record-widget@3.0.0\";\n        let mut base = closure_component(\"base-component\", Some(base_operation));\n        base.scope.package_id = \"base\".to_owned();\n        let mut overlay = closure_component(\"overlay-component\", Some(overlay_operation));\n        overlay.scope.package_id = \"overlay\".to_owned();\n        overlay.scope.package_version = \"3.0.0\".to_owned();\n        overlay.component_digest = format!(\"sha256:{}\", \"b\".repeat(64));\n        let roots = BTreeMap::from([(\"entry\".to_owned(), overlay.clone())]);",
+      "fragment": "    fn base_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {\n        let base_operation = \"base:stock/record-widget@1.0.0\";\n        let overlay_operation = \"overlay:stock/record-widget@3.0.0\";\n        let mut base = closure_component(\"base-component\", Some(base_operation));\n        base.target.package_id = \"base\".to_owned();\n        let mut overlay = closure_component(\"overlay-component\", Some(overlay_operation));\n        overlay.target.package_id = \"overlay\".to_owned();\n        overlay.target.package_version = \"3.0.0\".to_owned();\n        overlay.component_digest = format!(\"sha256:{}\", \"b\".repeat(64));\n        let roots = BTreeMap::from([(\"entry\".to_owned(), overlay.clone())]);",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -7579,7 +7579,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let fact = application.facts();\n    let manifest = ServingManifest::new(\n        ServingRelease {\n            packages: BTreeSet::from([PackageCoordinate::new(\n                &fact.scope.package_id,\n                &fact.scope.package_version,\n            )\n            .unwrap()]),\n        },\n        BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),\n        BTreeSet::new(),",
+      "fragment": "    let fact = application.facts();\n    let manifest = ServingManifest::new(\n        ServingRelease {\n            packages: BTreeSet::from([PackageCoordinate::new(\n                &fact.target.package_id,\n                &fact.target.package_version,\n            )\n            .unwrap()]),\n        },\n        BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),\n        BTreeSet::new(),",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -8453,7 +8453,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    include_str!(\"../../../../apps/platform/execution/jsonata/declaration.json.in\");\n\nconst NODE_TYPES: &str = r#\"\n      (import \"wamn:node/types@0.1.0\" (instance $node\n        (type $json' string)\n        (export \"json\" (type $json (eq $json')))\n        (type $context' (record\n          (field \"wiring-id\" string) (field \"wiring-version\" u32)\n          (field \"node-id\" string) (field \"delivery-id\" string)\n          (field \"input-port\" (option string)) (field \"occurrence\" u32)\n          (field \"traceparent\" (option string)) (field \"tracestate\" (option string))\n          (field \"deadline-ms\" (option u64)) (field \"config\" $json)))\n        (export \"node-context\" (type $context (eq $context')))\n        (type $detail' (record (field \"message\" string) (field \"code\" (option string))))\n        (export \"error-detail\" (type $detail (eq $detail')))\n        (type $rate' (record (field \"detail\" $detail) (field \"retry-after-ms\" (option u64))))\n        (export \"rate-limit-detail\" (type $rate (eq $rate')))\n        (type $error' (variant (case \"retryable\" $detail) (case \"rate-limited\" $rate)\n          (case \"terminal\" $detail) (case \"invalid-input\" $detail) (case \"cancelled\")))\n        (export \"node-error\" (type $error (eq $error')))\n        (type $emission' (record (field \"payload\" $json) (field \"port\" (option string))))\n        (export \"emission\" (type $emission (eq $emission')))))\n      (alias export $node \"json\" (type $json))\n      (alias export $node \"node-context\" (type $context))\n      (alias export $node \"node-error\" (type $error))\n      (alias export $node \"emission\" (type $emission))\n\"#;\n\n/// The read: a node that ignores its input and emits [`ROWS`] from a data\n/// segment. It imports nothing, so it can write nothing.\nfn read_component() -> Vec<u8> {\n    wat::parse_str(format!(\n        r#\"(component\n      {NODE_TYPES}\n      (core module $memory\n        (memory (export \"memory\") 16)\n        (data (i32.const 512) \"{data}\")\n        (global $next (mut i32) (i32.const 1024))\n        (func (export \"realloc\") (param i32 i32 i32) (param $size i32) (result i32)\n          (local $old i32) global.get $next local.tee $old\n          local.get $size i32.add global.set $next local.get $old))\n      (core instance $memory (instantiate $memory))\n      (core module $main\n        (import \"memory\" \"memory\" (memory 16))\n        (func (export \"run\") (param $input i32) (result i32)\n          i32.const 264 i32.const 512 i32.store\n          i32.const 268 i32.const {length} i32.store\n          i32.const 256))\n      (core instance $main (instantiate $main (with \"memory\" (instance $memory))))\n      (func $run (param \"ctx\" $context) (param \"input\" $json)\n        (result (result $emission (error $error)))\n        (canon lift (core func $main \"run\") (memory $memory \"memory\")\n          (realloc (func $memory \"realloc\"))))\n      (instance $handler\n        (export \"json\" (type $json)) (export \"node-context\" (type $context))\n        (export \"node-error\" (type $error)) (export \"emission\" (type $emission))\n        (export \"run\" (func $run)))\n      (export \"{READ}\" (instance $handler)))\"#,\n        data = ROWS.replace('\"', \"\\\\\\\"\"),\n        length = ROWS.len(),\n    ))\n    .expect(\"the read component is valid WAT\")\n}\n\nfn read_declaration() -> Value {\n    json!({\n        \"scope\": {\"env_key\": ENV_KEY, \"package-id\": APPLICATION, \"package-version\": \"1.0.0\"},\n        \"component\": \"orders_data\", \"interface-version\": \"0.1.0\",\n        \"operations\": {(READ): {\"registered-operation\": READ,\n            \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n            \"output-ports\": [{\"name\": \"main\", \"schema\": {}}],\n            \"parameters\": []}},\n        \"connections\": []\n    })\n}",
+      "fragment": "    include_str!(\"../../../../apps/platform/execution/jsonata/declaration.json.in\");\n\nconst NODE_TYPES: &str = r#\"\n      (import \"wamn:node/types@0.1.0\" (instance $node\n        (type $json' string)\n        (export \"json\" (type $json (eq $json')))\n        (type $context' (record\n          (field \"wiring-id\" string) (field \"wiring-version\" u32)\n          (field \"node-id\" string) (field \"delivery-id\" string)\n          (field \"input-port\" (option string)) (field \"occurrence\" u32)\n          (field \"traceparent\" (option string)) (field \"tracestate\" (option string))\n          (field \"deadline-ms\" (option u64)) (field \"config\" $json)))\n        (export \"node-context\" (type $context (eq $context')))\n        (type $detail' (record (field \"message\" string) (field \"code\" (option string))))\n        (export \"error-detail\" (type $detail (eq $detail')))\n        (type $rate' (record (field \"detail\" $detail) (field \"retry-after-ms\" (option u64))))\n        (export \"rate-limit-detail\" (type $rate (eq $rate')))\n        (type $error' (variant (case \"retryable\" $detail) (case \"rate-limited\" $rate)\n          (case \"terminal\" $detail) (case \"invalid-input\" $detail) (case \"cancelled\")))\n        (export \"node-error\" (type $error (eq $error')))\n        (type $emission' (record (field \"payload\" $json) (field \"port\" (option string))))\n        (export \"emission\" (type $emission (eq $emission')))))\n      (alias export $node \"json\" (type $json))\n      (alias export $node \"node-context\" (type $context))\n      (alias export $node \"node-error\" (type $error))\n      (alias export $node \"emission\" (type $emission))\n\"#;\n\n/// The read: a node that ignores its input and emits [`ROWS`] from a data\n/// segment. It imports nothing, so it can write nothing.\nfn read_component() -> Vec<u8> {\n    wat::parse_str(format!(\n        r#\"(component\n      {NODE_TYPES}\n      (core module $memory\n        (memory (export \"memory\") 16)\n        (data (i32.const 512) \"{data}\")\n        (global $next (mut i32) (i32.const 1024))\n        (func (export \"realloc\") (param i32 i32 i32) (param $size i32) (result i32)\n          (local $old i32) global.get $next local.tee $old\n          local.get $size i32.add global.set $next local.get $old))\n      (core instance $memory (instantiate $memory))\n      (core module $main\n        (import \"memory\" \"memory\" (memory 16))\n        (func (export \"run\") (param $input i32) (result i32)\n          i32.const 264 i32.const 512 i32.store\n          i32.const 268 i32.const {length} i32.store\n          i32.const 256))\n      (core instance $main (instantiate $main (with \"memory\" (instance $memory))))\n      (func $run (param \"ctx\" $context) (param \"input\" $json)\n        (result (result $emission (error $error)))\n        (canon lift (core func $main \"run\") (memory $memory \"memory\")\n          (realloc (func $memory \"realloc\"))))\n      (instance $handler\n        (export \"json\" (type $json)) (export \"node-context\" (type $context))\n        (export \"node-error\" (type $error)) (export \"emission\" (type $emission))\n        (export \"run\" (func $run)))\n      (export \"{READ}\" (instance $handler)))\"#,\n        data = ROWS.replace('\"', \"\\\\\\\"\"),\n        length = ROWS.len(),\n    ))\n    .expect(\"the read component is valid WAT\")\n}\n\nfn read_declaration() -> Value {\n    json!({\n        \"target\": {\"env_key\": ENV_KEY, \"package-id\": APPLICATION, \"package-version\": \"1.0.0\"},\n        \"component\": \"orders_data\", \"interface-version\": \"0.1.0\",\n        \"operations\": {(READ): {\"registered-operation\": READ,\n            \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n            \"output-ports\": [{\"name\": \"main\", \"schema\": {}}],\n            \"parameters\": []}},\n        \"connections\": []\n    })\n}",
       "isNew": false,
       "kind": "exact",
       "lines": 75,
@@ -8757,7 +8757,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .get(0);\n    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::EnvKey {\n                env_key: ENV_KEY,",
+      "fragment": "        .get(0);\n    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let target = if family == WorkloadRoleFamily::App {\n            WorkloadRoleIdentity::EnvKey {\n                env_key: ENV_KEY,",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -8795,7 +8795,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::EnvKey {\n                env_key: ENV_KEY,\n                database: &database,\n            }\n        } else {\n            WorkloadRoleScope::ProjectEnvironment {\n                org: ENV_KEY,\n                project: PROJECT,\n                environment: ENVIRONMENT,\n                database: &database,\n            }\n        };\n        let role = workload_generation_role(family, scope, CredentialGeneration::A).unwrap();\n        admin\n            .batch_execute(&sql::prepare_workload_generation_sql(\n                family,\n                &database,\n                &role,\n                PASSWORD,\n                \"2099-01-01T00:00:00Z\",\n            ))\n            .await\n            .expect(\"prepare the scoped login\");\n        admin\n            .batch_execute(&format!(\n                \"ALTER ROLE \\\"{role}\\\" SET search_path = application_data\"\n            ))\n            .await\n            .unwrap();\n        let mut login = url::Url::parse(url).unwrap();\n        login.set_username(&role).unwrap();\n        login.set_password(Some(PASSWORD)).unwrap();",
+      "fragment": "    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let target = if family == WorkloadRoleFamily::App {\n            WorkloadRoleIdentity::EnvKey {\n                env_key: ENV_KEY,\n                database: &database,\n            }\n        } else {\n            WorkloadRoleIdentity::ProjectEnvironment {\n                org: ENV_KEY,\n                project: PROJECT,\n                environment: ENVIRONMENT,\n                database: &database,\n            }\n        };\n        let role = workload_generation_role(family, target, CredentialGeneration::A).unwrap();\n        admin\n            .batch_execute(&sql::prepare_workload_generation_sql(\n                family,\n                &database,\n                &role,\n                PASSWORD,\n                \"2099-01-01T00:00:00Z\",\n            ))\n            .await\n            .expect(\"prepare the targeted login\");\n        admin\n            .batch_execute(&format!(\n                \"ALTER ROLE \\\"{role}\\\" SET search_path = application_data\"\n            ))\n            .await\n            .unwrap();\n        let mut login = url::Url::parse(url).unwrap();\n        login.set_username(&role).unwrap();\n        login.set_password(Some(PASSWORD)).unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 45,
@@ -8909,7 +8909,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            let connection = parse_control_authoring_url(\n                &url(&role(generation), DATABASE),\n                ORG,\n                PROJECT,\n                ENVIRONMENT,\n            )\n            .expect(\"an in-scope generation URL is admitted\");\n            assert_eq!(connection.generation(), generation);\n            assert_eq!(connection.database(), DATABASE);\n            assert_eq!(connection.role(), role(generation));\n            // The password never reaches the accepted value, so no log or panic\n            // formatting it can leak the credential.\n            assert!(!format!(\"{connection:?}\").contains(\"secret\"));\n        }\n    }\n\n    #[test]\n    fn every_out_of_scope_connection_input_fails_closed_by_predicate() {\n        let admitted = role(CredentialGeneration::A);\n        for (input, expected) in [\n            (\"\", ControlAuthoringUrlErrorType::Absent),",
+      "fragment": "            let connection = parse_control_authoring_url(\n                &url(&role(generation), DATABASE),\n                ORG,\n                PROJECT,\n                ENVIRONMENT,\n            )\n            .expect(\"an in-target generation URL is admitted\");\n            assert_eq!(connection.generation(), generation);\n            assert_eq!(connection.database(), DATABASE);\n            assert_eq!(connection.role(), role(generation));\n            // The password never reaches the accepted value, so no log or panic\n            // formatting it can leak the credential.\n            assert!(!format!(\"{connection:?}\").contains(\"secret\"));\n        }\n    }\n\n    #[test]\n    fn every_out_of_target_connection_input_fails_closed_by_predicate() {\n        let admitted = role(CredentialGeneration::A);\n        for (input, expected) in [\n            (\"\", ControlAuthoringUrlErrorType::Absent),",
       "isNew": false,
       "kind": "exact",
       "lines": 21,
@@ -10885,7 +10885,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                wamn_engine::release_manifest::ReleaseScope::new(\"tenant-a\", \"test\")\n                    .with_applications(\n                        serde_json::from_value(\n                            serde_json::json!({\"receiving\": {\"packages\": [\"root\", \"child\"]}}),\n                        )\n                        .unwrap(),\n                    ),\n            )\n            .expect(\"admit the exact release manifest\"),\n        );\n        let postgres = postgres.unwrap_or_else(|| {\n            Arc::new(WamnPostgres::with_provider(Arc::new(\n                StaticCredentialProvider::new(HashMap::new(), None),\n            )))\n        });\n        let facts = Arc::new(ConnectionFacts::new(",
+      "fragment": "                wamn_engine::release_manifest::ReleaseTarget::new(\"tenant-a\", \"test\")\n                    .with_applications(\n                        serde_json::from_value(\n                            serde_json::json!({\"receiving\": {\"packages\": [\"root\", \"child\"]}}),\n                        )\n                        .unwrap(),\n                    ),\n            )\n            .expect(\"admit the exact release manifest\"),\n        );\n        let postgres = postgres.unwrap_or_else(|| {\n            Arc::new(WamnPostgres::with_provider(Arc::new(\n                StaticCredentialProvider::new(HashMap::new(), None),\n            )))\n        });\n        let facts = Arc::new(ConnectionFacts::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -11569,7 +11569,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        )\n        .await?;\n    let role = workload_generation_role(\n        WorkloadRoleFamily::Control,\n        WorkloadRoleScope::Org {\n            org: ORG,\n            database: &database,\n        },\n        CredentialGeneration::A,\n    )?;\n    admin\n        .batch_execute(&sql::prepare_workload_generation_sql(\n            WorkloadRoleFamily::Control,\n            &database,\n            &role,\n            PASSWORD,\n            \"2099-01-01T00:00:00Z\",\n        ))\n        .await?;\n    let control = Arc::new(connect(&login(admin_url, &role)?).await?);",
+      "fragment": "        )\n        .await?;\n    let role = workload_generation_role(\n        WorkloadRoleFamily::Control,\n        WorkloadRoleIdentity::Org {\n            org: ORG,\n            database: &database,\n        },\n        CredentialGeneration::A,\n    )?;\n    admin\n        .batch_execute(&sql::prepare_workload_generation_sql(\n            WorkloadRoleFamily::Control,\n            &database,\n            &role,\n            PASSWORD,\n            \"2099-01-01T00:00:00Z\",\n        ))\n        .await?;\n    let control = Arc::new(connect(&login(admin_url, &role)?).await?);",
       "isNew": false,
       "kind": "exact",
       "lines": 20,
@@ -12405,7 +12405,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            .expect(\"fixture component encodes\")\n    }\n\n    fn request() -> ComponentAdmissionRequest {\n        ComponentAdmissionRequest {\n            declaration: ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_string(),\n                    package_id: \"orders\".to_string(),\n                    package_version: \"1.0.0\".to_string(),\n                },\n                component: \"transform\".to_string(),\n                interface_version: \"0.1.0\".to_string(),\n                operations: BTreeMap::from([(\n                    OPERATION.to_string(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        output_ports: vec![ComponentPortDeclaration {\n                            name: \"main\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        parameters: vec![ComponentParameterDeclaration {\n                            name: \"mapping\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                            required: true,\n                        }],\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            admitted_platform_packages: BTreeSet::new(),\n            base_digests: BTreeSet::new(),\n        }\n    }\n\n    #[test]\n    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {",
+      "fragment": "            .expect(\"fixture component encodes\")\n    }\n\n    fn request() -> ComponentAdmissionRequest {\n        ComponentAdmissionRequest {\n            declaration: ComponentDeclaration {\n                target: ComponentPackageCoordinate {\n                    env_key: \"tenant-a\".to_string(),\n                    package_id: \"orders\".to_string(),\n                    package_version: \"1.0.0\".to_string(),\n                },\n                component: \"transform\".to_string(),\n                interface_version: \"0.1.0\".to_string(),\n                operations: BTreeMap::from([(\n                    OPERATION.to_string(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        output_ports: vec![ComponentPortDeclaration {\n                            name: \"main\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        parameters: vec![ComponentParameterDeclaration {\n                            name: \"mapping\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                            required: true,\n                        }],\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            admitted_platform_packages: BTreeSet::new(),\n            base_digests: BTreeSet::new(),\n        }\n    }\n\n    #[test]\n    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {",
       "isNew": false,
       "kind": "exact",
       "lines": 42,
@@ -12633,7 +12633,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let project = checked_scope_segment(\"project\", project)?;\n    let env = checked_scope_segment(\"env\", env)?;\n    let found: bool = client\n        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])\n        .await\n        .map_err(|error| database_error(&error))?\n        .get(0);\n    if !found {\n        return Err(IdentityError::refused(\n            IdentityErrorType::NotFound,\n            IdentityRefusal::EnvironmentNotFound,\n            format!(\"environment {project}/{env} is not an environment of org {org}\"),\n        ));\n    }",
+      "fragment": "    let project = checked_target_segment(\"project\", project)?;\n    let env = checked_target_segment(\"env\", env)?;\n    let found: bool = client\n        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])\n        .await\n        .map_err(|error| database_error(&error))?\n        .get(0);\n    if !found {\n        return Err(IdentityError::refused(\n            IdentityErrorType::NotFound,\n            IdentityRefusal::EnvironmentNotFound,\n            format!(\"environment {project}/{env} is not an environment of org {org}\"),\n        ));\n    }",
       "isNew": false,
       "kind": "exact",
       "lines": 14,
@@ -13089,7 +13089,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    use crate::component_artifact::component_artifact_config_bytes;\n\n    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }",
+      "fragment": "    use crate::component_artifact::component_artifact_config_bytes;\n\n    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                target: ComponentPackageCoordinate {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }",
       "isNew": false,
       "kind": "exact",
       "lines": 34,
@@ -13127,7 +13127,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }\n\n    #[tokio::test]",
+      "fragment": "    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                target: ComponentPackageCoordinate {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }\n\n    #[tokio::test]",
       "isNew": false,
       "kind": "exact",
       "lines": 34,
@@ -13393,7 +13393,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    crate::release_manifest::ReleaseScope::new(\"tenant-a\", \"prod\")\n                        .with_applications(\n                            [(\n                                \"catalog\".to_owned(),\n                                wamn_catalog::ApplicationDefinition {\n                                    connections: std::collections::BTreeMap::new(),\n                                    packages: [\"cat\".to_owned()].into(),\n                                },\n                            )]\n                            .into(),\n                        ),\n                )\n                .expect(\"fixture mount loads\"),",
+      "fragment": "                    crate::release_manifest::ReleaseTarget::new(\"tenant-a\", \"prod\")\n                        .with_applications(\n                            [(\n                                \"catalog\".to_owned(),\n                                wamn_catalog::ApplicationDefinition {\n                                    connections: std::collections::BTreeMap::new(),\n                                    packages: [\"cat\".to_owned()].into(),\n                                },\n                            )]\n                            .into(),\n                        ),\n                )\n                .expect(\"fixture mount loads\"),",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -13507,7 +13507,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            wamn_catalog::ConnectionTypeDescriptor::http_v1(),\n        );\n        facts.bindings.push(super::LocalBindingFacts {\n            package_id: facts.components[0].scope.package_id.clone(),\n            requirement: requirement.clone(),\n            selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {\n                read_only: false,\n                component_digest: requirement.component_digest().to_owned(),\n                store_alias: \"erp\".to_owned(),",
+      "fragment": "            wamn_catalog::ConnectionTypeDescriptor::http_v1(),\n        );\n        facts.bindings.push(super::LocalBindingFacts {\n            package_id: facts.components[0].target.package_id.clone(),\n            requirement: requirement.clone(),\n            selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {\n                read_only: false,\n                component_digest: requirement.component_digest().to_owned(),\n                store_alias: \"erp\".to_owned(),",
       "isNew": false,
       "kind": "exact",
       "lines": 9,
@@ -13746,7 +13746,7 @@
           "line": 1596,
           "position": 68715
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs",
         "start": 1577,
         "startLoc": {
           "column": 8,
@@ -13773,7 +13773,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    ) -> wash_runtime::wasmtime::Result<Result<String, JsError>> {\n        let (plugin, postgres, component) = event_plugins(accessor)?;\n        let Some(release) = plugin.release.as_deref() else {\n            return Ok(Err(JsError::Other(UNREGISTERED_SOURCE.into())));\n        };\n        if let Err(error) = postgres.require_event_materializer(&component, release) {\n            return Ok(Err(JsError::Other(error.to_string())));\n        }\n        let claim = plugin.claim_for(&component);\n        let span = js_span(&claim, &component, \"event-triggers\", None);",
+      "fragment": "    ) -> wash_runtime::wasmtime::Result<Result<String, JsError>> {\n        let (plugin, postgres, component) = event_plugins(accessor)?;\n        let Some(release) = plugin.release.as_deref() else {\n            return Ok(Err(JsError::Other(UNREGISTERED_SOURCE.into())));\n        };\n        if let Err(error) = postgres.require_event_materializer(&component, release) {\n            return Ok(Err(JsError::Other(error.to_string())));\n        }\n        let identity = plugin.identity_for(&component);\n        let span = js_span(&identity, &component, \"event-triggers\", None);",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -13840,7 +13840,7 @@
           "line": 555,
           "position": 22605
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 547,
         "startLoc": {
           "column": 61,
@@ -13878,7 +13878,7 @@
           "line": 1218,
           "position": 49587
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1186,
         "startLoc": {
           "column": 50,
@@ -13887,7 +13887,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let schema = format!(\"wamn_rls_claim_{suffix}\");\n    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:\n    // guest credential resolution verifies that the login carries\n    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe\n    // with an arbitrary name would be refused before the policy under test\n    // ever ran. The two env_keys differ per test, so the derived logins do\n    // too and the tests stay parallel-safe.\n    let probe = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let _ = suffix;\n    let admin = connect_raw(admin_url).await;\n    admin\n        .batch_execute(&rls_fixture_sql(&schema, &probe, ENV_KEY, U1, U2))\n        .await\n        .expect(\"seed the per-user RLS fixture as the superuser owner\");\n\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(database_url_for_role(\n            admin_url, &probe, &probe,\n        ))),\n        guest_pool_max_size: 2,\n        platform_pool_max_size: 2,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .unwrap();\n    pg.set_env_key(COMPONENT, ENV_KEY).unwrap();\n    pg.set_schema(COMPONENT, &schema).unwrap();\n    pg.set_role(COMPONENT, \"inspector\").unwrap();\n    pg.set_user_id(COMPONENT, U1).unwrap();",
+      "fragment": "    let schema = format!(\"wamn_rls_claim_{suffix}\");\n    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:\n    // guest credential resolution verifies that the login carries\n    // `app_identity_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe\n    // with an arbitrary name would be refused before the policy under test\n    // ever ran. The two env_keys differ per test, so the derived logins do\n    // too and the tests stay parallel-safe.\n    let probe = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let _ = suffix;\n    let admin = connect_raw(admin_url).await;\n    admin\n        .batch_execute(&rls_fixture_sql(&schema, &probe, ENV_KEY, U1, U2))\n        .await\n        .expect(\"seed the per-user RLS fixture as the superuser owner\");\n\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(database_url_for_role(\n            admin_url, &probe, &probe,\n        ))),\n        guest_pool_max_size: 2,\n        platform_pool_max_size: 2,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .unwrap();\n    pg.set_env_key(COMPONENT, ENV_KEY).unwrap();\n    pg.set_schema(COMPONENT, &schema).unwrap();\n    pg.set_role(COMPONENT, \"inspector\").unwrap();\n    pg.set_user_id(COMPONENT, U1).unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 33,
@@ -13898,7 +13898,7 @@
           "line": 1312,
           "position": 53493
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1280,
         "startLoc": {
           "column": 53,
@@ -13916,7 +13916,7 @@
           "line": 1451,
           "position": 58199
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1413,
         "startLoc": {
           "column": 31,
@@ -13925,7 +13925,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            env_key: \"tenant-b\".to_string(),\n            ..SessionClaims::default()\n        },\n    )\n    .await\n    .expect(\"the acquiring env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"tenant-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
+      "fragment": "            env_key: \"tenant-b\".to_string(),\n            ..SessionIdentity::default()\n        },\n    )\n    .await\n    .expect(\"the acquiring env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"tenant-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
       "isNew": false,
       "kind": "exact",
       "lines": 39,
@@ -13936,7 +13936,7 @@
           "line": 1682,
           "position": 66928
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1644,
         "startLoc": {
           "column": 31,
@@ -13954,7 +13954,7 @@
           "line": 1451,
           "position": 58199
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1418,
         "startLoc": {
           "column": 41,
@@ -13974,7 +13974,7 @@
           "line": 1543,
           "position": 61738
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1510,
         "startLoc": {
           "column": 4,
@@ -13992,7 +13992,7 @@
           "line": 1545,
           "position": 61747
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1525,
         "startLoc": {
           "column": 56,
@@ -14012,7 +14012,7 @@
           "line": 1684,
           "position": 66937
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 1664,
         "startLoc": {
           "column": 56,
@@ -14030,7 +14030,7 @@
           "line": 2381,
           "position": 95282
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2372,
         "startLoc": {
           "column": 68,
@@ -14039,7 +14039,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14050,7 +14050,7 @@
           "line": 2506,
           "position": 99477
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2497,
         "startLoc": {
           "column": 73,
@@ -14068,7 +14068,7 @@
           "line": 2381,
           "position": 95281
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2372,
         "startLoc": {
           "column": 68,
@@ -14077,7 +14077,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14088,7 +14088,7 @@
           "line": 2575,
           "position": 102250
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2566,
         "startLoc": {
           "column": 35,
@@ -14106,7 +14106,7 @@
           "line": 2381,
           "position": 95281
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2372,
         "startLoc": {
           "column": 68,
@@ -14115,7 +14115,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14126,7 +14126,7 @@
           "line": 2645,
           "position": 104824
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2636,
         "startLoc": {
           "column": 35,
@@ -14144,7 +14144,7 @@
           "line": 2381,
           "position": 95281
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2372,
         "startLoc": {
           "column": 68,
@@ -14153,7 +14153,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14164,7 +14164,7 @@
           "line": 2792,
           "position": 110206
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2783,
         "startLoc": {
           "column": 66,
@@ -14182,7 +14182,7 @@
           "line": 2381,
           "position": 95281
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2372,
         "startLoc": {
           "column": 68,
@@ -14191,7 +14191,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14202,7 +14202,7 @@
           "line": 2975,
           "position": 116304
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2966,
         "startLoc": {
           "column": 58,
@@ -14220,7 +14220,7 @@
           "line": 2576,
           "position": 102267
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2567,
         "startLoc": {
           "column": 14,
@@ -14229,7 +14229,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14240,7 +14240,7 @@
           "line": 2646,
           "position": 104841
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2637,
         "startLoc": {
           "column": 14,
@@ -14258,7 +14258,7 @@
           "line": 2576,
           "position": 102272
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2567,
         "startLoc": {
           "column": 14,
@@ -14267,7 +14267,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14278,7 +14278,7 @@
           "line": 2793,
           "position": 110228
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2784,
         "startLoc": {
           "column": 14,
@@ -14296,7 +14296,7 @@
           "line": 2576,
           "position": 102272
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2567,
         "startLoc": {
           "column": 14,
@@ -14305,7 +14305,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14316,7 +14316,7 @@
           "line": 2976,
           "position": 116326
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2967,
         "startLoc": {
           "column": 14,
@@ -14334,7 +14334,7 @@
           "line": 2802,
           "position": 110579
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2785,
         "startLoc": {
           "column": 4,
@@ -14343,7 +14343,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(guest_url)),\n        guest_pool_max_size: 1,\n        platform_pool_max_size: 1,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .expect(\"the plugin builds from the guest generation's url\");\n    let scope = \"operation-instance-1\";",
+      "fragment": "    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(guest_url)),\n        guest_pool_max_size: 1,\n        platform_pool_max_size: 1,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .expect(\"the plugin builds from the guest generation's url\");\n    let target = \"operation-instance-1\";",
       "isNew": false,
       "kind": "exact",
       "lines": 18,
@@ -14354,7 +14354,7 @@
           "line": 2985,
           "position": 116677
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 2968,
         "startLoc": {
           "column": 4,
@@ -14372,7 +14372,7 @@
           "line": 3096,
           "position": 120565
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 3087,
         "startLoc": {
           "column": 41,
@@ -14381,7 +14381,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const ENV_KEY: &str = \"read-snapshot\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    let admin = connect_raw(admin_url).await;",
+      "fragment": "    const ENV_KEY: &str = \"read-snapshot\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    let admin = connect_raw(admin_url).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14392,7 +14392,7 @@
           "line": 3673,
           "position": 142253
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs",
         "start": 3664,
         "startLoc": {
           "column": 41,
@@ -14410,7 +14410,7 @@
           "line": 304,
           "position": 14116
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/transactions.rs",
         "start": 290,
         "startLoc": {
           "column": 51,
@@ -14419,7 +14419,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    pub(in super::super) async fn begin_with_claims(\n        &self,\n        conn: &Object,\n        class: AuthorityClass,\n        read: bool,\n        env_key: &str,\n        schema: Option<&str>,\n        runner: Option<&str>,\n        role: Option<&str>,\n        user_id: Option<&str>,\n        operation: Option<&str>,\n        application: Option<&str>,\n        run: Option<&Causation>,\n        statement_timeout_ms: u32,\n    ) -> Result<(), PgError> {",
+      "fragment": "    pub(in super::super) async fn begin_with_identity(\n        &self,\n        conn: &Object,\n        class: AuthorityClass,\n        read: bool,\n        env_key: &str,\n        schema: Option<&str>,\n        runner: Option<&str>,\n        role: Option<&str>,\n        user_id: Option<&str>,\n        operation: Option<&str>,\n        application: Option<&str>,\n        run: Option<&Causation>,\n        statement_timeout_ms: u32,\n    ) -> Result<(), PgError> {",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -14430,7 +14430,7 @@
           "line": 342,
           "position": 15060
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/session_identity/transactions.rs",
         "start": 328,
         "startLoc": {
           "column": 48,
@@ -14457,7 +14457,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout manual admission connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout manual admission connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 25,
@@ -14495,7 +14495,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(",
+      "fragment": "            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 21,
@@ -14837,7 +14837,7 @@
         }
       },
       "format": "rust",
-      "fragment": "use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};\nuse wash_runtime::engine::ctx::SharedCtx;\nuse wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};\nuse wash_runtime::host::HostRef;\nuse wash_runtime::host::http::{HostHandler, NullServer};\nuse wash_runtime::observability::{MeterKind, Meters};\nuse wash_runtime::plugin::{HostPlugin, PluginBindings};\nuse wash_runtime::types::{Component as WorkloadComponent, Workload};\nuse wash_runtime::wasmtime::component::{Accessor, Instance, ResourceAny, Val};",
+      "fragment": "use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};\nuse wash_runtime::engine::ctx::SharedCtx;\nuse wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};\nuse wash_runtime::host::HostRef;\nuse wash_runtime::host::http::{HostHandler, NullServer};\nuse wash_runtime::observability::{MeterKind, Meters};\nuse wash_runtime::plugin::{HostPlugin, PluginBindings};\nuse wash_runtime::types::{Component as WorkloadComponent, Workload};\nuse wash_runtime::wasmtime::component::{Accessor, Instance, ResourceAny, Val};",
       "isNew": false,
       "kind": "exact",
       "lines": 9,
@@ -14942,7 +14942,7 @@
           "line": 177,
           "position": 6718
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 166,
         "startLoc": {
           "column": 61,
@@ -14951,7 +14951,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        let release = self.release_identity_for(component_id);\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "        let release = self.release_identity_for(component_id);\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 12,
@@ -14962,7 +14962,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 278,
         "startLoc": {
           "column": 11,
@@ -14980,7 +14980,7 @@
           "line": 201,
           "position": 7490
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 178,
         "startLoc": {
           "column": 49,
@@ -14989,7 +14989,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15000,7 +15000,7 @@
           "line": 313,
           "position": 11735
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 290,
         "startLoc": {
           "column": 49,
@@ -15018,7 +15018,7 @@
           "line": 201,
           "position": 7490
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 178,
         "startLoc": {
           "column": 49,
@@ -15027,7 +15027,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15038,7 +15038,7 @@
           "line": 492,
           "position": 18544
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 469,
         "startLoc": {
           "column": 52,
@@ -15056,7 +15056,7 @@
           "line": 201,
           "position": 7490
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 178,
         "startLoc": {
           "column": 49,
@@ -15065,7 +15065,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15076,7 +15076,7 @@
           "line": 567,
           "position": 21461
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 544,
         "startLoc": {
           "column": 57,
@@ -15094,7 +15094,7 @@
           "line": 201,
           "position": 7490
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 178,
         "startLoc": {
           "column": 49,
@@ -15103,7 +15103,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15114,7 +15114,7 @@
           "line": 792,
           "position": 30055
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 769,
         "startLoc": {
           "column": 49,
@@ -15132,7 +15132,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 275,
         "startLoc": {
           "column": 40,
@@ -15141,7 +15141,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -15152,7 +15152,7 @@
           "line": 385,
           "position": 14586
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 371,
         "startLoc": {
           "column": 40,
@@ -15170,7 +15170,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 275,
         "startLoc": {
           "column": 40,
@@ -15179,7 +15179,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -15190,7 +15190,7 @@
           "line": 468,
           "position": 17769
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 454,
         "startLoc": {
           "column": 43,
@@ -15208,7 +15208,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 275,
         "startLoc": {
           "column": 40,
@@ -15217,7 +15217,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -15228,7 +15228,7 @@
           "line": 543,
           "position": 20681
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 529,
         "startLoc": {
           "column": 48,
@@ -15246,7 +15246,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 275,
         "startLoc": {
           "column": 40,
@@ -15255,7 +15255,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -15266,7 +15266,7 @@
           "line": 690,
           "position": 26138
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 676,
         "startLoc": {
           "column": 40,
@@ -15284,7 +15284,7 @@
           "line": 289,
           "position": 10963
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 275,
         "startLoc": {
           "column": 40,
@@ -15293,7 +15293,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionClaimError::new(\n                    ProductionClaimErrorType::Storage,",
+      "fragment": "                \"resolve janitor runner\",\n                \"component has no host-injected runner\",\n            )\n        })?;\n        let project = self.project_for(component_id);\n        let schema = self.schema_for(component_id);\n        let user_id = self.user_id_for(component_id);\n        let operation = self.operation_for(component_id);\n        let application = self.application_for(component_id);\n        let (connection, policy) = self\n            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| {\n                ProductionLeaseError::new(\n                    ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -15304,7 +15304,7 @@
           "line": 768,
           "position": 29283
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 754,
         "startLoc": {
           "column": 40,
@@ -15322,7 +15322,7 @@
           "line": 409,
           "position": 15429
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 386,
         "startLoc": {
           "column": 49,
@@ -15331,7 +15331,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout renewal connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));\n        if let Err(error) = self\n            .begin_with_claims(\n                connection.connection(),\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout renewal connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));\n        if let Err(error) = self\n            .begin_with_identity(\n                connection.connection(),\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            return Err(ProductionLeaseError::new(\n                ProductionLeaseErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15342,7 +15342,7 @@
           "line": 714,
           "position": 26981
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs",
         "start": 691,
         "startLoc": {
           "column": 49,
@@ -15977,7 +15977,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn finish_txn(\n    state: &SharedTxnState,\n    destroyed: &Arc<AtomicU64>,\n    verb: &str,\n) -> Result<(), PgError> {\n    let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));\n    match super::claims::transactions::finish_transaction(connection.connection(), verb).await {\n        Ok(()) => {\n            if let Ok(mut st) = state.lock() {",
+      "fragment": "async fn finish_txn(\n    state: &SharedTxnState,\n    destroyed: &Arc<AtomicU64>,\n    verb: &str,\n) -> Result<(), PgError> {\n    let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));\n    match super::session_identity::transactions::finish_transaction(connection.connection(), verb).await {\n        Ok(()) => {\n            if let Ok(mut st) = state.lock() {",
       "isNew": false,
       "kind": "exact",
       "lines": 9,
@@ -16091,7 +16091,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let (plugin, component_id, trace, state, destroyed, row_limit, statements) =\n        accessor.with(|mut access| {\n            let mut ctx = access.get();\n            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);\n            let transaction = ctx.table.get(&rep)?;\n            wash_runtime::wasmtime::ensure!(\n                transaction.owner_scope == ctx.component_id.as_ref(),\n                \"statement transaction belongs to a different invocation\"\n            );\n            Ok::<_, wash_runtime::wasmtime::Error>((\n                plugin_of(&ctx)?,\n                ctx.component_id.to_string(),\n                trace,\n                Arc::clone(&transaction.transaction.state),\n                Arc::clone(&transaction.transaction.destroyed),\n                transaction.transaction.row_limit,",
+      "fragment": "    let (plugin, component_id, trace, state, destroyed, row_limit, statements) =\n        accessor.with(|mut access| {\n            let mut ctx = access.get();\n            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);\n            let transaction = ctx.table.get(&rep)?;\n            wash_runtime::wasmtime::ensure!(\n                transaction.owner_target == ctx.component_id.as_ref(),\n                \"statement transaction belongs to a different invocation\"\n            );\n            Ok::<_, wash_runtime::wasmtime::Error>((\n                plugin_of(&ctx)?,\n                ctx.component_id.to_string(),\n                trace,\n                Arc::clone(&transaction.transaction.state),\n                Arc::clone(&transaction.transaction.destroyed),\n                transaction.transaction.row_limit,",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -16167,7 +16167,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        let (connection, policy) = self\n            .checkout_platform(project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| anyhow::anyhow!(error.to_string()))?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(anyhow::anyhow!(error.to_string()));\n        }\n\n        let result = if let Some(local) = &self.local_application {",
+      "fragment": "        let (connection, policy) = self\n            .checkout_platform(project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| anyhow::anyhow!(error.to_string()))?;\n        if let Err(error) = self\n            .begin_with_identity(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(anyhow::anyhow!(error.to_string()));\n        }\n\n        let result = if let Some(local) = &self.local_application {",
       "isNew": false,
       "kind": "exact",
       "lines": 26,
@@ -16205,7 +16205,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn the_claim_of_a_request_element_commits_with_its_transaction() {\n    let _lock = wamn_test_postgres::lock();\n    let (database, postgres) = env_key_database(\"writelogtx\").await;\n    postgres\n        .bind_session_claims(\n            SCOPE,\n            &SessionClaims {\n                env_key: \"writelogtx\".into(),\n                user_id: Some(LIVE_PRINCIPAL.into()),\n                operation: Some(\"base:widget/create@1.0.0\".into()),\n                ..SessionClaims::default()\n            },\n        )\n        .await\n        .expect(\"claims bind\");",
+      "fragment": "async fn the_claim_of_a_request_element_commits_with_its_transaction() {\n    let _lock = wamn_test_postgres::lock();\n    let (database, postgres) = env_key_database(\"writelogtx\").await;\n    postgres\n        .bind_session_identity(\n            TARGET,\n            &SessionIdentity {\n                env_key: \"writelogtx\".into(),\n                user_id: Some(LIVE_PRINCIPAL.into()),\n                operation: Some(\"base:widget/create@1.0.0\".into()),\n                ..SessionIdentity::default()\n            },\n        )\n        .await\n        .expect(\"claims bind\");",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -16424,7 +16424,7 @@
           "line": 477,
           "position": 18079
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/tests/production_claim_live.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/tests/production_lease_live.rs",
         "start": 470,
         "startLoc": {
           "column": 46,
@@ -16444,7 +16444,7 @@
           "line": 608,
           "position": 22812
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/tests/production_claim_live.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime/tests/production_lease_live.rs",
         "start": 601,
         "startLoc": {
           "column": 48,
@@ -18105,7 +18105,7 @@
         }
       },
       "format": "sql",
-      "fragment": "-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;\n\n-- ---------------------------------------------------------------------------",
+      "fragment": "-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from an identity the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;\n\n-- ---------------------------------------------------------------------------",
       "isNew": false,
       "kind": "exact",
       "lines": 55,
@@ -18143,7 +18143,7 @@
         }
       },
       "format": "sql",
-      "fragment": "DO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
+      "fragment": "DO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
       "isNew": false,
       "kind": "exact",
       "lines": 40,
@@ -18181,7 +18181,7 @@
         }
       },
       "format": "sql",
-      "fragment": "GRANT USAGE ON SCHEMA s2 TO wamn_app;\n\n-- ---------------------------------------------------------------------------\n-- The per-database authority derivations every tenant policy below calls\n-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
+      "fragment": "GRANT USAGE ON SCHEMA s2 TO wamn_app;\n\n-- ---------------------------------------------------------------------------\n-- The per-database authority derivations every tenant policy below calls\n-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from an identity the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
       "isNew": false,
       "kind": "exact",
       "lines": 57,
@@ -18637,7 +18637,7 @@
         }
       },
       "format": "rust",
-      "fragment": "use std::path::{Path, PathBuf};\nuse std::process::Stdio;\nuse std::time::Instant;\n\nuse anyhow::{Context as _, ensure};\nuse serde_json::{Value, json};\nuse tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};\nuse tokio::process::Command;\nuse wamn_control::dev::environment::{\n    DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, generation_args,",
+      "fragment": "use std::path::{Path, PathBuf};\nuse std::process::Stdio;\nuse std::time::Instant;\n\nuse anyhow::{Context as _, ensure};\nuse serde_json::{Value, json};\nuse tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};\nuse tokio::process::Command;\nuse wamn_control::dev::environment::{\n    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, generation_args,",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -19435,7 +19435,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    input: &wamn_authoring_model::PublishValidatedDraft,\n) -> anyhow::Result<Response<Full<Bytes>>> {\n    let Some(scope) = surface.command_scope(&input.scope.project_id, &input.scope.environment)\n    else {\n        return Ok(authorization_denied());\n    };\n    if input.package_id.is_empty()\n        || input.package_version.is_empty()\n        || command.command_id.is_empty()\n    {\n        return Ok(empty(StatusCode::BAD_REQUEST));\n    }\n    let mut backend = surface.backend.lock().await;\n    let mut admission = surface.admission.lock().await;\n    let outcome_bytes =",
+      "fragment": "    input: &wamn_authoring_model::PublishValidatedDraft,\n) -> anyhow::Result<Response<Full<Bytes>>> {\n    let Some(target) = surface.command_target(&input.target.project_id, &input.target.environment)\n    else {\n        return Ok(authorization_denied());\n    };\n    if input.package_id.is_empty()\n        || input.package_version.is_empty()\n        || command.command_id.is_empty()\n    {\n        return Ok(empty(StatusCode::BAD_REQUEST));\n    }\n    let mut backend = surface.backend.lock().await;\n    let mut admission = surface.admission.lock().await;\n    let outcome_bytes =",
       "isNew": false,
       "kind": "exact",
       "lines": 15,

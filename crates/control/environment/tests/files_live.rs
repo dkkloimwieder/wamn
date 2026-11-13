@@ -18,7 +18,7 @@ fn file_fixture_declares_each_binding_mode() {
     let declaration = wamn_package_control::component_declaration::render_palette_declaration(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/support/file_package/publication/components/blob-put.json.in"),
-        &wamn_catalog::ComponentPackageScope {
+        &wamn_catalog::ComponentPackageCoordinate {
             env_key: "file-fixture".into(),
             package_id: "file_fixture".into(),
             package_version: "0.1.0".into(),
@@ -164,7 +164,7 @@ fn registry_definition() -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn file_connection_lookup_refuses_wrong_login_and_forged_scope() -> anyhow::Result<()> {
+async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyhow::Result<()> {
     let registry = files::registry("file-org", "project", registry_definition()).await?;
     assert_eq!(
         files::active_file_connections(

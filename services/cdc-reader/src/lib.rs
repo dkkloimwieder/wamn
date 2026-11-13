@@ -48,7 +48,7 @@
 //!   and compares them against the provisioning declaration in
 //!   `wamn_control_provision::sql::cdc`. A server below
 //!   [`POSTGRES_MAJOR_FLOOR`], a publication that publishes other operations or
-//!   another scope, or a slot with another plugin, lifetime, two-phase setting,
+//!   another target, or a slot with another plugin, lifetime, two-phase setting,
 //!   or failover setting stops the reader. The declared publication excludes
 //!   TRUNCATE, so a received TRUNCATE is counted and alerted as an incident.
 //! - The reader never creates or changes streams. Provisioning owns both the
@@ -115,7 +115,7 @@ pub struct EventReaderArgs {
     /// Postgres URL to the T1 system DB (`wamn_system`) — reads this
     /// project-env's `registry.event_readers` registration (SELECT only).
     ///
-    /// A scoped A/B LOGIN generation of `wamn_registry_reader`, whose whole
+    /// A targeted A/B LOGIN generation of `wamn_registry_reader`, whose whole
     /// authority is that one `SELECT` (`wamn-0h0g.12.116`). It is settled purely
     /// before any I/O by [`parse_system_reader_url`], so a URL carrying the
     /// unconfined `wamn_system` owner — which can write `identity.pats` under no
@@ -543,7 +543,7 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
     // Settled PURELY and FIRST: the credential is shown to be this project-env's
     // own registry-reader generation before a socket is opened. The accepted
     // value is deliberately discarded — this call exists to fix the ORDER, so a
-    // mis-scoped or over-wide Secret refuses here instead of connecting with it.
+    // mis-targeted or over-wide Secret refuses here instead of connecting with it.
     parse_system_reader_url(
         SystemReader::Registry,
         &args.system_database_url,
@@ -1098,13 +1098,13 @@ pub async fn run_with_shutdown(
     )
     .await?;
     let js = jetstream::new(client);
-    let scope = Triple::new(&args.org, &args.project, args.env.as_str());
+    let target = Triple::new(&args.org, &args.project, args.env.as_str());
     let source_config = source_stream_config(
-        &scope,
+        &target,
         args.stream_replicas,
         Duration::from_secs(args.dup_window_secs),
     );
-    let advisory_config = advisory_stream_config(&scope, args.stream_replicas);
+    let advisory_config = advisory_stream_config(&target, args.stream_replicas);
     for expected in [&source_config, &advisory_config] {
         let stream = js
             .get_stream(&expected.name)
@@ -2284,7 +2284,7 @@ mod tests {
         };
         let refusal = error
             .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
-            .expect("the refusal is the pure scope check, not a connection failure");
+            .expect("the refusal is the pure target check, not a connection failure");
         assert_eq!(
             refusal.error_type(),
             wamn_control_provision::SystemReaderUrlErrorType::Role
@@ -2294,7 +2294,7 @@ mod tests {
         assert!(!format!("{error}").contains("pw@"));
     }
 
-    /// Its own scoped generation, conversely, passes the pure gate and only
+    /// Its own targeted generation, conversely, passes the pure gate and only
     /// then fails on the connection — which is what shows the gate is a
     /// PREDICATE on the credential and not a blanket refusal.
     #[tokio::test]
@@ -2316,7 +2316,7 @@ mod tests {
             error
                 .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
                 .is_none(),
-            "the reader's own generation was refused by the scope gate: {error}"
+            "the reader's own generation was refused by the target gate: {error}"
         );
     }
 
@@ -2693,13 +2693,13 @@ mod tests {
         use jetstream::stream::Config;
         let matching = advisory_stream_config(&Triple::new("fixture", "widgets", "dev"), 3);
         assert!(stream_config_matches(&matching, &matching.clone()));
-        for scope in [
+        for target in [
             Triple::new("fixture", "gadgets", "dev"),
             Triple::new("fixture", "widgets", "prod"),
         ] {
             assert!(!stream_config_matches(
                 &matching,
-                &advisory_stream_config(&scope, 3)
+                &advisory_stream_config(&target, 3)
             ));
         }
         assert!(!stream_config_matches(

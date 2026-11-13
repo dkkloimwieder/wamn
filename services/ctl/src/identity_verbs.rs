@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_prepare_arguments_parse_and_redact_admin_credentials() {
+    fn targeted_prepare_arguments_parse_and_redact_admin_credentials() {
         let args = IssuerCli::try_parse_from(issuer_arguments()).unwrap().args;
         assert_eq!(args.namespace, "wamn-system");
         assert_eq!(args.secret_name, "wamn-identity-db");

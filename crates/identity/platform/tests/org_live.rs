@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test of the org grants
 //! (docs/architecture/overview.md#organization-membership-and-administration):
 //! `org-admin` and `project-admin` write their row, then the project roles and
-//! memberships below it, and refuse a scope outside the member's org.
+//! memberships below it, and refuse a target outside the member's org.
 
 use wamn_identity_protocol::PrincipalId;
 

@@ -63,11 +63,11 @@ impl RouterDeliveryBridge {
         project: &str,
     ) -> anyhow::Result<Self> {
         let release = Arc::clone(&operations.release);
-        jetstream.bind_derived_scope(
+        jetstream.bind_derived_invocation(
             ROUTER_DELIVERY_ID,
-            &release.scope().env_key,
+            &release.target().env_key,
             project,
-            &release.scope().environment,
+            &release.target().environment,
         )?;
         Ok(Self {
             operations,
@@ -434,8 +434,8 @@ mod tests {
                 .get_finished_metrics()
                 .expect("test metric exporter must remain readable")
             {
-                for scope in resource.scope_metrics() {
-                    for metric in scope.metrics() {
+                for batch in resource.scope_metrics() {
+                    for metric in batch.metrics() {
                         let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() else {
                             panic!("{} must stay a u64 sum", metric.name())
                         };

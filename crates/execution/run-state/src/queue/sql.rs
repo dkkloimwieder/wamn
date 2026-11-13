@@ -2,7 +2,7 @@
 //!
 //! Identifiers are static, runtime values are bound, and table names remain
 //! unqualified so the host-injected transaction `search_path` selects the run
-//! plane. The production claim is deliberately split into small statements
+//! plane. The production lease is deliberately split into small statements
 //! composed by one host-owned transaction: lock, clear abandoned state, then lease.
 
 use super::MAX_RETRY_BACKOFF_MS;
@@ -11,7 +11,7 @@ use crate::{FailType, RunStatus};
 /// Lock one eligible run in exact global FIFO order without granting a lease.
 ///
 /// The shared retry budget excludes exhausted expired leases for the janitor.
-/// Credential releases at the limit end the run before another claim. Operator
+/// Credential releases at the limit end the run before another lease. Operator
 /// wakes remain eligible even when the budget is spent.
 /// `AS MATERIALIZED` keeps `LIMIT 1` exact under cached prepared-statement plans.
 ///
@@ -24,22 +24,22 @@ use crate::{FailType, RunStatus};
 /// component digest of every node
 /// (docs/architecture/execution.md#environment-workflows). The release is
 /// admission-pinned by its manifest digest, which the grant compares with the
-/// claiming pod's digest. `$1` is the exact package-id set in the mounted
-/// release and `$2` is the environment scope. One set-valued predicate
+/// leasing pod's digest. `$1` is the exact package-id set in the mounted
+/// release and `$2` is the environment target. One set-valued predicate
 /// preserves the tenant's single global FIFO; an executor never leases a
 /// package outside its release merely because the tenant shares a project
 /// database.
 ///
-/// `$3` is the claiming host's release manifest digest, or NULL for a host that
+/// `$3` is the leasing host's release manifest digest, or NULL for a host that
 /// carries none. A run executes only on hosts of the release it was admitted
 /// under, so the select takes only runs whose pin equals `$3`: a production
 /// host, which always carries a digest, selects exactly its own release's
 /// runs, and a run pinned to another release never becomes its head. While two
-/// releases coexist, FIFO is per release and a draining host claims only its
+/// releases coexist, FIFO is per release and a draining host leases only its
 /// own backlog (docs/architecture/execution.md#process-lifecycle). A candidate run carries no pin, so
 /// only a host with no release selects it: candidate selection keeps its own
-/// path. [`grant_production_claim_sql`] rechecks the pin.
-pub fn select_production_claim_sql() -> String {
+/// path. [`grant_production_lease_sql`] rechecks the pin.
+pub fn select_production_lease_sql() -> String {
     "WITH candidate AS MATERIALIZED ( \
              SELECT q.env_key, q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
@@ -103,10 +103,10 @@ pub fn clear_pre_effect_state_sql() -> String {
 /// never reach `max_attempts`, the janitor could never reap it, and it stayed
 /// the FIFO head forever (wamn-0h0g.15.69).
 ///
-/// A prior non-NULL lease increments the shared count. First claims and
+/// A prior non-NULL lease increments the shared count. First leases and
 /// released rows do not. Credential releases spend this same count when they
-/// release the lease, so the next claim does not count that failure twice.
-pub fn advance_claim_attempts_sql() -> String {
+/// release the lease, so the next lease does not count that failure twice.
+pub fn advance_lease_attempts_sql() -> String {
     "UPDATE run_queue AS q \
         SET attempts = q.attempts \
             + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
@@ -116,19 +116,19 @@ pub fn advance_claim_attempts_sql() -> String {
         .to_string()
 }
 
-/// Grant a lease and verify the claiming release.
+/// Grant a lease and verify the leasing release.
 ///
 /// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
 /// manifest digest. The crash-evidence attempt count is NOT advanced here —
-/// [`advance_claim_attempts_sql`] owns it, outside this statement's abort scope.
+/// [`advance_lease_attempts_sql`] owns it, outside this statement's abort target.
 ///
-/// The release digest was pinned at admission. The claim verifies the pod
+/// The release digest was pinned at admission. The lease verifies the pod
 /// carries that same release on the write that marks the run running. A pod
 /// with no injected release identity binds NULL and verifies nothing.
 /// The status predicate widened from `dispatched` to the two runnable states the
-/// composer already validates, because a re-claim of a `running` row must reach
+/// composer already validates, because a re-lease of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
-pub fn grant_production_claim_sql() -> String {
+pub fn grant_production_lease_sql() -> String {
     format!(
         "WITH leased AS ( \
              UPDATE run_queue AS q \
@@ -174,11 +174,11 @@ pub fn renew_production_lease_sql() -> String {
         .to_string()
 }
 
-/// Release one live claim after a credential or pool failure.
+/// Release one live lease after a credential or pool failure.
 /// Binds: run id, lease owner, lease generation. The statement locks both rows
 /// until release or terminalization commits. It returns exhaustion and wiring.
 /// Live tests cover fencing, the shared count, and the delay bounds.
-pub fn release_production_claim_sql() -> String {
+pub fn release_production_lease_sql() -> String {
     format!(
         "WITH held AS MATERIALIZED ( \
              SELECT q.env_key, q.run_id, r.wiring_id, r.wiring_version \
@@ -206,7 +206,7 @@ pub fn release_production_claim_sql() -> String {
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
-/// in the mounted release and `$3` is the environment scope.
+/// in the mounted release and `$3` is the environment target.
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.env_key, q.run_id, selected_run.status, \
@@ -235,7 +235,7 @@ pub fn select_exhausted_production_sql() -> String {
 /// Mark one already locked exhausted run and dequeue it.
 ///
 /// Params: run id, exact generic failure JSON, RFC 8785 body hash, terminal
-/// instant. Caller outcome compare-and-set semantics match claim refusals:
+/// instant. Caller outcome compare-and-set semantics match lease refusals:
 /// callerless fields stay NULL and an existing released winner is preserved
 /// byte-for-byte. A component-era management run stores the same truthful
 /// failure as its result because it has no durable caller row for

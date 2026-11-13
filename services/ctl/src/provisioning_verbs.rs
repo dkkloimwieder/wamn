@@ -308,7 +308,7 @@ impl WorkloadFamilySet for ProjectEnvFamilies {
     }
 }
 
-/// The org-scoped families `provision-org` mints (`wamn-a40n.2`).
+/// The org-targeted families `provision-org` mints (`wamn-a40n.2`).
 #[derive(Debug, Default, Clone)]
 pub struct OrgFamilies;
 
@@ -1128,7 +1128,7 @@ pub struct ProvisionOrgArgs {
     pub emit_scheduled_backup: Option<PathBuf>,
 
     /// The generation actions of the org's own credentials and their Secrets,
-    /// derived from the org-scoped families: today `control`, the login of the
+    /// derived from the org-targeted families: today `control`, the login of the
     /// org's control host (`wamn-a40n.2`). An action needs
     /// `--system-database-url`.
     #[command(flatten)]

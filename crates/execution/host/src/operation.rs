@@ -34,8 +34,8 @@ use wamn_runtime::plugins::connection_http::{
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField,
-    VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
+    PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionIdentity,
+    StatementField, VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -141,7 +141,7 @@ impl opentelemetry::propagation::Injector for NodeTraceContext {
 /// Forwarding the ingress header verbatim made every downstream service a
 /// sibling of the host rather than its child, skipping the component span
 /// entirely, and left the queue path (which carries no ingress header at all,
-/// by the ratified host-scoped re-root) with no context to send.
+/// by the ratified host-targeted re-root) with no context to send.
 ///
 /// Read through [`tracing_opentelemetry::OpenTelemetrySpanExt`], never
 /// `opentelemetry::global::tracer`: the runtime's `initialize_observability`
@@ -256,7 +256,7 @@ impl fmt::Debug for OperationHost {
 
 /// The process-owned facts of an [`OperationHost`], outside its capabilities.
 #[derive(Debug, Clone)]
-pub struct OperationScope {
+pub struct OperationHostConfig {
     pub project: String,
     pub schema: Option<String>,
     pub owner_prefix: String,
@@ -279,12 +279,12 @@ impl OperationHost {
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,
         source: Arc<dyn ArtifactSource>,
-        scope: OperationScope,
+        target: OperationHostConfig,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            valid_runner(&scope.owner_prefix),
+            valid_runner(&target.owner_prefix),
             "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
-            scope.owner_prefix
+            target.owner_prefix
         );
         Ok(Self {
             engine,
@@ -295,10 +295,10 @@ impl OperationHost {
             allowed_hosts,
             release,
             source,
-            project: scope.project,
-            schema: scope.schema,
-            owner_prefix: scope.owner_prefix,
-            warm_reuse: scope.warm_reuse,
+            project: target.project,
+            schema: target.schema,
+            owner_prefix: target.owner_prefix,
+            warm_reuse: target.warm_reuse,
             native: tokio::sync::OnceCell::new(),
             files: std::sync::OnceLock::new(),
             integrations: std::sync::OnceLock::new(),
@@ -335,9 +335,9 @@ impl OperationHost {
         ReleaseIdentity::from_loaded(&self.release)
     }
 
-    /// The session claims of one call, before activation binds its principal.
-    pub fn claims(&self, env_key: &str, release: Option<ReleaseIdentity>) -> SessionClaims {
-        SessionClaims {
+    /// The session identity of one call, before activation binds its principal.
+    pub fn identity(&self, env_key: &str, release: Option<ReleaseIdentity>) -> SessionIdentity {
+        SessionIdentity {
             env_key: env_key.to_owned(),
             project: Some(self.project.clone()),
             schema: self.schema.clone(),
@@ -369,12 +369,14 @@ impl OperationHost {
         operation: &str,
     ) -> anyhow::Result<Option<CallIntents>> {
         let manifest = self.release.manifest();
-        let Some(route) =
-            manifest.route(&component.scope.package_id, &component.component, operation)
-        else {
+        let Some(route) = manifest.route(
+            &component.target.package_id,
+            &component.component,
+            operation,
+        ) else {
             return Ok(None);
         };
-        let env_key = self.release.scope().env_key.clone();
+        let env_key = self.release.target().env_key.clone();
         Ok(Some(CallIntents {
             store: WriteLogStore::new(
                 Arc::clone(&self.postgres),
@@ -397,8 +399,8 @@ impl OperationHost {
                     .postgres
                     .resolve_release_components(
                         &self.project,
-                        &self.release.scope().env_key,
-                        &self.release.scope().environment,
+                        &self.release.target().env_key,
+                        &self.release.target().environment,
                         self.release.release().manifest_digest.as_str(),
                     )
                     .await?;
@@ -459,7 +461,7 @@ impl OperationHost {
         let (members, own): (Vec<_>, Vec<_>) = components.iter().cloned().partition(|fact| {
             recorded.is_some_and(|entry| {
                 entry.members.iter().any(|member| {
-                    member.package_id == fact.scope.package_id
+                    member.package_id == fact.target.package_id
                         && member.component == fact.component
                         && member.digest == fact.component_digest
                 })
@@ -538,7 +540,7 @@ impl OperationHost {
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.facts),
-                    self.release.scope().env_key.as_str(),
+                    self.release.target().env_key.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
                     Some(Arc::clone(&self.release)),
@@ -546,7 +548,7 @@ impl OperationHost {
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.facts),
-                    self.release.scope().env_key.as_str(),
+                    self.release.target().env_key.as_str(),
                     self.project.as_str(),
                     Some(Arc::clone(&self.release)),
                 )),
@@ -611,17 +613,17 @@ pub fn component_invocation(
 ) -> ConnectionInvocation {
     ConnectionInvocation {
         origin: ConnectionOrigin {
-            package_id: component.scope.package_id.clone(),
+            package_id: component.target.package_id.clone(),
             component_digest: component.component_digest.clone(),
             component: component.component.clone(),
             interface_version: component.interface_version.clone(),
             operation: operation.to_owned(),
         },
         entry,
-        package_id: component.scope.package_id.clone(),
+        package_id: component.target.package_id.clone(),
         component_digest: component.component_digest.clone(),
         // The admitted component name, read off the catalog fact this
-        // call resolved to. The per-request pooled scope is an instance
+        // call resolved to. The per-request pooled target is an instance
         // id and names no component a reader can look up, so an effect
         // span takes its component identity from here (`wamn-b2m6.7`).
         component: component.component.clone(),
@@ -633,7 +635,7 @@ pub fn component_invocation(
 
 #[derive(Debug, Clone)]
 pub struct NodeAcquisition {
-    pub claims: SessionClaims,
+    pub identity: SessionIdentity,
     pub invocation: ConnectionInvocation,
     /// Event provenance for every transaction opened during this acquisition.
     /// This is intentionally independent of `caller`: post-commit delivery has
@@ -658,20 +660,20 @@ impl NodeAcquisition {
         }
     }
 
-    /// The claims that activation binds: [`Self::claims`] with the executing
+    /// The identity that activation binds: [`Self::identity`] with the executing
     /// principal as `app.user_id`, the operation token that this acquisition
     /// executes as `app.operation`, and `application`, the declared
     /// application of the component that runs it, as `app.application`.
-    fn executing_claims(
+    fn executing_identity(
         &self,
         caller: Option<&AuthenticatedCaller>,
         application: &str,
-    ) -> SessionClaims {
-        SessionClaims {
+    ) -> SessionIdentity {
+        SessionIdentity {
             user_id: self.executing_principal(caller),
             operation: Some(self.invocation.operation.clone()),
             application: Some(application.to_owned()),
-            ..self.claims.clone()
+            ..self.identity.clone()
         }
     }
 }

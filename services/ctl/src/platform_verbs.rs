@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_control_provision::schema_migrations::MigrationScope;
+use wamn_control_provision::schema_migrations::MigrationDatabase;
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::pools::Direction;
 use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
@@ -47,25 +47,25 @@ pub enum PlatformSchemaCommand {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum PlatformSchemaScope {
+pub enum PlatformSchemaTarget {
     System,
     Project,
 }
 
 #[derive(Debug)]
 pub struct PlatformSchemaArgs {
-    pub scope: PlatformSchemaScope,
+    pub target: PlatformSchemaTarget,
     pub env: Option<PathBuf>,
     pub chart: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct PlatformSchemaInput {
-    /// The database scope.
+    /// The database target.
     #[arg(long, value_enum)]
-    scope: PlatformSchemaScope,
-    /// The environment document, required only for project scope.
-    #[arg(long, required_if_eq("scope", "project"))]
+    target: PlatformSchemaTarget,
+    /// The environment document, required only for project target.
+    #[arg(long, required_if_eq("target", "project"))]
     env: Option<PathBuf>,
     /// The prepared chart whose ctl image supplies the SQL.
     #[arg(long)]
@@ -75,14 +75,14 @@ struct PlatformSchemaInput {
 impl clap::FromArgMatches for PlatformSchemaArgs {
     fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
         let input = PlatformSchemaInput::from_arg_matches(matches)?;
-        if matches!(input.scope, PlatformSchemaScope::System) && input.env.is_some() {
+        if matches!(input.target, PlatformSchemaTarget::System) && input.env.is_some() {
             return Err(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,
-                "--env is refused for system scope",
+                "--env is refused for system target",
             ));
         }
         Ok(Self {
-            scope: input.scope,
+            target: input.target,
             env: input.env,
             chart: input.chart,
         })
@@ -118,12 +118,12 @@ pub(crate) fn platform_resolution(value: &str) -> anyhow::Result<MigrationResolu
         !value.contains(':'),
         "resolution must be <path>=applied|retry"
     );
-    let scope = if value.starts_with("migrations/project/") {
+    let target = if value.starts_with("migrations/project/") {
         "project"
     } else {
         "system"
     };
-    format!("{scope}:{value}").parse()
+    format!("{target}:{value}").parse()
 }
 
 /// In-image entry points. Both actions read the same embedded migration bytes.
@@ -167,7 +167,7 @@ pub async fn run_system_schema(
     let connection = tokio::spawn(connection);
     let result = async {
         client.batch_execute("SET ROLE wamn_system").await?;
-        let sources = platform_migrations::embedded_sources(MigrationScope::System);
+        let sources = platform_migrations::embedded_sources(MigrationDatabase::System);
         platform_migrations::run(
             &mut client,
             platform_migrations::MigrationTarget::System,
@@ -233,9 +233,9 @@ pub async fn run_product(
             let chart = artifact_plan::select(&args.chart)?;
             let target =
                 wamn_environment_control::environment::kubernetes_target("platform".into())?;
-            let label = match args.scope {
-                PlatformSchemaScope::System => "system",
-                PlatformSchemaScope::Project => "project",
+            let label = match args.target {
+                PlatformSchemaTarget::System => "system",
+                PlatformSchemaTarget::Project => "project",
             };
             writeln!(
                 output,
@@ -247,14 +247,14 @@ pub async fn run_product(
             output.flush()?;
             let directory = work_directory()?;
             let result = Box::pin(interruptible(&mut signals, async {
-                match args.scope {
-                    PlatformSchemaScope::System => {
+                match args.target {
+                    PlatformSchemaTarget::System => {
                         let log = wamn_environment_control::platform::system_schema(
                             &target, &directory, &chart, apply, resolution).await?;
                         writeln!(output, "{log}")?;
                     }
-                    PlatformSchemaScope::Project => {
-                        let file = args.env.as_deref().context("--env is required for project scope")?;
+                    PlatformSchemaTarget::Project => {
+                        let file = args.env.as_deref().context("--env is required for project target")?;
                         let mut platform = wamn_environment_control::environment::Platform::project_schema_from_env()?;
                         platform.target = target;
                         let document = wamn_environment_control::environment::document::EnvironmentDocument::read_deployed(&platform, file, None).await?;

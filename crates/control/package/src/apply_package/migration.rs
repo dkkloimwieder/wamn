@@ -8,9 +8,9 @@ pub(super) async fn begin<'a>(
     env_key: &str,
 ) -> anyhow::Result<Transaction<'a>> {
     let tx = client.transaction().await.context("begin package SQL")?;
-    tx.query_one(super::CLAIM_ENV_KEY_SQL, &[&env_key])
+    tx.query_one(super::ASSIGN_ENV_KEY_SQL, &[&env_key])
         .await
-        .context("claim package tenant")?;
+        .context("bind package identity")?;
     super::bind_apply_package_principal(&tx).await?;
     Ok(tx)
 }

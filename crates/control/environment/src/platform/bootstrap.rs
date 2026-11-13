@@ -11,7 +11,7 @@ use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, identity_issuer_generation_role,
 };
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_release_control::release_chart::Target;
 
@@ -243,7 +243,7 @@ fn service_credentials(document: &ClusterDocument, image: &str) -> anyhow::Resul
     let control_role = |generation| {
         workload_generation_role(
             WorkloadRoleFamily::Control,
-            WorkloadRoleScope::Org {
+            WorkloadRoleIdentity::Org {
                 org: &document.org,
                 database: "wamn_system",
             },
@@ -479,7 +479,7 @@ async fn credential(
         })?;
     ensure!(
         result.trim() == "t",
-        "credential authenticated with an unexpected database scope"
+        "credential authenticated with an unexpected database target"
     );
     Ok(())
 }
@@ -501,7 +501,7 @@ fn credential_password(credential: &Credential, raw: &str) -> anyhow::Result<(us
         .roles
         .iter()
         .position(|role| role == url.username())
-        .context("bootstrap credential does not name its scoped A or B login")?;
+        .context("bootstrap credential does not name its targeted A or B login")?;
     let configuration: tokio_postgres::Config = raw
         .parse()
         .map_err(|_| anyhow::anyhow!("bootstrap credential is not a PostgreSQL connection"))?;
@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn service_credentials_accept_both_scoped_generations_and_refuse_url_overrides() {
+    fn service_credentials_accept_both_targeted_generations_and_refuse_url_overrides() {
         let document = document();
         for service in service_credentials(&document, "ctl-image").unwrap() {
             for (index, role) in service.roles.iter().enumerate() {

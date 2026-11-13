@@ -112,11 +112,11 @@ Evidence: `apps/client_acme_receiving/wamn.k:15`, `apps/client_acme_receiving/wa
 
 Problem: Acme pins Receiving’s operation, then repeats its request, result, error details, and canonicalization rules. Its Rust component manually translates matching request and error structures. The base version also appears in authored WIT despite the exact dependency declaration.
 
-Proposal: Let an overlay operation explicitly consume the wire shape of an operation from its pinned base artifact. Generate conversions and imports from that relationship. Keep Acme’s identity, claim scope, inspection behavior, and intentional contract overrides explicit.
+Proposal: Let an overlay operation explicitly consume the wire shape of an operation from its pinned base artifact. Generate conversions and imports from that relationship. Keep Acme’s identity, claim target, inspection behavior, and intentional contract overrides explicit.
 
 Deletes: The copied contract portions, the handwritten base WIT import, `base_request`, and matching branches of `base_error`.
 
-Risk: Incorrect inheritance can merge operation identities or change rollback behavior. Prove that a refused inspection rolls back the base receipt and that retries retain separate claim scopes. Retain overlay schema evidence from `apps/client_acme_receiving/tests/overlay_compatibility.rs:24`.
+Risk: Incorrect inheritance can merge operation identities or change rollback behavior. Prove that a refused inspection rolls back the base receipt and that retries retain separate statement targets. Retain overlay schema evidence from `apps/client_acme_receiving/tests/overlay_compatibility.rs:24`.
 
 Owner review 2026-10-31: keep, Group 4 Do, after A5, because composition is where the base wire shape is consumed. Question 3 is answered: yes.
 
@@ -262,7 +262,7 @@ Problem: Standup fixes the coordinate to `acme/receiving/dev` and requires exact
 
 Proposal: Read `environment.k` before provisioning and use its coordinate throughout. Derive package schemas from `wamn.k` without collapsing them into one application schema.
 
-Deletes: Remove Receiving constants and `JourneyScope::receiving()` from the product startup path. Remove the single-schema restriction.
+Deletes: Remove Receiving constants and `JourneyTarget::receiving()` from the product startup path. Remove the single-schema restriction.
 
 Risk: Identity, database markers, and event subjects must retain the same coordinate. Add a startup case with a different coordinate and two schemas, then make authenticated requests through both.
 

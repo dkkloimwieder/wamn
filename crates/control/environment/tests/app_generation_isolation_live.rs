@@ -34,7 +34,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, project_env_database_name, sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, sql,
     workload_generation_role,
 };
 use wamn_environment_control::provision_project_env::{privilege_sql, role_posture_sql};
@@ -117,13 +117,13 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     // `--prepare-guest-generation` calls.
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &home,
         },
         CredentialGeneration::A,
     )
-    .expect("the App family takes a tenant scope");
+    .expect("the App family takes a tenant target");
     run_alone(
         &superuser,
         &sql::prepare_workload_generation_sql(

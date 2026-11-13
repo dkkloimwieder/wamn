@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::ComponentPackageScope;
+use wamn_catalog::ComponentPackageCoordinate;
 use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
@@ -30,24 +30,24 @@ pub fn admit(
     palette: Option<&str>,
     bases: BTreeSet<String>,
 ) -> ComponentAdmission {
-    let scope = ComponentPackageScope {
+    let target = ComponentPackageCoordinate {
         env_key: "rest--publication--test".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.1".into(),
     };
     let declaration = match palette {
         Some(template) => {
-            render_palette_declaration(&repository().join(template), &scope, None).unwrap()
+            render_palette_declaration(&repository().join(template), &target, None).unwrap()
         }
         None => render_declaration_document(
             &package.join(format!("publication/components/{name}.json.in")),
-            &scope.env_key,
+            &target.env_key,
         )
         .unwrap(),
     };
     let rendered = std::env::temp_dir().join(format!(
         "rest-publication-{}-{name}-{}.json",
-        scope.package_id,
+        target.package_id,
         std::process::id()
     ));
     std::fs::write(&rendered, serde_json::to_vec(&declaration).unwrap()).unwrap();

@@ -6,7 +6,7 @@
 -- BYPASSRLS) and tenant separation from `current_user` (wamn-0h0g.22.6). RLS
 -- policies key on
 --   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
--- so a session that can set its own claim gains nothing: the connected role is
+-- so a session that can set its own identity gains nothing: the connected role is
 -- the one thing it cannot rewrite. A role outside the guest generation
 -- convention derives NULL and matches no row, and CHECK (tenant_id <> '')
 -- forbids a ''-tenant row, so the floor is structural rather than conventional.
@@ -28,7 +28,7 @@
 -- issue `CREATE ROLE`, and the loser gets `duplicate_object`.
 --
 -- `wamn-0h0g.12.140`: this is a stable ACL and grant-owner role, never a
--- credential. Guest sessions authenticate as scoped `wamn_app_<scope>_[ab]`
+-- credential. Guest sessions authenticate as targeted `wamn_app_<target>_[ab]`
 -- generations that inherit it. Both a fresh install and a replay over the old
 -- shared LOGIN therefore converge to NOLOGIN, PASSWORD NULL and NOINHERIT.
 DO $app$ BEGIN
@@ -70,7 +70,7 @@ DO $app_drain$ DECLARE stale_pid integer; BEGIN
 END $app_drain$;
 
 -- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
--- scoped A/B LOGIN generations, their CONNECT and their Secret are provisioned
+-- targeted A/B LOGIN generations, their CONNECT and their Secret are provisioned
 -- separately; this local fixture needs only the NOLOGIN grant carrier, so
 -- canonical run-state.sql can be applied against it.
 DO $run_retention$ BEGIN
@@ -124,7 +124,7 @@ GRANT USAGE ON SCHEMA s2 TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- The per-database authority derivations every tenant policy below calls
 -- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
--- from a claim the session can set: a session that can set its own tenant can
+-- from an identity the session can set: a session that can set its own tenant can
 -- read every tenant.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
@@ -150,7 +150,7 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
         || int8send(7::bigint) || convert_to('env_key', 'UTF8')
         || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')

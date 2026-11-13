@@ -186,9 +186,9 @@ impl ApplicationRoutes<'_> {
             return Err(start_refusal("invalid_input", "idempotency_key"));
         }
         let manifest = self.release.manifest();
-        let scope = self.release.scope();
-        let env_key = scope.env_key.as_str();
-        let Some(declared) = scope.applications.get(&request.application) else {
+        let target = self.release.target();
+        let env_key = target.env_key.as_str();
+        let Some(declared) = target.applications.get(&request.application) else {
             return Err(start_refusal("application_not_declared", "application"));
         };
         let application = request.application.as_str();
@@ -198,7 +198,7 @@ impl ApplicationRoutes<'_> {
             .enabled_workflow(
                 self.project,
                 env_key,
-                &scope.environment,
+                &target.environment,
                 application,
                 &request.workflow_id,
             )
@@ -250,7 +250,7 @@ impl ApplicationRoutes<'_> {
                 &ManualRunAdmission {
                     package_id: application,
                     manifest_digest: self.release.release().manifest_digest.as_str(),
-                    environment: &scope.environment,
+                    environment: &target.environment,
                     workflow_id: &request.workflow_id,
                     workflow_version: workflow.version,
                     wiring_hash: &workflow.wiring_hash,
@@ -287,7 +287,7 @@ impl ApplicationRoutes<'_> {
                 .set_counter(attachment, principal, request_id, request)
                 .await;
         }
-        let env_key = self.release.scope().env_key.as_str();
+        let env_key = self.release.target().env_key.as_str();
         let mut drops = AuthDrops::default();
         let result = self
             .serve(attachment, principal, payload, env_key, &mut drops)
@@ -465,7 +465,7 @@ impl ApplicationRoutes<'_> {
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        require_counter_application(&self.release.scope().applications, &request.application)
+        require_counter_application(&self.release.target().applications, &request.application)
             .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
             application: request.application,
@@ -478,7 +478,7 @@ impl ApplicationRoutes<'_> {
             .postgres
             .set_number_counter(
                 self.project,
-                self.release.scope().env_key.as_str(),
+                self.release.target().env_key.as_str(),
                 principal.to_string().as_str(),
                 &attachment.operation,
                 request_id.unwrap_or_default(),
@@ -511,7 +511,7 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let env_key = self.release.scope().env_key.as_str();
+        let env_key = self.release.target().env_key.as_str();
         self.postgres
             .administration_transaction(
                 self.project,

@@ -136,12 +136,12 @@ pub async fn provision(
         !root.join("identity-process.json").exists(),
         "stop the existing development environment before provisioning again"
     );
-    let scope = JourneyScope {
+    let coordinate = JourneyTarget {
         org: identity.org.clone(),
         project: identity.project.clone(),
         environment: identity.environment.clone(),
     };
-    provision_journey_control(&scope, system_url, admin).await?;
+    provision_journey_control(&coordinate, system_url, admin).await?;
     let (mut system, connection) =
         tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
@@ -152,7 +152,7 @@ pub async fn provision(
     let route_secret = root.join("operator-pat.json");
     let management_secret = root.join("management-author-pat.json");
     let mut args = provisioning_args(
-        &scope,
+        &coordinate,
         system_url,
         root,
         &route_secret,
@@ -172,10 +172,10 @@ pub async fn provision(
     drop(project);
     project_task.abort();
 
-    reconcile_journey_run_plane(&scope, system_url, &project_url).await?;
+    reconcile_journey_run_plane(&coordinate, system_url, &project_url).await?;
     let target_secret = root.join("session-role-reader.json");
     provision_project_env::run_workload_action(&generation_args(
-        &scope,
+        &coordinate,
         WorkloadRoleFamily::SessionRoleReader,
         system_url,
         Some(&project_url),
@@ -202,10 +202,15 @@ pub async fn provision(
         }),
     )?;
 
-    reconcile_journey_run_plane(&scope, system_url, &route.database_url).await?;
-    let credentials =
-        prepare_journey_credentials(&scope, system_url, &route.database_url, root, "wamn-system")
-            .await?;
+    reconcile_journey_run_plane(&coordinate, system_url, &route.database_url).await?;
+    let credentials = prepare_journey_credentials(
+        &coordinate,
+        system_url,
+        &route.database_url,
+        root,
+        "wamn-system",
+    )
+    .await?;
     // The template is taken HERE, while the project database is provisioned and
     // still pristine: the loop applies package migrations, the standup does not.
     // A clone of this is what every run starts from.
@@ -233,20 +238,20 @@ pub const ENV_KEY: &str = "acme--receiving--dev";
 
 /// The org, project, and environment that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JourneyScope {
+pub struct JourneyTarget {
     pub org: String,
     pub project: String,
     pub environment: String,
 }
 
-impl JourneyScope {
+impl JourneyTarget {
     /// The composed environment key derived from the environment coordinate.
     pub fn env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
-impl JourneyScope {
+impl JourneyTarget {
     /// The Receiving journey of the dev loop, and of a fixture with no candidate.
     pub fn receiving() -> Self {
         Self {
@@ -276,7 +281,7 @@ fn database_url(admin_url: &str, database: &str) -> anyhow::Result<String> {
 }
 
 fn provisioning_args(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     system_url: &str,
     root: &Path,
     route_secret: &Path,
@@ -284,9 +289,9 @@ fn provisioning_args(
 ) -> ProvisionProjectEnvRequest {
     ProvisionProjectEnvRequest {
         changes: wamn_broker::Publisher::default(),
-        org: scope.org.clone(),
-        project: scope.project.clone(),
-        env: scope.environment.clone(),
+        org: coordinate.org.clone(),
+        project: coordinate.project.clone(),
+        env: coordinate.environment.clone(),
         policy: None,
         target: "cloud".to_owned(),
         // The development target is disposable, and its registry row is where
@@ -311,7 +316,7 @@ fn provisioning_args(
 }
 
 pub fn generation_args(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     family: WorkloadRoleFamily,
     system_url: &str,
     target_admin_url: Option<&str>,
@@ -321,9 +326,9 @@ pub fn generation_args(
     let admin = url::Url::parse(target_admin_url.unwrap_or(system_url))
         .expect("the dev loop's admin URL parses");
     WorkloadActionRequest {
-        org: scope.org.clone(),
-        project: scope.project.clone(),
-        env: scope.environment.clone(),
+        org: coordinate.org.clone(),
+        project: coordinate.project.clone(),
+        env: coordinate.environment.clone(),
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: target_admin_url.map(str::to_owned),
         cluster: None,
@@ -383,7 +388,7 @@ pub async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
 }
 
 pub async fn provision_route(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     system_url: &str,
     admin: &Client,
     root: &Path,
@@ -391,7 +396,13 @@ pub async fn provision_route(
 ) -> anyhow::Result<ProvisionedRoute> {
     let route_secret = root.join("operator-pat.json");
     let issuer = super::pat_issuer::start(system_url, root).await?;
-    let mut args = provisioning_args(scope, system_url, root, &route_secret, management_secret);
+    let mut args = provisioning_args(
+        coordinate,
+        system_url,
+        root,
+        &route_secret,
+        management_secret,
+    );
     args.pat_issuer = issuer.args.clone();
     let provisioned = provision_project_env::provision_project_env(&args).await;
     let stopped = issuer.stop().await;
@@ -483,14 +494,14 @@ pub struct JourneyCredentials {
 pub const DEVELOPER_EMAIL: &str = "development@example.invalid";
 
 pub async fn provision_journey_control(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     system_url: &str,
     admin: &Client,
 ) -> anyhow::Result<()> {
     super::pat_issuer::preflight(system_url)?;
     reset_control_store(admin).await?;
     provision_org(ProvisionOrgRequest {
-        org: scope.org.clone(),
+        org: coordinate.org.clone(),
         template: Template::trials(),
         pool: "route-auth-pg18".to_owned(),
         record: Some(OrgRecord {
@@ -736,7 +747,7 @@ pub async fn grant_operator_admin_role(
                 wamn_control_provision::PlatformComponent::Provisioning,
             ))
             .await?;
-        let scope = wamn_platform_identity::application::ApplicationScope {
+        let coordinate = wamn_platform_identity::application::ApplicationTarget {
             org,
             project,
             env: environment,
@@ -745,7 +756,7 @@ pub async fn grant_operator_admin_role(
         wamn_platform_identity::application::project_authority(
             &authority,
             &transaction,
-            scope,
+            coordinate,
             principal.id(),
             &mut drops,
         )
@@ -765,16 +776,16 @@ pub async fn grant_operator_admin_role(
 }
 
 pub async fn reconcile_journey_run_plane(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     system_url: &str,
     project_url: &str,
 ) -> anyhow::Result<()> {
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_owned(),
         admin_database_url: project_url.to_owned(),
-        org: scope.org.clone(),
-        project: scope.project.clone(),
-        env: scope.environment.clone(),
+        org: coordinate.org.clone(),
+        project: coordinate.project.clone(),
+        env: coordinate.environment.clone(),
         schema: "wamn_run".to_owned(),
         dry_run: false,
         // A journey reconciles before its host serves.
@@ -786,14 +797,14 @@ pub async fn reconcile_journey_run_plane(
 }
 
 pub async fn prepare_journey_credentials(
-    scope: &JourneyScope,
+    coordinate: &JourneyTarget,
     system_url: &str,
     project_url: &str,
     host_secret_directory: &Path,
     host_secret_namespace: &str,
 ) -> anyhow::Result<JourneyCredentials> {
     async fn prepare(
-        scope: &JourneyScope,
+        coordinate: &JourneyTarget,
         family: WorkloadRoleFamily,
         system_url: &str,
         target_url: Option<&str>,
@@ -802,7 +813,7 @@ pub async fn prepare_journey_credentials(
         name: &str,
     ) -> anyhow::Result<String> {
         let secret = root.join(format!("{name}.json"));
-        let mut args = generation_args(scope, family, system_url, target_url, &secret);
+        let mut args = generation_args(coordinate, family, system_url, target_url, &secret);
         args.namespace = namespace.to_owned();
         provision_project_env::run_workload_action(&args)
             .await
@@ -812,7 +823,7 @@ pub async fn prepare_journey_credentials(
 
     Ok(JourneyCredentials {
         guest_sql: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::App,
             system_url,
             Some(project_url),
@@ -822,7 +833,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         executor_platform: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::ExecutorPlatform,
             system_url,
             Some(project_url),
@@ -832,7 +843,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         event_materializer: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::EventMaterializer,
             system_url,
             Some(project_url),
@@ -842,7 +853,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         http_admitter: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::HttpAdmitter,
             system_url,
             Some(project_url),
@@ -852,7 +863,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         administration: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::Administration,
             system_url,
             Some(project_url),
@@ -862,7 +873,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         identity_reader: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::IdentityReader,
             system_url,
             None,
@@ -872,7 +883,7 @@ pub async fn prepare_journey_credentials(
         )
         .await?,
         connection_reader: prepare(
-            scope,
+            coordinate,
             WorkloadRoleFamily::ConnectionReader,
             system_url,
             None,
@@ -1000,7 +1011,7 @@ mod tests {
     #[test]
     fn the_journey_env_key_is_the_coordinate_env_key() {
         assert_eq!(
-            JourneyScope::receiving().env_key().as_bytes(),
+            JourneyTarget::receiving().env_key().as_bytes(),
             b"acme--receiving--dev"
         );
         assert_eq!(

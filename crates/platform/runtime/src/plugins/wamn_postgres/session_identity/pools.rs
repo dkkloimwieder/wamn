@@ -180,13 +180,13 @@ impl WamnPostgres {
     }
 
     /// Check out a raw connection from the default project and report its state
-    /// *before* any claim injection. Gate verification only.
+    /// *before* any identity injection. Gate verification only.
     pub async fn probe_checkout(&self, env_key: &str) -> anyhow::Result<CheckoutProbe> {
         self.probe_checkout_of(DEFAULT_PROJECT, env_key).await
     }
 
     /// Check out a raw connection from a project's (lazily built) pool and
-    /// report its state *before* any claim injection. Gate verification only —
+    /// report its state *before* any identity injection. Gate verification only —
     /// not reachable from guests and not a platform work path. It deliberately
     /// observes the guest lifecycle that the conformance gate is proving.
     pub async fn probe_checkout_of(
@@ -207,7 +207,7 @@ impl WamnPostgres {
             .await?;
         Ok(CheckoutProbe {
             backend_pid: row.try_get(0)?,
-            env_key_claim: row.try_get(1)?,
+            env_key_identity: row.try_get(1)?,
             xact_id: row.try_get(2)?,
         })
     }
@@ -290,9 +290,9 @@ impl WamnPostgres {
     /// distinct authorities (`wamn-0h0g.22.14`). Making the caller name which
     /// one is what stops executor-platform work and callable-HTTP admission
     /// sharing a pooled session.
-    /// `env_key` is deliberately absent: platform credentials are scoped to the
-    /// project-environment, not to a tenant. The remaining relation with a
-    /// settable claim is `wamn_run.run_queue`. The host injects that claim,
+    /// `env_key` is deliberately absent: platform credentials are bound to the
+    /// project environment, not to a tenant. The remaining relation with a
+    /// settable identity is `wamn_run.run_queue`. The host injects that identity,
     /// and the guest cannot reach the relation.
     pub(in super::super) async fn checkout_platform(
         &self,

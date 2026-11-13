@@ -59,12 +59,12 @@ pub async fn prepare_release(
         let source = source
             .as_ref()
             .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
-        let scope = wamn_catalog::ComponentPackageScope::new(
+        let target = wamn_catalog::ComponentPackageCoordinate::new(
             env_key,
             &package.package.id,
             &package.package.version,
         )?;
-        let admitted = component.descriptor.clone().into_admitted(scope);
+        let admitted = component.descriptor.clone().into_admitted(target);
         let bytes = source.pull_verified(&admitted.component).await?;
         write(
             tx,

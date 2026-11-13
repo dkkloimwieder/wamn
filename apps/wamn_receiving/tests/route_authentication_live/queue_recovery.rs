@@ -158,7 +158,7 @@ async fn recover(
         std::fs::write(local.join(wamn_runtime::local_application::LOCAL_RELEASE_FILE),
             serde_json::to_vec(&json!({
                 "manifest-digest":queue.release.release().manifest_digest.as_str(),
-                "applications":&queue.release.scope().applications,
+                "applications":&queue.release.target().applications,
             }))?)?;
         let document = root.join("workflow.json");
         std::fs::write(&document, serde_json::to_vec(wiring)?)?;

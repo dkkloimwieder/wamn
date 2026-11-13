@@ -136,9 +136,9 @@ impl WamnJetstream {
     ) -> Result<(), JsError> {
         let env_key = self.materializer_env_key()?;
         let coordinates = &self.event_coordinates;
-        if release.scope().applications.len() != 1
-            || release.scope().env_key != env_key
-            || release.scope().environment != coordinates.environment.as_ref()
+        if release.target().applications.len() != 1
+            || release.target().env_key != env_key
+            || release.target().environment != coordinates.environment.as_ref()
         {
             return Err(JsError::Other(UNREGISTERED_SOURCE.into()));
         }
@@ -150,7 +150,7 @@ impl WamnJetstream {
             .iter()
             .filter(|trigger| {
                 release
-                    .scope()
+                    .target()
                     .applications
                     .contains_key(&trigger.application)
             })

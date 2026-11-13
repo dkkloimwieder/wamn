@@ -6,8 +6,8 @@ use std::fmt;
 use boon::{Compiler, Draft, Schemas};
 
 use crate::{
-    AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort, ComponentPackageScope,
-    ComponentSchema, WiringDocument, WiringNode,
+    AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort,
+    ComponentPackageCoordinate, ComponentSchema, WiringDocument, WiringNode,
 };
 
 const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
@@ -15,7 +15,7 @@ const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
 /// Stable classification for a refused wiring/component compatibility gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringCompatibilityErrorType {
-    FactScopeMismatch,
+    FactTargetMismatch,
     MissingComponent,
     IncompatibleInterfaceVersion,
     MissingOperation,
@@ -59,7 +59,7 @@ impl fmt::Display for WiringCompatibilityError {
 
 impl std::error::Error for WiringCompatibilityError {}
 
-/// Validate one wiring exclusively against facts from its exact package scope.
+/// Validate one wiring exclusively against facts from its exact package target.
 ///
 /// This is a publish/gate function, not a delivery-time fallback. Every normal
 /// edge resolves the exact authored source and target ports and requires equal
@@ -68,24 +68,24 @@ impl std::error::Error for WiringCompatibilityError {}
 /// or cross-version lookup exists.
 pub fn validate_wiring_compatibility(
     wiring: &WiringDocument,
-    scope: &ComponentPackageScope,
+    target: &ComponentPackageCoordinate,
     components: &[AdmittedComponent],
 ) -> Result<(), WiringCompatibilityError> {
     if let Some(component) = components
         .iter()
-        .find(|component| component.scope != *scope)
+        .find(|component| component.target != *target)
     {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorType::FactScopeMismatch,
+            WiringCompatibilityErrorType::FactTargetMismatch,
             format!(
-                "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring gate scope ({:?}, {:?}, {:?})",
+                "component {:?} fact target ({:?}, {:?}, {:?}) differs from wiring gate target ({:?}, {:?}, {:?})",
                 component.component,
-                component.scope.env_key,
-                component.scope.package_id,
-                component.scope.package_version,
-                scope.env_key,
-                scope.package_id,
-                scope.package_version,
+                component.target.env_key,
+                component.target.package_id,
+                component.target.package_version,
+                target.env_key,
+                target.package_id,
+                target.package_version,
             ),
         ));
     }
@@ -103,7 +103,7 @@ pub fn validate_wiring_compatibility(
 /// Validate a wiring against the exact component fact selected for every node.
 ///
 /// Unlike [`validate_wiring_compatibility`], this form admits facts from
-/// different exact package scopes. The release publisher owns resolving each
+/// different exact package targets. The release publisher owns resolving each
 /// authored dependency alias before calling it; this function verifies that
 /// the supplied target still matches the node tuple and then applies the same
 /// parameter, port, and schema rules as the package-local gate.
@@ -422,7 +422,7 @@ mod tests {
         output_schema: serde_json::Value,
     ) -> AdmittedComponent {
         AdmittedComponent {
-            scope: scope(),
+            target: target(),
             component: name.to_string(),
             interface_version: "0.1.0".to_string(),
             operations: BTreeMap::from([(
@@ -460,8 +460,8 @@ mod tests {
             .expect("fixture operation exists")
     }
 
-    fn scope() -> ComponentPackageScope {
-        ComponentPackageScope {
+    fn target() -> ComponentPackageCoordinate {
+        ComponentPackageCoordinate {
             env_key: "t1".to_string(),
             package_id: "app".to_string(),
             package_version: "1.0.0".to_string(),
@@ -536,16 +536,16 @@ mod tests {
             committed_result: Some("source".to_owned()),
         });
         let mut facts = components();
-        assert!(validate_wiring_compatibility(&wiring, &scope(), &facts).is_err());
+        assert!(validate_wiring_compatibility(&wiring, &target(), &facts).is_err());
         let operation = operation_mut(&mut facts[0], "read");
         operation.committed_result_schema = Some(schema(json!({"type": "object"})));
-        assert!(validate_wiring_compatibility(&wiring, &scope(), &facts).is_err());
+        assert!(validate_wiring_compatibility(&wiring, &target(), &facts).is_err());
         let registered = "app:order/read@1.0.0";
         let mut operation = facts[0].operations.remove("read").unwrap();
         operation.registered_operation = Some(registered.to_owned());
         facts[0].operations.insert(registered.to_owned(), operation);
         wiring.nodes.get_mut("source").unwrap().operation = registered.to_owned();
-        validate_wiring_compatibility(&wiring, &scope(), &facts)
+        validate_wiring_compatibility(&wiring, &target(), &facts)
             .expect("response and edge schemas remain separate");
         let resolved = BTreeMap::from([
             ("source".to_owned(), facts[0].clone()),
@@ -558,16 +558,16 @@ mod tests {
     }
 
     #[test]
-    fn exact_scoped_schema_and_parameter_facts_admit() {
-        validate_wiring_compatibility(&wiring(), &scope(), &components())
+    fn exact_targeted_schema_and_parameter_facts_admit() {
+        validate_wiring_compatibility(&wiring(), &target(), &components())
             .expect("exact compatibility admits");
     }
 
     #[test]
-    fn resolved_cross_package_facts_keep_their_exact_target_scopes() {
+    fn resolved_cross_package_facts_keep_their_exact_target_targets() {
         let mut facts = components();
-        facts[1].scope.package_id = "base".to_owned();
-        facts[1].scope.package_version = "3.1.0".to_owned();
+        facts[1].target.package_id = "base".to_owned();
+        facts[1].target.package_version = "3.1.0".to_owned();
         let resolved = BTreeMap::from([
             ("source".to_owned(), facts[0].clone()),
             ("target".to_owned(), facts[1].clone()),
@@ -576,9 +576,9 @@ mod tests {
         validate_resolved_wiring_compatibility(&wiring(), &resolved)
             .expect("exact per-node target facts admit");
 
-        assert_eq!(resolved["source"].scope, scope());
-        assert_eq!(resolved["target"].scope.package_id, "base");
-        assert_eq!(resolved["target"].scope.package_version, "3.1.0");
+        assert_eq!(resolved["source"].target, target());
+        assert_eq!(resolved["target"].target.package_id, "base");
+        assert_eq!(resolved["target"].target.package_version, "3.1.0");
     }
 
     #[test]
@@ -587,7 +587,7 @@ mod tests {
         operation_mut(&mut source_digest[0], "read").output_ports[0].schema =
             schema(json!({"type": "string"}));
         assert_eq!(
-            validate_wiring_compatibility(&wiring(), &scope(), &source_digest)
+            validate_wiring_compatibility(&wiring(), &target(), &source_digest)
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::SchemaMismatch
@@ -597,7 +597,7 @@ mod tests {
         operation_mut(&mut target_digest[1], "write").input_ports[0].schema =
             schema(json!({"type": "array"}));
         assert_eq!(
-            validate_wiring_compatibility(&wiring(), &scope(), &target_digest)
+            validate_wiring_compatibility(&wiring(), &target(), &target_digest)
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::SchemaMismatch
@@ -606,7 +606,7 @@ mod tests {
         let mut wrong_port = wiring();
         wrong_port.edges[0].to_port = Some("missing".to_string());
         assert_eq!(
-            validate_wiring_compatibility(&wrong_port, &scope(), &components())
+            validate_wiring_compatibility(&wrong_port, &target(), &components())
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::UnknownInputPort
@@ -614,21 +614,21 @@ mod tests {
     }
 
     #[test]
-    fn stale_scope_and_invalid_parameter_refuse_before_publish() {
+    fn stale_target_and_invalid_parameter_refuse_before_publish() {
         let mut stale = components();
-        stale[0].scope.package_version = "2.0.0".to_string();
+        stale[0].target.package_version = "2.0.0".to_string();
         assert_eq!(
-            validate_wiring_compatibility(&wiring(), &scope(), &stale)
+            validate_wiring_compatibility(&wiring(), &target(), &stale)
                 .unwrap_err()
                 .error_type(),
-            WiringCompatibilityErrorType::FactScopeMismatch
+            WiringCompatibilityErrorType::FactTargetMismatch
         );
 
         let mut invalid = wiring();
         invalid.nodes.get_mut("target").unwrap().params =
             BTreeMap::from([("relation".to_string(), json!(42))]);
         assert_eq!(
-            validate_wiring_compatibility(&invalid, &scope(), &components())
+            validate_wiring_compatibility(&invalid, &target(), &components())
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::InvalidParameter
@@ -637,7 +637,7 @@ mod tests {
         let mut missing = wiring();
         missing.nodes.get_mut("target").unwrap().params.clear();
         assert_eq!(
-            validate_wiring_compatibility(&missing, &scope(), &components())
+            validate_wiring_compatibility(&missing, &target(), &components())
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::MissingRequiredParameter
@@ -653,7 +653,7 @@ mod tests {
             "additionalProperties": true
         }));
         assert_eq!(
-            validate_wiring_compatibility(&wiring(), &scope(), &structurally_wider)
+            validate_wiring_compatibility(&wiring(), &target(), &structurally_wider)
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::SchemaMismatch
@@ -664,12 +664,12 @@ mod tests {
     fn error_edges_validate_the_target_without_fabricating_a_component_output_schema() {
         let mut error = wiring();
         error.edges[0].from_port = crate::ERROR_PORT.to_string();
-        validate_wiring_compatibility(&error, &scope(), &components())
+        validate_wiring_compatibility(&error, &target(), &components())
             .expect("the router-owned error payload has no component output schema");
 
         error.edges[0].to_port = Some("missing".to_string());
         assert_eq!(
-            validate_wiring_compatibility(&error, &scope(), &components())
+            validate_wiring_compatibility(&error, &target(), &components())
                 .unwrap_err()
                 .error_type(),
             WiringCompatibilityErrorType::UnknownInputPort

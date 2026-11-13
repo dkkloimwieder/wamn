@@ -364,8 +364,8 @@ mod platform_tests {
     use wamn_environment_control::platform::document::UpgradeTarget;
 
     #[test]
-    fn platform_schema_requires_explicit_system_scope_and_chart() {
-        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaScope};
+    fn platform_schema_requires_explicit_system_target_and_chart() {
+        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
         use wamn_package_control::migrations::Resolution;
 
         for action in ["diff", "apply"] {
@@ -374,7 +374,7 @@ mod platform_tests {
                 "platform",
                 "schema",
                 action,
-                "--scope",
+                "--target",
                 "system",
                 "--chart",
                 "/prepared/chart",
@@ -394,7 +394,7 @@ mod platform_tests {
                     args.selection
                 }
             };
-            assert!(matches!(args.scope, PlatformSchemaScope::System));
+            assert!(matches!(args.target, PlatformSchemaTarget::System));
             assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
             assert!(Cli::try_parse_from(&arguments[..4]).is_err());
             assert!(Cli::try_parse_from(&arguments[..6]).is_err());
@@ -434,14 +434,14 @@ mod platform_tests {
 
     #[test]
     fn platform_schema_selects_project_only_with_an_environment() {
-        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaScope};
+        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaTarget};
         for action in ["diff", "apply"] {
             let arguments = [
                 "wamn",
                 "platform",
                 "schema",
                 action,
-                "--scope",
+                "--target",
                 "project",
                 "--chart",
                 "/prepared/chart",
@@ -460,7 +460,7 @@ mod platform_tests {
                 PlatformSchemaCommand::Diff(args) => args,
                 PlatformSchemaCommand::Apply(args) => args.selection,
             };
-            assert!(matches!(args.scope, PlatformSchemaScope::Project));
+            assert!(matches!(args.target, PlatformSchemaTarget::Project));
             assert_eq!(
                 args.env.as_deref(),
                 Some(std::path::Path::new("environment.k"))

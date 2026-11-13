@@ -24,7 +24,7 @@ use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth
 use wamn_schema_generator::build_record::{self, BuildRecord};
 
 use crate::package_artifact::PackageRegistry;
-use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE};
+use crate::web_config::{CONFIG_CACHE, CONFIG_CONTENT_TYPE, CONFIG_FILE};
 
 /// Standalone output below a package's build directory.
 const ARTIFACT_DIRECTORY: &str = "web-artifact";
@@ -355,7 +355,7 @@ pub async fn push_archive(
     })
 }
 
-/// Pull a pinned web artifact and read its canonical metadata without claiming it.
+/// Pull a pinned web artifact and read its canonical metadata without taking ownership.
 ///
 /// # Errors
 ///
@@ -509,10 +509,10 @@ pub async fn upload_web_to_store(
     put(
         store,
         &root,
-        SCOPE_FILE,
-        crate::web_scope::scope_file_bytes(org, project),
-        SCOPE_CACHE,
-        SCOPE_CONTENT_TYPE,
+        CONFIG_FILE,
+        crate::web_config::config_file_bytes(org, project),
+        CONFIG_CACHE,
+        CONFIG_CONTENT_TYPE,
     )
     .await?;
     put(
@@ -1037,8 +1037,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert!(written);
         let asset = object_store::path::Path::from(format!("{root}/assets/app.js"));
         store.delete(&asset).await.unwrap();
-        let scope = object_store::path::Path::from(format!("{root}/config.json"));
-        store.put(&scope, "sentinel".into()).await.unwrap();
+        let target = object_store::path::Path::from(format!("{root}/config.json"));
+        store.put(&target, "sentinel".into()).await.unwrap();
         let (_, _, written) =
             super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
                 .await
@@ -1047,7 +1047,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert!(store.head(&asset).await.is_err());
         assert_eq!(
             store
-                .get(&scope)
+                .get(&target)
                 .await
                 .unwrap()
                 .bytes()

@@ -657,7 +657,7 @@ pub async fn write_release(
     transaction
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
-        .context("claim the tenant")?;
+        .context("bind the tenant identity")?;
     transaction
         .query_one(
             wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,

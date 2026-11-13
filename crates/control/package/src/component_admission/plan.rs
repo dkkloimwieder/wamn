@@ -139,7 +139,7 @@ pub(super) fn host_transaction_exports<T>(
 /// node (`label-render`, `blob-put`: one `wamn:node` handler, no registered
 /// operation) is not the package's to declare, so a component ABSENT from the
 /// manifest is admitted iff it registers no manifest operation, with an empty
-/// expected set (RULED `wamn-362o.40`). A component that claims a registered
+/// expected set (RULED `wamn-362o.40`). A component that declares a registered
 /// operation must be a manifest member, as before: that is the fence against
 /// a stranger serving the package's operations.
 ///
@@ -394,15 +394,15 @@ pub(super) fn ensure_component_package_matches(
     component: &AdmittedComponent,
     package: &wamn_catalog::PackageCoordinate,
 ) -> anyhow::Result<()> {
-    if component.scope.package_id != package.package_id()
-        || component.scope.package_version != package.package_version()
+    if component.target.package_id != package.package_id()
+        || component.target.package_version != package.package_version()
     {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorType::PackageCoordinateMismatch,
             format!(
                 "declaration names {}@{} but package directory names {}@{}",
-                component.scope.package_id,
-                component.scope.package_version,
+                component.target.package_id,
+                component.target.package_version,
                 package.package_id(),
                 package.package_version()
             ),

@@ -22,14 +22,14 @@ pub(crate) fn copy_schema_fixture(root: &std::path::Path) {
 }
 
 use std::collections::BTreeMap;
-use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope};
+use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate};
 
 pub const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 pub fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
     let operation = registered_operation.unwrap_or("run");
     AdmittedComponent {
-        scope: ComponentPackageScope {
+        target: ComponentPackageCoordinate {
             env_key: "tenant-a--fixture--dev".to_owned(),
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),

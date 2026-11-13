@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_environment_control::reconcile_package_data_access::{
     self, ReconcilePackageDataAccessRequest,
@@ -163,13 +163,13 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App generation accepts tenant scope");
+    .expect("App generation accepts tenant target");
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
@@ -662,13 +662,13 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     apply(&url, package.clone()).await;
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App generation accepts tenant scope");
+    .expect("App generation accepts tenant target");
     admin
         .batch_execute(&sql::prepare_workload_generation_sql(
             WorkloadRoleFamily::App,

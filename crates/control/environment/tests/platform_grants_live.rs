@@ -5,7 +5,7 @@ use wamn_test_infrastructure::locked_database;
 
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
-/// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`).
+/// (`crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs`).
 const READ_TABLES: [&str; 12] = [
     "connection",
     "environment",

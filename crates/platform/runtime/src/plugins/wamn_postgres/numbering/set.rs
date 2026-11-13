@@ -2,11 +2,11 @@
 //! (docs/architecture/data-access.md#setting-a-counter).
 //!
 //! A set runs in an operation transaction of the guest authority, under the
-//! caller, the route's operation and the application as claims, so the
+//! caller, the route's operation and the application as identity, so the
 //! engine write log records it by its request id and the counter row's
 //! `updated_by` names the caller. The set resolves the sequence by the
 //! application that the host route checked against the release and the
-//! sequence name, never by the `app.application` claim, and passes its id to
+//! sequence name, never by the `app.application` identity, and passes its id to
 //! `platform.set_counter`. That function writes the value under the counter
 //! row's lock, so a set waits for a concurrent next number and a next number
 //! waits for the set.
@@ -20,10 +20,10 @@
 use deadpool_postgres::Object;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use wamn_number_pattern::Scope;
+use wamn_number_pattern::Policy;
 
 use super::super::write_log::OpaqueBegun;
-use super::super::{SessionClaims, WamnPostgres};
+use super::super::{SessionIdentity, WamnPostgres};
 use super::SEQUENCE_SQL;
 
 /// One set of one counter of a number sequence.
@@ -180,22 +180,22 @@ impl WamnPostgres {
             ));
         }
         let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
-        let claims = SessionClaims {
+        let identity = SessionIdentity {
             env_key: env_key.to_owned(),
             project: Some(project.to_owned()),
             user_id: Some(user_id.to_owned()),
             operation: Some(operation.to_owned()),
             application: Some(set.application.clone()),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         };
         let result = async {
-            self.bind_session_claims(&scope, &claims)
+            self.bind_session_identity(&scope, &identity)
                 .await
                 .map_err(|error| {
                     failed(
                         set,
                         request_id,
-                        "bind the set's session claims",
+                        "bind the set's session identity",
                         Some(error),
                     )
                 })?;
@@ -203,7 +203,7 @@ impl WamnPostgres {
                 .await
         }
         .await;
-        self.revoke_session_claims(&scope);
+        self.revoke_session_identity(&scope);
         result
     }
 
@@ -324,14 +324,14 @@ async fn set_counter(
     else {
         return Ok(Err(refused(CounterSetRefusal::CounterNotFound)));
     };
-    match target.scope() {
-        Scope::Per(_) => return Ok(Err(refused(CounterSetRefusal::AssignedPerKey))),
-        Scope::Always if !set.key.is_empty() => {
+    match target.policy() {
+        Policy::Per(_) => return Ok(Err(refused(CounterSetRefusal::AssignedPerKey))),
+        Policy::Always if !set.key.is_empty() => {
             return Ok(Err(refused(CounterSetRefusal::InvalidInput {
                 field: "key",
             })));
         }
-        Scope::Always | Scope::Reset(_) => {}
+        Policy::Always | Policy::Reset(_) => {}
     }
 
     let write = connection.prepare_cached(SET_SQL).await?;

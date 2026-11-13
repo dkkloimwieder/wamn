@@ -455,8 +455,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_release_control::release_chart::ValuesInput;
     use wamn_test_infrastructure::rendering::{EventIdentity, HostRoleSecret, HostValuesInput};
-    let scope = Triple::new("acme", project, "dev");
-    let secrets = credential_secrets(&scope, NAMESPACE);
+    let target = Triple::new("acme", project, "dev");
+    let secrets = credential_secrets(&target, NAMESPACE);
     let guest = wamn_control_provision::workload_secret_name(
         WorkloadRoleFamily::App,
         "acme",
@@ -738,9 +738,9 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
 
 #[test]
 fn reader_uses_the_environments_owned_credentials() {
-    let scope = Triple::new("acme", "apps", "dev");
+    let target = Triple::new("acme", "apps", "dev");
     let image = format!("registry/host@sha256:{}", "a".repeat(64));
-    let first = reader_deployment(&scope, "hosts", &image, 1, 120);
+    let first = reader_deployment(&target, "hosts", &image, 1, 120);
     let pod = &first["spec"]["template"]["spec"];
     assert_eq!(pod["containers"][0]["image"], image);
     let variables = pod["containers"][0]["env"].as_array().unwrap();
@@ -748,18 +748,18 @@ fn reader_uses_the_environments_owned_credentials() {
         (
             "WAMN_CDC_URL",
             wamn_control_provision::project_env_cdc_secret_name(
-                &scope.org,
-                &scope.project,
-                &scope.env,
+                &target.org,
+                &target.project,
+                &target.env,
             ),
         ),
         (
             "WAMN_SYSTEM_URL",
             wamn_control_provision::workload_secret_name(
                 wamn_control_provision::WorkloadRoleFamily::RegistryReader,
-                &scope.org,
-                &scope.project,
-                &scope.env,
+                &target.org,
+                &target.project,
+                &target.env,
             ),
         ),
     ] {

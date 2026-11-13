@@ -478,7 +478,7 @@ fn operation_signature_mismatch(
 /// been removed, so every remaining package is authority-free or an admitted
 /// platform capability. `effectful_dependencies` carries the other half of the
 /// union: a wrapper with an empty capability list reaches an effect
-/// through the operations it calls, and an empty projection claims it pure.
+/// through the operations it calls, and an empty projection declares it pure.
 ///
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
 /// the INHERITED provenance and the audited-imports check stays with the
@@ -610,7 +610,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
+        ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
         ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -742,7 +742,7 @@ mod tests {
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
-                scope: ComponentPackageScope {
+                target: ComponentPackageCoordinate {
                     env_key: "tenant-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),

@@ -16,7 +16,7 @@ use super::{escape_identifier, escape_literal};
 /// LOGIN`, otherwise least-privilege (`NOSUPERUSER NOCREATEDB NOCREATEROLE
 /// NOINHERIT NOBYPASSRLS` — `NOINHERIT` matches every other role this crate
 /// mints; the role holds no memberships, so it is exactness, not a live
-/// change). One role per project-env names the intended capture scope; it does
+/// change). One role per project-env names the intended capture target; it does
 /// not limit a leaked credential to one registration. `REPLICATION` itself is
 /// CLUSTER-WIDE in Postgres: any replication role can read any database's WAL
 /// on that cluster. The accepted T3 boundary is compound: production HBA has

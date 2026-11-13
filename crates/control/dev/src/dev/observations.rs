@@ -140,7 +140,7 @@ struct TraceReader {
 struct TraceSummary {
     observation: DevTraceObservation,
     end: u64,
-    scoped: bool,
+    targeted: bool,
     has_root: bool,
 }
 
@@ -196,7 +196,7 @@ impl TraceReader {
     fn observations(&self) -> Vec<DevTraceObservation> {
         self.traces
             .values()
-            .filter(|summary| summary.scoped)
+            .filter(|summary| summary.targeted)
             .map(|summary| summary.observation.clone())
             .collect()
     }

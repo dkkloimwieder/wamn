@@ -112,7 +112,7 @@ try {
             resolve(
               keys.result.map((key, i) => ({
                 model: JSON.parse(key)[0],
-                scope: JSON.parse(key)[2],
+                filter: JSON.parse(key)[2],
                 count: values.result[i].rows.length,
                 bytes: new TextEncoder().encode(JSON.stringify({ key, ...values.result[i] })).byteLength,
                 asOf: values.result[i].saved_at,
@@ -128,7 +128,7 @@ try {
     database,
   );
   const packaging = collections.find(
-    (entry) => entry.model === "packaging" && entry.scope === '{"filter":{"status":["available"]}}',
+    (entry) => entry.model === "packaging" && entry.filter === '{"filter":{"status":["available"]}}',
   );
   const location = collections.find((entry) => entry.model === "location");
   assert.equal(packaging.count, 1);

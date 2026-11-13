@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope};
+use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::PluginBindings;
 use wash_runtime::types::LocalResources;
@@ -36,7 +36,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
     );
     NativeComponent {
         fact: AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".into(),
                 package_id: export.split(':').next().expect("package namespace").into(),
                 package_version: "1.0.0".into(),

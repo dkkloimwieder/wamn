@@ -1,6 +1,6 @@
 use super::{
     DateTime, PLATFORM_GROUP_ROLE, SecondsFormat, Utc, WORKLOAD_CREDENTIAL_TTL_DAYS,
-    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityKind,
     validate_project_env,
 };
 
@@ -9,10 +9,10 @@ pub(in super::super) fn is_workload_generation_role(
     role: &str,
 ) -> bool {
     let prefix = format!("{}_", family.generation_prefix());
-    let Some(scoped) = role.strip_prefix(&prefix) else {
+    let Some(targeted) = role.strip_prefix(&prefix) else {
         return false;
     };
-    let Some((hash, generation)) = scoped.split_once('_') else {
+    let Some((hash, generation)) = targeted.split_once('_') else {
         return false;
     };
     hash.len() == 40
@@ -24,11 +24,11 @@ pub(in super::super) fn is_workload_generation_role(
 
 /// ONE lifecycle constructor, for any family (`wamn-0h0g.22.16`).
 ///
-/// Replaces four copy-pasted constructors that differed only in the scope arm
-/// they filled in. The scope GRAIN is the family's own declaration, so pairing a
+/// Replaces four copy-pasted constructors that differed only in the target arm
+/// they filled in. The target GRAIN is the family's own declaration, so pairing a
 /// family with the wrong grain is not something a caller can get wrong here.
 ///
-/// The control tenant follows the same derivation: only a control-scoped family
+/// The control tenant follows the same derivation: only a control-targeted family
 /// records a login-to-tenant mapping row, because that row is the control
 /// plane's and a project-environment credential never reaches the control
 /// database.
@@ -43,30 +43,31 @@ pub(in super::super) fn workload_lifecycle<'a>(
         project,
         environment,
     } = identity;
-    let scope = match family.scope_kind() {
-        // Tenant scope for the guest credential: the digest in the role name IS
+    let target = match family.identity_kind() {
+        // Tenant target for the guest credential: the digest in the role name IS
         // the tenant key, so the login the mint issues and the key
         // `wamn_authority.tenant_key` computes are the same string
         // (`wamn-0h0g.22.6.4`).
-        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey { env_key, database },
-        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentityKind::EnvKey => WorkloadRoleIdentity::EnvKey { env_key, database },
+        WorkloadRoleIdentityKind::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+        WorkloadRoleIdentityKind::Control => WorkloadRoleIdentity::Control {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org { org, database },
+        WorkloadRoleIdentityKind::Org => WorkloadRoleIdentity::Org { org, database },
     };
     WorkloadLifecycle {
         family,
-        scope,
-        control_env_key: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(env_key),
+        target,
+        control_env_key: (family.identity_kind() == WorkloadRoleIdentityKind::Control)
+            .then_some(env_key),
     }
 }
 
@@ -122,7 +123,7 @@ pub(super) struct WorkloadRoleState {
 #[derive(Debug, Clone, Copy)]
 pub(in super::super) struct WorkloadLifecycle<'a> {
     pub(in super::super) family: WorkloadRoleFamily,
-    pub(in super::super) scope: WorkloadRoleScope<'a>,
+    pub(in super::super) target: WorkloadRoleIdentity<'a>,
     pub(in super::super) control_env_key: Option<&'a str>,
 }
 

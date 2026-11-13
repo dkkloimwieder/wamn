@@ -1,5 +1,5 @@
 import type { Change, Feed } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
+import type { PackagingRow, PackagingFilter } from "./generated/wamn_wms/packaging.js";
 
 const statuses = ["available", "consumed", "held"] as const;
 const types = ["bin", "case", "loose", "pallet", "tote"] as const;
@@ -55,12 +55,12 @@ export function makeRows(count: number, seed = 1): PackagingRow[] {
 }
 
 /** A feed that answers `list` from memory. `changes` has nothing yet. */
-export function fakeFeed(rows: () => PackagingRow[]): Feed<PackagingRow, PackagingScope> {
+export function fakeFeed(rows: () => PackagingRow[]): Feed<PackagingRow, PackagingFilter> {
   return {
     async list() {
       return { rows: rows(), cursor: "none" };
     },
-    async changes(_scope, cursor) {
+    async changes(_filter, cursor) {
       return { rows: [], next_cursor: cursor, complete: true };
     },
   };

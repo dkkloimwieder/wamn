@@ -2,7 +2,7 @@ use super::{
     AdmittedComponent, AttachmentTarget, AuthoritativeEnvironmentPolicy, BTreeMap, BTreeSet,
     BareSchemaName, ComposedApplication, DependencyDigestRule, PackageCoordinate,
     ProjectedEnvironmentPolicy, PublishManifestError, PublishManifestErrorType,
-    PublishReleaseManifest, PublishedRelease, ReleaseComponents, ReleaseScope, RouteContracts,
+    PublishReleaseManifest, PublishedRelease, ReleaseComponents, ReleaseTarget, RouteContracts,
     ServingComponent, ServingManifest, ServingRoute, ensure, project_serving_component,
     resolve_component_dependency_closure, resolve_route_component,
     validate_attachment_definition_hashes,
@@ -110,13 +110,13 @@ pub fn record_composed_entry(
 pub(crate) fn verify_projected_environment_policy(
     projected: Option<&ProjectedEnvironmentPolicy>,
     source_policy: &AuthoritativeEnvironmentPolicy,
-    scope: &ReleaseScope,
+    target: &ReleaseTarget,
     run_schema: &BareSchemaName,
 ) -> Result<(), PublishManifestError> {
     let Some(projected) = projected else {
-        return Err(environment_policy_absent(scope, run_schema));
+        return Err(environment_policy_absent(target, run_schema));
     };
-    verify_environment_name(&projected.expected_environment, scope)?;
+    verify_environment_name(&projected.expected_environment, target)?;
     if projected.source_policy_org.as_deref() != Some(source_policy.source_policy_org.as_ref())
         || projected.source_policy_hash.as_deref()
             != Some(source_policy.source_policy_hash.as_ref())
@@ -125,7 +125,7 @@ pub(crate) fn verify_projected_environment_policy(
             PublishManifestErrorType::EnvironmentPolicySourceMismatch,
             format!(
                 "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
-                scope.environment,
+                target.environment,
                 projected.source_policy_org.as_deref().unwrap_or("<absent>"),
                 source_policy.source_policy_org,
                 projected
@@ -140,14 +140,14 @@ pub(crate) fn verify_projected_environment_policy(
 }
 
 pub(super) fn environment_policy_absent(
-    scope: &ReleaseScope,
+    target: &ReleaseTarget,
     run_schema: &BareSchemaName,
 ) -> PublishManifestError {
     PublishManifestError::new(
         PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
             "tenant {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
-            scope.env_key,
+            target.env_key,
             run_schema.as_str()
         ),
     )
@@ -155,14 +155,14 @@ pub(super) fn environment_policy_absent(
 
 pub(super) fn verify_environment_name(
     expected_environment: &str,
-    scope: &ReleaseScope,
+    target: &ReleaseTarget,
 ) -> Result<(), PublishManifestError> {
-    if expected_environment != scope.environment {
+    if expected_environment != target.environment {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::EnvironmentPolicyMismatch,
             format!(
                 "release environment {:?} differs from provisioned environment {:?}",
-                scope.environment, expected_environment
+                target.environment, expected_environment
             ),
         ));
     }
@@ -361,7 +361,7 @@ pub(super) fn pin_runtime_schemas(
 }
 
 /// The admitted components of the opened package artifacts, each from its
-/// descriptor layer, in the scope of `env_key`.
+/// descriptor layer, in the target of `env_key`.
 pub(super) fn project_components(
     components: &ReleaseComponents,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {

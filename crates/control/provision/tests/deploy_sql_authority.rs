@@ -2,7 +2,7 @@
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
 //! the current package-era relation set contains 21 governed relations, all off
-//! the settable `app.env_key` claim and onto
+//! the settable `app.env_key` identity and onto
 //! `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
@@ -34,7 +34,7 @@ use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::sql;
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
 use wamn_record_history::{HistoryRow, RowState, state_at};
 
@@ -65,16 +65,16 @@ const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 fn platform_probe_retention() -> String {
     workload_generation_role(
         WorkloadRoleFamily::Retention,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("Retention takes a tenant scope")
+    .expect("Retention takes a tenant target")
 }
 
-/// The host injects the claim for this relation. The guest ACL role holds
+/// The host injects the identity for this relation. The guest ACL role holds
 /// no privileges on it, as measured by `has_table_privilege`.
 const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 
@@ -272,7 +272,7 @@ fn reset(admin_url: &str) {
 ///
 /// Applies the real files to a fresh cluster and then asks `pg_policy`,
 /// `pg_index` and `has_table_privilege` — never the file text — three things:
-/// no guest-reachable relation is still on a settable claim, every re-keyed
+/// no guest-reachable relation is still on a settable identity, every re-keyed
 /// relation carries its expression index, and a minted guest reads its own
 /// tenant and only its own.
 #[test]
@@ -311,7 +311,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         apply(&db_url, sql);
     }
 
-    // 1. NOTHING guest-reachable is still on a settable claim.
+    // 1. NOTHING guest-reachable is still on a settable identity.
     let settable = psql(
         &db_url,
         None,
@@ -327,7 +327,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "a guest-reachable relation still keys on a claim the session can set"
     );
 
-    // The remaining relation with the claim holds no guest privilege.
+    // The remaining relation with the identity holds no guest privilege.
     // This assertion also refuses a guest grant on that relation.
     let kept = psql(
         &db_url,
@@ -386,13 +386,13 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     //    provisioner would issue matches the key the predicate computes.
     let guest = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("App takes a tenant scope");
+    .expect("App takes a tenant target");
     assert_eq!(
         &guest[guest.len() - 42..guest.len() - 2],
         tenant_key("t1", "wamn"),
@@ -861,13 +861,13 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
 fn record_history_guest() -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("App takes a tenant scope")
+    .expect("App takes a tenant target")
 }
 
 /// Actors the record-history cases bind. No user row names A, B, or C, so a
@@ -920,7 +920,7 @@ fn record_history_fixture(admin: &str) -> (String, String) {
 }
 
 /// Run `body` as the guest in one transaction with `app.user_id` bound to
-/// `actor`, the way the host claims transaction binds it.
+/// `actor`, the way the host identity transaction binds it.
 fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
     apply(
         db_url,
@@ -1119,7 +1119,7 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
     );
 
     // 4. The guest with no bound actor, and with the empty binding the host
-    //    sends for an absent claim, on both relations. A no-op update refuses
+    //    sends for an absent identity, on both relations. A no-op update refuses
     //    too.
     let writes = [
         "INSERT INTO rh_probe.stamped (id, note) VALUES (2, 'second')",
@@ -1216,7 +1216,7 @@ fn record_history_log_fixture(admin: &str) -> (String, String) {
 }
 
 /// One guest transaction with `app.user_id` and `app.operation` bound, the way
-/// the host claims transaction binds them. The session time zone is not UTC,
+/// the host identity transaction binds them. The session time zone is not UTC,
 /// so an image that matches a later `wamn_history.row_image` read shows that
 /// the image does not depend on the session time zone.
 fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &str) -> String {
@@ -1846,7 +1846,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     );
 
     // 10. An unbound operation, and the empty binding the host sends for an
-    //     absent claim, raise operation-required. An unbound actor raises
+    //     absent identity, raise operation-required. An unbound actor raises
     //     actor-required on a relation without the stamp trigger.
     let operation_required = [
         "UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1",
@@ -1993,7 +1993,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
         ),
     );
 
-    let claims = |actor: &str| {
+    let identity = |actor: &str| {
         format!(
             "BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
@@ -2008,7 +2008,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'from first', revision = revision + 1 \
                WHERE id = 1;\n\
              SELECT set_config('application_name', 'rh-first-locked', false);\n",
-            claims(ACTOR_A)
+            identity(ACTOR_A)
         ),
     );
     wait_until(
@@ -2022,7 +2022,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'from second', revision = revision + 1 \
                WHERE id = 1;\n\
              COMMIT;\n",
-            claims(ACTOR_B)
+            identity(ACTOR_B)
         ),
     );
     drop(second.stdin.take());
@@ -2079,7 +2079,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'from earlier', revision = revision + 1 \
                WHERE id = 2;\n\
              SELECT set_config('application_name', 'rh-earlier-held', false);\n",
-            claims(ACTOR_A)
+            identity(ACTOR_A)
         ),
     );
     wait_until(
@@ -2093,7 +2093,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'from later', revision = revision + 1 \
                WHERE id = 3;\n\
              SELECT set_config('application_name', 'rh-later-held', false);\n",
-            claims(ACTOR_B)
+            identity(ACTOR_B)
         ),
     );
     wait_until(
@@ -2145,7 +2145,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'rolled back', revision = revision + 1 \
                WHERE id = 1;\n\
              SELECT set_config('application_name', 'rh-aborted-locked', false);\n",
-            claims(ACTOR_A)
+            identity(ACTOR_A)
         ),
     );
     wait_until(
@@ -2159,7 +2159,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
             "{}UPDATE rh_probe.logged SET note = 'after rollback', revision = revision + 1 \
                WHERE id = 1;\n\
              COMMIT;\n",
-            claims(ACTOR_B)
+            identity(ACTOR_B)
         ),
     );
     drop(committed.stdin.take());

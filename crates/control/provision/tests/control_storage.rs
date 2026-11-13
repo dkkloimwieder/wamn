@@ -1,5 +1,5 @@
 //! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
-//! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
+//! generalized in wamn-8df.3; org-targeted policies + templates in wamn-8df.4).
 //!
 //! A live-apply gate (invariants 2/3 + placement/env FK integrity + the template
 //! stamp insert-if-absent semantics + the real registry reads and saga builders),
@@ -135,7 +135,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     .expect("writing to a String cannot fail");
     // Exercise the REAL env-policy read via `CREATE TABLE AS EXECUTE` — provision-
     // project-env reads one of the ORG's policies to derive the cluster owner; a
-    // different org's key returns nothing (org-scoped, never cross-org).
+    // different org's key returns nothing (org-targeted, never cross-org).
     writeln!(
         script,
         "PREPARE getpol (text,text) AS {get};\n\

@@ -217,7 +217,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             "command",
             "namespace",
             "actor",
-            "scope",
+            "target",
             "secret",
             "chart_path",
         ] {

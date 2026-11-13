@@ -15,8 +15,8 @@ run["sampling_percentage"] = 100 * float(configuration["OTEL_TRACES_SAMPLER_ARG"
 traces = defaultdict(dict)
 for line in (work / "env/local-artifacts/otel/traces.jsonl").open():
     for resource in json.loads(line).get("resourceSpans", []):
-        for scope in resource.get("scopeSpans", []):
-            for span in scope.get("spans", []):
+        for target in resource.get("scopeSpans", []):
+            for span in target.get("spans", []):
                 traces[span["traceId"]][span["spanId"]] = span
 
 parts = defaultdict(list)

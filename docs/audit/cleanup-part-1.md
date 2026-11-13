@@ -36,9 +36,9 @@ Not run: `registry_image_archive -- --ignored`, whose test changed in Issue 4. I
 
 `deploy/sql/corrections/wamn-a04x-wms-0007.sql` (owner retired 2026-11-01), `backfill_generation_passwords_sql`, `wamn_run.effect_attempt_dispatches`, `docs/plan/package-upgrade.md`.
 
-## Scope
+## Target
 
-The explicit out-of-scope list was the hard stop, and named deletions were in scope. So this branch deletes or edits files that One NATS also edits: `upgrade_environment.rs`, `event-reader-rbac`, `system-schema.sql` and others. `values-host-default`, the PAT overlays, `values-host-base` and `values-host` stay because they have readers.
+The explicit out-of-target list was the hard stop, and named deletions were in target. So this branch deletes or edits files that One NATS also edits: `upgrade_environment.rs`, `event-reader-rbac`, `system-schema.sql` and others. `values-host-default`, the PAT overlays, `values-host-base` and `values-host` stay because they have readers.
 
 ## Merge
 

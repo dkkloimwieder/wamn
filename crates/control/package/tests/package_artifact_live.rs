@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use wamn_catalog::{ComponentDescriptor, ComponentPackageScope};
+use wamn_catalog::{ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
 use wamn_package_artifact::{NoPackageArtifact, Repository, pull_package};
@@ -159,7 +159,7 @@ impl Fixture {
         .expect("decode the descriptor");
         let (package_id, version) = tag.rsplit_once('-').expect("a tag names a version");
         let facts = descriptor.clone().into_admitted(
-            ComponentPackageScope::new("tenant-a", package_id, version).expect("a scope"),
+            ComponentPackageCoordinate::new("tenant-a", package_id, version).expect("a target"),
         );
         let credentials =
             read_registry_credentials(&self.registry.registry_auth_file, &self.local.address)

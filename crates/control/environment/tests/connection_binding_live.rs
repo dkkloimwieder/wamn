@@ -1,4 +1,4 @@
-//! Release bindings, scope refusals, and native read authority on the environment catalog.
+//! Release bindings, target refusals, and native read authority on the environment catalog.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -9,8 +9,8 @@ use tokio_postgres::{Client, NoTls};
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
-    RequirementType, WiringDocument, WiringNode, WiringTerminal,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
+    ConnectionTypeDescriptor, RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
@@ -108,7 +108,7 @@ async fn admit_component(
     descriptor: ConnectionTypeDescriptor,
 ) -> AdmittedComponent {
     let admitted = AdmittedComponent {
-        scope: ComponentPackageScope {
+        target: ComponentPackageCoordinate {
             env_key: ENV_KEY.to_owned(),
             package_id: package_id.to_owned(),
             package_version: PACKAGE_VERSION.to_owned(),
@@ -227,7 +227,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     project
         .execute("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
-        .expect("scope the project seed session");
+        .expect("target the project seed session");
     let blob_put = admit_component(
         project,
         PACKAGE,
@@ -599,8 +599,8 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let (mut project, project_task) = connect(&project_url).await;
     provision_project(&project, &project_url).await;
     let mut authority = Authority::new("http://127.0.0.1:9/").await;
-    // The plugin, constructed the way the host constructs it, scoped to the
-    // component the way the host scopes it at bind time.
+    // The plugin, constructed the way the host constructs it, targeted to the
+    // component the way the host targets it at bind time.
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(project_url.clone())),
@@ -973,7 +973,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "read binding fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT),
+            wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, ENVIRONMENT),
         )
         .unwrap(),
     );

@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_scope_or_principal_is_refused_before_connecting() {
+    fn malformed_target_or_principal_is_refused_before_connecting() {
         type SetField = fn(&mut MembershipRequest, &str);
         let fields: [(SetField, &str); 4] = [
             (|request, value| request.org = value.to_owned(), "Bad-org"),

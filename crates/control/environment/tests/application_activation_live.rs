@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScopeKind};
+use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentityKind};
 use wamn_digest::bytes_sha256;
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
@@ -146,7 +146,7 @@ fn component(
         .collect();
     let admitted = descriptor
         .clone()
-        .into_admitted(wamn_catalog::ComponentPackageScope::new(
+        .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
             ENV_KEY, name, "1.0.0",
         )?);
     let config =
@@ -659,7 +659,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mounted = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &old_a.canonical_bytes(),
         "running application a",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
             wamn_environment_control::environment::analyse::select_application(
                 &document,
                 Some("a"),
@@ -1222,7 +1222,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     };
     let mut credential_checks = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+        .filter(|family| family.identity_kind() != WorkloadRoleIdentityKind::Control)
     {
         let mut project_admin = url::Url::parse(system.url())?;
         project_admin.set_path(&database_name);
@@ -1579,7 +1579,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
 #[tokio::test]
 async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_history()
 -> anyhow::Result<()> {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::{platform_migrations, provision_system};
     use wamn_schema_control::MigrationSource;
 
@@ -1645,7 +1645,7 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
     let (mut project, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    let mut files = platform_migrations::embedded_sources(MigrationScope::Project);
+    let mut files = platform_migrations::embedded_sources(MigrationDatabase::Project);
     for (label, sql) in [
         (
             "create",
@@ -1674,9 +1674,12 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
         relative_path: format!("migrations/project/{:04}_pending.sql", files.len() + 1),
         bytes: b"UPDATE platform.reset_probe SET value=value+1;".to_vec(),
     });
-    let before =
-        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
-            .await?;
+    let before = wamn_package_control::schema_baseline::observe(
+        &project,
+        MigrationDatabase::Project,
+        &files,
+    )
+    .await?;
     assert_eq!(
         project
             .query_one("SELECT value FROM platform.reset_probe", &[])
@@ -1704,7 +1707,7 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
         assert_eq!(
             wamn_package_control::schema_baseline::observe(
                 &project,
-                MigrationScope::Project,
+                MigrationDatabase::Project,
                 &files
             )
             .await?,
@@ -1760,9 +1763,12 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
     );
     sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
     sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
-    let restored =
-        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
-            .await?;
+    let restored = wamn_package_control::schema_baseline::observe(
+        &project,
+        MigrationDatabase::Project,
+        &files,
+    )
+    .await?;
     assert_eq!(restored.installed, before.installed);
     assert_eq!(restored.pending, before.pending);
     assert_eq!(
@@ -1804,17 +1810,24 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
         .await
         .is_err()
     );
-    let uncertain =
-        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
-            .await?;
+    let uncertain = wamn_package_control::schema_baseline::observe(
+        &project,
+        MigrationDatabase::Project,
+        &files,
+    )
+    .await?;
     let error =
         sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
             .await
             .unwrap_err();
     assert!(error.to_string().contains("--resolve"));
     assert_eq!(
-        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
-            .await?,
+        wamn_package_control::schema_baseline::observe(
+            &project,
+            MigrationDatabase::Project,
+            &files
+        )
+        .await?,
         uncertain
     );
     assert_eq!(

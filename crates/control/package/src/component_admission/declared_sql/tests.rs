@@ -17,7 +17,7 @@ fn assert_admitted(statements: &[&str]) {
 }
 
 // wamn-9e4ks: the guest reaches no platform counter function. These were the
-// run-time refusals of `reject_claim_mutation` on a declared statement.
+// run-time refusals of `reject_identity_mutation` on a declared statement.
 #[test]
 fn refuses_counter_function_calls() {
     assert_refused(
@@ -127,7 +127,7 @@ fn refuses_xml_query_functions() {
     );
 }
 
-// wamn-cjv.2: the in-band claim and role mutation guard.
+// wamn-cjv.2: the in-band identity and role mutation guard.
 #[test]
 fn refuses_session_writes() {
     assert_refused(

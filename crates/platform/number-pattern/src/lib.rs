@@ -43,7 +43,7 @@ pub enum Part {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Counter {
     name: Box<str>,
-    scope: Scope,
+    policy: Policy,
     width: Option<u16>,
     pad: char,
     hex: bool,
@@ -56,8 +56,8 @@ impl Counter {
     }
 
     /// When the counter starts again, or whether a key reuses its value.
-    pub const fn scope(&self) -> &Scope {
-        &self.scope
+    pub const fn policy(&self) -> &Policy {
+        &self.policy
     }
 
     /// The width the value is padded to, if the token states one.
@@ -77,13 +77,16 @@ impl Counter {
 
     /// Whether the token is bare: `{seq:<counter>}` with no option.
     pub const fn is_bare(&self) -> bool {
-        matches!(self.scope, Scope::Always) && self.width.is_none() && self.pad == '0' && !self.hex
+        matches!(self.policy, Policy::Always)
+            && self.width.is_none()
+            && self.pad == '0'
+            && !self.hex
     }
 }
 
 /// How a counter advances.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Scope {
+pub enum Policy {
     /// One counter that never resets.
     Always,
     /// `reset=<key>`: advances every call and starts at 1 for each distinct key.
@@ -92,8 +95,8 @@ pub enum Scope {
     Per(Key),
 }
 
-impl Scope {
-    /// The key the scope names, if it names one.
+impl Policy {
+    /// The key the policy names, if it names one.
     pub const fn key(&self) -> Option<&Key> {
         match self {
             Self::Always => None,
@@ -176,7 +179,7 @@ impl Pattern {
             .iter()
             .filter_map(|part| match part {
                 Part::Field(name) => Some(&**name),
-                Part::Counter(counter) => match counter.scope.key() {
+                Part::Counter(counter) => match counter.policy.key() {
                     Some(Key::Field(name)) => Some(&**name),
                     _ => None,
                 },
@@ -301,10 +304,10 @@ pub fn parse(pattern: &str) -> Result<Pattern, PatternError> {
         } else {
             Key::Field(name)
         };
-        counter.scope = match &counter.scope {
-            Scope::Reset(_) => Scope::Reset(key),
-            Scope::Per(_) => Scope::Per(key),
-            Scope::Always => unreachable!("only a reset= or per= option names a key"),
+        counter.policy = match &counter.policy {
+            Policy::Reset(_) => Policy::Reset(key),
+            Policy::Per(_) => Policy::Per(key),
+            Policy::Always => unreachable!("only a reset= or per= option names a key"),
         };
     }
     let pattern_value = Pattern {
@@ -333,7 +336,7 @@ fn token(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
 fn counter(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
     let mut options = body.split(',');
     let name = identifier(options.next().unwrap_or_default(), "counter")?;
-    let mut scope = Scope::Always;
+    let mut policy = Policy::Always;
     let mut key = None;
     let mut width = None;
     let mut pad = None;
@@ -349,7 +352,7 @@ fn counter(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
             .strip_prefix("reset=")
             .or(option.strip_prefix("per="))
         {
-            if scope != Scope::Always {
+            if policy != Policy::Always {
                 return Err(invalid("is a second reset= or per="));
             }
             // A named key is a placeholder until the pattern's counters are known.
@@ -359,10 +362,10 @@ fn counter(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
                 key = Some(identifier(value, "key")?.into());
                 Key::Field("".into())
             };
-            scope = if option.starts_with("reset=") {
-                Scope::Reset(resolved)
+            policy = if option.starts_with("reset=") {
+                Policy::Reset(resolved)
             } else {
-                Scope::Per(resolved)
+                Policy::Per(resolved)
             };
         } else if let Some(value) = option.strip_prefix("width=") {
             if width.is_some() {
@@ -395,7 +398,7 @@ fn counter(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
     Ok((
         Part::Counter(Counter {
             name: name.into(),
-            scope,
+            policy,
             width,
             pad: pad.unwrap_or('0'),
             hex,
@@ -448,7 +451,7 @@ fn refuse_counter_cycles(pattern: &Pattern, text: &str) -> Result<(), PatternErr
         pattern
             .counters()
             .find(|counter| &*counter.name == name)
-            .and_then(|counter| match counter.scope.key() {
+            .and_then(|counter| match counter.policy.key() {
                 Some(Key::Counter(next)) => Some(next.clone()),
                 _ => None,
             })
@@ -490,14 +493,14 @@ mod tests {
         let pattern = parse("{field:facility}-PO-{seq:po,reset=facility,width=6}").unwrap();
         assert_eq!(pattern.fields(), ["facility"]);
         assert_eq!(
-            pattern.counters().next().unwrap().scope(),
-            &Scope::Reset(Key::Field("facility".into()))
+            pattern.counters().next().unwrap().policy(),
+            &Policy::Reset(Key::Field("facility".into()))
         );
 
         let pattern = parse("{date:YY}-{seq:po,reset=date:YY}").unwrap();
         assert_eq!(
-            pattern.counters().next().unwrap().scope(),
-            &Scope::Reset(Key::Date(DateFormat::ShortYear))
+            pattern.counters().next().unwrap().policy(),
+            &Policy::Reset(Key::Date(DateFormat::ShortYear))
         );
         assert!(pattern.fields().is_empty());
 
@@ -505,12 +508,12 @@ mod tests {
             parse("B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}").unwrap();
         let counters = pattern.counters().collect::<Vec<_>>();
         assert_eq!(
-            counters[0].scope(),
-            &Scope::Per(Key::Field("batch_id".into()))
+            counters[0].policy(),
+            &Policy::Per(Key::Field("batch_id".into()))
         );
         assert_eq!(
-            counters[1].scope(),
-            &Scope::Reset(Key::Counter("batch".into()))
+            counters[1].policy(),
+            &Policy::Reset(Key::Counter("batch".into()))
         );
         assert_eq!(pattern.fields(), ["batch_id"]);
     }

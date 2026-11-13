@@ -26,12 +26,12 @@ use std::path::PathBuf;
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageScope,
+    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
     ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
     ServingAttachment, ServingComponent, ServingManifest, ServingRelation, ServingRelease,
     ServingRoute,
 };
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 use wamn_schema_control::{
     BareSchemaName, HttpRoute as AuthoredHttpRoute, canonical_http_route_template,
     normalize_http_route,
@@ -60,7 +60,7 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, false)";
+const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, false)";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE env_key = $1 AND manifest_digest = $2";
@@ -326,7 +326,7 @@ pub async fn publish_local(
     let (client, connection) = tokio_postgres::connect(target.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
     client
-        .query_one(CLAIM_ENV_KEY_SQL, &[&args.env_key()])
+        .query_one(ASSIGN_ENV_KEY_SQL, &[&args.env_key()])
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
@@ -341,7 +341,7 @@ pub async fn publish_local(
     verify_projected_environment_policy(
         projected.as_ref(),
         &policy,
-        &ReleaseScope::new(args.env_key(), &args.environment),
+        &ReleaseTarget::new(args.env_key(), &args.environment),
         &run_schema,
     )?;
     drop(client);
@@ -414,7 +414,7 @@ fn compose_verified_application(
         digest,
         route_digest: route_digest.to_owned(),
         application: wamn_catalog::ServingEntryMember {
-            package_id: application.scope.package_id.as_str().to_owned(),
+            package_id: application.target.package_id.as_str().to_owned(),
             component: application.component.as_str().to_owned(),
             digest: application.component_digest.as_str().to_owned(),
         },
@@ -465,7 +465,7 @@ pub fn refresh_composed_entry(
     let (member, bytes) = covering_application(published, candidates, applications, None)?;
     let route_digest = wamn_digest::bytes_sha256(route_bytes);
     if entry.as_ref().is_some_and(|entry| {
-        entry.application.package_id == member.scope.package_id
+        entry.application.package_id == member.target.package_id
             && entry.application.component == member.component
             && entry.application.digest == member.component_digest
             && entry.route_digest == route_digest
@@ -525,9 +525,9 @@ fn covering_application<'a>(
     for (member, bytes) in candidates {
         if definition
             .packages
-            .contains(member.scope.package_id.as_str())
+            .contains(member.target.package_id.as_str())
             && published.manifest.components.iter().any(|released| {
-                released.package_id == member.scope.package_id
+                released.package_id == member.target.package_id
                     && released.descriptor.component == member.component
                     && released.descriptor.component_digest == member.component_digest
             })
@@ -549,7 +549,10 @@ fn covering_application<'a>(
                 "application {name:?} has multiple members covering every route: {}",
                 members
                     .iter()
-                    .map(|(member, _)| format!("{}::{}", member.scope.package_id, member.component))
+                    .map(|(member, _)| format!(
+                        "{}::{}",
+                        member.target.package_id, member.component
+                    ))
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .collect::<Vec<_>>()
@@ -606,11 +609,11 @@ pub fn assemble_local_release(
     for admission in admissions {
         let fact = admission.facts();
         ensure!(
-            fact.scope.env_key == args.env_key()
+            fact.target.env_key == args.env_key()
                 && packages
                     .iter()
-                    .any(|package| package.package_id() == fact.scope.package_id
-                        && package.package_version() == fact.scope.package_version),
+                    .any(|package| package.package_id() == fact.target.package_id
+                        && package.package_version() == fact.target.package_version),
             "local admission is outside package membership"
         );
         release_components.insert(
@@ -891,19 +894,19 @@ impl ReleaseComponents {
         ensure!(
             self.connections
                 .insert(
-                    (fact.scope.package_id.clone(), fact.component.clone()),
+                    (fact.target.package_id.clone(), fact.component.clone()),
                     connections,
                 )
                 .is_none(),
             "package {}@{} names component {} twice",
-            fact.scope.package_id,
-            fact.scope.package_version,
+            fact.target.package_id,
+            fact.target.package_version,
             fact.component
         );
         self.facts
             .entry((
-                fact.scope.package_id.clone(),
-                fact.scope.package_version.clone(),
+                fact.target.package_id.clone(),
+                fact.target.package_version.clone(),
             ))
             .or_default()
             .push(fact);
@@ -947,14 +950,14 @@ impl ReleaseComponents {
         fact: &AdmittedComponent,
     ) -> Result<Vec<ComponentConnection>, PublishManifestError> {
         self.connections
-            .get(&(fact.scope.package_id.clone(), fact.component.clone()))
+            .get(&(fact.target.package_id.clone(), fact.component.clone()))
             .cloned()
             .ok_or_else(|| {
                 PublishManifestError::new(
                     PublishManifestErrorType::Component,
                     format!(
                         "component {:?} of package {:?} has no descriptor",
-                        fact.component, fact.scope.package_id
+                        fact.component, fact.target.package_id
                     ),
                 )
             })
@@ -983,9 +986,9 @@ pub async fn read_release(
     manifest_digest: &str,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+        .query_one(ASSIGN_ENV_KEY_SQL, &[&env_key])
         .await
-        .map_err(|error| storage("claim the release tenant", error))?;
+        .map_err(|error| storage("bind the release tenant identity", error))?;
     transaction
         .query_opt(READ_RELEASE_SQL, &[&env_key, &manifest_digest])
         .await
@@ -1004,11 +1007,14 @@ fn descriptor_components(
 ) -> anyhow::Result<ReleaseComponents> {
     let mut components = ReleaseComponents::default();
     for (package, opened) in packages.iter().zip(opened) {
-        let scope =
-            ComponentPackageScope::new(env_key, package.package_id(), package.package_version())
-                .context("name the release component scope")?;
+        let target = ComponentPackageCoordinate::new(
+            env_key,
+            package.package_id(),
+            package.package_version(),
+        )
+        .context("name the release component target")?;
         for descriptor in wamn_package_control::package_artifact::read_descriptors(opened.root())? {
-            let facts = descriptor.into_admitted(scope.clone());
+            let facts = descriptor.into_admitted(target.clone());
             wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
                 format!(
                     "component {:?} of package {}@{} carries an invalid effect projection",
@@ -1110,8 +1116,8 @@ mod tests {
                 environment_is_disposable: false,
             };
             let mut component = closure_component("source_fixture", None);
-            component.scope.package_id = "source_fixture".to_owned();
-            component.scope.env_key = request.env_key();
+            component.target.package_id = "source_fixture".to_owned();
+            component.target.env_key = request.env_key();
             let mut components = ReleaseComponents::default();
             components
                 .insert(component, Vec::new(), BTreeMap::new())
@@ -1639,7 +1645,7 @@ mod tests {
             .zip(&bytes)
             .map(|(package, bytes)| {
                 let mut fact = closure_component("entry", None);
-                fact.scope.package_id = package.into();
+                fact.target.package_id = package.into();
                 fact.component_digest = wamn_digest::bytes_sha256(bytes);
                 fact
             })
@@ -1648,7 +1654,7 @@ mod tests {
             ServingRelease {
                 packages: facts
                     .iter()
-                    .map(|fact| PackageCoordinate::new(&fact.scope.package_id, "1.0.0").unwrap())
+                    .map(|fact| PackageCoordinate::new(&fact.target.package_id, "1.0.0").unwrap())
                     .collect(),
             },
             facts
@@ -1658,7 +1664,7 @@ mod tests {
             facts[..2]
                 .iter()
                 .map(|fact| ServingRoute {
-                    package_id: fact.scope.package_id.clone(),
+                    package_id: fact.target.package_id.clone(),
                     component: "entry".into(),
                     operation: "run".into(),
                     type_: OperationType::Get,
@@ -1694,7 +1700,7 @@ mod tests {
         // component is outside its declared packages and cannot become its member.
         let (member, _) =
             covering_application(&published, &candidates(), &applications, None).unwrap();
-        assert_eq!(member.scope.package_id, "overlay");
+        assert_eq!(member.target.package_id, "overlay");
         assert_eq!(
             covering_application(&published, &candidates(), &applications, Some("orders"))
                 .unwrap()
@@ -1799,7 +1805,7 @@ mod tests {
             let components =
                 descriptor_components(env_key, &packages, std::slice::from_ref(&opened)).unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
-            assert_eq!(fact.scope.env_key, env_key);
+            assert_eq!(fact.target.env_key, env_key);
             project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
         };
         let first = project("acme--plant--dev");
@@ -1966,10 +1972,10 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.scope.package_id = "base".to_owned();
+        base.target.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.scope.package_id = "overlay".to_owned();
-        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
@@ -2042,10 +2048,10 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.scope.package_id = "base".to_owned();
+        base.target.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.scope.package_id = "overlay".to_owned();
-        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
         let stale_pin = format!("sha256:{}", "d".repeat(64));
         assert_ne!(stale_pin, base.component_digest);
@@ -2087,7 +2093,7 @@ mod tests {
     }
 
     #[test]
-    fn release_projection_preserves_operation_scoped_statement_facts() {
+    fn release_projection_preserves_operation_targeted_statement_facts() {
         let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
         let path = "generated/sql/widget/get.sql".to_owned();
@@ -2127,7 +2133,7 @@ mod tests {
             policy: wamn_control_registry::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
-        let release = ReleaseScope::new("tenant-a", "prod");
+        let release = ReleaseTarget::new("tenant-a", "prod");
         let schema = BareSchemaName::new("wamn_run").unwrap();
         assert_eq!(
             verify_projected_environment_policy(None, &source_policy, &release, &schema)

@@ -552,9 +552,9 @@ Do not infer execution from the aggregate Cargo pass count.
 | Existing reference | Current owner and required setup |
 | --- | --- |
 | `[RUN-PLANE-RECONCILE]` | `crates/control/environment/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
-| `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
+| `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
-| `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
+| `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
@@ -655,7 +655,7 @@ It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
 The fixture's NATS admits the materializer consumers of the packages that the command gives `wamn dev up`.
 These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
 The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
-It also sets the event materializer credential, which the broker scopes to the source stream.
+It also sets the event materializer credential, which the broker targets to the source stream.
 It sets `WAMN_DEV_ENV_ROOT` to `delivery-timings/env` in the target directory, which survives runs, so the compile cache survives too.
 Before the command starts, the fixture counts the files under `dev-wasmtime-cache/modules` in that root, without the `.stats` files.
 It writes the count to `cache-state.json` in the results directory, so that you can read a cold run as cold.
@@ -927,7 +927,7 @@ CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-target/dep4 \
 
 Supply `WAMN_TEST_CLUSTER`, `WAMN_TEST_OWNER_PASSWORD`, `WAMN_KCL`, and the publication inputs from the preceding instructions.
 Supply the second chart through `WAMN_RELEASE_CHART`.
-The case observes running image digests, Helm revisions, pods, credentials, signing rows, schema identity, and application data.
+The case observes running image digests, Helm revisions, pods, credentials, signing rows, scheman identity, and application data.
 It leaves setup, cleanup, readiness, and data retention unverified until their approved cluster runs pass.
 Automatic rollback after a failed rollout stays unverified even after this case passes.
 This case explicitly reselects an earlier image and does not induce a rollout failure.
@@ -983,8 +983,8 @@ cargo test --locked --offline -p wamn-schema-introspection --test file_reference
 The file fixture declares read and write S3 bindings, including a binding for a store without a CDN host.
 Its document migration references `platform.file(id)`.
 The metadata tests cover grants, stamps, history, connection disablement, and referenced deletion refusal.
-Registry tests use real scoped logins for `registry.lookup_file_connection`.
-They refuse unmapped logins, forged scope, disabled connections, and projects without enablement.
+Registry tests use real targeted logins for `registry.lookup_file_connection`.
+They refuse unmapped logins, forged target, disabled connections, and projects without enablement.
 They also read the recorded generation after a bucket and prefix change.
 
 The native host tests start an owned MinIO container and disposable PostgreSQL servers.
@@ -1204,7 +1204,7 @@ The browser opens separate membership forms from the User and Project table tool
 Each form returns to its owning table after submission.
 Record actions beside the title grant and revoke project-admin access.
 Membership rows provide the Revoke membership action.
-The User screen scopes every write to the principal in its address.
+The User screen targets every write to the principal in its address.
 Each write must update the screen.
 The second user opens its single project directly and can return to the organization. Addresses for `receiving`, Users, and User show no page.
 The project-admin session uses the project names from `control.mine` and never calls `project.list`.

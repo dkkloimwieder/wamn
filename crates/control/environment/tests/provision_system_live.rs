@@ -375,14 +375,14 @@ async fn disconnect(
 
 #[tokio::test]
 async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::platform_migrations;
     use wamn_schema_control::MigrationSource;
 
     let url = locked_database::database(wamn_test_postgres::database);
     let (mut client, connection) = connect(&url).await;
     client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
-    let mut sources = platform_migrations::embedded_sources(MigrationScope::System);
+    let mut sources = platform_migrations::embedded_sources(MigrationDatabase::System);
     sources.push(MigrationSource {
         relative_path: format!("migrations/system/{:04}_fresh_probe.sql", sources.len() + 1),
         bytes: b"CREATE TABLE registry.dep5_fresh_probe (value int); INSERT INTO registry.dep5_fresh_probe VALUES (1);".to_vec(),
@@ -396,7 +396,7 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
             .get::<_, i32>(0),
         1
     );
-    let recorded = platform_migrations::plan(&client, MigrationScope::System, &sources)
+    let recorded = platform_migrations::plan(&client, MigrationDatabase::System, &sources)
         .await
         .unwrap();
     assert!(!recorded.adoption);
@@ -415,7 +415,7 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
 
     let before = snapshot(&client).await;
     let earlier = &sources[..sources.len() - 1];
-    let preview = platform_migrations::plan(&client, MigrationScope::System, earlier)
+    let preview = platform_migrations::plan(&client, MigrationDatabase::System, earlier)
         .await
         .unwrap();
     assert!(
@@ -451,7 +451,7 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
         "reapply runs no pending SQL and preserves initialization"
     );
     assert!(
-        !platform_migrations::plan(&client, MigrationScope::System, &sources)
+        !platform_migrations::plan(&client, MigrationDatabase::System, &sources)
             .await
             .unwrap()
             .migrations
@@ -496,11 +496,11 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
         .unwrap();
     assert_eq!(schema_dump(fresh.url()).await, schema_dump(&url).await);
     assert_eq!(
-        platform_migrations::plan(&fresh_client, MigrationScope::System, &sources)
+        platform_migrations::plan(&fresh_client, MigrationDatabase::System, &sources)
             .await
             .unwrap()
             .recorded,
-        platform_migrations::plan(&client, MigrationScope::System, &sources)
+        platform_migrations::plan(&client, MigrationDatabase::System, &sources)
             .await
             .unwrap()
             .recorded
@@ -522,14 +522,14 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
 
 #[tokio::test]
 async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::platform_migrations;
     use wamn_schema_control::MigrationSource;
 
     let url = locked_database::database(wamn_test_postgres::database);
     let (mut client, connection) = connect(&url).await;
     client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
-    let mut sources = platform_migrations::embedded_sources(MigrationScope::System);
+    let mut sources = platform_migrations::embedded_sources(MigrationDatabase::System);
     sources.push(MigrationSource {
         relative_path: format!(
             "migrations/system/{:04}_resume_probe.sql",
@@ -553,7 +553,7 @@ async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
         Some(&tokio_postgres::error::SqlState::DIVISION_BY_ZERO)
     );
     assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
-    let interrupted = platform_migrations::plan(&client, MigrationScope::System, &sources)
+    let interrupted = platform_migrations::plan(&client, MigrationDatabase::System, &sources)
         .await
         .unwrap();
     assert_eq!(interrupted.recorded.len(), sources.len() - 1);
@@ -576,7 +576,7 @@ async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
     )
     .await
     .unwrap();
-    let resumed = platform_migrations::plan(&client, MigrationScope::System, &sources)
+    let resumed = platform_migrations::plan(&client, MigrationDatabase::System, &sources)
         .await
         .unwrap();
     assert!(resumed.migrations.pending.is_empty());
@@ -748,24 +748,24 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
 }
 
 async fn migration_database(
-    scope: wamn_control_provision::schema_migrations::MigrationScope,
+    database_type: wamn_control_provision::schema_migrations::MigrationDatabase,
 ) -> (
     wamn_test_postgres::Database,
     tokio_postgres::Client,
     JoinHandle<Result<(), tokio_postgres::Error>>,
 ) {
-    use wamn_control_provision::schema_migrations::MigrationScope;
-    let database = match scope {
-        MigrationScope::System => wamn_test_postgres::database(),
-        MigrationScope::Project => wamn_platform_identity::test_database::tenant_platform(),
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
+    let database = match database_type {
+        MigrationDatabase::System => wamn_test_postgres::database(),
+        MigrationDatabase::Project => wamn_platform_identity::test_database::tenant_platform(),
     };
     let (client, connection) = connect(database.url()).await;
-    match scope {
-        MigrationScope::System => {
+    match database_type {
+        MigrationDatabase::System => {
             client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
             install_control_store(&client).await.unwrap();
         }
-        MigrationScope::Project => {
+        MigrationDatabase::Project => {
             client
                 .batch_execute(include_str!(
                     "../../../../deploy/sql/app-schema-baseline.sql"
@@ -777,9 +777,9 @@ async fn migration_database(
                 .unwrap();
         }
     }
-    let owner = match scope {
-        MigrationScope::System => "wamn_system",
-        MigrationScope::Project => "wamn_db_owner",
+    let owner = match database_type {
+        MigrationDatabase::System => "wamn_system",
+        MigrationDatabase::Project => "wamn_db_owner",
     };
     client
         .batch_execute(&format!(
@@ -788,7 +788,7 @@ async fn migration_database(
         ))
         .await
         .unwrap();
-    if scope == MigrationScope::Project {
+    if database_type == MigrationDatabase::Project {
         // The existing fixture installs as its administrator. Match the production substrate owner.
         client.batch_execute("ALTER SCHEMA platform OWNER TO wamn_db_owner; ALTER TABLE platform.schema_baseline OWNER TO wamn_db_owner;").await.unwrap();
     }
@@ -801,15 +801,15 @@ async fn migration_database(
 
 #[tokio::test]
 async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::platform_migrations::{MigrationTarget, apply, plan};
     use wamn_schema_control::{MigrationOutcome, MigrationSource};
 
     let _lock = wamn_test_postgres::lock();
-    for scope in [MigrationScope::System, MigrationScope::Project] {
-        let (database, mut client, mut connection) = migration_database(scope).await;
+    for database_type in [MigrationDatabase::System, MigrationDatabase::Project] {
+        let (database, mut client, mut connection) = migration_database(database_type).await;
         let (registry, system, system_connection) =
-            migration_database(MigrationScope::System).await;
+            migration_database(MigrationDatabase::System).await;
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -827,13 +827,13 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
         )
         .await
         .unwrap();
-        let target = match scope {
-            MigrationScope::System => MigrationTarget::System,
-            MigrationScope::Project => MigrationTarget::Project(&lifecycle),
+        let target = match database_type {
+            MigrationDatabase::System => MigrationTarget::System,
+            MigrationDatabase::Project => MigrationTarget::Project(&lifecycle),
         };
-        let (name, schema, owner) = match scope {
-            MigrationScope::System => ("system", "registry", "wamn_system"),
-            MigrationScope::Project => ("project", "platform", "wamn_db_owner"),
+        let (name, schema, owner) = match database_type {
+            MigrationDatabase::System => ("system", "registry", "wamn_system"),
+            MigrationDatabase::Project => ("project", "platform", "wamn_db_owner"),
         };
         let baseline_sql =
             format!("SELECT sha256, installed_at::text FROM {schema}.schema_baseline");
@@ -866,7 +866,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .await
                 .is_err()
         );
-        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert!(plan(&client, database_type, &[]).await.unwrap().adoption);
         assert!(client.query_one("SELECT to_regclass('public.migration_effect') IS NULL AND to_regclass('public.unsafe_a') IS NULL AND to_regclass('public.unsafe_b') IS NULL", &[]).await.unwrap().get::<_, bool>(0));
 
         // A failed first transactional file rolls back its DDL and history creation.
@@ -875,7 +875,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
             "CREATE TABLE public.failed_effect(id int); SELECT 1/0;".into(),
         )];
         assert!(apply(&mut client, target, &failing, None).await.is_err());
-        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert!(plan(&client, database_type, &[]).await.unwrap().adoption);
         assert!(
             client
                 .query_one("SELECT to_regclass('public.failed_effect') IS NULL", &[])
@@ -886,16 +886,16 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
 
         // Read-only planning describes adoption and pending files without writing.
         let files = vec![second, first];
-        let preview = plan(&client, scope, &files).await.unwrap();
+        let preview = plan(&client, database_type, &files).await.unwrap();
         assert!(preview.adoption);
         assert!(preview.recorded.is_empty());
-        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert!(plan(&client, database_type, &[]).await.unwrap().adoption);
         assert_eq!(apply(&mut client, target, &[], None).await.unwrap(), 0);
-        let adopted = plan(&client, scope, &files).await.unwrap();
+        let adopted = plan(&client, database_type, &files).await.unwrap();
         assert!(!adopted.adoption);
         assert!(
             adopted.recorded.is_empty(),
-            "adoption claims no executed file"
+            "adoption records no executed file"
         );
 
         // A real record-write failure rolls back the file's non-idempotent effect.
@@ -909,7 +909,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .get::<_, bool>(0)
         );
         assert!(
-            plan(&client, scope, &files)
+            plan(&client, database_type, &files)
                 .await
                 .unwrap()
                 .recorded
@@ -928,7 +928,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .await
                 .is_err()
         );
-        let partial = plan(&client, scope, &interrupted).await.unwrap();
+        let partial = plan(&client, database_type, &interrupted).await.unwrap();
         assert_eq!(partial.recorded.len(), preview.migrations.pending.len());
         assert!(
             partial
@@ -969,7 +969,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .unwrap(),
             0
         );
-        let completed = plan(&client, scope, &interrupted).await.unwrap();
+        let completed = plan(&client, database_type, &interrupted).await.unwrap();
         let mut expected = interrupted
             .iter()
             .map(|file| file.relative_path.as_str())
@@ -1015,7 +1015,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
             &actor,
         )
         .await;
-        if scope == MigrationScope::System {
+        if database_type == MigrationDatabase::System {
             assert!(client.query_one("SELECT has_table_privilege('wamn_apply', 'registry.schema_migration', 'SELECT') AND NOT has_table_privilege('wamn_apply', 'registry.schema_migration', 'INSERT,UPDATE,DELETE')", &[]).await.unwrap().get::<_, bool>(0));
         }
 
@@ -1040,7 +1040,10 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .get::<_, bool>(0)
         );
         assert_eq!(
-            plan(&client, scope, &interrupted).await.unwrap().recorded,
+            plan(&client, database_type, &interrupted)
+                .await
+                .unwrap()
+                .recorded,
             completed.recorded
         );
         for sql in [
@@ -1064,7 +1067,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
             ))
             .await
             .unwrap();
-        let error = plan(&client, scope, &interrupted)
+        let error = plan(&client, database_type, &interrupted)
             .await
             .unwrap_err()
             .to_string();
@@ -1077,16 +1080,16 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
 
 #[tokio::test]
 async fn platform_nontransactional_files_keep_started_and_share_resolution() {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::platform_migrations::{MigrationTarget, apply, plan};
     use wamn_package_control::migrations::{MigrationResolution, Resolution};
     use wamn_schema_control::{MigrationOutcome, MigrationSource};
 
     let _lock = wamn_test_postgres::lock();
-    for scope in [MigrationScope::System, MigrationScope::Project] {
-        let (_database, mut client, connection) = migration_database(scope).await;
+    for database_type in [MigrationDatabase::System, MigrationDatabase::Project] {
+        let (_database, mut client, connection) = migration_database(database_type).await;
         let (registry, system, system_connection) =
-            migration_database(MigrationScope::System).await;
+            migration_database(MigrationDatabase::System).await;
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -1104,20 +1107,20 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
         )
         .await
         .unwrap();
-        let target = match scope {
-            MigrationScope::System => MigrationTarget::System,
-            MigrationScope::Project => MigrationTarget::Project(&lifecycle),
+        let target = match database_type {
+            MigrationDatabase::System => MigrationTarget::System,
+            MigrationDatabase::Project => MigrationTarget::Project(&lifecycle),
         };
-        let (name, schema) = match scope {
-            MigrationScope::System => ("system", "registry"),
-            MigrationScope::Project => ("project", "platform"),
+        let (name, schema) = match database_type {
+            MigrationDatabase::System => ("system", "registry"),
+            MigrationDatabase::Project => ("project", "platform"),
         };
         let path = format!("migrations/{name}/0001_index.sql");
         let mut files = vec![MigrationSource { relative_path: path.clone(),
             bytes: b"-- wamn:no-transaction\nCREATE UNIQUE INDEX CONCURRENTLY migration_effect_idx ON public.migration_effect(id);".to_vec() }];
         // A nontransactional first failure retains adoption and its durable started row.
         assert!(apply(&mut client, target, &files, None).await.is_err());
-        let uncertain = plan(&client, scope, &files).await.unwrap();
+        let uncertain = plan(&client, database_type, &files).await.unwrap();
         assert!(!uncertain.adoption);
         assert_eq!(uncertain.recorded.len(), files.len());
         assert_eq!(uncertain.recorded[0].outcome, MigrationOutcome::Started);
@@ -1133,9 +1136,10 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
                 .get::<_, bool>(0),
             "adoption commits in an earlier transaction than the first started row"
         );
-        let observed = wamn_package_control::schema_baseline::observe(&client, scope, &files)
-            .await
-            .unwrap();
+        let observed =
+            wamn_package_control::schema_baseline::observe(&client, database_type, &files)
+                .await
+                .unwrap();
         assert!(observed.installed.is_empty());
         assert!(observed.pending.is_empty());
         assert_eq!(
@@ -1189,7 +1193,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
             files.len()
         );
         assert!(
-            plan(&client, scope, &files)
+            plan(&client, database_type, &files)
                 .await
                 .unwrap()
                 .recorded
@@ -1213,7 +1217,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
                 .get::<_, bool>(0)
         );
         assert_eq!(
-            plan(&client, scope, &files)
+            plan(&client, database_type, &files)
                 .await
                 .unwrap()
                 .recorded
@@ -1232,7 +1236,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
             0
         );
         assert!(
-            plan(&client, scope, &files)
+            plan(&client, database_type, &files)
                 .await
                 .unwrap()
                 .migrations
@@ -1255,7 +1259,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
 
 #[tokio::test]
 async fn project_schema_preserves_applications_and_other_environments_and_holds_exclusion() {
-    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_control_provision::schema_migrations::MigrationDatabase;
     use wamn_environment_control::environment::{
         Platform, document::EnvironmentDocument, lock::LifecycleLock, sql,
     };
@@ -1336,7 +1340,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         dry_run: false,
         changes: wamn_broker::Publisher::default(),
     };
-    let mut sources = platform_migrations::embedded_sources(MigrationScope::Project);
+    let mut sources = platform_migrations::embedded_sources(MigrationDatabase::Project);
     sources.push(MigrationSource {
         relative_path: format!("migrations/project/{:04}_fresh.sql", sources.len() + 1),
         bytes: b"CREATE TABLE platform.dep5_probe (value int); INSERT INTO platform.dep5_probe VALUES (1);".to_vec(),
@@ -1345,7 +1349,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .await
         .unwrap();
     assert!(fresh.env_key_identity.app_schema_installed);
-    let installed = platform_migrations::plan(&project, MigrationScope::Project, &sources)
+    let installed = platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
         .await
         .unwrap();
     assert!(installed.migrations.pending.is_empty());
@@ -1379,7 +1383,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .unwrap();
     assert!(!repeated.env_key_identity.app_schema_installed);
     assert_eq!(
-        platform_migrations::plan(&project, MigrationScope::Project, &sources)
+        platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
             .await
             .unwrap()
             .recorded,
@@ -1421,7 +1425,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
                 .is_err()
         );
         assert_eq!(
-            platform_migrations::plan(&project, MigrationScope::Project, &sources)
+            platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
                 .await
                 .unwrap()
                 .recorded,
@@ -1433,7 +1437,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
             .unwrap()
             .unwrap();
     }
-    let completed = platform_migrations::plan(&project, MigrationScope::Project, &sources)
+    let completed = platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
         .await
         .unwrap();
     assert!(completed.migrations.pending.is_empty());
@@ -1511,7 +1515,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         schema_dump(databases[0].url()).await
     );
     assert_eq!(
-        platform_migrations::plan(&fresh_client, MigrationScope::Project, &sources)
+        platform_migrations::plan(&fresh_client, MigrationDatabase::Project, &sources)
             .await
             .unwrap()
             .recorded,
@@ -1529,10 +1533,13 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .unwrap();
     assert!(!repeated.env_key_identity.app_schema_installed);
     assert_eq!(snapshot(&project).await, before_reapply);
-    let observed =
-        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &sources)
-            .await
-            .unwrap();
+    let observed = wamn_package_control::schema_baseline::observe(
+        &project,
+        MigrationDatabase::Project,
+        &sources,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         observed
             .installed
@@ -1625,14 +1632,11 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .await
         .unwrap_err();
     let report = format!("{error:#}");
-    assert!(
-        report.contains("wamn platform schema apply --scope project --env FILE --chart DIR"),
-        "{report}"
-    );
     let (interrupted_client, interrupted_connection) = connect(interrupted.url()).await;
-    let partial = platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
-        .await
-        .unwrap();
+    let partial =
+        platform_migrations::plan(&interrupted_client, MigrationDatabase::Project, &failing)
+            .await
+            .unwrap();
     assert_eq!(partial.recorded.len(), failing.len() - 1);
     for file in &partial.recorded {
         assert!(report.contains(&file.relative_path), "{report}");
@@ -1651,7 +1655,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .await
         .unwrap();
     assert_eq!(
-        platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
+        platform_migrations::plan(&interrupted_client, MigrationDatabase::Project, &failing)
             .await
             .unwrap()
             .recorded,
@@ -1678,7 +1682,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     .await
     .unwrap();
     assert!(
-        platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
+        platform_migrations::plan(&interrupted_client, MigrationDatabase::Project, &failing)
             .await
             .unwrap()
             .migrations

@@ -32,7 +32,7 @@ mod event_batch {
         let retired = LoadedRelease::load_canonical_bytes(
             &retired.canonical_bytes(),
             "retired-component",
-            upgraded.scope().clone(),
+            upgraded.target().clone(),
         )
         .unwrap();
         let client = wamn_broker::nats::PlatformNats::from_env()
@@ -41,14 +41,15 @@ mod event_batch {
             .await
             .unwrap();
         let broker = async_nats::jetstream::new(client.clone());
-        let scope = Triple::new("schedule-live", PROJECT, ENVIRONMENT);
-        let source = wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
-        let advisory = wamn_broker::events::advisory_stream_config(&scope, 1);
+        let coordinate = Triple::new("schedule-live", PROJECT, ENVIRONMENT);
+        let source =
+            wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
+        let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
         let stream = broker.create_stream(source).await.unwrap();
         let advisory = broker.create_stream(advisory).await.unwrap();
         let events = WamnJetstream::new(WamnJetstreamConfig {
             nats: Some(client),
-            event_scope: Some(scope),
+            event_target: Some(coordinate),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
         });
@@ -239,17 +240,18 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
     let target = Triple::new("reset", &project, "dev");
     let other = Triple::new("reset", &project, "other");
     let mut streams = Vec::new();
-    for scope in [&target, &other] {
-        wamn_broker::streams::provision(&broker, scope, 1, Duration::from_secs(120), &[]).await?;
+    for coordinate in [&target, &other] {
+        wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])
+            .await?;
         for config in [
-            source_stream_config(scope, 1, Duration::from_secs(120)),
-            advisory_stream_config(scope, 1),
+            source_stream_config(coordinate, 1, Duration::from_secs(120)),
+            advisory_stream_config(coordinate, 1),
         ] {
             let subject = config.subjects[0]
                 .replace('>', "widget.insert")
                 .replace('*', "message");
             broker.publish(subject, "old event".into()).await?.await?;
-            streams.push((scope == &target, config));
+            streams.push((coordinate == &target, config));
         }
     }
     let result = async {

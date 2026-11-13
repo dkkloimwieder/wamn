@@ -21,14 +21,14 @@ use wamn_schema_generator::{
 };
 use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, artifact_digest FROM catalog.packages \
  WHERE env_key = $1 ORDER BY package_id COLLATE \"C\"";
 // apply-package owns these OID histories beside application tables. No package
 // declaration consumes them, so the declared relation list leaves them out.
 // The sweep below still reads them, because every relation in a package-owned
-// schema is in scope for revocation.
+// schema is in target for revocation.
 const CONTROL_OWNED_RELATION_MAPS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 // A package-owned schema holds relations no package declares. The declared reads
 // bind one relation name at a time, so they never reach those relations and never
@@ -389,9 +389,9 @@ async fn reconcile_in_transaction(
         ReconcileMode::Local(environment) => Some(environment),
         ReconcileMode::Production => None,
     };
-    tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+    tx.query_one(ASSIGN_ENV_KEY_SQL, &[&env_key])
         .await
-        .context("claim package tenant")?;
+        .context("bind package identity")?;
     tx.query_one(LOCK_SQL, &[])
         .await
         .context("lock project data-access carrier")?;
@@ -645,7 +645,7 @@ async fn effective_acl(
 
 /// Read the App authority left on relations no presented package declares.
 ///
-/// The scope is a wall. Only the schemas the presented packages own are read,
+/// The target is a wall. Only the schemas the presented packages own are read,
 /// so a platform schema never enters the sweep. Inside those schemas a relation
 /// counts when it carries an ACL a role holds. That means ordinary tables,
 /// partitioned tables, views, materialized views and foreign tables, all of
@@ -655,7 +655,7 @@ async fn effective_acl(
 ///
 /// Only the relations the declared path already converges drop out here. Every
 /// relation means every relation, so the applier-owned relation maps stay in
-/// scope. Platform roles such as the CDC reader read those maps, and the App
+/// target. Platform roles such as the CDC reader read those maps, and the App
 /// role never does, so a revocation there removes nothing that is true. A named
 /// exception list grows with the applier and hides the day that stops holding.
 async fn undeclared_residue(

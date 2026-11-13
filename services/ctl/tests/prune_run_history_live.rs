@@ -21,7 +21,7 @@
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url, sql,
+    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, compose_url, sql,
     workload_generation_role,
 };
 use wamn_test_infrastructure::ctl_process;
@@ -317,7 +317,7 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
 
     let generation_role = workload_generation_role(
         WorkloadRoleFamily::Retention,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &database,
         },

@@ -40,8 +40,8 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: a prior run-queue batch claim
-//! passed every pure test while the real statement over-claimed on a
+//! correctly here and still misbehave live: a prior run-queue batch lease
+//! passed every pure test while the real statement over-leased on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
@@ -71,7 +71,7 @@ pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
 pub mod sql;
-/// The two T1 control-database read consumers' scoped credential contract.
+/// The two T1 control-database read consumers' targeted credential contract.
 pub mod system_reader;
 /// The pure derivation guest RLS uses to reach a tenant from `current_user`.
 pub mod tenant_key;
@@ -107,7 +107,7 @@ pub use recovery::{
 };
 pub use system_reader::{
     SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorType,
-    parse_system_reader_url, system_reader_generation_role, system_reader_scope_hash,
+    parse_system_reader_url, system_reader_generation_role, system_reader_identity_hash,
 };
 
 pub use secret::{
@@ -121,9 +121,9 @@ pub use wamn_identity_protocol::PlatformComponent;
 pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
-    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError,
-    WorkloadRoleScopeKind, WorkloadSecretBodyKind, workload_generation_role,
-    workload_role_scope_hash,
+    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError,
+    WorkloadRoleIdentityKind, WorkloadSecretBodyKind, workload_generation_role,
+    workload_role_identity_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.
@@ -138,7 +138,7 @@ pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
-/// Environment declarations and scoped connection-reader authority.
+/// Environment declarations and targeted connection-reader authority.
 pub const CONTROL_PORTABLE_STORE_SQL: &str =
     include_str!("../../../../deploy/sql/control-portable-store.sql");
 

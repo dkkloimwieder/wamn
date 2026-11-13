@@ -1,7 +1,7 @@
-//! The claim boundary as ONE reviewable security unit (SR4, wamn-cjv.18): the
-//! `WamnPostgres` plugin state (the correlated claim maps), the identity-format
-//! validators it imports, the in-band claim/causation-mutation guard, and the
-//! `set_config()`-bound claim injection (`begin_with_claims`). This is the exact
+//! The identity boundary as ONE reviewable security unit (SR4, wamn-cjv.18): the
+//! `WamnPostgres` plugin state (the correlated identity maps), the identity-format
+//! validators it imports, the in-band identity/causation-mutation guard, and the
+//! `set_config()`-bound identity injection (`begin_with_identity`). This is the exact
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
 use std::collections::{BTreeSet, HashMap};
@@ -152,36 +152,39 @@ impl std::fmt::Display for SessionGrantRefusal {
 impl std::error::Error for SessionGrantRefusal {}
 
 #[derive(Debug)]
-pub(super) struct ClaimError {
-    pub(super) kind: ClaimErrorKind,
+pub(super) struct SessionIdentityError {
+    pub(super) kind: SessionIdentityErrorKind,
     pub(super) context: &'static str,
     pub(super) source: anyhow::Error,
 }
 
 #[derive(Debug)]
-pub(super) enum ClaimErrorKind {
+pub(super) enum SessionIdentityErrorKind {
     Authorization,
     Infrastructure,
 }
 
-impl std::fmt::Display for ClaimError {
+impl std::fmt::Display for SessionIdentityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.context, self.source)
     }
 }
 
-impl std::error::Error for ClaimError {
+impl std::error::Error for SessionIdentityError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.source.as_ref())
     }
 }
 
-fn principal_read_error(context: &'static str, source: tokio_postgres::Error) -> ClaimError {
-    ClaimError {
+fn principal_read_error(
+    context: &'static str,
+    source: tokio_postgres::Error,
+) -> SessionIdentityError {
+    SessionIdentityError {
         kind: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
-            ClaimErrorKind::Authorization
+            SessionIdentityErrorKind::Authorization
         } else {
-            ClaimErrorKind::Infrastructure
+            SessionIdentityErrorKind::Infrastructure
         },
         context,
         source: source.into(),
@@ -254,39 +257,39 @@ pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
-    /// claim or authorization work.
+    /// identity or authorization work.
     guest_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// Host-owned claim, authorization, and plan-supply project pools. Keeping a
+    /// Host-owned identity, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// component id → env_key claim.
+    /// component id → env_key identity.
     env_keys: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
     projects: std::sync::RwLock<HashMap<String, String>>,
     /// component id → `search_path` schema. Empty (the default) leaves the
     /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
     /// set, the plugin injects `SET LOCAL search_path` alongside the env_key
-    /// claim, so unqualified table names resolve to a host-chosen schema (S6:
+    /// identity, so unqualified table names resolve to a host-chosen schema (S6:
     /// prod = the shared fixture schema, test = a per-run ephemeral schema).
     schemas: std::sync::RwLock<HashMap<String, String>>,
     /// component id → durable-queue lease owner (fqg.4). Absent (the default)
-    /// leaves `app.runner` unset — so every non-claiming path (S2..S6, the
+    /// leaves `app.runner` unset — so every non-binding path (S2..S6, the
     /// gateway) is byte-unchanged. When set, the plugin injects
     /// `SET LOCAL app.runner` so a runner replica reads its owner identity to
-    /// claim/renew queue rows under.
+    /// identity/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the one host-owned workload authority admitted on the
     /// guest-visible WIT surface. Absence preserves ordinary `GuestSql`.
     /// Values enter only from the workload binding config; the guest cannot
     /// select or mutate this discriminator.
     workload_authorities: std::sync::RwLock<HashMap<String, AuthorityClass>>,
-    /// component id → the caller's `app.role` claim (a `roles.name`). Absent
+    /// component id → the caller's `app.role` identity (a `roles.name`). Absent
     /// (the default) binds the empty role, which is the deny floor every
     /// compiled role gate coalesces to. When set, a per-role RLS policy using
-    /// the claim contract documented by `deploy/sql/app-schema.sql` gates on
+    /// the identity contract documented by `deploy/sql/app-schema.sql` gates on
     /// the caller's role instead of denying.
     roles: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the executing principal's `app.user_id` claim (a
+    /// component id → the executing principal's `app.user_id` identity (a
     /// `users.id` uuid): the caller principal, or the platform principal of a
     /// callerless delivery. The record-history triggers stamp it on every
     /// write. Absent (the default) binds the empty string, which the triggers
@@ -294,29 +297,29 @@ pub struct WamnPostgres {
     /// caller-settable authority, modified application SQL can forge this
     /// attribution.
     users: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.operation` claim: the token of the operation
+    /// component id → the `app.operation` identity: the token of the operation
     /// that executes, or `wamn:<component>` for a platform component outside a
     /// registered operation. The record-history log records it as the source
     /// of a write. Absent (the default) binds the empty string. Modified
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.application` claim: the application name from
+    /// component id → the `app.application` identity: the application name from
     /// the environment map for the operation's package. Numbering keys its
     /// sequences on this host state, which the operation transaction keeps,
-    /// never on the claim (docs/architecture/data-access.md#rendering). Absent
+    /// never on the identity (docs/architecture/data-access.md#rendering). Absent
     /// (the default) binds the empty string.
     applications: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the release digest this pod carries.
-    /// Absent (the default) ⇒ the production claim verifies nothing, so every
+    /// Absent (the default) ⇒ the production identity verifies nothing, so every
     /// path that never mounted a release identity is byte-unchanged. When set,
-    /// the claim leases only a run admitted under that digest.
+    /// the identity leases only a run admitted under that digest.
     release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
     /// component id → the causation context {run, root, depth} of the run the
     /// caller is currently driving (l5i9.12.2). Declared through
     /// [`set_current_run`](WamnPostgres::set_current_run), cleared (removed)
     /// between runs. Absent (the default) ⇒ no causation is stamped — so every
     /// non-run path (S2..S6, the gateway, benches without a declaration) is
-    /// byte-unchanged. When set, [`begin_with_claims`] appends a
+    /// byte-unchanged. When set, [`begin_with_identity`] appends a
     /// TRANSACTIONAL `wamn.causation` logical message to each write transaction the
     /// plugin opens for that component, which the CDC reader (l5i9.12.1)
     /// stitches onto the txn's row events.
@@ -356,8 +359,8 @@ pub struct WamnPostgres {
 /// content of its mounted serving manifest
 /// ([`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease)).
 ///
-/// Admission pins the release digest. The production claim verifies that pin
-/// against the claiming pod's digest. The value is host-injected identity,
+/// Admission pins the release digest. The production identity verifies that pin
+/// against the binding pod's digest. The value is host-injected identity,
 /// never guest-supplied.
 ///
 /// The field is private, so production code builds the value only from a
@@ -391,21 +394,21 @@ impl ReleaseIdentity {
     }
 }
 
-/// The complete host-injected claim set one component id resolves to.
+/// The complete host-injected identity set one component id resolves to.
 ///
 /// Every field is a registry this plugin keys by component id, so this type is
-/// the whole of what [`WamnPostgres::bind_session_claims`] writes and
-/// [`WamnPostgres::revoke_session_claims`] clears. Adding a registry without
-/// adding a field here leaves a claim that no acquisition rebinds — which is
+/// the whole of what [`WamnPostgres::bind_session_identity`] writes and
+/// [`WamnPostgres::revoke_session_identity`] clears. Adding a registry without
+/// adding a field here leaves an identity that no acquisition rebinds — which is
 /// exactly the cross-env_key leak `wamn-0h0g.17.7` closes.
 ///
-/// `None` means *no claim*, not *keep the previous one*: the deny floors
+/// `None` means *no identity*, not *keep the previous one*: the deny floors
 /// (`app.role` = `''`, `app.user_id` = NULL, no `search_path` override) are what
 /// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionClaims {
-    /// `app.env_key` — the RLS claim. Required: a session with no env_key is
-    /// refused by [`WamnPostgres::require_env_key`] rather than run unscoped.
+pub struct SessionIdentity {
+    /// `app.env_key` — the RLS identity. Required: a session with no env_key is
+    /// refused by [`WamnPostgres::require_env_key`] rather than run without an identity.
     pub env_key: String,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.
@@ -426,11 +429,11 @@ pub struct SessionClaims {
     /// `app.application`: the environment map name of the application that
     /// holds the operation's package.
     pub application: Option<String>,
-    /// The release digest the claiming pod carries.
+    /// The release digest the binding pod carries.
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The bound principal has no `platform."user"` row in the env_key it claims
+/// The bound principal has no `platform."user"` row in the env_key it identity
 /// (`wamn-0h0g.9.19`).
 ///
 /// A credential for such a principal is a provisioning defect: every write it
@@ -462,7 +465,7 @@ impl UnprovisionedPrincipal {
         &self.project
     }
 
-    /// The `app.user_id` claim that named no row.
+    /// The `app.user_id` identity that named no row.
     #[must_use]
     pub fn principal_id(&self) -> &str {
         &self.principal_id
@@ -813,9 +816,9 @@ enum EffectRead {
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
 /// A guest on the transaction / one-shot / cursor API must not be able to
-/// rewrite a host-injected claim (or switch roles) and defeat RLS isolation
+/// rewrite a host-injected identity (or switch roles) and defeat RLS isolation
 /// (wamn-cjv.2 / review C4-1). The extended-query protocol forbids statement
-/// chaining, so a claim override can only arrive as a *standalone* `SET` /
+/// chaining, so an identity override can only arrive as a *standalone* `SET` /
 /// `RESET` / `set_config(…)` statement — which this catches.
 ///
 /// It runs on the raw `wamn:postgres/client` surface, which only platform
@@ -844,19 +847,19 @@ enum EffectRead {
 /// `SET app.role` passes it untouched. The guard therefore applies to reachable
 /// guest APIs bearing RLS policies that read `app.role` or `app.user_id`; none
 /// exists in the Receiving slice. Its host-only operation-permission read binds
-/// predicates directly and installs neither caller-derived claim
+/// predicates directly and installs neither caller-derived identity
 /// (`wamn-10yt.3.2`), so it does not arm this escape. `wamn-0h0g.22.23` (OPEN)
 /// owns the matcher defect and carries the trigger for the first such reachable
 /// API — do not close this comment against it.
-pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
+pub(super) fn reject_identity_mutation(sql: &str) -> Result<(), PgError> {
     if statement_mutates_session(sql) {
         tracing::warn!(
             target: "wamn::security",
-            "rejected an in-band claim/role mutation on the guest SQL surface"
+            "rejected an in-band identity/role mutation on the guest SQL surface"
         );
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
-            "in-band claim or role mutation is not permitted".to_string(),
+            "in-band identity or role mutation is not permitted".to_string(),
         )));
     }
     if statement_forges_causation(sql) {
@@ -1006,12 +1009,12 @@ pub(super) fn refuse_unattributed_statement(
 
 /// True if `sql` calls `pg_logical_emit_message` (either overload) AND names the
 /// reserved `wamn.` message-prefix namespace (l5i9.12.2). Only the plugin's own
-/// [`begin_with_claims`] emit — which runs through the plugin, NOT this
+/// [`begin_with_identity`] emit — which runs through the plugin, NOT this
 /// guest surface — may write a `wamn.causation` frame; a guest forging one over
 /// the parameterized query/execute/cursor surface would ride its own txn's
 /// commit and the reader (l5i9.12.1) would stitch it, misattributing causation.
 /// This is a defense-in-depth **blocklist** (the AR1 theme, like
-/// [`reject_claim_mutation`]), not a structural close: matching is
+/// [`reject_identity_mutation`]), not a structural close: matching is
 /// case-insensitive and comment-stripped, and over-rejects the rare statement
 /// that merely names both tokens in a literal — fail-closed, acceptable on this
 /// (flag-OFF) raw surface. A guest's own non-`wamn.` logical messages are left
@@ -1021,13 +1024,13 @@ fn statement_forges_causation(sql: &str) -> bool {
     lower.contains("pg_logical_emit_message") && lower.contains("wamn.")
 }
 
-/// Reject a malformed claim identity before it is bound (R16). Since R2 these
-/// validators are NO LONGER the injection boundary — every claim value binds as a
-/// parameter into [`transactions::CLAIM_SQL`], so a `'`/`;`/`--` value is inert data — but a
+/// Reject a malformed session identity before it is bound (R16). Since R2 these
+/// validators are NO LONGER the injection boundary — every identity value binds as a
+/// parameter into [`transactions::IDENTITY_SQL`], so a `'`/`;`/`--` value is inert data — but a
 /// malformed identity still fails closed: they define what a *legal* id is (and
 /// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
 /// into DDL elsewhere).
-fn validate_claims(
+fn validate_session_identity(
     env_key: &str,
     schema: Option<&str>,
     runner: Option<&str>,
@@ -1097,20 +1100,20 @@ fn validate_claims(
 
 /// An `app.operation`: a non-empty operation token or platform component name.
 /// The value binds as a parameter, so no charset rule applies. `''` is the
-/// unbound value, so it is not a claim.
+/// unbound value, so it is not an identity.
 fn valid_operation(operation: &str) -> bool {
     !operation.is_empty()
 }
 
 /// An `app.application`: a non-empty application name. The value binds as a
 /// parameter, so no charset rule applies. `''` is the unbound value, so it is
-/// not a claim.
+/// not an identity.
 fn valid_application(application: &str) -> bool {
     !application.is_empty()
 }
 
 /// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
-/// renders as. Local rather than imported because this claim is a uuid, not one
+/// renders as. Local rather than imported because this identity is a uuid, not one
 /// of the `[A-Za-z0-9_-]` identities `wamn-control-registry` owns. Since R2 it
 /// is not the injection boundary (the value binds as `$6`); it fails closed on a
 /// value the compiled `NULLIF(…, '')::uuid` coercion would raise 22P02 on inside
@@ -1295,7 +1298,7 @@ impl WamnPostgres {
         )))
     }
 
-    /// Register the env_key claim for a component id. The bench harness calls
+    /// Register the env_key identity for a component id. The bench harness calls
     /// this directly; the host path feeds it from workload bind.
     pub fn set_env_key(&self, component_id: &str, env_key: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -1371,7 +1374,7 @@ impl WamnPostgres {
     /// Register the durable-queue lease owner for a component id (fqg.4). When
     /// set, every transaction the plugin opens for that component also runs
     /// `SET LOCAL app.runner`, so a runner replica reads a stable owner to
-    /// claim/renew queue rows under. The bench harness calls this directly (a
+    /// identity/renew queue rows under. The bench harness calls this directly (a
     /// distinct owner per replica); the host path feeds it from the
     /// `wamn.runner` workload config.
     pub fn set_runner(&self, component_id: &str, runner: &str) -> anyhow::Result<()> {
@@ -1423,11 +1426,11 @@ impl WamnPostgres {
             .unwrap_or(AuthorityClass::GuestSql)
     }
 
-    /// Register the caller's `app.role` claim for a component id (4.2). When
+    /// Register the caller's `app.role` identity for a component id (4.2). When
     /// set, every transaction the plugin opens for that component binds
     /// `app.role`, so a compiled per-role RLS policy gates on the caller's role
     /// instead of the `''` floor that denies it. Host-injected identity like the
-    /// env_key: the guest has no path to it, and [`reject_claim_mutation`] refuses
+    /// env_key: the guest has no path to it, and [`reject_identity_mutation`] refuses
     /// an in-band override.
     pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -1450,7 +1453,7 @@ impl WamnPostgres {
             .cloned()
     }
 
-    /// Register the executing principal's `app.user_id` claim for a component
+    /// Register the executing principal's `app.user_id` identity for a component
     /// id. When set, every transaction the plugin opens for that component
     /// binds `app.user_id`, so the record-history triggers stamp that
     /// `users.id`. Host-injected identity like the env_key.
@@ -1474,7 +1477,7 @@ impl WamnPostgres {
             .cloned()
     }
 
-    /// Register the `app.operation` claim for a component id. When set, every
+    /// Register the `app.operation` identity for a component id. When set, every
     /// transaction the plugin opens for that component binds `app.operation`,
     /// so the record-history log records the source of each write.
     /// Host-injected identity like the env_key.
@@ -1498,7 +1501,7 @@ impl WamnPostgres {
             .cloned()
     }
 
-    /// Register the `app.application` claim for a component id. When set,
+    /// Register the `app.application` identity for a component id. When set,
     /// every transaction the plugin opens for that component binds
     /// `app.application`, the declared application that runs the operation.
     /// Host-injected identity like the env_key.
@@ -1523,11 +1526,11 @@ impl WamnPostgres {
     }
 
     /// Register the release this pod carries for a component id. The production
-    /// claim verifies its digest against the admission pin of every run it
+    /// identity verifies its digest against the admission pin of every run it
     /// leases. The bench harness and live tests call this directly; the host
     /// path feeds it from the loaded
     /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease), whose
-    /// digest is derived from verified manifest content. Absent leaves the claim
+    /// digest is derived from verified manifest content. Absent leaves the identity
     /// verifying nothing.
     ///
     /// The digest arrives as [`ManifestDigest`], so its shape is already validated.
@@ -1561,7 +1564,7 @@ impl WamnPostgres {
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
     /// component is driving (l5i9.12.2). While set, each write transaction the plugin
     /// opens for the component carries a `wamn.causation` message. Host-injected
-    /// like the other claim registries — callers set it directly, exactly like
+    /// like the other identity registries — callers set it directly, exactly like
     /// [`set_env_key`](Self::set_env_key) / [`set_runner`](Self::set_runner).
     pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
         let mut w = self.current_run.write().expect("current_run lock poisoned");
@@ -1641,24 +1644,24 @@ impl WamnPostgres {
             .collect()
     }
 
-    /// Bind EVERY per-component-id claim registry this plugin keeps to one
+    /// Bind EVERY per-component-id identity registry this plugin keeps to one
     /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
     ///
     /// The registries are process-resident and keyed by component id, so a
-    /// component id is a *claim scope*, not a fact about which env_key a store
+    /// component id is a *invocation scope*, not a fact about which env_key a store
     /// was built for. This is the write half of that scope: a pooled instance is
     /// fungible compute, and the identity it serves arrives here at acquisition
     /// rather than at construction. Every registry
-    /// [`revoke_session_claims`](Self::revoke_session_claims) clears is written
-    /// here, so the two are exhaustive over the same set — a claim added to one
+    /// [`revoke_session_identity`](Self::revoke_session_identity) clears is written
+    /// here, so the two are exhaustive over the same set — an identity added to one
     /// and not the other is a leak channel.
     ///
-    /// Absent optional claims REMOVE any prior registration rather than leaving
+    /// Absent optional identity REMOVE any prior registration rather than leaving
     /// it standing: an acquisition that declares no schema must not inherit the
     /// previous acquisition's `search_path`.
     ///
     /// Validation is the same as the individual `set_*` setters, so an invalid
-    /// claim is refused here and the caller destroys the instance rather than
+    /// identity is refused here and the caller destroys the instance rather than
     /// serving it under a half-written identity.
     ///
     /// # The executing principal must own a user row (`wamn-0h0g.9.19`)
@@ -1671,7 +1674,7 @@ impl WamnPostgres {
     /// read the same row a moment before. On a miss the bind reads the row and
     /// keeps the answer. A request element that begins its own transaction
     /// binds twice, and its second bind is
-    /// [`bind_request_element_session_claims`](Self::bind_request_element_session_claims),
+    /// [`bind_request_element_session_identity`](Self::bind_request_element_session_identity),
     /// which does not check again.
     ///
     /// On a host that watches the auth bucket, a user row deleted after the
@@ -1679,55 +1682,55 @@ impl WamnPostgres {
     /// until the memory's TTL ends if the message is lost. A host without
     /// the bucket keeps no answer and reads the row on every bind.
     ///
-    /// The read runs LAST, after every claim is written and validated, so a
-    /// bind that is going to be refused for a malformed claim never opens a
-    /// connection. A refused bind leaves the claim maps half-written, which is
+    /// The read runs LAST, after every identity is written and validated, so a
+    /// bind that is going to be refused for a malformed identity never opens a
+    /// connection. A refused bind leaves the identity maps half-written, which is
     /// the contract above: the caller destroys the instance.
     ///
     /// A platform principal carries its own `wamn:<component>` row, which
     /// provisioning writes, so it binds like any other principal.
-    pub async fn bind_session_claims(
+    pub async fn bind_session_identity(
         &self,
         component_id: &str,
-        claims: &SessionClaims,
+        identity: &SessionIdentity,
     ) -> anyhow::Result<()> {
-        self.write_session_claims(component_id, claims)?;
+        self.write_session_identity(component_id, identity)?;
         // An acquisition that names no principal reads nothing. The
         // record-history triggers already refuse such a write with
         // actor-required.
-        if let Some(user_id) = claims.user_id.as_deref() {
-            let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-            self.require_provisioned_principal(&claims.env_key, project, user_id)
+        if let Some(user_id) = identity.user_id.as_deref() {
+            let project = identity.project.as_deref().unwrap_or(DEFAULT_PROJECT);
+            self.require_provisioned_principal(&identity.env_key, project, user_id)
                 .await?;
         }
         Ok(())
     }
 
-    /// Bind `claims` as [`bind_session_claims`](Self::bind_session_claims)
+    /// Bind `identity` as [`bind_session_identity`](Self::bind_session_identity)
     /// does, without its principal read, for the call inside a request element whose
-    /// transaction a bind of the same claims began (`wamn-uq4r`).
+    /// transaction a bind of the same identity began (`wamn-uq4r`).
     ///
     /// The request element's bind read the principal's user row moments before, in the
     /// same invocation, so a second read answers nothing new and takes a
-    /// second guest connection. The caller passes the claims of that bind.
-    pub fn bind_request_element_session_claims(
+    /// second guest connection. The caller passes the identity of that bind.
+    pub fn bind_request_element_session_identity(
         &self,
         component_id: &str,
-        claims: &SessionClaims,
+        identity: &SessionIdentity,
     ) -> anyhow::Result<()> {
-        self.write_session_claims(component_id, claims)
+        self.write_session_identity(component_id, identity)
     }
 
-    fn write_session_claims(
+    fn write_session_identity(
         &self,
         component_id: &str,
-        claims: &SessionClaims,
+        identity: &SessionIdentity,
     ) -> anyhow::Result<()> {
         // An acquisition starts with no statement authority. The router
-        // activates the selected operation only after claims bind.
+        // activates the selected operation only after identity bind.
         self.revoke_statement_operation(component_id);
-        self.set_env_key(component_id, &claims.env_key)?;
-        match claims.project.as_deref() {
+        self.set_env_key(component_id, &identity.env_key)?;
+        match identity.project.as_deref() {
             Some(project) => self.set_project(component_id, project)?,
             None => drop(
                 self.projects
@@ -1736,7 +1739,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.schema.as_deref() {
+        match identity.schema.as_deref() {
             Some(schema) => self.set_schema(component_id, schema)?,
             None => drop(
                 self.schemas
@@ -1745,7 +1748,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.runner.as_deref() {
+        match identity.runner.as_deref() {
             Some(runner) => self.set_runner(component_id, runner)?,
             None => drop(
                 self.runners
@@ -1754,7 +1757,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.role.as_deref() {
+        match identity.role.as_deref() {
             Some(role) => self.set_role(component_id, role)?,
             None => drop(
                 self.roles
@@ -1763,7 +1766,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.user_id.as_deref() {
+        match identity.user_id.as_deref() {
             Some(user_id) => self.set_user_id(component_id, user_id)?,
             None => drop(
                 self.users
@@ -1772,7 +1775,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.operation.as_deref() {
+        match identity.operation.as_deref() {
             Some(operation) => self.set_operation(component_id, operation)?,
             None => drop(
                 self.operations
@@ -1781,7 +1784,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.application.as_deref() {
+        match identity.application.as_deref() {
             Some(application) => self.set_application(component_id, application)?,
             None => drop(
                 self.applications
@@ -1790,7 +1793,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        match claims.release.as_ref() {
+        match identity.release.as_ref() {
             Some(release) => self.set_release_identity(component_id, release.clone())?,
             None => drop(
                 self.release_identities
@@ -1799,7 +1802,7 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
-        // Causation is RUN-scoped, declared through `set_current_run` once the
+        // Causation is RUN-owned, declared through `set_current_run` once the
         // run is in hand. A binding acquisition has no run yet, so it starts
         // undeclared — carrying the previous acquisition's run context forward
         // would misattribute its CDC stitch.
@@ -1835,8 +1838,8 @@ impl WamnPostgres {
         let (connection, _policy) =
             self.checkout_guest(project, env_key)
                 .await
-                .map_err(|source| ClaimError {
-                    kind: ClaimErrorKind::Infrastructure,
+                .map_err(|source| SessionIdentityError {
+                    kind: SessionIdentityErrorKind::Infrastructure,
                     context: "check out the env_key connection that reads platform.\"user\"",
                     source: source.into(),
                 })?;
@@ -1851,7 +1854,7 @@ impl WamnPostgres {
         };
         let rows = connection
             .query(&statement, &[&principal_id])
-            .instrument(tracing::info_span!("wamn.claims.principal.query"))
+            .instrument(tracing::info_span!("wamn.identity.principal.query"))
             .await
             .map_err(|source| {
                 principal_read_error(
@@ -1879,17 +1882,17 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// Read back the claim set one component id currently resolves to.
+    /// Read back the identity set one component id currently resolves to.
     ///
     /// `None` is the deny floor: no env_key is bound, so
     /// [`require_env_key`](Self::require_env_key) refuses every call made under
     /// this id. That is what an idle, never-acquired execution instance must
     /// report, and it is the read half of the checkout-identity seam — the pair
-    /// this and [`bind_session_claims`](Self::bind_session_claims) form is what
+    /// this and [`bind_session_identity`](Self::bind_session_identity) form is what
     /// lets a test assert that two concurrent acquisitions never share one
     /// identity.
-    pub fn session_claims(&self, component_id: &str) -> Option<SessionClaims> {
-        Some(SessionClaims {
+    pub fn session_identity(&self, component_id: &str) -> Option<SessionIdentity> {
+        Some(SessionIdentity {
             env_key: self.env_key_for(component_id)?,
             project: self
                 .projects
@@ -1907,7 +1910,7 @@ impl WamnPostgres {
         })
     }
 
-    /// Clear every registration [`bind_session_claims`](Self::bind_session_claims)
+    /// Clear every registration [`bind_session_identity`](Self::bind_session_identity)
     /// installed under one component id.
     ///
     /// Called when a checkout ends, on every path — repooled, retired, or
@@ -1915,7 +1918,7 @@ impl WamnPostgres {
     /// store carrying identity, which is the whole defect this seam closes; and
     /// a `require_env_key` failure is how an unbound instance fails closed
     /// instead of serving someone else's rows.
-    pub fn revoke_session_claims(&self, component_id: &str) {
+    pub fn revoke_session_identity(&self, component_id: &str) {
         self.revoke_statement_operation(component_id);
         self.env_keys
             .write()
@@ -1959,22 +1962,22 @@ impl WamnPostgres {
             .remove(component_id);
     }
 
-    /// Reap EVERY per-component-id claim, workload-authority, and verified
+    /// Reap EVERY per-component-id identity, workload-authority, and verified
     /// statement registry this plugin keeps for a workload
     /// on teardown (R31): env_key, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the executing operation and application, the carried
     /// release identity, the causation run context, and the bound invocation —
     /// all set at workload bind (or via the runner or driver channel) and keyed
     /// by component id.
-    /// Without this a stale claim
+    /// Without this a stale identity
     /// survives unbind, the maps grow across workload churn, and a rebound
-    /// component id inherits the prior claim. The lifecycle pool maps are
+    /// component id inherits the prior identity. The lifecycle pool maps are
     /// deliberately NOT touched: they are keyed by PROJECT (shared and memoized
     /// within each lifecycle for the plugin's lifetime), not by component id.
     /// Keyed like the runtime's builtin postgres plugin — a workload's component ids
     /// are prefixed by the workload id — so everything NOT under it is retained;
     /// an unknown workload id is a no-op.
-    pub(super) fn clear_component_claims(&self, workload_id: &str) {
+    pub(super) fn clear_component_identity(&self, workload_id: &str) {
         let retain = |c: &String| !c.starts_with(workload_id);
         self.env_keys
             .write()
@@ -2051,8 +2054,8 @@ impl WamnPostgres {
     /// (`crates/platform/runtime/src/plugins/connection_http.rs:77`). That value
     /// is NOT rebound at checkout — the store's `Ctx.plugins` map is private to
     /// wash-runtime, so nothing outside it can swap the plugin — while every other
-    /// claim on this path IS
-    /// ([`bind_session_claims`](Self::bind_session_claims)). A pooled instance
+    /// identity on this path IS
+    /// ([`bind_session_identity`](Self::bind_session_identity)). A pooled instance
     /// serving env_key B would therefore carry env_key A's frozen value here and
     /// read A's rows under B's run.
     ///
@@ -2067,7 +2070,7 @@ impl WamnPostgres {
     /// that skipped the absent case would be a guard whose strength depended on
     /// the caller having been bound. It is the same deny floor
     /// [`require_env_key`](Self::require_env_key) applies to every other read:
-    /// nothing resolves under an unbound claim scope.
+    /// nothing resolves under an unbound invocation scope.
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
@@ -2079,7 +2082,7 @@ impl WamnPostgres {
         let registered = self.env_key_for(component_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "HTTP effect authorization for component {component_id:?} has no bound env_key \
-                 claim; refusing to resolve under an unbound identity"
+                 identity; refusing to resolve under an unbound identity"
             )
         })?;
         anyhow::ensure!(
@@ -2235,7 +2238,7 @@ impl WamnPostgres {
         // This read writes nothing, so it binds no `app.user_id` and no
         // `app.operation`.
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &conn,
                 AuthorityClass::CallableHttp,
                 false,
@@ -2385,8 +2388,8 @@ impl WamnPostgres {
 
     /// The user row, roles and permissions of one principal, from the host's
     /// memory or, on a miss, from one read under the callable-HTTP authority
-    /// with no session claims. The read also answers the provisioned-principal
-    /// check of the claim bind.
+    /// with no session identity. The read also answers the provisioned-principal
+    /// check of the identity bind.
     pub async fn principal_grants(
         &self,
         project: &str,
@@ -2513,7 +2516,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::Administration,
                 false,

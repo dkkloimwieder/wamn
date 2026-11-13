@@ -40,11 +40,11 @@ pub(in super::super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<S
 ///
 /// Deliberately a per-schema shape — iterate whatever schemas the role holds
 /// anything in and require each to be EXACTLY this set — because retention
-/// is likewise a tenant-scoped family whose grants land inside each project-env
+/// is likewise a tenant-targeted family whose grants land inside each project-env
 /// database's run-plane schema, and a widened grant in a schema nobody thought
 /// to name is exactly the drift a per-schema allow-list would miss.
 ///
-/// The `SELECT` is COLUMN-scoped and the assertion has to keep it that way. The
+/// The `SELECT` is COLUMN-targeted and the assertion has to keep it that way. The
 /// role is a `wamn_platform` member, that group's floor arm on `wamn_run.runs`
 /// is `USING (true)`, and PostgreSQL grants are relation- and column-shaped
 /// rather than row-shaped — so this column list is the only thing standing
@@ -220,7 +220,7 @@ pub(super) fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String
         .collect()
 }
 
-/// Check the reader's two column-scoped reads and no other direct grants.
+/// Check the reader's two column-targeted reads and no other direct grants.
 pub(in super::super) fn verify_session_role_reader_grants(
     role: &str,
     database: &str,
@@ -603,7 +603,7 @@ pub(in super::super) fn verify_event_materializer_grants(
     Ok(())
 }
 
-/// Require only the login-scoped credential lookup in the control database,
+/// Require only the login-targeted credential lookup in the control database,
 /// and the OAuth token rows that the host's reader login locks and writes.
 pub(in super::super) fn verify_connection_reader_grants(
     role: &str,

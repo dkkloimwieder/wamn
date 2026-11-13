@@ -34,9 +34,9 @@ pub fn verified_source_event_id(
     }
 }
 
-/// Accept exactly one host-scoped `Nats-Msg-Id` matching a derived record.
+/// Accept exactly one host-targeted `Nats-Msg-Id` matching a derived record.
 ///
-/// Scope equality is checked before identity derivation, so bytes claiming a
+/// Target equality is checked before identity derivation, so bytes naming a
 /// foreign tenant/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
     env_key: &str,
@@ -111,10 +111,10 @@ pub fn serviceable(
 
 /// Decide whether one envelope reaches the registration's wiring.
 ///
-/// `resident_env_key` comes from the scoped catalog credential after
+/// `resident_env_key` comes from the targeted catalog credential after
 /// the event's stream identity has verified. Package rows
-/// without a `tenant_id` use that trusted database-residency scope; a missing
-/// or disagreeing scope remains unserviceable.
+/// without a `tenant_id` use that trusted database-residency target; a missing
+/// or disagreeing target remains unserviceable.
 pub fn decide(
     registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn derived_source_identity_requires_exact_scope_and_one_header() {
+    fn derived_source_identity_requires_exact_target_and_one_header() {
         let event = derived(0);
         let expected = wamn_event_wire::derived_msg_id(
             "t1",
@@ -532,7 +532,7 @@ mod tests {
             &event.dedup_id,
         );
         let source = verified_derived_source_event_id("t1", "app", "dev", &event, &[&message_id])
-            .expect("host-scoped source identity verifies");
+            .expect("host-targeted source identity verifies");
         assert_eq!(source.as_str(), message_id);
         assert_eq!(
             decide_derived(

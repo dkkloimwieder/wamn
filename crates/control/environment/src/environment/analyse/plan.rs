@@ -222,7 +222,7 @@ pub(crate) fn notices(
             ),
             observed: Observation::PlatformSchema { report: report.clone() },
             next_action: format!(
-                "Inspect project SQL with wamn platform schema diff --scope project --env FILE --chart DIR for {}/{}/{}",
+                "Inspect project SQL with wamn platform schema diff --target project --env FILE --chart DIR for {}/{}/{}",
                 document.org, document.project, document.env
             ),
         });

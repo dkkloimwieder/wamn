@@ -191,8 +191,8 @@ impl HostCommandHandler for Commands {
                     Arc::clone(&operations.release),
                     &component.image,
                     &component.name,
-                    operations.claims(
-                        &operations.release.scope().env_key,
+                    operations.identity(
+                        &operations.release.target().env_key,
                         Some(operations.release_identity()),
                     ),
                 )?;

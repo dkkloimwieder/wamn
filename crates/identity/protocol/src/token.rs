@@ -1,7 +1,7 @@
 //! Fixed Ed25519 session-token primitives, without route or exchange admission.
 //!
 //! The caller owns fresh identity validation and key freshness. These functions
-//! enforce the signed wire profile, scope, and age; returning claims is not an
+//! enforce the signed wire profile, audience, and age; returning JWT claims is not an
 //! operation-permission grant. No token is persisted or logged.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -26,7 +26,7 @@ pub enum SessionAuthority {
     Login(PrincipalId),
 }
 
-/// Required wire claims; deserialization alone does not authenticate them.
+/// Required wire JWT claims; deserialization alone does not authenticate them.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SessionClaims {
@@ -53,9 +53,9 @@ pub struct SessionClaims {
     pub csrf: Option<String>,
 }
 
-/// Host-configured scope; no field is inferred from the token or its key ID.
+/// Host-configured audience; no field is inferred from the token or its key ID.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SessionScope<'a> {
+pub(crate) struct SessionAudience<'a> {
     /// Configured issuer.
     pub issuer: &'a str,
     /// Configured organization identity.
@@ -115,15 +115,15 @@ pub(crate) fn session_key_id(token: &str) -> Result<String, SessionError> {
     Ok(decode_header(header)?.kid)
 }
 
-/// Verify the exact profile, signature, configured scope, and claim age.
+/// Verify the exact profile, signature, configured audience, and JWT claim age.
 ///
 /// `key` must come from the configured issuer's currently fresh complete key
 /// set. Key freshness and operation permissions are deliberately outside this
-/// primitive. Every token/profile/scope/age refusal has the same public error.
+/// primitive. Every token/profile/audience/age refusal has the same public error.
 pub(crate) fn verify_session_token(
     token: &str,
     key: &PublicSessionKey,
-    scope: SessionScope<'_>,
+    audience: SessionAudience<'_>,
     now: i64,
 ) -> Result<SessionClaims, SessionError> {
     let kid = session_key_id(token)?;
@@ -132,8 +132,8 @@ pub(crate) fn verify_session_token(
     }
     let key_bytes = decode_public_key(key).map_err(|_| refused())?;
     let mut validation = Validation::new(Algorithm::EdDSA);
-    validation.set_issuer(&[scope.issuer]);
-    validation.set_audience(&[scope.audience]);
+    validation.set_issuer(&[audience.issuer]);
+    validation.set_audience(&[audience.audience]);
     // The verifier owns the clock, including the admission-time recheck.
     validation.validate_exp = false;
     let claims = jsonwebtoken::decode::<SessionClaims>(
@@ -144,14 +144,14 @@ pub(crate) fn verify_session_token(
     .map_err(|_| refused())?
     .claims;
     validate_claim_shape(&claims)?;
-    if claims.org != scope.org {
+    if claims.org != audience.org {
         return Err(refused());
     }
     validate_session_age(claims.iat, claims.exp, now)?;
     Ok(claims)
 }
 
-/// Refuse claims whose principal, authority, roles, or CSRF digest are not
+/// Refuse JWT claims whose principal, authority, roles, or CSRF digest are not
 /// canonical. The signer checks the same shape before it signs.
 pub(crate) fn validate_claim_shape(claims: &SessionClaims) -> Result<(), SessionError> {
     if claims.iss.trim().is_empty()

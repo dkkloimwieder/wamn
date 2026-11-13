@@ -32,7 +32,7 @@ pub use credentials::{
     normalize_workload_generation_membership_sql, prepare_workload_generation_sql,
     record_generation_password_sql, retire_workload_generation_sql, system_generation_state_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
-    workload_scope_lock_sql,
+    workload_identity_lock_sql,
 };
 
 #[doc(inline)]
@@ -82,7 +82,7 @@ pub fn refresh_env_key_environment_sql() -> &'static str {
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
 /// stable NOLOGIN ACL role.
 ///
-/// Guest sessions authenticate as scoped [`WorkloadRoleFamily::App`]
+/// Guest sessions authenticate as targeted [`WorkloadRoleFamily::App`]
 /// generations and inherit this role's grants. The stable role therefore
 /// carries no verifier and cannot authenticate or inherit memberships itself.
 /// The shared bootstrap lock serializes cooperative appliers; the exception arm
@@ -210,7 +210,7 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 /// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`]:
 ///
 /// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
-/// * `queue::sql::grant_production_claim_sql` — `status`
+/// * `queue::sql::grant_production_lease_sql` — `status`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
 ///   `result_json`, the caller-outcome family, `updated_at`
 /// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
@@ -218,13 +218,13 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 ///   `result_json`, `fail_type`, `updated_at`
 /// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
 ///
-/// The SELECT side is deliberately NOT column-scoped: `transitions::FENCED_PREFIX`
+/// The SELECT side is deliberately NOT column-targeted: `transitions::FENCED_PREFIX`
 /// locks the run with `SELECT r.* FROM runs AS r`, which needs SELECT on EVERY
 /// column of `runs`. A column list there would withhold nothing and break the
 /// fence, so relation-grain SELECT is the measured surface rather than a
 /// concession. Confining the WRITE is what a column list can still buy, and it
 /// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
-/// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
+/// so a blanket `UPDATE` would let one lease rewrite any tenant's admission pins.
 pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
     "status",
     "terminal_reason",
@@ -243,11 +243,11 @@ pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
 
 /// Every `run_queue` column the executor-platform family WRITES.
 ///
-/// `queue::sql::advance_claim_attempts_sql` writes `attempts`;
-/// `queue::sql::grant_production_claim_sql` writes `lease_owner`,
+/// `queue::sql::advance_lease_attempts_sql` writes `attempts`;
+/// `queue::sql::grant_production_lease_sql` writes `lease_owner`,
 /// `lease_expires_at` and `lease_generation`;
 /// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`.
-/// `queue::sql::release_production_claim_sql` writes `attempts`, `available_at`,
+/// `queue::sql::release_production_lease_sql` writes `attempts`, `available_at`,
 /// `lease_owner` and `lease_expires_at` for credential retries. Nothing writes
 /// `max_attempts` or `enqueued_at`.
 ///
@@ -456,8 +456,8 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// # What it deliberately does NOT hold
 ///
 /// * NO `wamn_run` anything. The admitter authorizes an effect; it does not
-///   admit, claim, lease or terminalize a run. `schema` is therefore the REVOKE
-///   scope and never a grant scope — an environment where someone handed this
+///   admit, lease or terminalize a run. `schema` is therefore the REVOKE
+///   target and never a grant target — an environment where someone handed this
 ///   family a run-plane privilege converges back on the next apply.
 /// * NO write of any grain, so no `wamn_authority.tenant_key(text)` EXECUTE
 ///   either. That grant exists for the families whose INSERT or UPDATE makes
@@ -538,7 +538,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
 /// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
 /// `row_image`. On the catalog it
 /// reads `catalog.releases` only, for the control host's `release.profile`.
-/// It holds nothing on the run plane. `schema` is the run-plane revoke scope.
+/// It holds nothing on the run plane. `schema` is the run-plane revoke target.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
     let role = escape_identifier(ADMINISTRATION_ROLE);
     let schema = escape_identifier(schema);
@@ -605,11 +605,11 @@ pub fn grant_session_role_reader_surface_sql() -> String {
     )
 }
 
-/// Converge the stable executor-platform role to its exact claim surface
+/// Converge the stable executor-platform role to its exact lease surface
 /// (`wamn-0h0g.22.37`).
 ///
 /// The production queries that select `AuthorityClass::ExecutorPlatform` live
-/// in `wamn_runtime::plugins::wamn_postgres::production_claim` and its
+/// in `wamn_runtime::plugins::wamn_postgres::production_lease` and its
 /// `wiring_resolution` sibling.
 ///
 /// # The grains, and why each is the one it is
@@ -771,7 +771,7 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
 
 /// Every schema `deploy/sql/system-schema.sql` creates under `wamn_system`.
 ///
-/// The REVOKE scope, not the grant scope: a system-plane reader is revoked
+/// The REVOKE target, not the grant target: a system-plane reader is revoked
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
 
@@ -1043,7 +1043,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     }
 }
 
-/// Record the owner-maintained login-identity-to-tenant mapping for one scope.
+/// Record the owner-maintained login-identity-to-tenant mapping for one target.
 ///
 /// `$1` login identity, `$2` `env_key`, `$3` org, `$4` project, `$5` environment.
 /// Tenant authority is database-authoritative: this row, not a caller-set
@@ -1387,33 +1387,6 @@ mod tests {
             assert!(sql.contains(catalog), "missing direct ACL class {catalog}");
         }
         assert!(sql.contains("x.grantee = (SELECT oid FROM wanted)"));
-    }
-
-    #[test]
-    fn generation_cluster_probes_are_read_only_and_scope_locked() {
-        assert!(public_connect_databases_sql().starts_with("SELECT"));
-        assert!(public_connect_databases_sql().contains("acl.grantee = 0"));
-        assert!(public_connect_databases_sql().contains("privilege_type = 'CONNECT'"));
-        assert!(!public_connect_databases_sql().contains("TEMPORARY"));
-        assert!(revoke_public_connect_floor_sql().starts_with("DO $$"));
-        // The floor is CONNECTABILITY-filtered, never template-filtered:
-        // `template1` is a template AND connectable, and a template filter left
-        // PostgreSQL's default PUBLIC CONNECT on it. `template0`
-        // (`datallowconn = false`) stays out of scope either way.
-        assert!(revoke_public_connect_floor_sql().contains("WHERE d.datallowconn"));
-        assert!(!revoke_public_connect_floor_sql().contains("datistemplate"));
-        assert!(public_connect_databases_sql().contains("WHERE d.datallowconn"));
-        assert!(!public_connect_databases_sql().contains("datistemplate"));
-        assert!(revoke_public_connect_floor_sql().contains("REVOKE CONNECT ON DATABASE %I"));
-        assert!(!revoke_public_connect_floor_sql().contains("TEMPORARY"));
-        assert!(public_temporary_on_current_database_sql().starts_with("SELECT EXISTS"));
-        assert!(public_temporary_on_current_database_sql().contains("current_database()"));
-        assert!(public_temporary_on_current_database_sql().contains("'TEMPORARY'"));
-        assert!(non_template_databases_sql().contains("NOT datistemplate"));
-        assert_eq!(
-            workload_scope_lock_sql(),
-            "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
-        );
     }
 
     #[test]

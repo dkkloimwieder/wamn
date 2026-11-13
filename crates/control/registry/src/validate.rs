@@ -266,7 +266,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
         }
     }
 
-    // --- env policies (org-scoped, wamn-8df.4): valid slug names, unique per
+    // --- env policies (org-targeted, wamn-8df.4): valid slug names, unique per
     // org, known org, resolvable recovery domains within the org's own set ---
     let mut policy_keys: HashSet<(&str, &str)> = HashSet::new();
     for (i, p) in reg.env_policies.iter().enumerate() {
@@ -812,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn policies_are_org_scoped_not_shared_across_orgs() {
+    fn policies_are_org_targeted_not_shared_across_orgs() {
         // ANOTHER org's policy row does not satisfy this org's project-env: a
         // 'staging' policy stamped only for 'try' leaves acme's staging unknown
         // (8df.4 — each org owns its policy set).
@@ -868,7 +868,7 @@ mod tests {
         });
         assert!(codes(&r).contains(&"duplicate-env-policy"));
 
-        // The SAME policy name in a DIFFERENT org is fine (org-scoped keying).
+        // The SAME policy name in a DIFFERENT org is fine (org-targeted keying).
         let mut r = minimal();
         r.env_policies.push(OrgEnvPolicy {
             org: "try".into(),

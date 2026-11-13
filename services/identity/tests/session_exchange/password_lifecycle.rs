@@ -119,7 +119,7 @@ async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
     verify(
         token,
         key,
-        Scope {
+        Audience {
             issuer: ISSUER,
             org: "demo",
             audience: fixture.targets[0].audience(),
@@ -469,7 +469,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     );
     // An application shell names its org and project, and is offered the
     // control audience of its org beside the environments (wamn-a40n.11).
-    let scoped = async |org: &str| {
+    let targeted = async |org: &str| {
         discovery_window(&fixture).await;
         let response = post(
             &https,
@@ -478,19 +478,19 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         )
         .send()
         .await
-        .expect_redacted("scoped discovery");
+        .expect_redacted("targeted discovery");
         assert_eq!(response.status(), 200);
         response
             .json::<Value>()
             .await
-            .expect_redacted("scoped discovery JSON")
+            .expect_redacted("targeted discovery JSON")
     };
     assert!(
-        audiences(&scoped("demo").await).contains(&json!({"aud": CONTROL, "org": "demo"})),
+        audiences(&targeted("demo").await).contains(&json!({"aud": CONTROL, "org": "demo"})),
         "a request that names a project is offered the control audience of its org"
     );
     assert!(
-        !audiences(&scoped("other").await)
+        !audiences(&targeted("other").await)
             .iter()
             .any(|entry| entry["aud"] == CONTROL),
         "a request for another org is not offered this org's control audience"
@@ -512,7 +512,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     let claims = verify(
         token,
         key,
-        Scope {
+        Audience {
             issuer: ISSUER,
             org: "demo",
             audience: CONTROL,
@@ -593,7 +593,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     let claims = verify(
         token,
         key,
-        Scope {
+        Audience {
             issuer: ISSUER,
             org: "demo",
             audience: CONTROL,
@@ -816,7 +816,7 @@ fn assert_cleared(response: &reqwest::Response) {
     assert_eq!(set_cookies(response), expected);
 }
 
-/// The session cookie verifies and its csrf claim is the SHA-256 hex of the CSRF cookie.
+/// The session cookie verifies and its csrf JWT claim is the SHA-256 hex of the CSRF cookie.
 async fn cookie_claims(fixture: &Fixture, values: &[String; 3]) -> SessionClaims {
     let verified = claims(fixture, &json!({"access_token": values[0]})).await;
     #[expect(

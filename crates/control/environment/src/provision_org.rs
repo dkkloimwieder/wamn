@@ -1,5 +1,5 @@
 //! The `provision-org` subcommand (wamn-q3n.6; D18 model by wamn-8df.3;
-//! template-driven + org-scoped policies by wamn-8df.4): stamp an org from a
+//! template-driven + org-targeted policies by wamn-8df.4): stamp an org from a
 //! named [`Template`] — its placement **and** its own env-policy set in one step
 //! — then render its CNPG `Cluster` set (one cluster per recovery-domain owner,
 //! each sized by the org's policy for that env).

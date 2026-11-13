@@ -5,7 +5,7 @@
 #
 #   1. THIS FILE — the operator and its five CRDs.
 #      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
-#      cluster-scoped, so every environment in the cluster shares this one
+#      cluster-wide, so every environment in the cluster shares this one
 #      operator version. It carries NO host groups.
 #   2. THE HOST TIER — the release chart (`deploy/platform/release`) with the
 #      install values that environment apply renders, ONE HELM RELEASE PER
@@ -87,7 +87,7 @@ operator:
   # (templates/operator/clusterrole.yaml:1, clusterrolebinding.yaml:1) and binds
   # the same grants as per-namespace Roles instead (workload-crd-role.yaml,
   # workload-namespace-role.yaml, endpointslice-role.yaml), while the operator
-  # scopes its workload informer cache to the same set
+  # limits its workload informer cache to the same set
   # (runtime-operator/cmd/main.go:252-255). A WorkloadDeployment in any other
   # namespace is then not seen at all. Chart default is `[]` = watch every
   # namespace (chart values.yaml:182-183).

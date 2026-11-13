@@ -16,8 +16,8 @@ const status: environment.EnvironmentStatusResult = {
   live: [],
 };
 
-function tile(label: string, value: string, state: string, scope: Pick<typeof screen, "getByRole"> = screen) {
-  const group = scope.getByRole("group", { name: label });
+function tile(label: string, value: string, state: string, view: Pick<typeof screen, "getByRole"> = screen) {
+  const group = view.getByRole("group", { name: label });
   expect(group.getAttribute("data-state")).toBe(state);
   expect(group.querySelector(".ui-status-tile-value")?.textContent).toBe(value);
   expect(group.querySelector("button, a")).toBeNull();

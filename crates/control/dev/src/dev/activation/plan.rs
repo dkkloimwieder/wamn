@@ -57,10 +57,10 @@ pub(super) fn host_namespace(identity: &DevActivationIdentity) -> &str {
     &identity.environment
 }
 
-/// The identity claims the host injects into the flow-http workload, paired
+/// The identity fields the host injects into the flow-http workload, paired
 /// with the field of [`DevActivationIdentity`] each one carries.
 ///
-/// This is the SINGLE SOURCE for the claim set. It exists because the set was
+/// This is the SINGLE SOURCE for the identity set. It exists because the set was
 /// previously written out by hand in two places -- here and in the cluster
 /// journey's workload renderer -- and the second copy had four of the five.
 /// `wamn.catalog` was left at the template's placeholder, with no identity check, no
@@ -70,9 +70,9 @@ pub(super) fn host_namespace(identity: &DevActivationIdentity) -> &str {
 /// whatever the enumeration missed; nothing compared the two.
 ///
 /// `deploy/platform/http-route-workload.example.yaml` is held equal to this
-/// by a test in this module, so the template gaining or losing a claim fails
+/// by a test in this module, so the template gaining or losing an identity fails
 /// here rather than in a cluster.
-pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 4] {
+pub fn flow_http_identity_fields(identity: &DevActivationIdentity) -> [(&'static str, String); 4] {
     [
         ("wamn.env_key", identity.env_key()),
         ("wamn.catalog", identity.catalog.clone()),
@@ -88,9 +88,9 @@ pub(super) fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::Workl
     .expect("the platform chart defaults are valid YAML");
     let http = &platform["platform"]["roles"]["http"];
     let identity = request.identity;
-    let config = flow_http_identity_claims(identity)
+    let config = flow_http_identity_fields(identity)
         .into_iter()
-        .map(|(claim, value)| (claim.to_owned(), value))
+        .map(|(identity, value)| (identity.to_owned(), value))
         .collect::<HashMap<_, _>>();
     let local_resources = v2::LocalResources {
         memory_limit_mb: 0,

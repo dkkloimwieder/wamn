@@ -1,7 +1,7 @@
 //! The live test that the Rust and SQL halves of the tenant key AGREE.
 //!
 //! This is the sharpest failure mode in `wamn-0h0g.22.6`: provisioning mints a
-//! guest login whose name carries the scope digest, and every governed RLS
+//! guest login whose name carries the target digest, and every governed RLS
 //! predicate recomputes that digest in SQL from `current_user`. If the two
 //! implementations disagree by one byte, every guest read refuses — and no pure
 //! test can catch it, because one of the two implementations only exists inside
@@ -16,7 +16,7 @@ use wamn_control_provision::tenant_key::{
     authority_derivations_bootstrap_sql, authority_derivations_sql, tenant_key,
 };
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
 use wamn_run_state::CredentialGeneration;
 
@@ -27,13 +27,13 @@ use wamn_run_state::CredentialGeneration;
 /// schedules them in parallel — which the default workspace sweep does. Per-test
 /// isolation removes the shared mutable state instead of relying on
 /// `--test-threads=1` being remembered.
-struct Scope {
+struct Target {
     db: String,
     owner: String,
     app: String,
 }
 
-impl Scope {
+impl Target {
     fn new(slug: &str) -> Self {
         Self {
             db: format!("wamn-db-acme--billing--{slug}"),
@@ -42,7 +42,7 @@ impl Scope {
         }
     }
 
-    /// A scope whose DATABASE NAME is multi-byte, with ASCII role names.
+    /// A target whose DATABASE NAME is multi-byte, with ASCII role names.
     ///
     /// The bootstrap rendering computes the name's length ON THE SERVER, and
     /// `length()` counts CHARACTERS while `octet_length(convert_to(...))` counts
@@ -50,9 +50,9 @@ impl Scope {
     /// ASCII-only gate cannot tell a correct implementation from a broken one,
     /// and the disagreement it would miss is every guest read refusing.
     fn multibyte(slug: &str) -> Self {
-        let mut scope = Self::new(slug);
-        scope.db = format!("wamn-db-acme--billing--{slug}-\u{f6}\u{e4}");
-        scope
+        let mut target = Self::new(slug);
+        target.db = format!("wamn-db-acme--billing--{slug}-\u{f6}\u{e4}");
+        target
     }
 }
 
@@ -115,8 +115,8 @@ fn psql_file(url: &str, script: &str) {
 ///
 /// HERMETIC ON PURPOSE: a leftover healthy role satisfies `IF NOT EXISTS` and
 /// would mask a mutated builder, so every run exercises the CURRENT builder.
-fn reset(admin_url: &str, scope: &Scope) -> String {
-    let (db, owner, app) = (&scope.db, &scope.owner, &scope.app);
+fn reset(admin_url: &str, target: &Target) -> String {
+    let (db, owner, app) = (&target.db, &target.owner, &target.app);
     // CREATE/DROP DATABASE MUST BE THEIR OWN AUTOCOMMIT STATEMENTS. `psql -c`
     // wraps a multi-statement string in ONE transaction, and DROP DATABASE
     // cannot run inside one — so each statement gets its own invocation.
@@ -145,20 +145,20 @@ fn reset(admin_url: &str, scope: &Scope) -> String {
     format!("{base}/{}", encode_path(db))
 }
 
-/// The DDL under test, rendered for one isolated scope.
-fn ddl(scope: &Scope) -> String {
-    authority_derivations_sql(&scope.db)
-        .replace("\"wamn_db_owner\"", &format!("\"{}\"", scope.owner))
-        .replace("\"wamn_app\"", &format!("\"{}\"", scope.app))
+/// The DDL under test, rendered for one isolated target.
+fn ddl(target: &Target) -> String {
+    authority_derivations_sql(&target.db)
+        .replace("\"wamn_db_owner\"", &format!("\"{}\"", target.owner))
+        .replace("\"wamn_app\"", &format!("\"{}\"", target.app))
 }
 
 #[test]
 fn the_sql_tenant_key_equals_the_rust_tenant_key() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    let scope = Scope::new("agree");
-    let db_url = reset(&admin, &scope);
-    psql_file(&db_url, &ddl(&scope));
+    let target = Target::new("agree");
+    let db_url = reset(&admin, &target);
+    psql_file(&db_url, &ddl(&target));
 
     for env_key in ENV_KEYS {
         let observed = psql(
@@ -166,7 +166,7 @@ fn the_sql_tenant_key_equals_the_rust_tenant_key() {
             None,
             &format!("SELECT wamn_authority.tenant_key('{env_key}')"),
         );
-        let expected = tenant_key(env_key, &scope.db);
+        let expected = tenant_key(env_key, &target.db);
         assert_eq!(
             observed, expected,
             "tenant {env_key:?}: the SQL derivation and the Rust derivation \
@@ -177,7 +177,7 @@ fn the_sql_tenant_key_equals_the_rust_tenant_key() {
         assert_eq!(
             expected.len(),
             40,
-            "the digest is the 40-hex scope convention"
+            "the digest is the 40-hex target convention"
         );
     }
 }
@@ -186,9 +186,9 @@ fn the_sql_tenant_key_equals_the_rust_tenant_key() {
 fn the_function_carries_the_flags_the_expression_index_requires() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    let scope = Scope::new("flags");
-    let db_url = reset(&admin, &scope);
-    psql_file(&db_url, &ddl(&scope));
+    let target = Target::new("flags");
+    let db_url = reset(&admin, &target);
+    psql_file(&db_url, &ddl(&target));
 
     // Read from pg_proc, NOT from the DDL text. A function that silently lost
     // IMMUTABLE still creates fine and breaks every expression index built on
@@ -249,9 +249,9 @@ fn the_function_carries_the_flags_the_expression_index_requires() {
 fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    let scope = Scope::new("grants");
-    let db_url = reset(&admin, &scope);
-    psql_file(&db_url, &ddl(&scope));
+    let target = Target::new("grants");
+    let db_url = reset(&admin, &target);
+    psql_file(&db_url, &ddl(&target));
 
     let execute = psql(
         &db_url,
@@ -259,7 +259,7 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
         &format!(
             "SELECT has_function_privilege('{app}', \
              'wamn_authority.tenant_key(text)', 'EXECUTE')",
-            app = scope.app
+            app = target.app
         ),
     );
     assert_eq!(
@@ -278,11 +278,11 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
           WHERE n.nspname = 'wamn_authority' AND p.proname = 'tenant_key'",
     );
     assert_eq!(
-        owner, scope.owner,
+        owner, target.owner,
         "the platform role owns the derivation, not the guest"
     );
     assert_ne!(
-        owner, scope.app,
+        owner, target.app,
         "the guest must not be able to redefine the derivation"
     );
 
@@ -310,7 +310,7 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
              'wamn_authority.current_tenant_key()', 'EXECUTE')::text \
              || has_function_privilege('public', \
              'wamn_authority.current_tenant_key()', 'EXECUTE')::text",
-            app = scope.app
+            app = target.app
         ),
     );
     assert_eq!(
@@ -325,7 +325,7 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
           WHERE n.nspname = 'wamn_authority' AND p.proname = 'current_tenant_key'",
     );
     assert_eq!(
-        session_owner, scope.owner,
+        session_owner, target.owner,
         "the platform role owns the session derivation, not the guest"
     );
 }
@@ -337,8 +337,8 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
 fn a_second_apply_leaves_the_definition_identical() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    let scope = Scope::new("converge");
-    let db_url = reset(&admin, &scope);
+    let target = Target::new("converge");
+    let db_url = reset(&admin, &target);
     // BOTH derivations, ordered: a converge arm that watched only one would
     // let the other drift silently between the two appliers.
     let definition = |url: &str| {
@@ -352,9 +352,9 @@ fn a_second_apply_leaves_the_definition_identical() {
         )
     };
 
-    psql_file(&db_url, &ddl(&scope));
+    psql_file(&db_url, &ddl(&target));
     let first = definition(&db_url);
-    psql_file(&db_url, &ddl(&scope));
+    psql_file(&db_url, &ddl(&target));
     let second = definition(&db_url);
 
     assert_eq!(
@@ -397,21 +397,21 @@ fn role_url(admin_url: &str, role: &str, database: &str) -> String {
 fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    let scope = Scope::new("session");
-    let db_url = reset(&admin, &scope);
-    psql_file(&db_url, &ddl(&scope));
+    let target = Target::new("session");
+    let db_url = reset(&admin, &target);
+    psql_file(&db_url, &ddl(&target));
 
     let env_key = "acme";
-    let key = tenant_key(env_key, &scope.db);
+    let key = tenant_key(env_key, &target.db);
     let login = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key,
-            database: &scope.db,
+            database: &target.db,
         },
         CredentialGeneration::A,
     )
-    .expect("App takes a tenant scope");
+    .expect("App takes a tenant target");
 
     // The near misses exist to show the ANCHORS, which are the difference
     // between a derivation and a cross-tenant read: without `^` a crafted role
@@ -435,11 +435,11 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
         );
         // Exactly the production shape: the generation holds no privilege of
         // its own and inherits the stable NOLOGIN ACL role.
-        psql_file(&admin, &format!("GRANT {} TO \"{role}\"", scope.app));
+        psql_file(&admin, &format!("GRANT {} TO \"{role}\"", target.app));
     }
 
     let observed = psql(
-        &role_url(&admin, &login, &scope.db),
+        &role_url(&admin, &login, &target.db),
         None,
         "SELECT coalesce(wamn_authority.current_tenant_key(), '<null>')",
     );
@@ -451,7 +451,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 
     // The governed predicate itself, evaluated by the server as the guest.
     let predicate = psql(
-        &role_url(&admin, &login, &scope.db),
+        &role_url(&admin, &login, &target.db),
         None,
         &format!(
             "SELECT wamn_authority.tenant_key('{env_key}') \
@@ -475,7 +475,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
         ),
     ] {
         let attacked = psql(
-            &role_url(&admin, role, &scope.db),
+            &role_url(&admin, role, &target.db),
             None,
             "SELECT coalesce(wamn_authority.current_tenant_key(), '<null>')",
         );
@@ -512,9 +512,9 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 fn the_bootstrap_and_literal_renderings_install_the_same_object() {
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
-    // MULTI-BYTE ON PURPOSE — see `Scope::multibyte`.
-    let scope = Scope::multibyte("boot");
-    let db_url = reset(&admin, &scope);
+    // MULTI-BYTE ON PURPOSE — see `Target::multibyte`.
+    let target = Target::multibyte("boot");
+    let db_url = reset(&admin, &target);
 
     let definitions = |url: &str| {
         psql(
@@ -528,8 +528,8 @@ fn the_bootstrap_and_literal_renderings_install_the_same_object() {
     };
 
     let bootstrap = authority_derivations_bootstrap_sql()
-        .replace("\"wamn_db_owner\"", &format!("\"{}\"", scope.owner))
-        .replace("\"wamn_app\"", &format!("\"{}\"", scope.app));
+        .replace("\"wamn_db_owner\"", &format!("\"{}\"", target.owner))
+        .replace("\"wamn_app\"", &format!("\"{}\"", target.app));
     psql_file(&db_url, &bootstrap);
     let from_bootstrap = definitions(&db_url);
     assert_eq!(
@@ -543,7 +543,7 @@ fn the_bootstrap_and_literal_renderings_install_the_same_object() {
     // byte — a length computed over chars instead of octets, a name that lost
     // its quoting — the digests differ and every guest read on this database
     // would refuse.
-    psql_file(&db_url, &ddl(&scope));
+    psql_file(&db_url, &ddl(&target));
     assert_eq!(
         definitions(&db_url),
         from_bootstrap,
@@ -582,7 +582,7 @@ fn the_bootstrap_and_literal_renderings_install_the_same_object() {
         );
         assert_eq!(
             observed,
-            tenant_key(env_key, &scope.db),
+            tenant_key(env_key, &target.db),
             "tenant {env_key:?}: the bootstrapped derivation disagrees with Rust"
         );
     }

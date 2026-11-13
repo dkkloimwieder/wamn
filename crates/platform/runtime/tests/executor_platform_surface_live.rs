@@ -36,8 +36,8 @@ use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionKind,
     CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
-    MembershipExpectation, MembershipMode, ProductionClaimErrorType, ProductionClaimResult,
-    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+    MembershipExpectation, MembershipMode, ProductionCompletion, ProductionCompletionResult,
+    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult, ProductionReapResult,
     RELEASE_COMPONENTS_SQL, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
     credential_exactness_probe, explicit_credential_source,
 };
@@ -45,7 +45,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// The generation login every leg runs as.
 ///
 /// Named with `ExecutorPlatform`'s frozen SHORT generation prefix: the family's
-/// stable role name does not fit the 63-byte identifier cap once a scope digest
+/// stable role name does not fit the 63-byte identifier cap once an identity digest
 /// and an A/B suffix are appended, so a login that reads like a real generation
 /// has to start here.
 const GENERATION: &str = "wamn_exec_platform_surface_live_a";
@@ -89,12 +89,12 @@ fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String>
     Ok(url.into())
 }
 
-/// Open one transaction shaped like `begin_with_claims` does for this class.
+/// Open one transaction shaped like `begin_with_identity` does for this class.
 ///
 /// The three plan-supply statements take the tenant as `$1` and read no GUC, so
-/// the claim is not what fences them; it is set because it IS what the host
+/// the identity is not what fences them; it is set because it IS what the host
 /// injects, and because the `run_queue` leg below depends on it.
-async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
+async fn begin_bound(client: &Client) -> anyhow::Result<()> {
     client.batch_execute("BEGIN").await?;
     client
         .execute("SELECT set_config('app.env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&ENV_KEY, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
@@ -281,7 +281,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
     let platform_url = generation_url(admin_url, None)?;
     let generation = connect(&platform_url).await?;
-    begin_claimed(&generation).await?;
+    begin_bound(&generation).await?;
 
     let manifest_digest: String = admin
         .query_one(
@@ -305,21 +305,21 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // *** `has_table_privilege` IS BLIND TO RLS. *** The ACL says this
     // principal may SELECT `wamn_run.run_queue`; `run_queue_env_key` carries no
     // `TO` clause and keys on `app.env_key`, so the SAME connection reads one
-    // row with the claim injected and ZERO without it. This is why every arm in
+    // row with the identity injected and ZERO without it. This is why every arm in
     // this file asserts rows rather than privileges.
-    let claimed_rows: i64 = generation
+    let bound_rows: i64 = generation
         .query_one("SELECT count(*) FROM wamn_run.run_queue", &[])
         .await?
         .get(0);
-    assert_eq!(claimed_rows, 1, "the claimed session read no queue row");
+    assert_eq!(bound_rows, 1, "the bound session read no queue row");
     generation.batch_execute("COMMIT").await?;
-    let unclaimed_rows: i64 = generation
+    let unbound_rows: i64 = generation
         .query_one("SELECT count(*) FROM wamn_run.run_queue", &[])
         .await?
         .get(0);
     assert_eq!(
-        unclaimed_rows, 0,
-        "an unclaimed session read the queue that the tenant claim is supposed to fence"
+        unbound_rows, 0,
+        "an unbound session read the queue that the tenant identity is supposed to fence"
     );
     let acl_says_yes: bool = generation
         .query_one(
@@ -464,7 +464,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     })?;
 
     // WRONG ACL. `wamn_run.runs` is SELECT plus a COLUMN-grain UPDATE for this
-    // family and INSERT for nothing, so an expectation that claims INSERT is
+    // family and INSERT for nothing, so an expectation that declares INSERT is
     // refused by the server's `has_table_privilege`, not by this test.
     let wrong_acl = credential_exactness_probe(
         explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
@@ -548,7 +548,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
-    // A production host carries its release digest and claims only the runs
+    // A production host carries its release digest and leases only the runs
     // pinned to it (docs/architecture/execution.md#environment-workflows).
     plugin.set_release_identity(
         COMPONENT,
@@ -574,7 +574,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}), None);
     for result in [
         plugin
-            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await
             .map(|_| ()),
         plugin
@@ -591,7 +591,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .map(|_| ()),
     ] {
         let error = result.expect_err("broad table grants must not replace executor membership");
-        assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
+        assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
         assert_eq!(error.operation(), "check executor authority");
         assert!(
             error
@@ -617,15 +617,15 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .await?,
         ProductionReapResult::Empty
     );
-    let ProductionClaimResult::Ready {
+    let ProductionLeaseResult::Ready {
         run_id,
         lease_generation,
         ..
     } = plugin
-        .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
         .await?
     else {
-        anyhow::bail!("the restored executor must claim its unchanged run");
+        anyhow::bail!("the restored executor must lease its unchanged run");
     };
     assert_eq!(run_id, "run-1");
     assert_eq!(lease_generation, 1);

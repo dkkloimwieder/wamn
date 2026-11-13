@@ -334,7 +334,7 @@ async fn redirects_reenter_policy_and_cannot_change_authority_or_base_path() {
         &dns,
     )
     .await
-    .expect("same-authority in-scope redirect");
+    .expect("same-authority authorized redirect");
     assert_eq!(
         redirected.logical_url.as_ref(),
         "https://erp.example/api/orders/2"

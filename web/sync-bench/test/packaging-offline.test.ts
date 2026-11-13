@@ -4,13 +4,13 @@ import type { Feed, Persistence } from "@wfe/sync";
 import { rowsPersistence } from "@wamn/web-runtime";
 import { PACKAGING_SHAPE_DIGEST } from "../src/generated/wamn_wms/packaging.js";
 import { LOCATION_SHAPE_DIGEST } from "../src/generated/wamn_wms/location.js";
-import { packagingKey, type PackagingRow, type PackagingScope } from "../src/generated/wamn_wms/packaging.js";
+import { packagingKey, type PackagingRow, type PackagingFilter } from "../src/generated/wamn_wms/packaging.js";
 import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
 import {
   collectionBytes,
   needsConnection,
   packagingOffline,
-  packagingScope,
+  packagingFilter,
   requireStorage,
 } from "../src/packaging-offline.js";
 import { makeRows } from "../src/fake.js";
@@ -32,9 +32,9 @@ function fixture() {
       createdAt: rows[0]!.createdAt,
     },
   ] as LocationRow[];
-  const packaging: Feed<PackagingRow, PackagingScope> = {
-    list: vi.fn(async (scope) => ({
-      rows: rows.filter((row) => !scope.filter?.status || scope.filter.status.includes(row.status)),
+  const packaging: Feed<PackagingRow, PackagingFilter> = {
+    list: vi.fn(async (filter) => ({
+      rows: rows.filter((row) => !filter.filter?.status || filter.filter.status.includes(row.status)),
       cursor: "p1",
     })),
     changes: vi.fn(async () => ({ rows: [], next_cursor: "p2", complete: true })),
@@ -55,11 +55,11 @@ function fixture() {
   };
   const estimate = vi.fn(async () => ({ quota: 100_000_000, usage: 0 }));
   let online = true;
-  function open(scope: PackagingScope = {}) {
+  function open(filter: PackagingFilter = {}) {
     const model = packagingOffline({
       packaging,
       location,
-      scope,
+      filter,
       persistence,
       estimate,
       online: () => online,
@@ -85,19 +85,19 @@ function fixture() {
   };
 }
 
-it("fills the filter scope and the whole location model, then follows both feeds", async () => {
+it("fills the filter filter and the whole location model, then follows both feeds", async () => {
   const h = fixture();
-  const scope = packagingScope("held");
-  expect(scope).toEqual({ filter: { status: ["held"] } });
-  expect(packagingScope("all")).toEqual({});
-  const model = h.open(scope);
+  const filter = packagingFilter("held");
+  expect(filter).toEqual({ filter: { status: ["held"] } });
+  expect(packagingFilter("all")).toEqual({});
+  const model = h.open(filter);
   await model.packaging.c.preload();
   const result = await model.takeOffline();
   expect(result.packaging.count).toBe(1);
   expect(result.location.count).toBe(1);
-  expect(h.packaging.list).toHaveBeenLastCalledWith(scope);
+  expect(h.packaging.list).toHaveBeenLastCalledWith(filter);
   expect(h.location.list).toHaveBeenCalledExactlyOnceWith({});
-  expect(h.saved.get(packagingKey(scope))?.rows).toEqual([h.rows[0]]);
+  expect(h.saved.get(packagingKey(filter))?.rows).toEqual([h.rows[0]]);
   expect(h.saved.get(locationKey({}))?.rows).toHaveLength(1);
   expect(result.needed).toBe(Math.ceil((result.packaging.bytes + result.location.bytes) * 1.2));
   await model.packaging.c.utils.pull();
@@ -141,16 +141,16 @@ it("refills locations through row_version without deleting the saved entry", asy
 
 it.each([false, true])("opens a local collection without network, empty=%s", async (empty) => {
   const h = fixture();
-  const scope = empty ? packagingScope("consumed") : {};
-  const before = h.open(scope);
+  const filter = empty ? packagingFilter("consumed") : {};
+  const before = h.open(filter);
   await before.takeOffline();
   await before.close();
-  const savedAt = h.saved.get(packagingKey(scope))!.saved_at;
+  const savedAt = h.saved.get(packagingKey(filter))!.saved_at;
   vi.mocked(h.packaging.list).mockClear();
   vi.mocked(h.location.list).mockClear();
   vi.mocked(h.persistence.save).mockClear();
   h.offline();
-  const model = h.open(scope);
+  const model = h.open(filter);
   await model.restored;
   await model.packaging.c.preload();
   await model.location!.c.preload();
@@ -169,7 +169,7 @@ it.each([false, true])("opens a local collection without network, empty=%s", asy
 it("requires a connection when the screen has no local collection", async () => {
   const h = fixture();
   h.offline();
-  const model = h.open(packagingScope("held"));
+  const model = h.open(packagingFilter("held"));
   await model.packaging.c.preload().catch(() => undefined);
   expect(needsConnection(false, model.packaging.local())).toBe(true);
   expect(String(model.packaging.c.utils.error())).toContain("needs a connection");

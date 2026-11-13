@@ -297,8 +297,8 @@ pub(super) async fn do_record_project_env(
 const CONTROL_PROJECTION_INSTALLED_SQL: &str =
     "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL";
 
-/// Claim the projected tenant for the transaction's RLS policy.
-const CLAIM_PROJECTED_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+/// Bind the projected tenant identity for the transaction's RLS policy.
+const ASSIGN_PROJECTED_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Project the recorded project-env into the control store, beside the facts its
 /// `disposable` marker governs (wamn-10yt.38).
@@ -346,9 +346,9 @@ pub async fn project_env_key_environment(
         .await
         .context("begin the project-env control projection")?;
     transaction
-        .query_one(CLAIM_PROJECTED_ENV_KEY_SQL, &[&env_key])
+        .query_one(ASSIGN_PROJECTED_ENV_KEY_SQL, &[&env_key])
         .await
-        .context("claim the projected tenant")?;
+        .context("bind the projected tenant identity")?;
     transaction
         .execute(
             sql::insert_env_key_environment_sql(),
@@ -394,7 +394,7 @@ pub async fn project_env_key_environment(
 ///
 /// The routine refuses a tenant that provisioning never projected — absence
 /// means durable, and a durable environment is never recreated.
-pub async fn claim_environment_instance(
+pub async fn assign_environment_instance(
     client: &mut tokio_postgres::Client,
     env_key: &str,
     instance: &str,
@@ -402,11 +402,11 @@ pub async fn claim_environment_instance(
     let transaction = super::provisioning_transaction(client).await?;
     let affected_rows = transaction
         .execute(
-            wamn_schema_control::claim_environment_instance_sql(),
+            wamn_schema_control::assign_environment_instance_sql(),
             &[&env_key, &instance],
         )
         .await?;
-    wamn_schema_control::check_environment_instance_claim(env_key, affected_rows)?;
+    wamn_schema_control::check_environment_instance_assignment(env_key, affected_rows)?;
     transaction.commit().await?;
     Ok(())
 }

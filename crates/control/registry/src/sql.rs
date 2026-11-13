@@ -31,7 +31,7 @@ pub fn select_org_placement_sql() -> &'static str {
     "SELECT placement_type, pool_cluster FROM registry.orgs WHERE id = $1"
 }
 
-// --- env policies (wamn-8df.3; org-scoped by wamn-8df.4) --------------------
+// --- env policies (wamn-8df.3; org-targeted by wamn-8df.4) --------------------
 //
 // The per-org [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing / HA / backup /
 // recovery-domain per (org, env slug). `recovery_domain` is `jsonb`; the reads

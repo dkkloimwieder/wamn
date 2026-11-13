@@ -7,8 +7,8 @@ use serde_json::json;
 use wamn_engine::artifact_source::LocalComponentSource;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
-use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
@@ -36,7 +36,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
-        ReleaseScope::new(ENV_KEY, "test")
+        ReleaseTarget::new(ENV_KEY, "test")
             .with_applications(super::consumer_live::declared("erp", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
@@ -74,7 +74,7 @@ pub async fn invoke(
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),
-        OperationScope {
+        OperationHostConfig {
             project: "test".into(),
             schema: Some("wamn_integration".into()),
             owner_prefix: "netsuite-checkpoint-live".into(),
@@ -200,7 +200,7 @@ pub async fn invoke(
                 deadline_ms: 10000,
                 facts: NativeFacts::entry(
                     NodeAcquisition {
-                        claims: host.claims(ENV_KEY, Some(host.release_identity())),
+                        identity: host.identity(ENV_KEY, Some(host.release_identity())),
                         invocation: wamn_execution_host::component_invocation(
                             component,
                             &write.operation,

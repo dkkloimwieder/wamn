@@ -47,7 +47,7 @@ pub struct IdentityConfig {
 }
 
 impl IdentityConfig {
-    /// Validate the scoped credential before any database socket is opened.
+    /// Validate the targeted credential before any database socket is opened.
     pub fn new(issuer: &str, database_url: &str) -> Result<Self, IdentityServiceError> {
         let connection = parse_identity_issuer_url(database_url, issuer)
             .map_err(|_| IdentityServiceError::new("identity database configuration refused"))?;
@@ -195,7 +195,7 @@ impl Inner {
 }
 
 impl IdentityService {
-    /// Connect using already validated issuer-scoped authority.
+    /// Connect using already validated issuer-targeted authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let database = connect(&config).await?;
         let issuance = Mutex::new(connect(&config).await?);

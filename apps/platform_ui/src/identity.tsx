@@ -15,7 +15,7 @@ import {
   type SessionOptions,
 } from "@wamn/web-runtime";
 import type { Address } from "./address";
-import type { Scope } from "./scope";
+import type { Config } from "./config";
 import { EntryPage, Frame, NavigationLink } from "./page";
 
 interface IdentityProps {
@@ -91,16 +91,16 @@ export function SignInForm(props: {
 }
 
 /** Identity names the reachable audiences; the session reads their permissions. */
-function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element {
+function ChooseEnvironment(props: IdentityProps & { config: Config }): JSX.Element {
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
   let login: Credentials | undefined;
   const page = createServerPage<Environment>(async (input) => {
     if (!login) throw new Error("Enter your email and password.");
-    const result = await environmentPage(login.email, login.password, props.scope, input, props.options);
+    const result = await environmentPage(login.email, login.password, props.config, input, props.options);
     return { ...result, rows: result.environments };
   });
   createEffect(
-    () => props.scope.org,
+    () => props.config.org,
     () => {
       login = undefined;
       setCredentials(null);
@@ -337,7 +337,7 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
   );
 }
 
-const pages = new Map<string, Component<IdentityProps & { scope: Scope }>>([
+const pages = new Map<string, Component<IdentityProps & { config: Config }>>([
   ["", ChooseEnvironment],
   ["/invite", AcceptInvitation],
   ["/recover", RecoverPassword],
@@ -345,6 +345,6 @@ const pages = new Map<string, Component<IdentityProps & { scope: Scope }>>([
 ]);
 
 /** The identity pages own their address table. */
-export function identityPage(pathname: string): Component<IdentityProps & { scope: Scope }> | undefined {
+export function identityPage(pathname: string): Component<IdentityProps & { config: Config }> | undefined {
   return pages.get(pathname.replace(/\/$/, ""));
 }

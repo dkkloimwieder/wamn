@@ -32,7 +32,7 @@ pub(in super::super) fn merge_package_attachment_documents(
 ///
 /// The release publish is the production boundary that accepts the authored
 /// attachment map. Comparing here prevents a caller from pairing an unchanged
-/// identity claim with different route or contract bytes before either can
+/// identity declaration with different route or contract bytes before either can
 /// enter the immutable serving snapshot.
 pub(in super::super) fn validate_attachment_definition_hashes(
     attachments: &BTreeMap<String, ServingAttachment>,

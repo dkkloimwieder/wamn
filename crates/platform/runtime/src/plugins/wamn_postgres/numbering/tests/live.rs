@@ -14,12 +14,12 @@ use super::super::{
     CounterSet, CounterSetError, CounterSetRefusal, DATE_SQL, NO_NUMBER_ISSUED, NumberCall,
     render_number,
 };
-use crate::plugins::wamn_postgres::claims::tests::{LIVE_PRINCIPAL, live_guest_url};
+use crate::plugins::wamn_postgres::session_identity::tests::{LIVE_PRINCIPAL, live_guest_url};
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, PgError, SessionClaims, StatementError, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, PgError, SessionIdentity, StatementError, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
     workload_generation_role,
 };
 
@@ -76,7 +76,7 @@ impl Live {
             .expect("create the run-plane schema that administration revokes in");
         let generation = workload_generation_role(
             WorkloadRoleFamily::Administration,
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: "org",
                 project: "project",
                 environment: "dev",
@@ -84,7 +84,7 @@ impl Live {
             },
             CredentialGeneration::A,
         )
-        .expect("the administration family takes a project-environment scope");
+        .expect("the administration family takes a project-environment identity");
         database
             .execute(&[&provision_sql::prepare_workload_generation_sql(
                 WorkloadRoleFamily::Administration,
@@ -158,17 +158,17 @@ impl Live {
     ) -> Result<String, StatementError> {
         let scope = format!("numbering-{}", self.scopes.fetch_add(1, Ordering::Relaxed));
         self.plugin
-            .bind_session_claims(
+            .bind_session_identity(
                 &scope,
-                &SessionClaims {
+                &SessionIdentity {
                     env_key: ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
-                    ..SessionClaims::default()
+                    ..SessionIdentity::default()
                 },
             )
             .await
-            .expect("the claims bind");
+            .expect("the identity bind");
         if finish == Finish::Outside {
             return render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         }
@@ -426,29 +426,29 @@ async fn live_a_sequence_of_another_application_is_refused() {
 }
 
 /// The plugin reads the application from host state, not from the
-/// `app.application` claim: a transaction whose claim is rewritten to another
+/// `app.application` identity: a transaction whose identity is rewritten to another
 /// application still renders its own sequences and reaches none of the other
 /// application's (wamn-9e4ks).
 #[tokio::test]
-async fn live_a_rewritten_application_claim_reaches_no_other_sequence() {
+async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
     let live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
         .await;
-    let scope = "numbering-rewritten-claim";
+    let scope = "numbering-rewritten-identity";
     live.plugin
-        .bind_session_claims(
+        .bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
-        .expect("the claims bind");
+        .expect("the identity bind");
     let transaction = live
         .plugin
         .begin_operation_transaction(scope)
@@ -468,7 +468,7 @@ async fn live_a_rewritten_application_claim_reaches_no_other_sequence() {
             (connection, result)
         })
         .await
-        .expect("the claim is rewritten");
+        .expect("the identity is rewritten");
     let render = |name: &str| {
         render_number(
             &live.plugin,
@@ -497,16 +497,16 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
         .await;
     let scope = "numbering-no-application";
     live.plugin
-        .bind_session_claims(
+        .bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
-        .expect("the claims bind");
+        .expect("the identity bind");
     let transaction = live
         .plugin
         .begin_operation_transaction(scope)
@@ -574,7 +574,7 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
     live.sequence(OTHER_APPLICATION, "stamp", pattern).await;
     // POSIX sign: Etc/GMT-14 is fourteen hours ahead of UTC.
     live.administer(&format!(
-        "INSERT INTO platform.setting (scope_type, scope_id, key, value) \
+        "INSERT INTO platform.setting (target_type, target_id, key, value) \
          VALUES ('application', '{APPLICATION}', 'timezone', '\"Etc/GMT-14\"');"
     ))
     .await;
@@ -668,23 +668,23 @@ async fn live_an_invalid_timezone_setting_is_refused() {
             .await;
         live.sequence(application, "label", "L-{seq:n}").await;
         live.administer(&format!(
-            "INSERT INTO platform.setting (scope_type, scope_id, key, value) \
+            "INSERT INTO platform.setting (target_type, target_id, key, value) \
              VALUES ('application', '{application}', 'timezone', '{value}');"
         ))
         .await;
         let scope = format!("numbering-timezone-{application}");
         live.plugin
-            .bind_session_claims(
+            .bind_session_identity(
                 &scope,
-                &SessionClaims {
+                &SessionIdentity {
                     env_key: ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
-                    ..SessionClaims::default()
+                    ..SessionIdentity::default()
                 },
             )
             .await
-            .expect("the claims bind");
+            .expect("the identity bind");
         let transaction = live
             .plugin
             .begin_operation_transaction(&scope)
@@ -978,17 +978,17 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
     let scope = "numbering-held";
     live.plugin
-        .bind_session_claims(
+        .bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
-        .expect("the claims bind");
+        .expect("the identity bind");
     let held = live
         .plugin
         .begin_operation_transaction(scope)
@@ -1096,13 +1096,13 @@ async fn live_set_counter_is_logged_by_its_request_id() {
         live.refused("missing", "po", "", 5).await,
         CounterSetRefusal::SequenceNotFound
     );
-    let claims: i64 = superuser
+    let identity: i64 = superuser
         .query_one("SELECT count(*) FROM platform.write_log", &[])
         .await
         .unwrap()
         .get(0);
     assert_eq!(
-        claims, 1,
-        "replay keeps the result and refusal rolls back its claim"
+        identity, 1,
+        "replay keeps the result and refusal rolls back its identity"
     );
 }

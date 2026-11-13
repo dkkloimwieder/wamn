@@ -187,8 +187,8 @@ mod tests {
         use crate::events::{consumer_config_matches, stream_config_matches};
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
-        let scope = Triple::new("example", "fixture", "dev");
-        let source = source_stream_config(&scope, 1, Duration::from_secs(120));
+        let target = Triple::new("example", "fixture", "dev");
+        let source = source_stream_config(&target, 1, Duration::from_secs(120));
         assert!(stream_config_matches(&source, &source));
         let changed = async_nats::jetstream::stream::Config {
             max_messages: 1,
@@ -219,9 +219,9 @@ mod tests {
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
         let root = ScratchRoot::create()?;
-        let scope = Triple::new("example", "fixture", "dev");
-        let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-        let advisory = advisory_stream_config(&scope, 1);
+        let target = Triple::new("example", "fixture", "dev");
+        let source = source_stream_config(&target, 1, Duration::from_secs(120));
+        let advisory = advisory_stream_config(&target, 1);
         let consumer = materializer_consumer_config(
             "registered",
             "evt.example.fixture.dev.item.update",
@@ -230,7 +230,7 @@ mod tests {
         );
         let broker = event_broker::prepare(
             root.path(),
-            &scope,
+            &target,
             "tenant",
             &source,
             &advisory,
@@ -389,13 +389,19 @@ mod tests {
             DeliveryAdvisoryType::MaxDeliver => "exhausted",
             DeliveryAdvisoryType::Terminated => "terminated",
         };
-        let scope = Triple::new(format!("c-{name}"), "app", "dev");
-        let source_name = stream_name(&scope.org, &scope.project, scope.env.as_str());
+        let target = Triple::new(format!("c-{name}"), "app", "dev");
+        let source_name = stream_name(&target.org, &target.project, target.env.as_str());
         let advisory_name = delivery_advisory_stream(&source_name);
-        let subject = format!("evt.{}.app.dev.item.update", scope.org);
+        let subject = format!("evt.{}.app.dev.item.update", target.org);
         let consumer = materializer_consumer_config(name, &subject, Duration::from_millis(100), 2);
-        crate::streams::provision(&jetstream, &scope, 1, Duration::from_secs(120), &[consumer])
-            .await?;
+        crate::streams::provision(
+            &jetstream,
+            &target,
+            1,
+            Duration::from_secs(120),
+            &[consumer],
+        )
+        .await?;
         let result: anyhow::Result<()> = async {
             let source = jetstream.get_stream(&source_name).await?;
             let consumer = source.get_consumer::<PullConfig>(name).await.map_err(anyhow::Error::from_boxed)?;
@@ -873,9 +879,9 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn scoped_credentials_allow_delivery_and_monitoring() -> anyhow::Result<()> {
+    async fn targeted_credentials_allow_delivery_and_monitoring() -> anyhow::Result<()> {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, advisory, consumer, consumers) = &fixture.declarations[0];
@@ -918,7 +924,7 @@ mod tests {
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn runtime_credentials_refuse_broker_management() -> anyhow::Result<()> {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, _, consumer, _) = &fixture.declarations[0];
@@ -992,9 +998,9 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn scoped_credentials_refuse_foreign_environments() -> anyhow::Result<()> {
+    async fn targeted_credentials_refuse_foreign_environments() -> anyhow::Result<()> {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (observer_client, mut observer_errors) =
@@ -1092,10 +1098,10 @@ mod tests {
     async fn activation_and_provisioning_refuse_changed_broker_configuration() -> anyhow::Result<()>
     {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let (source, _, consumer, _) = &fixture.declarations[0];
             let managers = &fixture.managers;
-            let scopes = &fixture.scopes;
+            let targets = &fixture.targets;
             let manager = &managers[0];
             manager
                 .update_stream(async_nats::jetstream::stream::Config {
@@ -1110,7 +1116,7 @@ mod tests {
             ensure!(
                 crate::streams::provision(
                     manager,
-                    &scopes[0],
+                    &targets[0],
                     1,
                     Duration::from_secs(120),
                     std::slice::from_ref(consumer)
@@ -1140,7 +1146,7 @@ mod tests {
             ensure!(
                 crate::streams::provision(
                     manager,
-                    &scopes[0],
+                    &targets[0],
                     1,
                     Duration::from_secs(120),
                     std::slice::from_ref(consumer)
@@ -1170,7 +1176,7 @@ mod tests {
     async fn interrupted_acknowledgement_redelivers_and_allows_later_messages() -> anyhow::Result<()>
     {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, _, _, consumers) = &fixture.declarations[0];
@@ -1194,7 +1200,7 @@ mod tests {
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn large_messages_obey_broker_pull_and_ack_limits() -> anyhow::Result<()> {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, _, _, consumers) = &fixture.declarations[0];
@@ -1221,7 +1227,7 @@ mod tests {
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn source_time_expiry_keeps_retained_advisories() -> anyhow::Result<()> {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
-        scoped_broker_behavior(async |fixture| {
+        targeted_broker_behavior(async |fixture| {
             let server = &fixture.server;
             let broker = &fixture.brokers[0];
             let (source, advisory, _, consumers) = &fixture.declarations[0];
@@ -1258,15 +1264,15 @@ mod tests {
         Vec<PullConfig>,
     );
 
-    struct ScopedBroker {
+    struct TargetedBroker {
         server: String,
-        scopes: [Triple; 3],
+        targets: [Triple; 3],
         brokers: Vec<wamn_test_infrastructure::event_broker::EventBroker>,
         declarations: Vec<BrokerDeclaration>,
         managers: Vec<async_nats::jetstream::Context>,
     }
 
-    impl ScopedBroker {
+    impl TargetedBroker {
         async fn runtime(
             &self,
         ) -> anyhow::Result<wamn_runtime::plugins::wamn_jetstream::WamnJetstream> {
@@ -1275,15 +1281,15 @@ mod tests {
             let (client, _) = monitored_broker_client(&broker.runtime, &self.server).await?;
             Ok(WamnJetstream::new(WamnJetstreamConfig {
                 nats: Some(client),
-                event_scope: Some(self.scopes[0].clone()),
+                event_target: Some(self.targets[0].clone()),
                 stream_replicas: Some(1),
                 dup_window_secs: Some(120),
             }))
         }
     }
 
-    async fn scoped_broker_behavior(
-        test: impl AsyncFnOnce(&ScopedBroker) -> anyhow::Result<()>,
+    async fn targeted_broker_behavior(
+        test: impl AsyncFnOnce(&TargetedBroker) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         use crate::events::advisory_stream_config;
         use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
@@ -1302,10 +1308,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
         let root = ScratchRoot(
-            std::env::temp_dir().join(format!("native-c-scoped-{}-{nonce}", std::process::id())),
+            std::env::temp_dir().join(format!("native-c-targeted-{}-{nonce}", std::process::id())),
         );
         std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
-        let scopes = [
+        let targets = [
             Triple::new("example", "fixture", "dev"),
             Triple::new("example", "other", "dev"),
             Triple::new("example", "fixture", "prod"),
@@ -1317,16 +1323,16 @@ mod tests {
         let mut users = vec![wamn_test_infrastructure::nats_tls::full_permission_user(
             wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER,
         )];
-        for (index, scope) in scopes.iter().enumerate() {
+        for (index, target) in targets.iter().enumerate() {
             let directory = root.path().join(index.to_string());
             std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
-            let source = source_stream_config(scope, 1, Duration::from_secs(120));
-            let advisory = advisory_stream_config(scope, 1);
+            let source = source_stream_config(target, 1, Duration::from_secs(120));
+            let advisory = advisory_stream_config(target, 1);
             let consumer = materializer_consumer_config(
                 "registered",
                 &format!(
                     "evt.{}.{}.{}.item.update",
-                    scope.org, scope.project, scope.env
+                    target.org, target.project, target.env
                 ),
                 Duration::from_secs(30),
                 2,
@@ -1342,7 +1348,7 @@ mod tests {
                         name,
                         &format!(
                             "evt.{}.{}.{}.item.{name}",
-                            scope.org, scope.project, scope.env
+                            target.org, target.project, target.env
                         ),
                         ack_wait,
                         max_deliver,
@@ -1352,7 +1358,7 @@ mod tests {
             let broker = event_broker::prepare_in(
                 &authority,
                 &directory,
-                scope,
+                target,
                 "route-tenant",
                 &source,
                 &advisory,
@@ -1424,14 +1430,14 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 let mut managers = Vec::new();
-                for (scope, broker) in scopes.iter().zip(&brokers) {
+                for (target, broker) in targets.iter().zip(&brokers) {
                     let manager = async_nats::jetstream::new(
                         event_broker::connect(&broker.provisioning, &server).await?,
                     );
                     let (_, _, _, consumers) = &declarations[managers.len()];
                     crate::streams::provision(
                         &manager,
-                        scope,
+                        target,
                         1,
                         Duration::from_secs(120),
                         consumers,
@@ -1439,7 +1445,7 @@ mod tests {
                     .await?;
                     crate::streams::provision(
                         &manager,
-                        scope,
+                        target,
                         1,
                         Duration::from_secs(120),
                         consumers,
@@ -1447,9 +1453,9 @@ mod tests {
                     .await?;
                     managers.push(manager);
                 }
-                test(&ScopedBroker {
+                test(&TargetedBroker {
                     server,
-                    scopes,
+                    targets,
                     brokers,
                     declarations,
                     managers,
@@ -1460,7 +1466,7 @@ mod tests {
         .await;
         let kill = child.start_kill();
         let reaped = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-        result.context("scoped native event test exceeded 90 seconds")??;
+        result.context("targeted native event test exceeded 90 seconds")??;
         kill.context("stop the owned NATS process")?;
         reaped
             .context("owned NATS process did not exit within five seconds")?

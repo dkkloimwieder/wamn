@@ -81,7 +81,7 @@ fn reset_and_apply(url: &str, before_store: &str) {
 }
 
 #[test]
-fn current_database_connect_posture_is_exactly_scoped() {
+fn current_database_connect_posture_is_exactly_targeted() {
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
     let sibling = format!("wamn_portable_sibling_{}", std::process::id());

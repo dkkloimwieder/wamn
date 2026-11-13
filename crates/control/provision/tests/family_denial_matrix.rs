@@ -18,7 +18,7 @@
 //! `has_table_privilege` IS BLIND TO RLS. It answers TRUE for a role whose every
 //! `SELECT` returns zero rows, so it cannot tell an isolated credential from a
 //! locked-out one — and under `FORCE ROW LEVEL SECURITY` a principal matching no
-//! policy reads ZERO ROWS WITH NO ERROR. Every arm whose claim is about RLS
+//! policy reads ZERO ROWS WITH NO ERROR. Every arm whose assertion is about RLS
 //! REACH therefore asserts the POST-STATE ROW COUNT from a MINTED GENERATION
 //! LOGIN, never from the bare stable ACL role — which derives a NULL tenant key
 //! and matches nothing silently.
@@ -39,7 +39,7 @@ use url::Url;
 use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityKind,
     workload_generation_role,
 };
 use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL};
@@ -50,7 +50,7 @@ const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
-/// The database `deploy/sql/postgres-init.sql` creates. Also the scope every
+/// The database `deploy/sql/postgres-init.sql` creates. Also the target every
 /// generation login's digest is taken over, so it cannot be chosen freely.
 const DATABASE: &str = "wamn";
 
@@ -62,7 +62,7 @@ const ORG: &str = "acme";
 const PROJECT: &str = "billing";
 const ENVIRONMENT: &str = "dev";
 
-/// The tenant every tenant-scoped generation in this gate is minted for, and
+/// The tenant every tenant-targeted generation in this gate is minted for, and
 /// the tenant the guest may read. `TENANT_B` is the neighbour it may not.
 const ENV_KEY_A: &str = "t1";
 const ENV_KEY_B: &str = "t2";
@@ -77,7 +77,7 @@ const PROBE_PASSWORD: &str = "w68-matrix-probe";
 
 /// Every relation any matrix family holds, or could plausibly be widened onto.
 ///
-/// The denial matrix is a claim about THESE objects: the run plane, the
+/// The denial matrix is an assertion about THESE objects: the run plane, the
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
@@ -315,7 +315,7 @@ const MATRIX: [FamilyReach; 9] = [
 /// The families whose credentials reach the control database, with their reach
 /// over every table of [`sql::SYSTEM_PLANE_SCHEMAS`] (`wamn-a40n.2`).
 ///
-/// The same pairwise and exactness claims as [`MATRIX`], on the other plane.
+/// The same pairwise and exactness assertions as [`MATRIX`], on the other plane.
 /// No family here holds a routine.
 const CONTROL_MATRIX: [FamilyReach; 3] = [
     FamilyReach {
@@ -498,9 +498,9 @@ fn login_url(admin_url: &str, role: &str) -> String {
 
 /// The database a family's credential reaches.
 fn database_of(family: WorkloadRoleFamily) -> &'static str {
-    match family.scope_kind() {
-        WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment => DATABASE,
-        WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => CONTROL_DATABASE,
+    match family.identity_kind() {
+        WorkloadRoleIdentityKind::EnvKey | WorkloadRoleIdentityKind::ProjectEnvironment => DATABASE,
+        WorkloadRoleIdentityKind::Control | WorkloadRoleIdentityKind::Org => CONTROL_DATABASE,
     }
 }
 
@@ -517,29 +517,29 @@ struct Fixture {
 
 /// The deterministic generation name the real mint would issue for one family.
 fn generation(family: WorkloadRoleFamily) -> String {
-    let scope = match family.scope_kind() {
-        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
+    let target = match family.identity_kind() {
+        WorkloadRoleIdentityKind::EnvKey => WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY_A,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentityKind::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+        WorkloadRoleIdentityKind::Control => WorkloadRoleIdentity::Control {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: CONTROL_DATABASE,
         },
-        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org {
+        WorkloadRoleIdentityKind::Org => WorkloadRoleIdentity::Org {
             org: ORG,
             database: CONTROL_DATABASE,
         },
     };
-    workload_generation_role(family, scope, CredentialGeneration::A)
+    workload_generation_role(family, target, CredentialGeneration::A)
         .unwrap_or_else(|error| panic!("mint a {family:?} generation: {error}"))
 }
 
@@ -600,7 +600,7 @@ fn reset(admin: &str) {
 /// Two tenants' worth of rows in every relation an RLS-reach arm reads back.
 ///
 /// Two, not one: an arm that reads its own tenant cannot tell confinement from
-/// an empty table, and the platform arm's whole claim is that it reads BOTH.
+/// an empty table, and the platform arm's whole assertion is that it reads BOTH.
 const SEED: &str = "\
 DO $seed$ DECLARE t text; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
@@ -868,7 +868,7 @@ fn control_plane() -> Plane {
 /// One family's own row of the matrix, plus the ordered pairs it is the SUBJECT
 /// of.
 ///
-/// Two claims, and neither subsumes the other. The exactness half catches a
+/// Two assertions, and neither subsumes the other. The exactness half catches a
 /// widening onto an object NO family owns; the pairwise half NAMES the family
 /// whose operation was taken.
 fn assert_family_row(plane: &Plane, subject: WorkloadRoleFamily) {
@@ -1217,37 +1217,37 @@ fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say()
     );
 }
 
-/// THE TENANT-SCOPED PLATFORM MEMBER (`wamn-0h0g.22.25`).
+/// THE TENANT-TARGETED PLATFORM MEMBER (`wamn-0h0g.22.25`).
 ///
 /// # A premise of that ruling no longer holds
 ///
-/// The ruling named TWO tenant-scoped `wamn_platform` members, the effect
+/// The ruling named TWO tenant-targeted `wamn_platform` members, the effect
 /// writer and `Retention`. `wamn-0h0g.22.32` then DEMOTED the writer out of the group,
 /// and `wamn-0h0g.10.15` removed the effect-writer family, so `Retention` is the
 /// only subject the arm still has. That is asserted here
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
-fn the_env_key_scoped_platform_member_reads_nothing_outside_its_grants() {
+fn the_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
     let fixture = fixture();
-    let env_key_scoped_members: Vec<WorkloadRoleFamily> = MATRIX
+    let env_key_targeted_members: Vec<WorkloadRoleFamily> = MATRIX
         .iter()
         .map(|reach| reach.family)
         .filter(|family| {
-            matches!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey)
+            matches!(family.identity_kind(), WorkloadRoleIdentityKind::EnvKey)
                 && family.is_platform_grain()
         })
         .collect();
     assert_eq!(
-        env_key_scoped_members,
+        env_key_targeted_members,
         vec![WorkloadRoleFamily::Retention],
-        "the set of TENANT-SCOPED platform members moved; wamn-0h0g.22.25 was \
+        "the set of TENANT-TARGETED platform members moved; wamn-0h0g.22.25 was \
          ruled for exactly the families in this set"
     );
 
     let login = generation(WorkloadRoleFamily::Retention);
     let as_retention = login_url(&fixture.admin, &login);
     // Its grant set names ONE relation, and the shared arm is USING (true), so
-    // the honest claim is: every row of that relation, and 42501 everywhere
+    // the honest assertion is: every row of that relation, and 42501 everywhere
     // else. The tenant predicate it keeps in its own statements is what
     // re-narrows it, and that is not a database-enforced boundary.
     assert_eq!(
@@ -1336,7 +1336,7 @@ fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
         "the guest generation does not read exactly its own tenant's row: a \
          second row is a CROSS-TENANT READ and zero rows is a silent lockout"
     );
-    // A settable claim must not move it. The floor keys on `current_user`, and
+    // A settable identity must not move it. The floor keys on `current_user`, and
     // this shows that the retired `app.env_key` path is inert for the guest.
     assert_eq!(
         query(
@@ -1347,7 +1347,7 @@ fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
             ),
         ),
         "1",
-        "a session-settable claim moved the guest's row visibility"
+        "a session-settable identity moved the guest's row visibility"
     );
 }
 
@@ -1439,7 +1439,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
 /// `tenant_key`'s body carries the database name and its octet length, so its
 /// digest is per-database; this is the value for the `wamn` database
 /// `deploy/sql/postgres-init.sql` creates, which is the database this gate
-/// builds. `current_tenant_key` carries no scope and its digest is absolute.
+/// builds. `current_tenant_key` carries no target and its digest is absolute.
 ///
 /// Measured on PostgreSQL 18.6. `pg_get_functiondef` is a RENDERING, so a server
 /// that reformats it moves these digests without anything about the derivation

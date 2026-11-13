@@ -1,5 +1,5 @@
 {
-  "scope": {
+  "target": {
     "env_key": "__ENV_KEY__",
     "package-id": "observer_fixture"
   },

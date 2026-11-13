@@ -16,7 +16,7 @@
 //! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
 //! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three tested here.
 //! `wamn_jetstream`, `flow_http_routing` and `connection_credentials` are deliberately
-//! out of scope: the first two are not on the executor store, and the third
+//! outside this test: the first two are not on the executor store, and the third
 //! implements no `HostPlugin` and has no WIT surface at all.
 //!
 //! # Why the guests are WAT, not built fixtures
@@ -75,12 +75,12 @@ use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 const MARK_ENTER: u32 = 238;
 
 /// Pushed AFTER a plugin call whose WIT declares no error channel. Its presence
-/// is the whole no-trap claim for those two plugins.
+/// is the whole no-trap assertion for those two plugins.
 const MARK_RESUMED: u32 = 255;
 
 /// The `component_id` every store is built with. Plugins key their per-component
 /// state on it (`ActiveCtx::component_id`), so the test's own registration —
-/// the postgres tenant claim — must use the same string.
+/// the postgres tenant identity — must use the same string.
 const GUEST_ID: &str = "no-trap-guest";
 
 // ---------------------------------------------------------------------------
@@ -466,7 +466,7 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
     let postgres = Arc::new(offline_postgres());
     postgres
         .set_env_key(GUEST_ID, "tenant-a")
-        .expect("tenant claim registers");
+        .expect("tenant identity registers");
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         WAMN_POSTGRES_ID,

@@ -8,7 +8,7 @@
 //! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. A complete installation needs no replay.
 //! Partial initialization requires explicit repair. Interrupted migrations resume
-//! through `wamn platform schema apply --scope system --chart <prepared-chart>`.
+//! through `wamn platform schema apply --target system --chart <prepared-chart>`.
 //!
 //! With the emit flags, the verb installs nothing. It writes the Secret
 //! manifest of `wamn_provisioner` and the role statement that sets its
@@ -35,7 +35,7 @@ use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statemen
 use crate::provision_project_env::{
     ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
 };
-use wamn_control_provision::schema_migrations::MigrationScope;
+use wamn_control_provision::schema_migrations::MigrationDatabase;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
 use wamn_schema_control::MigrationSource;
 
@@ -58,7 +58,7 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     let result = async {
         initialize_system(
             &mut client,
-            &crate::platform_migrations::embedded_sources(MigrationScope::System),
+            &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
         )
         .await?;
         set_platform_domain(&mut client, &request.platform_domain).await?;

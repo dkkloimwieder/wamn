@@ -6,23 +6,23 @@
  */
 
 /** The path of the file, on the page's own origin. */
-export const SCOPE_PATH = "/config.json";
+export const CONFIG_PATH = "/config.json";
 
 /** The org of one deployment of the platform UI. */
-export interface Scope {
+export interface Config {
   readonly org: string;
 }
 
 /** Read `config.json`, and refuse a file without a non-empty org. */
-export async function readScope(fetcher: typeof fetch = fetch): Promise<Scope> {
-  const response = await fetcher(SCOPE_PATH, { cache: "no-cache" });
+export async function readConfig(fetcher: typeof fetch = fetch): Promise<Config> {
+  const response = await fetcher(CONFIG_PATH, { cache: "no-cache" });
   if (!response.ok) {
-    throw new Error(`${SCOPE_PATH} answered ${response.status}; wamn web upload writes it`);
+    throw new Error(`${CONFIG_PATH} answered ${response.status}; wamn web upload writes it`);
   }
   const body: unknown = await response.json();
   const org = typeof body === "object" && body !== null ? (body as Record<string, unknown>).org : undefined;
   if (typeof org !== "string" || org === "") {
-    throw new Error(`${SCOPE_PATH} has no org`);
+    throw new Error(`${CONFIG_PATH} has no org`);
   }
   return { org };
 }

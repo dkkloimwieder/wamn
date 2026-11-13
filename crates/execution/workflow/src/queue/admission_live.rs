@@ -1,6 +1,6 @@
 //! Manual and event workflow admission through the real queue.
 
-use super::{QUEUE_CLAIM_SCOPE, QueueScope, drain_one};
+use super::{QUEUE_LEASE_INVOCATION, QueueTarget, drain_one};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio_postgres::NoTls;
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -21,13 +21,13 @@ use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, EventBatchAdmission, ProjectConfig, ReleaseIdentity,
-    SessionClaims, StaticCredentialProvider, WamnPostgres,
+    SessionIdentity, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
 use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
-use wamn_execution_host::{OperationHost, OperationScope};
+use wamn_execution_host::{OperationHost, OperationHostConfig};
 use wamn_identity_protocol::PlatformComponent;
 
 #[path = "admission_live/shutdown.rs"]
@@ -139,7 +139,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         Mode::Event => component_bytes(),
     };
     let declaration: ComponentDeclaration = serde_json::from_value(json!({
-        "scope": {"env_key":ENV_KEY,"package-id":"automation","package-version":"1.0.0"},
+        "target": {"env_key":ENV_KEY,"package-id":"automation","package-version":"1.0.0"},
         "component":"echo","interface-version":"0.1.0",
         "operations":{(OPERATION):{"registered-operation":OPERATION,
             "input-ports":[{"name":"input","schema":{}}],
@@ -183,7 +183,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "automation-live",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "test").with_applications(
+        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "test").with_applications(
             [(
                 "automation".to_owned(),
                 wamn_catalog::ApplicationDefinition {
@@ -212,20 +212,20 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
             AuthorityClass::CallableHttp,
         ),
     ] {
-        let role_scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
+        let role_target = if family == WorkloadRoleFamily::App {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: ENV_KEY,
                 database: &db_name,
             }
         } else {
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: ENV_KEY,
                 project: "default",
                 environment: "test",
                 database: &db_name,
             }
         };
-        let role = workload_generation_role(family, role_scope, CredentialGeneration::A)?;
+        let role = workload_generation_role(family, role_target, CredentialGeneration::A)?;
         admin
             .batch_execute(&sql::prepare_workload_generation_sql(
                 family,
@@ -259,9 +259,9 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     );
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(provider)));
     postgres
-        .bind_session_claims(
-            QUEUE_CLAIM_SCOPE,
-            &SessionClaims {
+        .bind_session_identity(
+            QUEUE_LEASE_INVOCATION,
+            &SessionIdentity {
                 env_key: ENV_KEY.to_owned(),
                 project: Some("default".to_owned()),
                 schema: Some("wamn_run".to_owned()),
@@ -271,7 +271,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 release: Some(ReleaseIdentity::for_test(
                     release.release().manifest_digest.clone(),
                 )),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await?;
@@ -310,14 +310,14 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         Arc::from([]),
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
-        OperationScope {
+        OperationHostConfig {
             project: "default".to_owned(),
             schema: Some("application_data".to_owned()),
             owner_prefix: "automation-live".to_owned(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
         },
     )?)));
-    let scope = QueueScope {
+    let target = QueueTarget {
         env_key: ENV_KEY.to_owned(),
         project: "default".to_owned(),
         package_ids: vec!["automation".to_owned()],
@@ -358,7 +358,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                     engine: &engine,
                     logging: &logging,
                     capture: &capture,
-                    scope: &scope,
+                    target: &target,
                     jetstream: &jetstream,
                 },
             )
@@ -366,7 +366,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         }
         Mode::Event => {
             event_run(
-                &admin, &workflows, &release, &driver, &postgres, &scope, &jetstream,
+                &admin, &workflows, &release, &driver, &postgres, &target, &jetstream,
             )
             .await
         }
@@ -452,7 +452,7 @@ async fn event_run(
     release: &LoadedRelease,
     driver: &RouterDriver,
     postgres: &WamnPostgres,
-    scope: &QueueScope,
+    target: &QueueTarget,
     jetstream: &WamnJetstream,
 ) -> anyhow::Result<()> {
     let liveness = Liveness::new(Duration::from_secs(90));
@@ -460,7 +460,7 @@ async fn event_run(
         "package_id": "automation", "entity": "movement", "table": "movement", "lsn": 7,
         "txid": 1, "commit_ts": "2026-10-25T00:00:00Z"})
     .to_string();
-    let source_id = wamn_event_wire::msg_id(&scope.project, "test", 7);
+    let source_id = wamn_event_wire::msg_id(&target.project, "test", 7);
     let mut admission = EventBatchAdmission {
         source_package: "automation",
         entity: "movement",
@@ -469,10 +469,10 @@ async fn event_run(
         source_event_id: &source_id,
     };
     postgres
-        .admit_event_batch(&scope.project, release, &admission)
+        .admit_event_batch(&target.project, release, &admission)
         .await?;
     postgres
-        .admit_event_batch(&scope.project, release, &admission)
+        .admit_event_batch(&target.project, release, &admission)
         .await?;
     let runs = admin
         .query(
@@ -488,7 +488,7 @@ async fn event_run(
     admission.envelope = &other;
     assert!(
         postgres
-            .admit_event_batch(&scope.project, release, &admission)
+            .admit_event_batch(&target.project, release, &admission)
             .await
             .is_err(),
         "changed input must conflict"
@@ -503,13 +503,13 @@ async fn event_run(
     assert!(entry.queued && !entry.parked);
     workflows.park(&run).await?;
     assert!(
-        !drain_one(driver, postgres, jetstream, scope, 30_000, &liveness).await?,
-        "no claim takes a parked event run"
+        !drain_one(driver, postgres, jetstream, target, 30_000, &liveness).await?,
+        "no lease takes a parked event run"
     );
     workflows.release(&run).await?;
     assert!(
-        drain_one(driver, postgres, jetstream, scope, 30_000, &liveness).await?,
-        "the queue claims the released event run"
+        drain_one(driver, postgres, jetstream, target, 30_000, &liveness).await?,
+        "the queue leases the released event run"
     );
     let stored = admin
         .query_one(

@@ -6,7 +6,7 @@ use std::process::{Command, Output, Stdio};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
-    park_queued_run_sql, release_parked_run_sql, select_production_claim_sql,
+    park_queued_run_sql, release_parked_run_sql, select_production_lease_sql,
 };
 
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
@@ -193,7 +193,7 @@ fn surviving_authority_matrix_live() {
     // `EXECUTOR_PLATFORM_*` ON PURPOSE. Deriving them would make the constants
     // agree with themselves: a column added to the constant would widen the
     // grant and the expectation in the same edit, and no leg here could tell.
-    // Written out, the constant and the claim about it are two documents, and
+    // Written out, the constant and the assertion about it are two documents, and
     // the surface cannot be widened without moving a named assertion.
     success(
         &url,
@@ -276,18 +276,18 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
          END $$;",
     );
 
-    let claim = select_production_claim_sql();
-    let claimed = success(
+    let lease = select_production_lease_sql();
+    let acquired = success(
         &url,
         &format!(
             "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.env_key='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
-             SELECT current_user; PREPARE matrix_claim(text[],text,text) AS {claim}; \
-             EXECUTE matrix_claim(ARRAY['cat'],'dev','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); ROLLBACK;"
+             SELECT current_user; PREPARE matrix_lease(text[],text,text) AS {lease}; \
+             EXECUTE matrix_lease(ARRAY['cat'],'dev','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); ROLLBACK;"
         ),
     );
-    assert!(claimed.contains(EXECUTOR_LOGIN));
-    assert!(claimed.contains("run-1"));
+    assert!(acquired.contains(EXECUTOR_LOGIN));
+    assert!(acquired.contains("run-1"));
 
     // The complete-grain CHECK makes a half candidate row unrepresentable, and
     // the trigger names every component-era pin.
@@ -333,12 +333,12 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
     }
 }
 
-/// R20 (1): the candidate select filters by the claiming host's release. The
-/// FIFO head is pinned to release 2, and a host of release 1 claims the
+/// R20 (1): the candidate select filters by the leasing host's release. The
+/// FIFO head is pinned to release 2, and a host of release 1 leases the
 /// release-1 run queued behind it instead of selecting the head. A host with
 /// no release selects no pinned run.
 #[test]
-fn release_scoped_queue_claim_skips_another_releases_head_live() {
+fn release_targeted_queue_lease_skips_another_releases_head_live() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -386,15 +386,15 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
             release_2 = RELEASE_2,
         ),
     );
-    let claim = select_production_claim_sql();
+    let lease = select_production_lease_sql();
     let head_for = |release: &str| {
         let selected = success(
             &url,
             &format!(
                 "BEGIN; SET LOCAL app.env_key='t1'; \
                  SET LOCAL search_path=wamn_run,catalog,public; \
-                 PREPARE release_claim(text[],text,text) AS {claim}; \
-                 EXECUTE release_claim(ARRAY['cat'],'dev',{release}); ROLLBACK;"
+                 PREPARE release_lease(text[],text,text) AS {lease}; \
+                 EXECUTE release_lease(ARRAY['cat'],'dev',{release}); ROLLBACK;"
             ),
         );
         selected
@@ -406,22 +406,22 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
     assert_eq!(
         head_for(RELEASE_1),
         "run-a",
-        "release 1 claims behind the release-2 head"
+        "release 1 leases behind the release-2 head"
     );
     assert_eq!(
         head_for(RELEASE_2),
         "run-b",
-        "release 2 claims its own head"
+        "release 2 leases its own head"
     );
     assert_eq!(
         head_for("NULL"),
         "",
-        "a host with no release claims no pinned run"
+        "a host with no release leases no pinned run"
     );
     assert_eq!(
         head_for("'sha256:3333333333333333333333333333333333333333333333333333333333333333'"),
         "",
-        "a release with no pinned run claims nothing"
+        "a release with no pinned run leases nothing"
     );
 
     // The selector supplies trusted event ancestry without rewriting author input.
@@ -442,7 +442,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
              DO $test$ DECLARE selected record; untouched jsonb; parked text; BEGIN \
                SELECT to_jsonb(q) INTO untouched FROM run_queue AS q WHERE run_id='projection'; \
-               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                ASSERT selected.run_id='projection', 'the earliest eligible row wins'; \
                ASSERT selected.input_json::jsonb = \
                  (SELECT input_json FROM runs WHERE run_id='projection'), \
@@ -458,19 +458,19 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                ASSERT (SELECT to_jsonb(q) FROM run_queue AS q WHERE run_id='projection')=untouched, \
                  'selection grants no lease'; \
                ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='projection')=0, \
-                 'an unclaimed queue row starts at generation zero'; \
+                 'an unacquired queue row starts at generation zero'; \
                EXECUTE $park${park}$park$ INTO STRICT parked USING 'projection','dev'; \
                ASSERT parked='projection', 'the queue row parks'; \
                ASSERT (SELECT status FROM runs WHERE run_id='projection')='dispatched', \
                  'parking preserves run status'; \
-               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                ASSERT selected.run_id='run-a', 'the selector skips a parked head'; \
                ASSERT selected.input_json::jsonb='{{}}'::jsonb, 'non-event input stays unchanged'; \
                ASSERT selected.service_principal_id='00000000-0000-0000-0000-000000000001', \
                  'the selector carries the automation principal'; \
                EXECUTE $park${park}$park$ INTO STRICT parked USING 'run-a','dev'; \
                EXECUTE $wake${wake}$wake$ INTO STRICT parked USING 'projection','dev'; \
-               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                ASSERT selected.run_id='projection', 'a released park is eligible again'; \
              END $test$; ROLLBACK;",
             park = park_queued_run_sql(),
@@ -495,7 +495,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                    'sha256:' || repeat('d',64), \
                    '[]'::jsonb,'dispatched',source); \
                  INSERT INTO run_queue(env_key,run_id) VALUES ('t1',identity); \
-                 EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+                 EXECUTE $lease${lease}$lease$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                  ASSERT selected.run_id=identity, 'one eligible row is selected'; \
                  ASSERT selected.router_caller_attached=router \
                     AND selected.durable_caller_attached=durable, \
@@ -507,6 +507,6 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
     );
 }
 
-/// The two release digests of the release-scoped claim, as SQL literals.
+/// The two release digests of the release-targeted lease, as SQL literals.
 const RELEASE_1: &str = "'sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394'";
 const RELEASE_2: &str = "'sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0'";

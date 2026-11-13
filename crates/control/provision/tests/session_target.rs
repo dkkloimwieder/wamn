@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 use wamn_control_provision::session_target::{SESSION_TARGET_KEY, SessionTarget, session_audience};
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, project_env_database_name};
 use wamn_control_registry::Triple;
 
@@ -29,7 +29,7 @@ fn credential(
         project_env_database_name(&triple.org, &triple.project, triple.env.as_str(), instance);
     let role = workload_generation_role(
         family,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: &triple.org,
             project: &triple.project,
             environment: triple.env.as_str(),
@@ -37,7 +37,7 @@ fn credential(
         },
         generation,
     )
-    .expect("fixture family uses environment scope");
+    .expect("fixture family uses environment target");
     format!("postgres://{role}:{PASSWORD}@database.invalid/{database}")
 }
 

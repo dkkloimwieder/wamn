@@ -266,7 +266,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
         ComponentPortDeclaration, normalize_component_fact,
     };
 
@@ -276,7 +276,7 @@ mod tests {
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentPackageScope {
+                target: ComponentPackageCoordinate {
                     env_key: "tenant-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),

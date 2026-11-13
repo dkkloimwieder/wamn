@@ -282,7 +282,7 @@ pub async fn analyse(
             ),
             observed: Observation::PlatformSchema { report },
             next_action:
-                "Inspect system SQL with wamn platform schema diff --scope system --chart DIR"
+                "Inspect system SQL with wamn platform schema diff --target system --chart DIR"
                     .into(),
         });
     }
@@ -410,7 +410,7 @@ pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<Pro
     transaction
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
-        .context("claim the tenant")?;
+        .context("bind the tenant identity")?;
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in transaction
         .query(

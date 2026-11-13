@@ -481,7 +481,7 @@ impl ProductionDevStageRunner {
             &self.config,
             self.target_instance
                 .as_deref()
-                .expect("prepare_run claimed the target instance"),
+                .expect("prepare_run assigned the target instance"),
             self.prepared_schema_inputs
                 .as_deref()
                 .expect("Migrate recorded the schema inputs"),
@@ -685,13 +685,13 @@ impl ProductionDevStageRunner {
             require_admitted_identity(&admission, &artifact)?;
             self.admissions.push(admission);
         }
-        // Each palette component a wiring names, admitted into the scope of
+        // Each palette component a wiring names, admitted into the target of
         // its package with the packages its own declaration states, as the
         // cluster path pushes it (wamn-hw3n).
         for palette in self.palette_artifacts.clone() {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
-            let scope = wamn_catalog::ComponentPackageScope {
+            let target = wamn_catalog::ComponentPackageCoordinate {
                 env_key: self.config.activation_identity().env_key(),
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
@@ -704,7 +704,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| ProductionDevStageError::owner("read connection aliases", source))?;
             require_wiring_store_alias(&components, &artifact, store_alias.as_deref())?;
             let document =
-                render_palette_declaration(&palette.declaration, &scope, store_alias.as_deref())
+                render_palette_declaration(&palette.declaration, &target, store_alias.as_deref())
                     .map_err(declaration_stage_error)?;
             let admitted_platform_packages =
                 declared_platform_packages(&palette.declaration, &document)
@@ -805,7 +805,7 @@ impl ProductionDevStageRunner {
         reconcile_local_replica_identity(self.config.target_database_url(), &packages, apply)
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("reconcile package replica identity", source)
+                ProductionDevStageError::owner("reconcile package replican identity", source)
             })?;
         Ok(())
     }
@@ -1618,7 +1618,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             }
             self.target_instance = Some(instance);
         }
-        claim_environment_instance(
+        assign_environment_instance(
             self.config.system_database_url(),
             &self.config.activation_identity().env_key(),
             self.target_instance
@@ -1939,7 +1939,7 @@ async fn reconcile_local_replica_identity(
 ) -> anyhow::Result<()> {
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
-        .context("connect to the local target for replica identity")?;
+        .context("connect to the local target for replican identity")?;
     let driver = tokio::spawn(connection);
     let result = async {
         for root in packages {
@@ -1953,7 +1953,7 @@ async fn reconcile_local_replica_identity(
                 apply,
             )
             .await?;
-            tracing::info!(package = %package_id, flips = plan.flips.len(), apply, "reconciled package replica identity");
+            tracing::info!(package = %package_id, flips = plan.flips.len(), apply, "reconciled package replican identity");
         }
         Ok::<_, anyhow::Error>(())
     }
@@ -1972,7 +1972,7 @@ async fn reconcile_local_replica_identity(
 /// a connection open across the whole loop for one UPDATE would outlive its
 /// purpose. The routine refuses an environment that provisioning never projected —
 /// absence means durable, and a durable environment is never recreated.
-pub(crate) async fn claim_environment_instance(
+pub(crate) async fn assign_environment_instance(
     system_database_url: &str,
     env_key: &str,
     instance: &str,
@@ -1981,12 +1981,12 @@ pub(crate) async fn claim_environment_instance(
         .await
         .map_err(|source| {
             ProductionDevStageError::owner(
-                "connect to the control database to claim the environment instance",
+                "connect to the control database to assign the environment instance",
                 source.into(),
             )
         })?;
     let connection_task = tokio::spawn(connection);
-    let claimed = wamn_environment_control::provision_project_env::claim_environment_instance(
+    let assigned = wamn_environment_control::provision_project_env::assign_environment_instance(
         &mut client,
         env_key,
         instance,
@@ -1994,8 +1994,8 @@ pub(crate) async fn claim_environment_instance(
     .await;
     drop(client);
     connection_task.abort();
-    claimed
-        .map_err(|source| ProductionDevStageError::owner("claim the environment instance", source))
+    assigned
+        .map_err(|source| ProductionDevStageError::owner("assign the environment instance", source))
 }
 
 fn render_component_declaration(

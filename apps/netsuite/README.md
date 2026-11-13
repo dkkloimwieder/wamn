@@ -35,7 +35,7 @@ Neither HTTP node takes its method from input.
 SuiteQL sends `{"q":...}`, `Prefer: transient`, and offset and limit query parameters.
 The page node reads `/items` and stops when `/hasMore` is false.
 Its output holds `items`, `carry`, and the bound connection’s `external_system_id`.
-The consumer mapping ignores any workflow parameter that claims another source.
+The consumer mapping ignores any workflow parameter that names another source.
 Queries must order by the unique `id` key.
 The standalone query mapping refuses text without `ORDER BY id`.
 The caller must keep that order as the query's actual final ordering clause.
@@ -81,7 +81,7 @@ NetSuite refuses RS256.
 Oracle permits PS256, PS384, PS512, ES256, ES384, and ES512.
 The generic auth type supports PS256, ES256, and RS256, so select PS256 or ES256 for NetSuite.
 NetSuite wants comma-separated scopes, so set `scope_separator` to `","`.
-Oracle defines the algorithms, scopes, and claims in [The Request Token Structure](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_162790605110.html).
+Oracle defines the algorithms, scopes, and JWT claims in [The Request Token Structure](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_162790605110.html).
 The assertion uses the token endpoint as `aud` and the M2M certificate ID as `kid`.
 The host sets `exp` to 300 seconds after `iat`, below Oracle's limit of 60 minutes.
 It also sends a random `jti`, an identifier for each assertion.

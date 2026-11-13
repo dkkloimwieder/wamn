@@ -53,7 +53,7 @@ pub async fn prepare(
                 platform,
                 document,
                 &crate::platform_migrations::embedded_sources(
-                    wamn_control_provision::schema_migrations::MigrationScope::Project,
+                    wamn_control_provision::schema_migrations::MigrationDatabase::Project,
                 ),
             )
             .await?,
@@ -76,7 +76,7 @@ pub async fn prepare_retained(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -285,7 +285,7 @@ pub async fn validate_pending_substrate(
         .inputs
         .substrate
         .validate(&crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ))?;
     Ok(())
 }
@@ -302,7 +302,7 @@ pub async fn initialize(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await

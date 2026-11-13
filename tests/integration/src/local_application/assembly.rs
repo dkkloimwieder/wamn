@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use wamn_catalog::{AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute};
 use wamn_control_provision::{
-    CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
+    CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleIdentity,
     system_reader_generation_role, workload_generation_role,
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
@@ -16,7 +16,7 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{
-    OperationHost, OperationScope, RouterDeliveryBridge, RouterReadinessProbe,
+    OperationHost, OperationHostConfig, RouterDeliveryBridge, RouterReadinessProbe,
     RouterReadinessStatus,
 };
 use wamn_package_control::apply_package::{ApplyPackageRequest, apply_package};
@@ -172,20 +172,20 @@ pub(super) async fn assemble(
             AuthorityClass::CallableHttp,
         ),
     ] {
-        let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
+        let target = if family == WorkloadRoleFamily::App {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: input.env_key,
                 database: &database,
             }
         } else {
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: input.org,
                 project: input.project,
                 environment: input.environment,
                 database: &database,
             }
         };
-        let role = workload_generation_role(family, scope, CredentialGeneration::A)?;
+        let role = workload_generation_role(family, target, CredentialGeneration::A)?;
         project
             .batch_execute(
                 &wamn_control_provision::sql::prepare_workload_generation_sql(
@@ -319,7 +319,7 @@ pub(super) async fn assemble(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
-        wamn_engine::release_manifest::ReleaseScope::new(input.env_key, input.environment)
+        wamn_engine::release_manifest::ReleaseTarget::new(input.env_key, input.environment)
             .with_applications(applications),
     )?);
     project.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
@@ -343,7 +343,7 @@ pub(super) async fn assemble(
         Arc::clone(&release),
         &entry_reference,
         "flow-http",
-        wamn_runtime::plugins::wamn_postgres::SessionClaims {
+        wamn_runtime::plugins::wamn_postgres::SessionIdentity {
             env_key: input.env_key.to_owned(),
             project: Some(input.project.to_owned()),
             schema: Some(input.schema.to_owned()),
@@ -372,15 +372,15 @@ pub(super) async fn assemble(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            &release.scope().env_key,
+            &release.target().env_key,
             input.project,
-            &release.scope().environment,
+            &release.target().environment,
         )),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from([]),
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
-        OperationScope {
+        OperationHostConfig {
             project: input.project.to_owned(),
             schema: Some(input.schema.to_owned()),
             owner_prefix: "local-application".into(),
@@ -547,7 +547,7 @@ fn serving_manifest(
 ) -> anyhow::Result<ServingManifest> {
     let packages = components
         .iter()
-        .map(|(id, c)| json!({"package-id":id,"package-version":c.scope.package_version}))
+        .map(|(id, c)| json!({"package-id":id,"package-version":c.target.package_version}))
         .collect::<Vec<_>>();
     let components = components
         .iter()

@@ -175,7 +175,7 @@ See [current caller authorization](../architecture/execution.md#caller-authentic
 
 | Section | Today | Becomes |
 | --- | --- | --- |
-| §2.5 Non-grantable operations | the ACL-editing operations (`role.*`, `permission.*`, `user_role.*`, `user.*`) are reserved to `admin` | Ruling: everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation may confer only what its caller already holds, with `admin` treated as the full set (it has no rows, so a row-subset test would pass vacuously). Prior art: Kubernetes RBAC escalation prevention; AWS IAM permission boundaries. Scope: the ruling is recorded here; the code is a follow-up after C, rescoped then (cut 2026-10-11 so C stays pure deletion). Until it lands, §2.5 behavior is unchanged: ACL-editing operations stay reserved to `admin`. The follow-up as sketched, to be re-examined: (1) a third host-route authority, `Granted`, so the route keeps an operation identity for the ACL check (`registered_operation()` returns one only for Admin today, host\_route.rs:421-423; a Member route would be open to every authenticated member); (2) `is_host_route_operation` stops refusing grants of these operations (application\_route.rs:168); (3) the escalation check in each handler; (4) `UserRoleGrant` takes `OPERATION_GRANT_LOCK_SQL` like `PermissionGrant` (application\_route.rs:217,281). `permission.mine` stays readable by any session. |
+| §2.5 Non-grantable operations | the ACL-editing operations (`role.*`, `permission.*`, `user_role.*`, `user.*`) are reserved to `admin` | Ruling: everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation may confer only what its caller already holds, with `admin` treated as the full set (it has no rows, so a row-subset test would pass vacuously). Prior art: Kubernetes RBAC escalation prevention; AWS IAM permission boundaries. Target: the ruling is recorded here; the code is a follow-up after C, retargeted then (cut 2026-10-11 so C stays pure deletion). Until it lands, §2.5 behavior is unchanged: ACL-editing operations stay reserved to `admin`. The follow-up as sketched, to be re-examined: (1) a third host-route authority, `Granted`, so the route keeps an operation identity for the ACL check (`registered_operation()` returns one only for Admin today, host\_route.rs:421-423; a Member route would be open to every authenticated member); (2) `is_host_route_operation` stops refusing grants of these operations (application\_route.rs:168); (3) the escalation check in each handler; (4) `UserRoleGrant` takes `OPERATION_GRANT_LOCK_SQL` like `PermissionGrant` (application\_route.rs:217,281). `permission.mine` stays readable by any session. |
 
 ## Deferred — build when a consumer exists
 
@@ -220,9 +220,9 @@ Left open and not scheduled: `wamn-xt0tg` and `wamn-b71vg` (wire contracts, with
 
 **C. Authorization** (your rulings of 2026-10-11; independent of A and B)
 
-- [x] Not in C: grantable administration (`Granted` authority, escalation check, grant lock) is a follow-up after C lands, rescoped then. C leaves ACL-editing operations reserved to `admin` as today; its tests are the two above. Evidence: ACL-editing stays `admin` (`wamn-14bx8.4`); grantable administration is still open and needs an owner sentence.
+- [x] Not in C: grantable administration (`Granted` authority, escalation check, grant lock) is a follow-up after C lands, retargeted then. C leaves ACL-editing operations reserved to `admin` as today; its tests are the two above. Evidence: ACL-editing stays `admin` (`wamn-14bx8.4`); grantable administration is still open and needs an owner sentence.
 
-Pass A: per-member instances with wiring verification, transaction selection unchanged, `run`/`run-stream` refusal in a host transaction, `client` denied to application components — one epic, `wamn:postgres` still 0.3. Fail on the link test: try the adapter fallback before anything else. Fail on rollback or authority: stop; the model is wrong. B has no failure mode that matters; a worse screen is a worse screen. Pass C: both folds, `required_by`, `fresh_only` deleted, with the platform-ui.md amendments — one epic, pure deletion. Follow-up after C: grantable administration, rescoped once C is in. Then Cleanup after migration, in its own change. Nothing from Deferred rides along with any of them.
+Pass A: per-member instances with wiring verification, transaction selection unchanged, `run`/`run-stream` refusal in a host transaction, `client` denied to application components — one epic, `wamn:postgres` still 0.3. Fail on the link test: try the adapter fallback before anything else. Fail on rollback or authority: stop; the model is wrong. B has no failure mode that matters; a worse screen is a worse screen. Pass C: both folds, `required_by`, `fresh_only` deleted, with the platform-ui.md amendments — one epic, pure deletion. Follow-up after C: grantable administration, retargeted once C is in. Then Cleanup after migration, in its own change. Nothing from Deferred rides along with any of them.
 
 Open questions:
 
@@ -235,7 +235,7 @@ Order (owner ruling 2026-10-14). C goes first because it is pure deletion and A 
 
 ## Evidence
 
-| Claim | Source |
+| Statement | Source |
 | --- | --- |
 | Authorization at publish, never per call; nested calls are component calls | project ruling 2026-09-24 |
 | Package facts have one owner, the OCI registry; no database stores package verification; the artifact's existence is the proof of its checks (owner ruling 2026-10-11) | 20efa90, 69c1cba (wamn-vavs4.11); ../operations/building.md#reading-a-pushed-package |

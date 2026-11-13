@@ -12,7 +12,7 @@ use super::WamnPostgres;
 
 /// The component descriptors of the release. Binds: `env_key` and manifest digest.
 pub const RELEASE_COMPONENTS_SQL: &str = "\
-WITH release_scope AS MATERIALIZED ( \
+WITH release_target AS MATERIALIZED ( \
     SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
      WHERE release.env_key = $1 \
@@ -20,14 +20,14 @@ WITH release_scope AS MATERIALIZED ( \
 ), release_package AS MATERIALIZED ( \
     SELECT package.value ->> 'package-id' AS package_id, \
            package.value ->> 'package-version' AS package_version \
-      FROM release_scope \
-     CROSS JOIN LATERAL jsonb_array_elements(release_scope.manifest #> '{release,packages}') \
+      FROM release_target \
+     CROSS JOIN LATERAL jsonb_array_elements(release_target.manifest #> '{release,packages}') \
            AS package(value) \
 ) \
 SELECT COALESCE( \
            (SELECT jsonb_agg( \
                jsonb_build_object( \
-                   'scope', jsonb_build_object( \
+                   'target', jsonb_build_object( \
                        'env_key', $1::text, \
                        'package-id', release_package.package_id, \
                        'package-version', release_package.package_version \
@@ -41,15 +41,15 @@ SELECT COALESCE( \
                    'effects', descriptor.value -> 'effects' \
                ) ORDER BY projected.ordinality \
             ) \
-              FROM jsonb_array_elements(release_scope.manifest -> 'components') \
+              FROM jsonb_array_elements(release_target.manifest -> 'components') \
                    WITH ORDINALITY AS projected(definition, ordinality) \
              CROSS JOIN LATERAL (SELECT projected.definition -> 'descriptor') AS descriptor(value) \
               JOIN release_package \
                 ON release_package.package_id = projected.definition ->> 'package-id'), \
            '[]'::jsonb \
        )::text AS components, \
-       jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
-  FROM release_scope";
+       jsonb_array_length(release_target.manifest -> 'components') AS manifest_component_count \
+  FROM release_target";
 
 /// Check that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
@@ -166,7 +166,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
@@ -190,10 +190,10 @@ impl WamnPostgres {
             async {
                 local.require_instance(&connection).await?;
                 anyhow::ensure!(
-                    local.scope.env_key == env_key
-                        && local.scope.environment == environment
+                    local.target.env_key == env_key
+                        && local.target.environment == environment
                         && local.facts.manifest_digest.as_str() == manifest_digest,
-                    "local release scope mismatch"
+                    "local release target mismatch"
                 );
                 Ok(local.facts.components.clone())
             }
@@ -235,7 +235,7 @@ impl WamnPostgres {
     ///
     /// An empty digest set is a background-only release and performs no store
     /// call. Otherwise the check shares the driver's existing platform pool and
-    /// tenant claim; missing rows, unavailable storage and malformed results are
+    /// tenant identity; missing rows, unavailable storage and malformed results are
     /// errors, while an ordinary unbound requirement is `Ok(false)`.
     pub async fn release_component_bindings_ready(
         &self,
@@ -254,7 +254,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
@@ -276,11 +276,11 @@ impl WamnPostgres {
 
         let params: [&(dyn ToSql + Sync); 3] = [&env_key, &manifest_digest, &component_digests];
         let result = if let Some(local) = &self.local_application {
-            if local.scope.env_key != env_key
-                || local.scope.environment != environment
+            if local.target.env_key != env_key
+                || local.target.environment != environment
                 || local.facts.manifest_digest.as_str() != manifest_digest
             {
-                Err(anyhow::anyhow!("local readiness release scope mismatch"))
+                Err(anyhow::anyhow!("local readiness release target mismatch"))
             } else {
                 local.bindings_ready(&connection, &component_digests).await
             }
@@ -380,7 +380,7 @@ pub(super) fn resolved_wiring(
 /// This is the DELIVERY path. The ctl readers refuse the same row at
 /// publication time, where an operator sees the failure and can act on it; here
 /// a fabricated projection would simply be trusted. `wamn-0h0g.21.10` defaulted
-/// every pre-migration row to `'[]'` — the positive claim of purity — so the
+/// every pre-migration row to `'[]'` — the positive identity of purity — so the
 /// projection is re-derived from the row's own attested imports rather than
 /// believed.
 fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow::Result<()> {
@@ -401,7 +401,7 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentDeclaration, ComponentOperationDeclaration,
-        ComponentPackageScope, ComponentPortDeclaration, normalize_component_fact,
+        ComponentPackageCoordinate, ComponentPortDeclaration, normalize_component_fact,
     };
 
     use super::*;
@@ -409,7 +409,7 @@ mod tests {
     fn component(name: &str, operation: &str, digest_byte: char) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentPackageScope {
+                target: ComponentPackageCoordinate {
                     env_key: "tenant-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.2.0".to_owned(),
@@ -511,7 +511,7 @@ mod tests {
     /// refuses this shape.
     fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.2.0".to_owned(),
@@ -538,14 +538,14 @@ mod tests {
     }
 
     /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
-    /// claim, not merely the publication path. Deleting the call in
+    /// identity, not merely the publication path. Deleting the call in
     /// `resolved_wiring` leaves this failing.
     #[test]
     fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
         let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];
 
         let error = verify_served_effect_projections(&served)
-            .expect_err("an underived purity claim is refused before it is served");
+            .expect_err("an underived purity identity is refused before it is served");
 
         assert!(
             error
@@ -556,7 +556,7 @@ mod tests {
     }
 
     /// The other half: a row whose `'[]'` is the value its own imports derive
-    /// is not fabricated, and must keep serving. This is what scopes the
+    /// is not fabricated, and must keep serving. This is what restricts the
     /// refusal to exactly the rows a validator never produced.
     #[test]
     fn the_serving_path_admits_a_projection_its_imports_derive() {

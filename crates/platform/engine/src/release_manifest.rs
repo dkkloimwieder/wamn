@@ -9,7 +9,7 @@
 //! content. The process keeps the parsed document for its lifetime.
 //!
 //! The manifest names no tenant or environment (R1): one release serves every
-//! environment it is published for. The host takes its [`ReleaseScope`] from
+//! environment it is published for. The host takes its [`ReleaseTarget`] from
 //! its own configuration and the loaded release carries it beside the bytes.
 //!
 //! # Process lifetime
@@ -119,7 +119,7 @@ impl std::error::Error for ReleaseLoadError {}
 
 /// The release a pod carries, derived from its verified manifest content.
 ///
-/// This is the manifest digest the production claim uses to verify the run's
+/// This is the manifest digest the production lease uses to verify the run's
 /// admission pin (`ReleaseIdentity`). It is
 /// host-injected identity, never guest-supplied — and, since it comes out of the
 /// same bytes the readers resolve against, the two cannot disagree.
@@ -138,7 +138,7 @@ pub struct CarriedRelease {
 /// targeted application that `environment.k` declares, and every reader takes it
 /// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReleaseScope {
+pub struct ReleaseTarget {
     /// The composed `org--project--env` key of the project environment.
     pub env_key: String,
     /// The short environment name, such as `dev`.
@@ -148,8 +148,8 @@ pub struct ReleaseScope {
     pub applications: wamn_catalog::EnvironmentApplications,
 }
 
-impl ReleaseScope {
-    /// A scope of one tenant and environment that declares no application.
+impl ReleaseTarget {
+    /// A target of one tenant and environment that declares no application.
     pub fn new(env_key: impl Into<String>, environment: impl Into<String>) -> Self {
         Self {
             env_key: env_key.into(),
@@ -158,7 +158,7 @@ impl ReleaseScope {
         }
     }
 
-    /// This scope with the targeted application membership.
+    /// This target with the targeted application membership.
     #[must_use]
     pub fn with_applications(
         mut self,
@@ -174,7 +174,7 @@ impl ReleaseScope {
 pub struct LoadedRelease {
     release: CarriedRelease,
     manifest: ServingManifest,
-    scope: ReleaseScope,
+    target: ReleaseTarget,
 }
 
 impl LoadedRelease {
@@ -182,8 +182,8 @@ impl LoadedRelease {
     ///
     /// A pod whose manifest is absent, unreadable, unparseable or non-canonical
     /// must not serve, so every failure here is fatal to host construction.
-    pub fn load(scope: ReleaseScope) -> Result<Self, ReleaseLoadError> {
-        Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH), scope)
+    pub fn load(target: ReleaseTarget) -> Result<Self, ReleaseLoadError> {
+        Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH), target)
     }
 
     /// Load and verify from an explicit mount root.
@@ -191,7 +191,10 @@ impl LoadedRelease {
     /// Reads are blocking `std::fs`: this runs exactly once during host
     /// construction, before the pod serves anything, and never on a request
     /// path.
-    pub fn load_from(manifest_root: &Path, scope: ReleaseScope) -> Result<Self, ReleaseLoadError> {
+    pub fn load_from(
+        manifest_root: &Path,
+        target: ReleaseTarget,
+    ) -> Result<Self, ReleaseLoadError> {
         // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
         // only the canonical encoding — so these bytes are used as read, with no
         // trimming. A trailing newline is a different document.
@@ -202,7 +205,7 @@ impl LoadedRelease {
                 format!("read serving manifest {}: {error}", manifest_path.display()),
             )
         })?;
-        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string(), scope)
+        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string(), target)
     }
 
     /// Load and verify bytes a carrier has already delivered whole.
@@ -215,7 +218,7 @@ impl LoadedRelease {
     pub fn load_canonical_bytes(
         bytes: &[u8],
         origin: &str,
-        scope: ReleaseScope,
+        target: ReleaseTarget,
     ) -> Result<Self, ReleaseLoadError> {
         let (manifest, manifest_digest) =
             ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
@@ -225,13 +228,13 @@ impl LoadedRelease {
                 )
             })?;
 
-        if scope.applications.len() > 1 {
+        if target.applications.len() > 1 {
             return Err(ReleaseLoadError::new(
                 ReleaseLoadErrorType::ManifestRejected,
                 "a loaded release serves at most one application",
             ));
         }
-        if let Some((application, membership)) = scope.applications.first_key_value()
+        if let Some((application, membership)) = target.applications.first_key_value()
             && manifest
                 .release
                 .packages
@@ -246,14 +249,14 @@ impl LoadedRelease {
         Ok(Self {
             release: CarriedRelease { manifest_digest },
             manifest,
-            scope,
+            target,
         })
     }
 
     /// The control serving root
     /// (docs/architecture/execution.md#host-run-routes). It is built with the
     /// platform and serves only the control host routes: it has no package,
-    /// component, route, attachment or database. Its fixed scope names no real
+    /// component, route, attachment or database. Its fixed target names no real
     /// tenant or environment, and a control host reads neither.
     pub fn control_root() -> Self {
         let manifest = ServingManifest {
@@ -273,7 +276,7 @@ impl LoadedRelease {
                 manifest_digest: manifest.digest(),
             },
             manifest,
-            scope: ReleaseScope::new(wamn_catalog::host_route_package(), "control"),
+            target: ReleaseTarget::new(wamn_catalog::host_route_package(), "control"),
         }
     }
 
@@ -288,8 +291,8 @@ impl LoadedRelease {
     }
 
     /// The tenant and environment this host serves, from its configuration.
-    pub fn scope(&self) -> &ReleaseScope {
-        &self.scope
+    pub fn target(&self) -> &ReleaseTarget {
+        &self.target
     }
 }
 
@@ -306,18 +309,18 @@ pub fn validate_component_in_release(
         .release
         .packages
         .iter()
-        .find(|package| package.package_id() == component.scope.package_id)
+        .find(|package| package.package_id() == component.target.package_id)
         .map(wamn_catalog::PackageCoordinate::package_version);
     anyhow::ensure!(
-        component.scope.env_key == release.scope().env_key
-            && package_version == Some(component.scope.package_version.as_str()),
-        "release-component-scope-mismatch"
+        component.target.env_key == release.target().env_key
+            && package_version == Some(component.target.package_version.as_str()),
+        "release-component-target-mismatch"
     );
     let digest = ArtifactHash::parse(component.component_digest.clone())
         .context("component fact carries a non-canonical artifact hash")?;
     // The descriptor carries the admitted operations without another projection.
     let carried = manifest.components.iter().any(|served| {
-        served.package_id == component.scope.package_id
+        served.package_id == component.target.package_id
             && served.descriptor.component == component.component
             && served.descriptor.interface_version == component.interface_version
             && served.descriptor.component_digest == digest.as_str()
@@ -398,33 +401,33 @@ mod tests {
     #[test]
     fn a_loaded_release_refuses_multiple_applications_and_foreign_packages() {
         let bytes = fixture().canonical_bytes();
-        let mut scoped = scope();
-        scoped
+        let mut targeted = target();
+        targeted
             .applications
-            .insert("other".into(), scoped.applications["catalog"].clone());
+            .insert("other".into(), targeted.applications["catalog"].clone());
         assert_eq!(
-            LoadedRelease::load_canonical_bytes(&bytes, "fixture", scoped)
+            LoadedRelease::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
                 .error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
-        let mut scoped = scope();
-        scoped
+        let mut targeted = target();
+        targeted
             .applications
             .get_mut("catalog")
             .unwrap()
             .packages
             .clear();
         assert_eq!(
-            LoadedRelease::load_canonical_bytes(&bytes, "fixture", scoped)
+            LoadedRelease::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
                 .error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
     }
 
-    fn scope() -> ReleaseScope {
-        ReleaseScope::new("t1", "prod").with_applications(
+    fn target() -> ReleaseTarget {
+        ReleaseTarget::new("t1", "prod").with_applications(
             [(
                 "catalog".to_owned(),
                 wamn_catalog::ApplicationDefinition {
@@ -461,7 +464,7 @@ mod tests {
         }
 
         fn load(&self) -> Result<LoadedRelease, ReleaseLoadError> {
-            LoadedRelease::load_from(&self.manifest_dir(), scope())
+            LoadedRelease::load_from(&self.manifest_dir(), target())
         }
     }
 
@@ -605,7 +608,7 @@ mod tests {
 
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
-            scope: wamn_catalog::ComponentPackageScope {
+            target: wamn_catalog::ComponentPackageCoordinate {
                 env_key: "t1".into(),
                 package_id: "cat".into(),
                 package_version: "1.0.0".into(),
@@ -637,16 +640,16 @@ mod tests {
     #[test]
     fn an_admitted_component_the_release_does_not_carry_is_refused() {
         let release =
-            LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture", scope())
+            LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture", target())
                 .expect("the fixture loads");
         validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
 
         let mutations: [(&str, Mutation); 5] = [
             ("another tenant", |fact| {
-                fact.scope.env_key = "t2".into();
+                fact.target.env_key = "t2".into();
             }),
             ("another package version", |fact| {
-                fact.scope.package_version = "2.0.0".into();
+                fact.target.package_version = "2.0.0".into();
             }),
             ("another digest", |fact| {
                 fact.component_digest =

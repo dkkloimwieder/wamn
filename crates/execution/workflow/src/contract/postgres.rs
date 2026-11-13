@@ -65,7 +65,7 @@ impl PostgresWorkflows {
     }
 
     /// Bind the transaction to the run plane and the release tenant.
-    async fn scope(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
+    async fn target(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
         let executor = PlatformComponent::Executor;
         transaction
             .query_one(
@@ -79,7 +79,7 @@ impl PostgresWorkflows {
                 ],
             )
             .await
-            .map_err(|error| WorkflowError::storage("scope the transaction", error))?;
+            .map_err(|error| WorkflowError::storage("target the transaction", error))?;
         Ok(())
     }
 
@@ -119,7 +119,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the park", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let parked = transaction
             .query_opt(&park_queued_run_sql(), &[&run_id, &self.environment()])
             .await
@@ -171,7 +171,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the release", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let released = transaction
             .query_opt(&release_parked_run_sql(), &[&run_id, &self.environment()])
             .await
@@ -201,7 +201,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the list", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let rows = transaction
             .query(&list_workflow_runs_sql(), &[&self.environment(), &limit])
             .await

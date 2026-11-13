@@ -6,17 +6,17 @@
 //!
 //! - The guest never holds a socket. Connections live in a deadpool pool
 //!   owned by the plugin; guests get resource handles.
-//! - Claims are derived from the executing component's identity
+//! - Identity is derived from the executing component's identity
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
 //!   `localResources.config["wamn.env_key"]` or via [`WamnPostgres::set_env_key`])
 //!   and injected by one fully-bound `set_config(…, is_local => true)` statement
 //!   — the `SET LOCAL` equivalent — inside the plugin-managed transaction; every
-//!   claim value travels as a bind parameter, so no interpolation path exists
+//!   identity value travels as a bind parameter, so no interpolation path exists
 //!   (R2/R16). Guest SQL that tries to set or reset a session variable or
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
-//!   `SET app.env_key = 'other'` that would override the BEGIN-time claim) is
+//!   `SET app.env_key = 'other'` that would override the BEGIN-time identity) is
 //!   rejected on the raw query/execute/cursor surface (see
-//!   `reject_claim_mutation`, wamn-cjv.2), closing the reachable
+//!   `reject_identity_mutation`, wamn-cjv.2), closing the reachable
 //!   transaction-API override. A verified statement (`statements.run`,
 //!   `run-stream`, `transaction.run`) passes the same guard, and admission
 //!   also refuses these and the other unsafe constructs on its parse tree. The TENANT axis no longer rests on that
@@ -27,7 +27,7 @@
 //!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
 //!   escape is dormant only while no reachable guest API bears an RLS policy
 //!   that reads `app.role` or `app.user_id`. Host-only authorization reads that
-//!   bind their predicates directly and install neither caller-derived claim do
+//!   bind their predicates directly and install neither caller-derived identity do
 //!   not cross that guard (`wamn-10yt.3.2`); it must close before any such
 //!   RLS-bearing guest API becomes reachable.
 //! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
@@ -59,7 +59,6 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
@@ -69,9 +68,10 @@ mod numbering;
 mod operation;
 mod operation_transaction;
 mod pool;
-mod production_claim;
+mod production_lease;
 mod resources;
 mod run_stream;
+mod session_identity;
 mod statements;
 mod types;
 mod wiring_resolution;
@@ -85,11 +85,6 @@ pub use workflow_resolution::{
     resolve_workflow_in_release,
 };
 
-pub use claims::{
-    CandidateBindingWorld, CandidateConnectionBinding, ConnectionEffectLookup,
-    ConnectionEffectSnapshot, ConnectionEntryLookup, ReleaseIdentity, SessionClaims,
-    UnprovisionedPrincipal, WamnPostgres, WiringLookup,
-};
 pub use credential_exactness::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,
     CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
@@ -106,14 +101,19 @@ pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig,
 };
-pub use production_claim::{
-    ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorType,
-    ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionReapResult, ProductionWorkflow,
+pub use production_lease::{
+    ProductionCallerOutcome, ProductionCandidate, ProductionCompletion, ProductionCompletionResult,
+    ProductionLeaseError, ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionLeaseResult,
+    ProductionReapResult, ProductionWorkflow,
 };
 #[cfg(feature = "test-util")]
 pub use resources::retained_transaction_for_test;
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
+pub use session_identity::{
+    CandidateBindingWorld, CandidateConnectionBinding, ConnectionEffectLookup,
+    ConnectionEffectSnapshot, ConnectionEntryLookup, ReleaseIdentity, SessionIdentity,
+    UnprovisionedPrincipal, WamnPostgres, WiringLookup,
+};
 pub use statements::{
     PreparedStatementMembers, PreparedStatementSet, StatementField, VerifiedStatement,
     VerifiedStatementSet,
@@ -260,7 +260,7 @@ pub const ENV_KEY_CONFIG_KEY: &str = "wamn.env_key";
 
 /// Per-workload config key carrying the `search_path` schema. Optional: absent
 /// leaves the server's default search_path in place. Set by the platform (not
-/// the guest), like the tenant claim.
+/// the guest), like the tenant identity.
 pub const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
 
 /// Per-workload config key naming the project whose database this component
@@ -270,9 +270,9 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 
 /// Per-workload config key carrying the runner's durable-queue LEASE OWNER
 /// identity (fqg.4). Optional: absent leaves `app.runner` unset (the S2..S6 and
-/// gateway paths never claim from the queue). When set, the host-only
-/// production composer injects it alongside the tenant claim as the stable,
-/// non-spoofable lease owner used for claim/reclaim and owner-guarded renewal.
+/// gateway paths never identity from the queue). When set, the host-only
+/// production composer injects it alongside the tenant identity as the stable,
+/// non-spoofable lease owner used for identity/reclaim and owner-guarded renewal.
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
@@ -312,7 +312,7 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// The per-REQUEST half of the workload bind: every claim keyed by `scope`.
+    /// The per-REQUEST half of the workload bind: every identity keyed by `scope`.
     ///
     /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
     /// can run this once per request while [`Self::add_linker_entries`] runs
@@ -552,7 +552,7 @@ impl HostPlugin for WamnPostgres {
                 )?;
             }
             // A control root links the interface without operation authority.
-            // Calls on an unbound instance refuse before accessing SQL or claims.
+            // Calls on an unbound instance refuse before accessing SQL or identity.
         }
         // The wash host path: one workload, one bind, both halves in order.
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces)?;
@@ -560,10 +560,10 @@ impl HostPlugin for WamnPostgres {
         self.add_linker_entries(item.linker()?, &component, &interfaces)
     }
 
-    /// R31: on workload teardown, reap the per-component claim registries
-    /// (`WamnPostgres::clear_component_claims`) so a stale tenant / project /
+    /// R31: on workload teardown, reap the per-component identity registries
+    /// (`WamnPostgres::clear_component_identity`) so a stale tenant / project /
     /// schema / runner / workload authority / release-identity / causation
-    /// claim cannot survive unbind
+    /// identity cannot survive unbind
     /// or be inherited by
     /// a rebound component id. The project pools stay — they are project-keyed
     /// (shared, memoized), not per component.
@@ -572,7 +572,7 @@ impl HostPlugin for WamnPostgres {
         workload_id: &str,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        self.clear_component_claims(workload_id);
+        self.clear_component_identity(workload_id);
         Ok(())
     }
 }
@@ -649,4 +649,4 @@ mod tests {
 // Transaction / cursor resources
 // ---------------------------------------------------------------------------
 
-pub(crate) use claims::SessionGrantRefusal;
+pub(crate) use session_identity::SessionGrantRefusal;

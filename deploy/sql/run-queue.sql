@@ -1,10 +1,10 @@
 -- Run-queue storage schema (5.14). The durable dispatch queue that co-transacts
 -- with the 5.7 run state: `run_queue` (one row per run waiting to be, or being,
--- dispatched). Postgres owns durability (`FOR UPDATE SKIP LOCKED` claim + run
--- state share one durability domain). The host polls due work and claims rows.
--- A run-claim lease lets another replica recover abandoned work.
--- Claim, lease, and janitor logic lives in crates/execution/run-state/src/queue.
--- The host and materializer use this schema to claim and enqueue work.
+-- dispatched). Postgres owns durability (`FOR UPDATE SKIP LOCKED` lease + run
+-- state share one durability domain). The host polls due work and leases rows.
+-- A run lease lets another replica recover abandoned work.
+-- Lease and janitor logic lives in crates/execution/run-state/src/queue.
+-- The host and materializer use this schema to lease and enqueue work.
 --
 -- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
 -- run-state.sql / catalog-schema.sql — deliberately NOT included by
@@ -16,16 +16,16 @@
 -- Security shape DELIBERATELY DIVERGES from the rest of the platform, and this
 -- is the determination rather than an oversight (wamn-0h0g.22.6.3): the guest
 -- ACL role holds NO privilege on `run_queue` — measured from
--- has_table_privilege, and this file contains no GRANT to it — so the claim
+-- has_table_privilege, and this file contains no GRANT to it — so the identity
 -- here is HOST-INJECTED, not guest-settable. Re-keying it onto `current_user`
 -- would be change without a threat, and would break the host writers that do
 -- reach it. FORCE RLS therefore stays keyed on
 -- NULLIF(current_setting('app.env_key', true), ''), NULL (=> zero rows) when no
--- claim was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
--- and CHECK (env_key <> '') forbids a ''-tenant row, so an empty claim
+-- identity was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
+-- and CHECK (env_key <> '') forbids a ''-tenant row, so an empty identity
 -- matches nothing structurally.
 --
--- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
+-- TARGET: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one tenant-global FIFO ordered by
 -- `(available_at, run_id)`. Runs have no event ordering guarantee.
 -- (Row events are the D19 v3 event plane's — CDC reader → JetStream →
@@ -34,8 +34,8 @@
 -- ---------------------------------------------------------------------------
 -- run_queue: one row per pending/in-flight run. `available_at` gates visibility
 -- (future = a queue-parked/backed-off run); a live `lease_expires_at` marks a
--- row a replica currently owns, and once it expires another replica may reclaim
--- it (crash-safe failover). `attempts` counts expired lease reclaims and releases
+-- row a replica currently owns, and once it expires another replica may recover
+-- it (crash-safe failover). `attempts` counts expired lease recovers and releases
 -- for unavailable credentials or pools. Operator parks and wakes are free.
 -- Both causes share `max_attempts`. A credential release at the limit fails the
 -- run with `retry-exhausted`. An exhausted expired lease ends the run with
@@ -43,8 +43,8 @@
 -- back off from one second, doubled per attempt, with up to 20 percent jitter.
 -- `queue::MAX_RETRY_BACKOFF_MS` caps the full delay at five minutes.
 -- The FK to `runs` ON DELETE CASCADE
--- ties the claim machinery to the run's immutable history. Status/lifecycle live
--- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
+-- ties the lease machinery to the run's immutable history. Status/lifecycle live
+-- on `runs` (5.7) — the queue is the lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
     created_at timestamptz NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE wamn_run.run_queue (
     available_at     timestamptz NOT NULL DEFAULT now(),
     lease_owner      text,
     lease_expires_at timestamptz,
-    -- Queue-owned executor authority (§9.5). Every claim/reclaim increments the
+    -- Queue-owned executor authority (§9.5). Every lease/recover increments the
     -- generation; executor mutations join on owner + generation.
     lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     attempts         int  NOT NULL DEFAULT 0,
@@ -70,11 +70,11 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
         'created_at', 'created_by', 'updated_at', 'updated_by');
--- The claim scan: visible rows in dispatch order, filtered on lease liveness.
+-- The lease scan: visible rows in dispatch order, filtered on lease liveness.
 -- `run_id` completes the ordering prefix, so the exact
 -- `ORDER BY available_at, run_id` is index-supported;
 -- `lease_expires_at` remains the trailing in-index filter column.
-CREATE INDEX run_queue_claimable ON wamn_run.run_queue
+CREATE INDEX run_queue_leasable ON wamn_run.run_queue
     (env_key, available_at, run_id, lease_expires_at);
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;

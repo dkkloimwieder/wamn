@@ -47,7 +47,7 @@ pub use component_facts::{
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
     ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
-    ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+    ComponentPackageCoordinate, ComponentParameterDeclaration, ComponentPortDeclaration,
     ComponentSchema, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
     normalize_component_fact, verify_stored_effect_projection,
 };
@@ -334,7 +334,7 @@ impl fmt::Display for ArtifactHash {
 /// This is the one *derived* identity in the family: it is never asserted by a
 /// carrier and never read from an object name, only computed from verified
 /// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
-/// further than any other hash in the system — through the claim-time run
+/// further than any other hash in the system — through the lease-time run
 /// recording, effect-authority equality, and the deployment attestation, across
 /// two host processes and four manifest readers. Its distinct type keeps it
 /// apart from the manifest's [`ArtifactHash`] and [`DefinitionHash`] members.
@@ -404,7 +404,7 @@ pub const ERROR_PORT: &str = "error";
 mod tests {
     use super::ManifestDigest;
 
-    /// The invariant that retired `valid_manifest_digest` in the claim path: the
+    /// The invariant that retired `valid_manifest_digest` in the lease path: the
     /// newtype admits exactly the `sha256:<64 lowercase hex>` shape the run
     /// plane's `runs_release_record_check` admits, so a parsed value can never
     /// die on that CHECK inside a lease grant.

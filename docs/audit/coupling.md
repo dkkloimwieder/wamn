@@ -200,7 +200,7 @@ Proposal (owner review 2026-10-31, small, Group 3 Do): with run-plane repair del
 Deletes: The independently assembled expected grants and duplicate family dispatch in `control/lib/src/provision_project_env/grants.rs`.  
 Risk: A mistaken consolidation can widen access. The three denial tests stay: `family_surface_grants.rs:444`, `family_surface_grants.rs:730`, and `run_grant_confinement.rs:95`.
 
-Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `integration_allow` and `project_connection` because the binding is the permission. B2-2 covers the role to operation ACL only.
+Owner addendum 2026-10-31, re-targeted: [integration-schema](../plan/integration-schema.md) drops `integration_allow` and `project_connection` because the binding is the permission. B2-2 covers the role to operation ACL only.
 
 ## Finding B2-3: Package application depends on the qualification runner it must serve
 
@@ -277,10 +277,10 @@ Severity: medium
 Effort: M  
 Area: `crates/control/lib/src/provision_project_env`, `crates/control/lib/src/environment/ensure.rs`  
 Evidence: `crates/control/lib/src/provision_project_env.rs:483`, `crates/control/lib/src/provision_project_env.rs:386`, `crates/control/lib/src/environment/ensure.rs:75`, `crates/control/lib/src/environment/ensure.rs:116`, `crates/control/lib/src/provision_project_env/registry.rs:423`.  
-Problem: Internal provisioning chooses behavior from `emit_*` paths. Environment reconciliation requests files, uses `-` as a sentinel, then reads and removes credential artifacts. Pure SQL composition also remains in control/lib despite the provisioning crate’s stated ownership. Environment projection updates live in provisioning, while the matching instance-claim statement lives in schema-control.  
-Proposal: Keep registry coordinates, placement, policy declarations, and registry SQL in registry. Keep substrate SQL, credential rendering, and projection identity rules in provisioning. Move effectful provisioning into environment-control and return credential objects directly. Services/ctl alone converts those results into requested files. Move the projection claim beside its refresh rule.  
-Deletes: Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-claim module.  
-Risk: Credential output permissions, projection identity, and refresh-versus-claim ordering can regress. Preserve `provision_project_env/tests.rs:1025`, including concurrent identity conflicts and missing-projection refusal. Keep file-output security tests at the CLI boundary.
+Problem: Internal provisioning chooses behavior from `emit_*` paths. Environment reconciliation requests files, uses `-` as a sentinel, then reads and removes credential artifacts. Pure SQL composition also remains in control/lib despite the provisioning crate’s stated ownership. Environment projection updates live in provisioning, while the matching instance-assignment statement lives in schema-control.
+Proposal: Keep registry coordinates, placement, policy declarations, and registry SQL in registry. Keep substrate SQL, credential rendering, and projection identity rules in provisioning. Move effectful provisioning into environment-control and return credential objects directly. Services/ctl alone converts those results into requested files. Move the projection statement beside its refresh rule.
+Deletes: Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-assignment module.
+Risk: Credential output permissions, projection identity, and refresh-versus-assignment ordering can regress. Preserve `provision_project_env/tests.rs:1025`, including concurrent identity conflicts and missing-projection refusal. Keep file-output security tests at the CLI boundary.
 
 Owner review 2026-10-31: In passing, when the integration-schema plan's C1 to C3 work touches `provision_project_env`. Return credential objects from the library. Files are a services/ctl concern only.
 
@@ -405,7 +405,7 @@ T43. `wamn-modbus`: Modbus capability implementation, moved inside the `no_std` 
 T44. `pg_walstream`: Existing patched vendor dependency. Retain its source and independent dependency identity. Allowed repository dependencies: none.
 
 Deletes: Every package manifest with one consumer or no enforced boundary, its redundant dependency declarations, and obsolete compatibility re-exports. Retain domain modules, deployment binaries, component declarations, and wire contracts.  
-Risk: Package consolidation changes Cargo feature selection and compilation scope. It does not establish faster builds. Preserve the engine and edge exclusions in `tools/repo-lint-dependencies:99` and the workflow separation at line 118. Retain session behavior through `crates/platform/runtime/tests/session_verifier.rs:18`, SQLite recovery through `crates/execution/run-state-sqlite/tests/intent_store.rs:160`, and manifest identity through `crates/catalog/model/tests/serving_manifest_digest.rs:128`.
+Risk: Package consolidation changes Cargo feature selection and compilation target. It does not establish faster builds. Preserve the engine and edge exclusions in `tools/repo-lint-dependencies:99` and the workflow separation at line 118. Retain session behavior through `crates/platform/runtime/tests/session_verifier.rs:18`, SQLite recovery through `crates/execution/run-state-sqlite/tests/intent_store.rs:160`, and manifest identity through `crates/catalog/model/tests/serving_manifest_digest.rs:128`.
 
 ## Finding B3-3: Migration must follow dependency order and distinguish artifact changes
 
@@ -424,7 +424,7 @@ Proposal: Use the following dependency order. “Mechanical” means source owne
 
 4. Merge identity persistence, credential storage, client, and service into T07. Keep T03 separate because the engine and edge must verify sessions without identity transport. Mechanical ownership change. Prove acceptance boundaries with `crates/platform/runtime/tests/session_verifier.rs:87` and signed caller handling with `crates/platform/runtime/tests/session_route_authentication.rs:289`.
 
-5. Merge execution host into T08, after A5 (package-artifact stays separate). Then merge the router into T09, while keeping T09 above T08. Mechanical native ownership change. Prove artifact verification with `crates/platform/runtime/tests/release_manifest_source.rs:128`, claim behavior with `crates/platform/runtime/tests/production_claim_live.rs:601`, and wiring behavior with `crates/execution/workflow/tests/wiring_lowering.rs:279`.
+5. Merge execution host into T08, after A5 (package-artifact stays separate). Then merge the router into T09, while keeping T09 above T08. Mechanical native ownership change. Prove artifact verification with `crates/platform/runtime/tests/release_manifest_source.rs:128`, statement behavior with `crates/platform/runtime/tests/production_lease_live.rs:601`, and wiring behavior with `crates/execution/workflow/tests/wiring_lowering.rs:279`.
 
 6. Move SQLite storage into T12. Keep `wamn-host`, `wamn-scenario-worker` and CDC as separate packages (T13 rejected). Mechanical source change with Cargo feature changes. Prove SQLite recovery at `crates/execution/run-state-sqlite/tests/intent_store.rs:160`. Keep the native and aarch64 edge graph checks at `tools/repo-lint-dependencies:110`. Existing edge route, device, forward, and release suites remain required.
 
@@ -439,7 +439,7 @@ Proposal: Use the following dependency order. “Mechanical” means source owne
 Update dependency guards with each owning move, rather than disabling them until the migration ends. Preserve the engine’s exact upstream exceptions. Replace references to retired package names with the new owners.
 
 Deletes: Obsolete package-name assertions, retired dependency edges, and duplicated runner selections. Do not retain empty compatibility packages.  
-Risk: The existing lint runner tests use fake Cargo output at `tests/conformance/tests/repo_lint.rs:48`. They prove command construction, not the real dependency graph. The real guard and behavior suites remain separate evidence. No migration or passing test result is claimed by this read-only audit.
+Risk: The existing lint runner tests use fake Cargo output at `tests/conformance/tests/repo_lint.rs:48`. They prove command construction, not the real dependency graph. The real guard and behavior suites remain separate evidence. No migration or passing test result is reported by this read-only audit.
 
 Owner review 2026-10-31: the order stays. One qualification cycle covers the whole guest move: a guest repin is a new release digest, and the qualification key is release plus host image, so one `qualify-release` run proves it.
 

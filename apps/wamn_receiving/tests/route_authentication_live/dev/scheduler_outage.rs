@@ -9,7 +9,7 @@
 //! host must publish its heartbeat through the restarted server, with no host
 //! restart, and the route must still answer.
 //!
-//! Out of scope: the Kubernetes half of the deleted case, where every Host and
+//! Out of target: the Kubernetes half of the deleted case, where every Host and
 //! WorkloadDeployment is ready again after the outage. That state belongs to
 //! the operator and the cluster, so no test without a cluster can observe it.
 

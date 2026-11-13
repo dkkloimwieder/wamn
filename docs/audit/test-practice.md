@@ -53,7 +53,7 @@ The cuts total 31 lines.
 | Lines | Count | What it pins | Owner that keeps the contract |
 | --- | ---: | --- | --- |
 | 286-304 | 19 | `pin_web_clients`, which builds real web artifacts for a cluster with no web bucket | The web artifact tests named above |
-| 572 (the `rows.len() == 4 &&` part), 573-575 | 3 | Fixture sizes (four rows, five bindings) | The per-handle scope check at 576-593, `crates/control/lib/tests/environment_render.rs:573` |
+| 572 (the `rows.len() == 4 &&` part), 573-575 | 3 | Fixture sizes (four rows, five bindings) | The per-handle target check at 576-593, `crates/control/lib/tests/environment_render.rs:573` |
 | 1154-1162 | 9 | A repeated preload shape check | `crates/control/lib/tests/environment_render.rs:487` |
 
 ### crates/control/lib/tests/platform_render.rs
@@ -254,9 +254,9 @@ The production part of the file (lines 1-803) has 22 `.clone()` calls on 19 line
 | Line | Expression and type | How often | What a borrow, move or Arc needs | Class |
 | ---: | --- | --- | --- | --- |
 | 156 | `fact.statements.clone()`: `BTreeMap<String, ComponentSqlStatement>` | Per operation at workload binding | Lower the borrowed maps directly into the final owned map. | M |
-| 743 | `facts.claims.clone()`: `SessionClaims` | Per begin or read authorization | Build the kept fields explicitly, because the struct update replaces the others. | M, partial |
+| 743 | `facts.identity.clone()`: `SessionIdentity` | Per begin or read authorization | Build the kept fields explicitly, because the struct update replaces the others. | M, partial |
 | 138 | `fact.registered_operation.clone()`: `Option<String>` | Per operation at binding | A manifest owner that outlives the workload, or shared field storage. | N |
-| 739 | `facts.claims.schema.clone()`: `Option<String>` | Per begin without an operation schema | Owned or shared schema storage in the claims. | N |
+| 739 | `facts.identity.schema.clone()`: `Option<String>` | Per begin without an operation schema | Owned or shared schema storage in the statements. | N |
 | 128, 135, 138, 139, 141 | `id.clone()`: `String`, five calls | Per operation at binding | Map keys that borrow need an owner that outlives the workload. | N |
 | 139 | `component.descriptor.component_digest.clone()`: `String` | Per operation at binding | A shared digest field type. | N |
 | 141 | `schema.clone()`: `String` | Per operation with a runtime schema | A changed workload field. | N |
@@ -265,8 +265,8 @@ The production part of the file (lines 1-803) has 22 `.clone()` calls on 19 line
 | 261 | `statement.sql.clone()`: `String` | Per statement in each lowered set | A shared SQL field in `VerifiedStatement`. | N |
 | 582 | `operation.clone()`: `String` | Per anonymous entry call | A changed `begin` signature or a returned context. | N |
 | 721 | `operation.clone()`: `String` | Per anonymous begin | One field in `OpenOperation` in place of two. | N |
-| 741 | `open.operation.clone()`: `String` | Per begin | Claims that borrow need changed types and lifetimes. | N |
-| 742 | `facts.applications[&open.operation].clone()`: `String` | Per begin | Owned or shared application storage in the claims. | N |
+| 741 | `open.operation.clone()`: `String` | Per begin | Identity records that borrow need changed types and lifetimes. | N |
+| 742 | `facts.applications[&open.operation].clone()`: `String` | Per begin | Owned or shared application storage in the statements. | N |
 | 759, 760 | `delivery.clone()`: `String`, two calls | Per begin | A shared causation type. | N |
 | 554 | `state(ctx.table)...clone()`: `StoreOperation` | Per entry call | This copies two Arc handles only. A borrow needs another state access design. | N |
 | 594 | `trace.clone()`: `InvocationTrace` | Per entry call | A trace API that does not consume its receiver. | N |

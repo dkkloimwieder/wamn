@@ -96,7 +96,7 @@ fn reset(admin: &str, roles: &[String]) {
 }
 
 #[test]
-fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
+fn targeted_issuer_grants_and_generation_retirement_execute_on_postgres() {
     let mut server = wamn_test_postgres::start(&[]).expect("start a test PostgreSQL server");
     let admin = server
         .create_database("wamn_system")
@@ -306,7 +306,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             "password_attempts\nsession_keys\nsession_signing_state"
         );
         for url in [&a_url, &b_url] {
-            // Execute each fresh-read shape as the actual scoped issuer login.
+            // Execute each fresh-read shape as the actual targeted issuer login.
             run(
                 url,
                 "SELECT p.id::text, p.type, p.subject, p.display_name, p.status, t.token_hash, \

@@ -444,7 +444,7 @@ pub fn analyze_tenant(
 
 /// The denied WIT `namespace:package`. A component importing ANY interface of
 /// this package can open a raw TCP/UDP socket and reach Postgres directly,
-/// bypassing the `wamn:postgres` plugin's tenant-claim / RLS path. This is the
+/// bypassing the `wamn:postgres` plugin's tenant-identity / RLS path. This is the
 /// single load-bearing literal — pinned by a drift guard in the tests.
 pub const DENIED_EGRESS_PKG: &str = "wasi:sockets";
 
@@ -476,7 +476,7 @@ impl std::fmt::Display for EgressGuardError {
                 formatter,
                 "component {component:?} imports raw-socket interface(s) {imports:?} \
                  (package {DENIED_EGRESS_PKG:?}) — this opens arbitrary outbound TCP with DNS, \
-                 bypassing the wamn:postgres tenant-claim / RLS path; the platform refuses to \
+                 bypassing the wamn:postgres tenant-identity / RLS path; the platform refuses to \
                  publish it"
             ),
         }

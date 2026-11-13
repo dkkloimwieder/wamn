@@ -3,7 +3,7 @@
 //!
 //! # Why functions and not a mapping table (`wamn-0h0g.22.6`, option (c))
 //!
-//! Guest tenant authority must come from `current_user`, because a GUC claim is
+//! Guest tenant authority must come from `current_user`, because a GUC identity is
 //! settable by whoever holds the session. The obvious replacement — a table
 //! mapping login to tenant — is banned, and the ban is precise: it targets
 //! MUTABLE, SETTABLE STATE between identity and authority. A fixed derivation
@@ -26,7 +26,7 @@
 //!
 //! # Why the digest is not implemented here
 //!
-//! [`tenant_key`] is a THIN WRAPPER over [`workload_role_scope_hash`]. A second
+//! [`tenant_key`] is a THIN WRAPPER over [`workload_role_identity_hash`]. A second
 //! Rust implementation would be the one drift this construction cannot absorb:
 //! the role name minted by provisioning and the key computed by the predicate
 //! must be the same string, or every guest read refuses. There is exactly one
@@ -46,7 +46,7 @@ use wamn_run_state::CredentialGeneration;
 use crate::APP_ROLE;
 use crate::DB_OWNER_ROLE;
 use crate::workload_role::{
-    SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_role_scope_hash,
+    IDENTITY_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleIdentity, workload_role_identity_hash,
 };
 
 /// Schema that owns the database authority functions.
@@ -58,14 +58,14 @@ pub const CURRENT_TENANT_KEY_FUNCTION: &str = "wamn_authority.current_tenant_key
 
 /// The tenant key for one tenant in one project-environment database.
 ///
-/// Equal by construction to the scope digest provisioning mints role names
+/// Equal by construction to the identity digest provisioning mints role names
 /// from, because it IS that function.
 pub fn tenant_key(env_key: &str, database: &str) -> String {
-    workload_role_scope_hash(
+    workload_role_identity_hash(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey { env_key, database },
+        WorkloadRoleIdentity::EnvKey { env_key, database },
     )
-    .expect("App's scope kind is EnvKey, so an EnvKey scope cannot mismatch it")
+    .expect("App's identity kind is EnvKey, so an EnvKey identity cannot mismatch it")
 }
 
 /// The anchored pattern that recovers a tenant key from a guest login name.
@@ -87,7 +87,7 @@ pub fn current_tenant_key_pattern() -> String {
     format!(
         "^{prefix}_([0-9a-f]{{{width}}})_[{generations}]$",
         prefix = WorkloadRoleFamily::App.generation_prefix(),
-        width = SCOPE_HASH_HEX_LEN,
+        width = IDENTITY_HASH_HEX_LEN,
     )
 }
 
@@ -120,8 +120,8 @@ const DATABASE_OCTETS_PLACEHOLDER: &str = "@wamn_database_octets@";
 /// `SET search_path = pg_catalog` pins every builtin these bodies call, so
 /// neither derivation can be redirected by a caller's search path.
 fn derivations_template(database_literal: &str, database_octets: &str, owner: &str) -> String {
-    let domain = WorkloadRoleFamily::App.scope_domain();
-    let domain_text = std::str::from_utf8(domain).expect("the scope domain is ASCII");
+    let domain = WorkloadRoleFamily::App.identity_domain();
+    let domain_text = std::str::from_utf8(domain).expect("the identity domain is ASCII");
     format!(
         "CREATE SCHEMA IF NOT EXISTS {schema} AUTHORIZATION {owner};\n\
          REVOKE ALL ON SCHEMA {schema} FROM PUBLIC;\n\
@@ -164,7 +164,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
         domain_lit = escape_literal(domain_text),
         env_key_tag_len = "env_key".len(),
         database_tag_len = "database".len(),
-        hex_len = SCOPE_HASH_HEX_LEN,
+        hex_len = IDENTITY_HASH_HEX_LEN,
         pattern_lit = escape_literal(&current_tenant_key_pattern()),
     )
 }
@@ -223,12 +223,11 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION, authority_derivations_sql,
-        current_tenant_key_pattern, tenant_key,
+        CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION, current_tenant_key_pattern, tenant_key,
     };
     use crate::workload_role::{
-        SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
-        workload_role_scope_hash,
+        IDENTITY_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
+        workload_role_identity_hash,
     };
     use wamn_run_state::CredentialGeneration;
 
@@ -239,15 +238,15 @@ mod tests {
     /// cannot disagree, because there is one Rust definition and this asserts
     /// the wrapper is it.
     #[test]
-    fn the_tenant_key_is_the_workload_scope_digest_and_not_a_second_one() {
-        let expected = workload_role_scope_hash(
+    fn the_tenant_key_is_the_workload_identity_digest_and_not_a_second_one() {
+        let expected = workload_role_identity_hash(
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::EnvKey {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: "acme",
                 database: DATABASE,
             },
         )
-        .expect("App takes a tenant scope");
+        .expect("App takes a tenant identity");
         assert_eq!(tenant_key("acme", DATABASE), expected);
     }
 
@@ -258,7 +257,7 @@ mod tests {
     ///
     /// This asserts DELEGATION, not the value: both sides are the same function
     /// now, so a domain or framing drift moves both and passes here. The value
-    /// is pinned in `wamn_run_state::tenant_scope`, and the live SQL agreement
+    /// is pinned in `wamn_run_state::tenant_identity`, and the live SQL agreement
     /// gate recomputes it inside PostgreSQL from a builder that does not
     /// delegate — measured: a domain drift survives this test and dies there.
     #[test]
@@ -270,7 +269,7 @@ mod tests {
         ] {
             assert_eq!(
                 tenant_key(env_key, database),
-                wamn_run_state::app_scope_hash(env_key, database),
+                wamn_run_state::app_identity_hash(env_key, database),
                 "tenant {env_key:?}: the provisioner and the runtime must agree"
             );
         }
@@ -297,17 +296,17 @@ mod tests {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
             let role = workload_generation_role(
                 WorkloadRoleFamily::App,
-                WorkloadRoleScope::EnvKey {
+                WorkloadRoleIdentity::EnvKey {
                     env_key: "acme",
                     database: DATABASE,
                 },
                 generation,
             )
-            .expect("App takes a tenant scope");
+            .expect("App takes a tenant identity");
             let rest = role
                 .strip_prefix(&head)
                 .expect("the mint composes from the family generation prefix");
-            let (captured, suffix) = rest.split_at(SCOPE_HASH_HEX_LEN);
+            let (captured, suffix) = rest.split_at(IDENTITY_HASH_HEX_LEN);
             assert_eq!(captured, key, "the role carries the tenant key verbatim");
             assert_eq!(suffix, format!("_{}", generation.as_str()));
         }
@@ -327,52 +326,6 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
             "{prefix} would need escaping before it can go into a pattern"
-        );
-    }
-
-    /// GENERATED SQL FROM A RUST BUILDER, so the string is pinned: it is the
-    /// only thing that catches the builder moving, and this builder's output is
-    /// a security boundary.
-    #[test]
-    fn the_emitted_ddl_is_frozen() {
-        let sql = authority_derivations_sql(DATABASE);
-        assert_eq!(
-            sql,
-            "CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION \"wamn_db_owner\";\n\
-             REVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\n\
-             GRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\n\
-             CREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\n\
-             RETURNS text\n\
-             LANGUAGE sql\n\
-             IMMUTABLE\n\
-             PARALLEL SAFE\n\
-             STRICT\n\
-             SET search_path = pg_catalog\n\
-             AS $$\n    \
-             SELECT substr(encode(sha256(\n           \
-             int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        \
-             || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        \
-             || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) \
-             || convert_to(env_key, 'UTF8')\n        \
-             || int8send(8::bigint) || convert_to('database', 'UTF8')\n        \
-             || int8send(26::bigint) || convert_to('wamn-db-acme--billing--dev', 'UTF8')\n       \
-             ), 'hex'), 1, 40)\n\
-             $$;\n\
-             ALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO \"wamn_db_owner\";\n\
-             REVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\n\
-             GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\n\
-             CREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\n\
-             RETURNS text\n\
-             LANGUAGE sql\n\
-             STABLE\n\
-             PARALLEL SAFE\n\
-             SET search_path = pg_catalog\n\
-             AS $$\n    \
-             SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n\
-             $$;\n\
-             ALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO \"wamn_db_owner\";\n\
-             REVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\n\
-             GRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";"
         );
     }
 

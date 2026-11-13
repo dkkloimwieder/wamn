@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -68,7 +68,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "environment status test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
             [(
                 "purchasing".to_owned(),
                 wamn_catalog::ApplicationDefinition {
@@ -102,7 +102,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &database,
         },

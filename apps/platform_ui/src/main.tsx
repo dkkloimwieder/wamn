@@ -1,19 +1,19 @@
 import { render } from "@solidjs/web";
 import "@wfe/components/styles.css";
 import { Shell } from "./shell";
-import { readScope } from "./scope";
+import { readConfig } from "./config";
 import { userSections } from "./users";
 import { controlSections } from "./projects";
 import { administrationSections } from "./administration";
 
 const root = document.getElementById("app")!;
-readScope().then(
-  (scope) =>
+readConfig().then(
+  (config) =>
     render(
       () => (
         <Shell
           title="WAMN"
-          {...scope}
+          {...config}
           sections={administrationSections}
           controlSections={[...controlSections, ...userSections]}
         />

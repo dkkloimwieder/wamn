@@ -16,8 +16,8 @@ mod run_plane;
 pub mod sql;
 
 pub use environment::{
-    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceClaimError,
-    check_environment_instance_claim, claim_environment_instance_sql,
+    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceAssignmentError,
+    assign_environment_instance_sql, check_environment_instance_assignment,
 };
 pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route};
 pub use model::{SqlStatement, Value};

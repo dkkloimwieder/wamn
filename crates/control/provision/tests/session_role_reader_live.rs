@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use url::Url;
 use wamn_control_provision::session_role_reader::parse_session_role_reader_url;
 use wamn_control_provision::sql;
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 
 const DATABASE: &str = "wamn_session_role_reader_test";
@@ -95,7 +95,7 @@ fn denied(url: &str, script: &str) {
 fn role(generation: CredentialGeneration) -> String {
     workload_generation_role(
         FAMILY,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "widgets",
             environment: "dev",

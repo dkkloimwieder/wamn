@@ -1,4 +1,4 @@
-//! Real scoped permission reads and local HTTPS keys cross the route-authentication boundary.
+//! Real authorizeded permission reads and local HTTPS keys cross the route-authentication boundary.
 //!
 //! This test starts its own PostgreSQL 18 server with
 //! `shared_preload_libraries=pg_stat_statements` and `pg_stat_statements.track=all`.
@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
@@ -212,7 +212,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "session route test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
             [(
                 "purchasing".to_owned(),
                 wamn_catalog::ApplicationDefinition {
@@ -301,7 +301,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::HttpAdmitter,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: "dev",
@@ -327,8 +327,8 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
-    let scoped = connect(url.as_str()).await?;
-    let identity = scoped
+    let authorizeded = connect(url.as_str()).await?;
+    let identity = authorizeded
         .query_one(
             "SELECT session_user::text, current_user::text, rolsuper, rolbypassrls, \
          pg_has_role(current_user, 'wamn_http_admitter', 'USAGE'), \
@@ -345,7 +345,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         !identity.get::<_, bool>(5),
         "runtime receives no permission writes"
     );
-    drop(scoped);
+    drop(authorizeded);
 
     let mut server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();

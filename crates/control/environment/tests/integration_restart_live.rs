@@ -188,7 +188,7 @@ impl Application {
                 &package.join("publication/components/modbus_reader.json.in"),
                 "acme--one--dev",
             )?;
-        declaration["scope"]["package-version"] = json!("0.1.0");
+        declaration["target"]["package-version"] = json!("0.1.0");
         let operation = declaration["operations"]
             .as_object()
             .context("reader operations missing")?
@@ -378,7 +378,7 @@ fn loaded_release(
     wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "connection read fixture",
-        wamn_engine::release_manifest::ReleaseScope::new("acme--one--dev", "dev")
+        wamn_engine::release_manifest::ReleaseTarget::new("acme--one--dev", "dev")
             .with_applications(
                 [(
                     application.to_owned(),
@@ -573,7 +573,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &packages,
     )
     .await?;
-    // A dedicated reader login fixes scope through session_user, independent of GUCs.
+    // A dedicated reader login fixes target through session_user, independent of GUCs.
     let login = format!("c9_integration_{}", std::process::id());
     database.execute(&[
         &sql::grant_connection_reader_surface_sql(),

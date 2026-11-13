@@ -178,7 +178,7 @@ mod tests {
             self.authenticator
                 .authenticate(AuthenticationRequest {
                     manifest: release.manifest(),
-                    scope: release.scope(),
+                    target: release.target(),
                     attachment_id: "record-http",
                     attachment: ServedAttachment::Authored(AttachmentRef::Route(&self.attachment)),
                     policy: AttachmentAuthPolicy::Session,

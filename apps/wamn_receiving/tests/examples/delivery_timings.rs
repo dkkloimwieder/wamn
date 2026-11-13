@@ -103,7 +103,7 @@ impl Drop for Compose {
             return;
         }
         // The random project was empty before startup. Compose's project label
-        // scopes shutdown to this invocation's containers and disposable volumes.
+        // targets shutdown to this invocation's containers and disposable volumes.
         let _ = self
             .command()
             .args(["down", "--volumes", "--remove-orphans"])
@@ -267,9 +267,9 @@ async fn main() -> anyhow::Result<()> {
         project: format!("wamn-delivery-timings-{}", hex::encode(&nonce[..8])),
         minio_password: hex::encode(&nonce[8..24]),
     };
-    let scope = Triple::new("acme", "receiving", "dev");
-    let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let advisory = advisory_stream_config(&scope, 1);
+    let coordinate = Triple::new("acme", "receiving", "dev");
+    let source = source_stream_config(&coordinate, 1, Duration::from_secs(120));
+    let advisory = advisory_stream_config(&coordinate, 1);
     // The broker admits the materializer consumers of the packages that the
     // timing command gives `wamn dev up`, which provisions those consumers.
     let env_key = wamn_dev_control::dev::environment::ENV_KEY;
@@ -280,13 +280,19 @@ async fn main() -> anyhow::Result<()> {
     };
     let manifests = application_manifests(&repository, packages)?;
     let consumers = wamn_broker::events::entity_consumers(
-        &scope,
+        &coordinate,
         manifests
             .iter()
             .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
     );
-    let broker =
-        event_broker::prepare(&directory, &scope, env_key, &source, &advisory, &consumers)?;
+    let broker = event_broker::prepare(
+        &directory,
+        &coordinate,
+        env_key,
+        &source,
+        &advisory,
+        &consumers,
+    )?;
     private(
         &directory.join("compose.json"),
         &serde_json::to_vec(&json!({"services":{"delivery-events":{

@@ -579,11 +579,11 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
         let issued = issue_pat(
             issuer,
             &principal,
-            "scoped issuer test",
+            "targeted issuer test",
             Duration::from_secs(60),
         )
         .await
-        .context("issue PAT through the scoped identity credential")?;
+        .context("issue PAT through the targeted identity credential")?;
         issuer
             .batch_execute("COMMIT")
             .await
@@ -598,13 +598,13 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
             .get(0);
         anyhow::ensure!(stamped, "the issuer PAT must stamp wamn:provisioning");
         anyhow::ensure!(
-            issued.record().label() == "scoped issuer test"
+            issued.record().label() == "targeted issuer test"
                 && issued.record().revoked_at().is_none(),
             "PAT issuance returned unexpected metadata"
         );
         anyhow::ensure!(
             authenticate_pat(issuer, issued.token()).await?.is_some(),
-            "scoped issuer cannot authenticate its stored PAT"
+            "targeted issuer cannot authenticate its stored PAT"
         );
         for statement in [
             "UPDATE identity.pats SET revoked_at = now()",

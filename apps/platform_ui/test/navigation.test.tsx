@@ -298,7 +298,7 @@ describe("control hierarchy navigation", () => {
     await screen.findByRole("table", { name: "Memberships" });
   });
 
-  it("scopes Members, membership actions and grants to the current environment", async () => {
+  it("views Members, membership actions and grants to the current environment", async () => {
     const { writes } = mount("projects/widgets/dev/members");
     const table = within(await screen.findByRole("table", { name: "Members" }));
     fireEvent.click(await table.findByRole("link", { name: "Alex" }));

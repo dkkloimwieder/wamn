@@ -3,7 +3,7 @@
 Server paging, `wamn-n8q9m.20`, remains open.
 [Execution](../architecture/execution.md#operator-clients) records current client and shell behavior.
 
-## 1. Goal and scope
+## 1. Goal and target
 
 See [browser client and shell behavior](../architecture/execution.md#operator-clients).
 

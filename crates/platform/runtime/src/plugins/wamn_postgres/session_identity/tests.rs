@@ -2,7 +2,7 @@ use super::super::pool::ResolvedCredential;
 use super::super::resources::admit_transaction_statement;
 use super::super::statements::StatementField;
 use super::super::{SqlValue, StatementError};
-use super::transactions::{CLAIM_SQL, causation_emit_sql};
+use super::transactions::{IDENTITY_SQL, causation_emit_sql};
 use super::*;
 use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionOrigin};
 use tokio_postgres::NoTls;
@@ -100,7 +100,7 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
 fn guest_url(env_key: &str, database: &str) -> String {
     format!(
         "postgres://wamn_app_{}_a:pw@db/{database}",
-        wamn_run_state::app_scope_hash(env_key, database)
+        wamn_run_state::app_identity_hash(env_key, database)
     )
 }
 
@@ -220,7 +220,7 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         // rather than relying on a libpq-style implicit OS user.
         credentials: Some(ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a@localhost/pool-lifecycle-test",
-            wamn_run_state::app_scope_hash("fixture", "pool-lifecycle-test")
+            wamn_run_state::app_identity_hash("fixture", "pool-lifecycle-test")
         ))),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -262,8 +262,8 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
     );
 }
 
-// The claim-time record must match `runs_release_record_check` exactly, or a
-// claim that would otherwise succeed dies on a CHECK inside the lease grant.
+// The identity-time record must match `runs_release_record_check` exactly, or a
+// identity that would otherwise succeed dies on a CHECK inside the lease grant.
 // The hand-rolled shape check this used to exercise is retired: the invariant
 // now rides `ManifestDigest`, so what is pinned here is that the TYPE admits
 // exactly what the run-plane CHECK admits. Same coupling, one owner.
@@ -288,7 +288,7 @@ fn manifest_digest_shape_matches_the_run_plane_check() {
     }
 }
 
-// wamn-cjv.2 — the in-band claim/role mutation guard.
+// wamn-cjv.2 — the in-band identity/role mutation guard.
 #[test]
 fn guard_rejects_set_and_reset_variants() {
     for s in [
@@ -297,7 +297,7 @@ fn guard_rejects_set_and_reset_variants() {
         "SET SESSION app.env_key TO 'victim'",
         "SET ROLE postgres",
         "set session authorization postgres",
-        // wamn-0h0g.23.1 — the two claims CLAIM_SQL now injects. Overriding
+        // wamn-0h0g.23.1 — the two identity IDENTITY_SQL now injects. Overriding
         // either is the privilege escalation the binding would otherwise open:
         // `app.role` clears an exempt-role gate, `app.user_id` reassigns row
         // ownership.
@@ -311,7 +311,7 @@ fn guard_rejects_set_and_reset_variants() {
         "-- lead\nSET app.env_key='victim'",
     ] {
         assert!(statement_mutates_session(s), "should reject: {s:?}");
-        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        assert!(reject_identity_mutation(s).is_err(), "should reject: {s:?}");
     }
 }
 
@@ -340,7 +340,7 @@ fn guard_allows_normal_statements_and_current_setting() {
         "DELETE FROM assets WHERE id = $1",
     ] {
         assert!(!statement_mutates_session(s), "should allow: {s:?}");
-        assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+        assert!(reject_identity_mutation(s).is_ok(), "should allow: {s:?}");
     }
 }
 
@@ -358,7 +358,7 @@ fn guard_rejects_guest_causation_forgery() {
             statement_forges_causation(s),
             "should detect forgery: {s:?}"
         );
-        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        assert!(reject_identity_mutation(s).is_err(), "should reject: {s:?}");
     }
 }
 
@@ -372,7 +372,7 @@ fn guard_allows_non_wamn_logical_messages_and_normal_sql() {
         "INSERT INTO t (k) VALUES ($1)",
     ] {
         assert!(!statement_forges_causation(s), "should allow: {s:?}");
-        assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+        assert!(reject_identity_mutation(s).is_ok(), "should allow: {s:?}");
     }
 }
 
@@ -394,7 +394,7 @@ fn guard_rejects_guest_counter_function_calls() {
             statement_calls_counter_function(s),
             "should detect a counter call: {s:?}"
         );
-        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        assert!(reject_identity_mutation(s).is_err(), "should reject: {s:?}");
     }
 }
 
@@ -418,7 +418,7 @@ fn guard_rejects_guest_platform_writes() {
             statement_writes_platform(s),
             "should detect a platform write: {s:?}"
         );
-        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+        assert!(reject_identity_mutation(s).is_err(), "should reject: {s:?}");
     }
 }
 
@@ -435,7 +435,7 @@ fn guard_allows_platform_reads_and_application_writes() {
     ] {
         assert!(!statement_calls_counter_function(s), "should allow: {s:?}");
         assert!(!statement_writes_platform(s), "should allow: {s:?}");
-        assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+        assert!(reject_identity_mutation(s).is_ok(), "should allow: {s:?}");
     }
 }
 
@@ -475,10 +475,10 @@ fn causation_emit_sql_escapes_single_quotes_in_the_run_id() {
 // injection boundary by R2): a malformed identity fails closed even though
 // the value would bind as inert data.
 #[test]
-fn validate_claims_rejects_malformed_identities() {
+fn validate_identity_rejects_malformed_identities() {
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     assert!(
-        validate_claims(
+        validate_session_identity(
             "fixture",
             Some("public"),
             Some("owner-1"),
@@ -489,17 +489,29 @@ fn validate_claims_rejects_malformed_identities() {
         )
         .is_ok()
     );
-    assert!(validate_claims("fixture", None, None, None, None, None, None).is_ok());
-    assert!(validate_claims("bad'tenant", None, None, None, None, None, None).is_err());
-    assert!(validate_claims("fixture", Some("has-hyphen"), None, None, None, None, None).is_err());
-    assert!(validate_claims("fixture", None, Some("bad;runner"), None, None, None, None).is_err());
-    // `''` is the deny floor, never a claim.
-    assert!(validate_claims("fixture", None, None, Some(""), None, None, None).is_err());
-    // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(validate_claims("fixture", None, None, None, Some("not-a-uuid"), None, None).is_err());
-    assert!(validate_claims("fixture", None, None, None, Some(&U1[..35]), None, None).is_err());
+    assert!(validate_session_identity("fixture", None, None, None, None, None, None).is_ok());
+    assert!(validate_session_identity("bad'tenant", None, None, None, None, None, None).is_err());
     assert!(
-        validate_claims(
+        validate_session_identity("fixture", Some("has-hyphen"), None, None, None, None, None)
+            .is_err()
+    );
+    assert!(
+        validate_session_identity("fixture", None, Some("bad;runner"), None, None, None, None)
+            .is_err()
+    );
+    // `''` is the deny floor, never an identity.
+    assert!(validate_session_identity("fixture", None, None, Some(""), None, None, None).is_err());
+    // A non-uuid user id would raise 22P02 inside every ownership predicate.
+    assert!(
+        validate_session_identity("fixture", None, None, None, Some("not-a-uuid"), None, None)
+            .is_err()
+    );
+    assert!(
+        validate_session_identity("fixture", None, None, None, Some(&U1[..35]), None, None)
+            .is_err()
+    );
+    assert!(
+        validate_session_identity(
             "fixture",
             None,
             None,
@@ -510,10 +522,10 @@ fn validate_claims_rejects_malformed_identities() {
         )
         .is_err()
     );
-    // `''` is the unbound operation, never a claim.
-    assert!(validate_claims("fixture", None, None, None, None, Some(""), None).is_err());
-    // `''` is the unbound application, never a claim.
-    assert!(validate_claims("fixture", None, None, None, None, None, Some("")).is_err());
+    // `''` is the unbound operation, never an identity.
+    assert!(validate_session_identity("fixture", None, None, None, None, Some(""), None).is_err());
+    // `''` is the unbound application, never an identity.
+    assert!(validate_session_identity("fixture", None, None, None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -617,13 +629,13 @@ fn bind_and_revoke_invocation_is_per_component() {
         .expect("a revoked scope rebinds");
 }
 
-// R31 — unbind reaps every per-component claim registry plus the closed
+// R31 — unbind reaps every per-component identity registry plus the closed
 // workload-authority discriminator while leaving another workload's
 // component untouched; the project-keyed `pools` map is never touched here.
 // Keyed by the workload-id prefix (the runtime's builtin convention). An unknown
 // workload id is a no-op.
 #[test]
-fn clear_component_claims_reaps_all_registries_for_the_workload() {
+fn clear_component_identity_reaps_all_registries_for_the_workload() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
@@ -651,17 +663,17 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     }
 
     // Unbinding an UNKNOWN workload clears nothing.
-    pg.clear_component_claims("wl-unknown");
+    pg.clear_component_identity("wl-unknown");
     assert_eq!(
         pg.env_key_for("wl-a-component-0").as_deref(),
         Some("fixture")
     );
 
-    pg.clear_component_claims("wl-a");
+    pg.clear_component_identity("wl-a");
 
     // Every registry emptied for the unbound workload's component.
     assert_eq!(pg.env_key_for("wl-a-component-0"), None);
-    // project_for falls back to DEFAULT_PROJECT once the claim is gone.
+    // project_for falls back to DEFAULT_PROJECT once the identity is gone.
     assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
     assert_eq!(pg.schema_for("wl-a-component-0"), None);
     assert_eq!(pg.runner_for("wl-a-component-0"), None);
@@ -800,7 +812,7 @@ fn live_database(admin_url: &str) -> String {
 /// creating the login if it is missing.
 ///
 /// `wamn-0h0g.22.6.7` binds a guest credential to its env_key: resolution
-/// verifies that the login carries `app_scope_hash(env_key, database)`, so a
+/// verifies that the login carries `app_identity_hash(env_key, database)`, so a
 /// URL naming an arbitrary user no longer resolves for the guest class.
 /// That is the point — a shared login is exactly what item 2 retires — and
 /// it means a live guest test has to authenticate as a real generation.
@@ -812,7 +824,7 @@ pub(in crate::plugins::wamn_postgres) async fn live_guest_url(
     let database = live_database(admin_url);
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(env_key, &database)
+        wamn_run_state::app_identity_hash(env_key, &database)
     );
     let admin = connect_raw(admin_url).await;
     admin
@@ -856,13 +868,13 @@ fn database_url_for_role(database_url: &str, role: &str, password: &str) -> Stri
     url.to_string()
 }
 
-// R2/R16 — the ACTUAL bound claim statement makes injection-shaped and
+// R2/R16 — the ACTUAL bound identity statement makes injection-shaped and
 // unicode values INERT DATA: bound as `$n`, none takes statement-level effect
 // (a marker table a spliced `DROP`/`DELETE` would destroy survives).
 // `valid_*` would reject these values, but the point is the BIND is safe
 // regardless of validation.
 #[tokio::test]
-async fn live_bound_claims_are_injection_inert_and_txn_local() {
+async fn live_bound_identity_are_injection_inert_and_txn_local() {
     let database = wamn_test_postgres::database();
     let client = connect_raw(database.url()).await;
     let marker = format!("wave2_marker_{}", std::process::id());
@@ -874,7 +886,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         ))
         .await
         .unwrap();
-    let stmt = client.prepare(CLAIM_SQL).await.unwrap();
+    let stmt = client.prepare(IDENTITY_SQL).await.unwrap();
     let timeout = "5000";
 
     // (1) app.env_key / app.runner / app.role / app.user_id are free-form
@@ -961,7 +973,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     assert_eq!(n, 1);
     client.batch_execute("COMMIT").await.unwrap();
 
-    // SET LOCAL equivalence: after COMMIT the txn-local claim is gone. Per the
+    // SET LOCAL equivalence: after COMMIT the txn-local identity is gone. Per the
     // custom-GUC gotcha a touched GUC reverts to '' (NOT NULL) — the value the
     // RLS floor NULLIFs.
     let after: Option<String> = client
@@ -1006,13 +1018,13 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         .unwrap();
 }
 
-// R2/R16 — the REAL plugin path: begin_with_claims injects the guest claim
+// R2/R16 — the REAL plugin path: begin_with_identity injects the guest identity
 // set via the bound statement, they are visible in-txn, and revert after the
 // txn. `app.env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's env_key
 // is its LOGIN, and injecting a GUC nothing it can read consults would be a
 // second, settable statement about an authority derived elsewhere.
 #[tokio::test]
-async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
+async fn live_begin_with_identity_sets_the_guest_set_without_a_env_key_identity() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -1034,7 +1046,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         .checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY)
         .await
         .unwrap();
-    pg.begin_with_claims(
+    pg.begin_with_identity(
         &conn,
         AuthorityClass::GuestSql,
         false,
@@ -1075,11 +1087,11 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
     // THE DELETION, ASSERTED — and NULL is the sharper result. A custom GUC
     // reads back as the EMPTY STRING once it has been set and the SET LOCAL
     // scope ended; it reads NULL only if it was never set in this session at
-    // all. So `None` here says more than "the claim was cleared": it says
+    // all. So `None` here says more than "the identity was cleared": it says
     // the guest transaction never touched `app.env_key`.
     assert_eq!(
         env_key, None,
-        "the guest claim set must NOT inject app.env_key"
+        "the guest identity set must NOT inject app.env_key"
     );
     // …and the session it runs on authenticates as the env_key's own
     // generation, which is where its env_key actually comes from.
@@ -1089,7 +1101,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         .unwrap()
         .get(0);
     assert!(
-        who.contains(&wamn_run_state::app_scope_hash(
+        who.contains(&wamn_run_state::app_identity_hash(
             LIVE_ENV_KEY,
             &live_database(admin_url)
         )),
@@ -1104,7 +1116,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
     assert_eq!(bound_application.as_deref(), Some(application));
 
     // COMMIT (the one_shot success path): a `set_config(is_local => true)`
-    // claim reverts even across a commit — showing it is truly LOCAL, not a
+    // identity reverts even across a commit — showing it is truly LOCAL, not a
     // session-level leak.
     conn.batch_execute("COMMIT").await.unwrap();
     let after: Option<String> = conn
@@ -1114,7 +1126,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         .get(0);
     // `app.role` IS injected by the guest set, so after the commit it reads
     // back as the empty string — the reset value, which is what shows the
-    // claim was transaction-LOCAL rather than a session-level leak.
+    // identity was transaction-LOCAL rather than a session-level leak.
     assert_eq!(after.as_deref(), Some(""));
 }
 
@@ -1132,7 +1144,7 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// (`wamn-0h0g.22.6`), which needs the authority derivations installed — and
 /// those are built by the provisioner, which the shipped runtime
 /// deliberately does not link. The floor is not this fixture's subject: the
-/// RESTRICTIVE per-role and per-user layer is, and that is a different claim
+/// RESTRICTIVE per-role and per-user layer is, and that is a different identity
 /// class item 2 leaves alone. The production floor is shown live by
 /// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
 /// `deploy/sql/app-schema.sql` contract.
@@ -1165,17 +1177,17 @@ fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str)
 
 // wamn-0h0g.23.1 — the compiled per-user / per-role rules key on `app.role`
 // and `app.user_id`, and under their COALESCE / NULLIF deny floors a policy
-// that is never handed those claims denies EVERYTHING. Before this bead
-// `CLAIM_SQL` bound only env_key / statement_timeout / search_path /
+// that is never handed those identity denies EVERYTHING. Before this bead
+// `IDENTITY_SQL` bound only env_key / statement_timeout / search_path /
 // app.runner, so every per-user policy silently denied on the production
 // path while isolated policy tests passed on hand-written `SET LOCAL`.
 // This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
-// NOBYPASSRLS role, so it fails against a `CLAIM_SQL` that does not inject
+// NOBYPASSRLS role, so it fails against a `IDENTITY_SQL` that does not inject
 // the caller's identity.
 #[tokio::test]
 async fn live_compiled_per_user_policy_permits_the_injected_caller() {
-    const ENV_KEY: &str = "rls-claim-live";
-    const COMPONENT: &str = "rls-claim-live-component";
+    const ENV_KEY: &str = "rls-identity-live";
+    const COMPONENT: &str = "rls-identity-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
 
@@ -1183,16 +1195,16 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let suffix = std::process::id();
-    let schema = format!("wamn_rls_claim_{suffix}");
+    let schema = format!("wamn_rls_identity_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_identity_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
     // ever ran. The two env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let admin = connect_raw(admin_url).await;
@@ -1259,15 +1271,15 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
         .expect("drop the per-user RLS fixture");
 }
 
-// wamn-0h0g.23.1 — the SET-override refusal, on the two claims the fix now
-// injects. `reject_claim_mutation` (wamn-cjv.2) is the mechanism the env_key
-// claim already carries and it is GUC-agnostic, so it covers these the moment
+// wamn-0h0g.23.1 — the SET-override refusal, on the two identity the fix now
+// injects. `reject_identity_mutation` (wamn-cjv.2) is the mechanism the env_key
+// identity already carries and it is GUC-agnostic, so it covers these the moment
 // they exist — but coverage that is never exercised is not coverage, and a
 // binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
 // The CONTROL below shows the escalation is real, so the refusal that
 // follows is load-bearing rather than vacuous.
 #[tokio::test]
-async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
+async fn live_guest_cannot_override_the_injected_role_or_user_identity() {
     const ENV_KEY: &str = "rls-override-live";
     const COMPONENT: &str = "rls-override-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
@@ -1280,13 +1292,13 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     let schema = format!("wamn_rls_override_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_identity_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
     // ever ran. The two env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let admin = connect_raw(admin_url).await;
@@ -1311,12 +1323,12 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
 
-    // CONTROL: inside ONE plugin-managed transaction the injected claims admit
+    // CONTROL: inside ONE plugin-managed transaction the injected identity admit
     // the caller's own row — and a bare `SET LOCAL` on that same transaction
     // clears the exempt-role gate and reveals BOTH. So the escalation the
     // guard refuses below is real, not hypothetical.
     let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT, ENV_KEY).await.unwrap();
-    pg.begin_with_claims(
+    pg.begin_with_identity(
         &conn,
         AuthorityClass::GuestSql,
         false,
@@ -1374,7 +1386,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     assert_eq!(
         visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
         1,
-        "the caller's claims are unchanged by the refused overrides"
+        "the caller's identity are unchanged by the refused overrides"
     );
 
     admin
@@ -1394,7 +1406,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
 /// to the (absent) connection. Both halves are asserted, because a guard
 /// that refused everything would pass the first alone.
 #[tokio::test]
-async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim() {
+async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_identity() {
     const COMPONENT: &str = "warm-instance-0";
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -1407,11 +1419,11 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
         })
         .unwrap(),
     );
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         COMPONENT,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: "tenant-b".to_string(),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -1477,11 +1489,11 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     );
 }
 
-/// wamn-0h0g.17.11 — the guard requires a bound claim, it does not merely
+/// wamn-0h0g.17.11 — the guard requires a bound identity, it does not merely
 /// refuse disagreement.
 ///
 /// Agreement with the registry carries no information when the registry has
-/// no entry, so an unbound claim scope must be refused rather than trusted
+/// no entry, so an unbound identity scope must be refused rather than trusted
 /// with whatever env_key the caller froze. This is the same deny floor
 /// `require_env_key` applies to every other read: an instance that skipped a
 /// bind resolves nothing.
@@ -1504,7 +1516,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
         .unwrap(),
     );
     assert_eq!(
-        pg.session_claims(COMPONENT),
+        pg.session_identity(COMPONENT),
         None,
         "the scope under test resolves no identity at all"
     );
@@ -1545,13 +1557,13 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
     let unbound = pg
         .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
         .await
-        .expect_err("an unbound claim scope resolves nothing");
+        .expect_err("an unbound identity scope resolves nothing");
     assert!(
         unbound.to_string().contains(
             "HTTP effect authorization for component \"never-acquired-instance\" has no \
-                 bound env_key claim"
+                 bound env_key identity"
         ),
-        "the refusal names the missing claim rather than any other failure: {unbound}"
+        "the refusal names the missing identity rather than any other failure: {unbound}"
     );
 }
 
@@ -1638,11 +1650,11 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     let pg = Arc::new(WamnPostgres::with_provider(
         Arc::clone(&provider) as Arc<dyn CredentialProvider>
     ));
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         COMPONENT,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: "tenant-a".to_string(),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -1734,7 +1746,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
 /// which the shipped runtime deliberately does not link). What the fixture
 /// reproduces faithfully is the thing under test: the row filter reads the
 /// CONNECTED ROLE, so a session cannot talk its way into another env_key's
-/// rows — there is no claim to rewrite.
+/// rows — there is no identity to rewrite.
 fn two_env_key_rls_fixture_sql(
     schema: &str,
     role_a: &str,
@@ -1769,7 +1781,7 @@ fn two_env_key_rls_fixture_sql(
 
 /// *** THE ADVERSARIAL ARM, RE-EXPRESSED ON THE NEW MECHANISM. ***
 ///
-/// This test used to show that two interleaved CLAIM sets each saw only
+/// This test used to show that two interleaved IDENTITY sets each saw only
 /// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
 /// env_key is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
 /// host holds ONE guest credential per project-environment. So the property
@@ -1793,11 +1805,11 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
     // credential the host resolves is bound to ENV_KEY_A by its own digest.
     let role_a = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY_A, &database)
+        wamn_run_state::app_identity_hash(ENV_KEY_A, &database)
     );
     let role_b = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY_B, &database)
+        wamn_run_state::app_identity_hash(ENV_KEY_B, &database)
     );
     let admin = connect_raw(admin_url).await;
     admin
@@ -1823,15 +1835,15 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
 
     let scope_a = "warm-instance-0";
     let scope_b = "warm-instance-1";
-    let claims = |env_key: &str| SessionClaims {
+    let identity = |env_key: &str| SessionIdentity {
         env_key: env_key.to_string(),
         schema: Some(schema.clone()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
-    pg.bind_session_claims(scope_a, &claims(ENV_KEY_A))
+    pg.bind_session_identity(scope_a, &identity(ENV_KEY_A))
         .await
         .expect("env_key A's acquisition binds");
-    pg.bind_session_claims(scope_b, &claims(ENV_KEY_B))
+    pg.bind_session_identity(scope_b, &identity(ENV_KEY_B))
         .await
         .expect("env_key B's acquisition binds");
 
@@ -1867,13 +1879,13 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
     // Ending A's checkout revokes A's identity and nothing else. Matched on
     // the `WAMN0` code specifically: a revoke that cleared only the
     // search_path would also fail this query, for an unrelated reason.
-    pg.revoke_session_claims(scope_a);
-    assert_eq!(pg.session_claims(scope_a), None);
+    pg.revoke_session_identity(scope_a);
+    assert_eq!(pg.session_identity(scope_a), None);
     let unbound = pg
         .one_shot(scope_a, "SELECT id FROM dispositions", &[], true)
         .await
         .err()
-        .expect("an unbound claim scope cannot query at all");
+        .expect("an unbound identity scope cannot query at all");
     assert!(
         matches!(&unbound, PgError::QueryError((code, _)) if code == "WAMN0"),
         "an instance whose checkout ended must resolve NO env_key, not merely \
@@ -1932,8 +1944,8 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
     let role = wamn_control_provision::workload_generation_role(
         family,
-        wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
-            org: "claims-test",
+        wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
+            org: "identity-test",
             project: DEFAULT_PROJECT,
             environment: "lifecycle",
             database: &database,
@@ -2144,7 +2156,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
 }
 
 // ------------------------------------------------------------------
-// wamn-0h0g.17.33 — the pipelined claim flight, and its test obligation.
+// wamn-0h0g.17.33 — the pipelined identity flight, and its test obligation.
 // ------------------------------------------------------------------
 
 /// The fixture a cold-parse check needs: a schema the session's own
@@ -2162,7 +2174,7 @@ fn cold_parse_fixture_sql(schema: &str, role: &str) -> String {
 }
 
 /// The statement a cold-parse check runs: it names `cold_parse`
-/// UNQUALIFIED, so Parse resolves it only under the claimed `search_path`.
+/// UNQUALIFIED, so Parse resolves it only under the bound `search_path`.
 fn cold_parse_statement() -> VerifiedStatement {
     VerifiedStatement {
         exact_sql: "SELECT id FROM cold_parse ORDER BY id".into(),
@@ -2171,13 +2183,13 @@ fn cold_parse_statement() -> VerifiedStatement {
             value_type: SqlValueType::Int32,
             nullable: false,
         }]),
-        // The claim path under test. A non-transactional statement with no
-        // role claim takes the autocommit branch instead.
+        // The identity path under test. A non-transactional statement with no
+        // role identity takes the autocommit branch instead.
         transactional: true,
     }
 }
 
-/// *** A COLD CONNECTION STILL PARSES INSIDE THE CLAIM TRANSACTION. ***
+/// *** A COLD CONNECTION STILL PARSES INSIDE THE IDENTITY TRANSACTION. ***
 ///
 /// The regression guard for `wamn-0h0g.15.137.15` and the correctness half
 /// of `wamn-0h0g.17.33`. The pool is brand new, so nothing on the physical
@@ -2185,15 +2197,15 @@ fn cold_parse_statement() -> VerifiedStatement {
 /// that exists ONLY in a schema outside the session's `search_path`. Parse
 /// is where a relation name resolves, so this can succeed only if the
 /// server ran the Parse after the transaction-LOCAL `search_path` the
-/// claims install — that is, inside the claim transaction.
+/// identity install — that is, inside the identity transaction.
 ///
-/// IT IS NOT RACY. On the pre-fix shape `begin_with_claims` opens by
+/// IT IS NOT RACY. On the pre-fix shape `begin_with_identity` opens by
 /// awaiting its OWN `prepare_cached`, which on a cold connection is a
 /// guaranteed round trip, and the statement half — polled during that await
 /// — always sends its Parse first. Reverting to that shape, or swapping the
 /// two branches of the `join!`, fails this every run.
 #[tokio::test]
-async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
+async fn live_a_cold_connection_parses_inside_the_identity_transaction() {
     const ENV_KEY: &str = "coldparse";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2201,7 +2213,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2224,13 +2236,13 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "coldparse-instance-0";
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: ENV_KEY.to_string(),
             schema: Some(schema.clone()),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -2241,14 +2253,14 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         .one_shot_statement(scope, "sha256:cold-parse", &statement, &[], false)
         .await
         .expect(
-            "a COLD connection must parse the statement inside the claim transaction: a \
+            "a COLD connection must parse the statement inside the identity transaction: a \
                  `relation \"cold_parse\" does not exist` here is the statement reaching the \
-                 server ahead of the claims",
+                 server ahead of the identity",
         );
     assert_eq!(
         rows.rows.len(),
         2,
-        "the claimed search_path resolved the relation"
+        "the bound search_path resolved the relation"
     );
 
     // And the same connection, now WARM, still runs it: the flight that
@@ -2290,11 +2302,11 @@ async fn a_transactional_statement_without_an_executing_principal_is_refused() {
         None,
     )));
     let scope = "principal-refusal-instance-0";
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: LIVE_ENV_KEY.to_string(),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -2375,7 +2387,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
@@ -2389,12 +2401,12 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "principal-instance-0";
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: ENV_KEY.to_string(),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -2416,7 +2428,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         bound.rows
     );
     // The pool holds one connection, so the read reuses the connection whose
-    // transaction-local claim ended at COMMIT.
+    // transaction-local identity ended at COMMIT.
     let read = pg
         .one_shot_statement(
             scope,
@@ -2435,13 +2447,13 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 
     // B borrows the same physical connection after A's transaction and read.
     let before = pg.probe_checkout(ENV_KEY).await.unwrap().backend_pid;
-    pg.revoke_session_claims(scope);
-    pg.bind_session_claims(
+    pg.revoke_session_identity(scope);
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: ENV_KEY.into(),
             user_id: Some(PRINCIPAL_B.into()),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -2500,7 +2512,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
@@ -2514,14 +2526,14 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "unprovisioned-instance-0";
-    let claims = |principal: &str| SessionClaims {
+    let identity = |principal: &str| SessionIdentity {
         env_key: ENV_KEY.to_string(),
         user_id: Some(principal.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
 
     let refused = pg
-        .bind_session_claims(scope, &claims(ABSENT_PRINCIPAL))
+        .bind_session_identity(scope, &identity(ABSENT_PRINCIPAL))
         .await
         .expect_err("a principal with no user row is refused");
     let denial = refused
@@ -2532,14 +2544,14 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     assert_eq!(denial.project(), DEFAULT_PROJECT);
 
     // CONTROL: the provisioned principal binds.
-    pg.bind_session_claims(scope, &claims(LIVE_PRINCIPAL))
+    pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL))
         .await
         .expect("a provisioned principal binds");
     assert_eq!(pg.user_id_for(scope), Some(LIVE_PRINCIPAL.to_string()));
-    pg.revoke_session_claims(scope);
+    pg.revoke_session_identity(scope);
 
     // And a platform principal is a principal like any other.
-    pg.bind_session_claims(scope, &claims(LIVE_PLATFORM_PRINCIPAL))
+    pg.bind_session_identity(scope, &identity(LIVE_PLATFORM_PRINCIPAL))
         .await
         .expect("the platform principal's own row binds");
     assert_eq!(
@@ -2570,7 +2582,7 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2588,12 +2600,12 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
     let (_nats, client) = crate::auth_cache::tests::nats().await;
     crate::auth_cache::tests::watched(&client, Some(ENV_KEY), Arc::clone(&pg)).await;
     let scope = "removed-instance-0";
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the provisioned principal binds");
 
@@ -2611,12 +2623,12 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
         "the live binding still carries the principal it read"
     );
 
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the auth memory still answers for the removed row");
     pg.auth_cache().clear();
     let refused = pg
-        .bind_session_claims(scope, &claims)
+        .bind_session_identity(scope, &identity)
         .await
         .expect_err("the bind after the clear reads again and refuses");
     assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
@@ -2641,7 +2653,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2660,13 +2672,13 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     let (_nats, client) = crate::auth_cache::tests::nats().await;
     let writer = crate::auth_cache::tests::watched(&client, Some(ENV_KEY), Arc::clone(&pg)).await;
     let scope = "dropped-instance-0";
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
     let cached_at = std::time::Instant::now();
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the provisioned principal binds");
     assert_eq!(
@@ -2693,7 +2705,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     })
     .await;
     let refused = pg
-        .bind_session_claims(scope, &claims)
+        .bind_session_identity(scope, &identity)
         .await
         .expect_err("the bind after the drop reads again and refuses");
     assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
@@ -2725,7 +2737,7 @@ fn operation_statement(transactional: bool) -> VerifiedStatement {
 /// An acquisition binds its operation, reads it back, and clears it. A later
 /// acquisition with no operation does not inherit the previous one.
 ///
-/// The claims name no executing principal, so the bind stays offline: the
+/// The identity name no executing principal, so the bind stays offline: the
 /// provisioning read of `wamn-0h0g.9.19` runs only for a bind that names one,
 /// and this test owns the operation registry rather than that check.
 #[tokio::test]
@@ -2736,39 +2748,39 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
         None,
     )));
     let scope = "operation-instance-0";
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: LIVE_ENV_KEY.to_string(),
         operation: Some(OPERATION.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the operation binds");
-    assert_eq!(pg.session_claims(scope), Some(claims.clone()));
+    assert_eq!(pg.session_identity(scope), Some(identity.clone()));
 
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             operation: None,
-            ..claims.clone()
+            ..identity.clone()
         },
     )
     .await
     .expect("the next acquisition binds");
     assert_eq!(pg.operation_for(scope), None);
 
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the operation binds again");
-    pg.revoke_session_claims(scope);
+    pg.revoke_session_identity(scope);
     assert_eq!(pg.operation_for(scope), None);
 
     let refused = pg
-        .bind_session_claims(
+        .bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 operation: Some(String::new()),
-                ..claims
+                ..identity
             },
         )
         .await;
@@ -2788,7 +2800,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2802,13 +2814,13 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "operation-instance-1";
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         operation: Some(OPERATION.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the operation scope binds");
 
@@ -2844,7 +2856,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     );
 
     // Leave a session-level value on the one pooled connection. The pool
-    // recycles without a reset, so only the bound claim clears it.
+    // recycles without a reset, so only the bound identity clears it.
     let (connection, _policy) = pg
         .checkout_guest(DEFAULT_PROJECT, ENV_KEY)
         .await
@@ -2854,11 +2866,11 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         .await
         .expect("set a session-level operation");
     drop(connection);
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             operation: None,
-            ..claims
+            ..identity
         },
     )
     .await
@@ -2907,7 +2919,7 @@ fn application_statement() -> VerifiedStatement {
 
 /// An acquisition binds its application, reads it back, and clears it. A
 /// later acquisition with no application does not inherit the previous one.
-/// The claims name no executing principal, so the bind stays offline.
+/// The identity name no executing principal, so the bind stays offline.
 #[tokio::test]
 async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_it() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
@@ -2915,52 +2927,52 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
         None,
     )));
     let scope = "application-instance-0";
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: LIVE_ENV_KEY.to_string(),
         application: Some("platform_fixture".to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the application binds");
-    assert_eq!(pg.session_claims(scope), Some(claims.clone()));
+    assert_eq!(pg.session_identity(scope), Some(identity.clone()));
 
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             application: None,
-            ..claims.clone()
+            ..identity.clone()
         },
     )
     .await
     .expect("the next acquisition binds");
     assert_eq!(pg.application_for(scope), None);
 
-    pg.bind_session_claims(scope, &claims)
+    pg.bind_session_identity(scope, &identity)
         .await
         .expect("the application binds again");
-    pg.revoke_session_claims(scope);
+    pg.revoke_session_identity(scope);
     assert_eq!(pg.application_for(scope), None);
 
     let refused = pg
-        .bind_session_claims(
+        .bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 application: Some(String::new()),
-                ..claims
+                ..identity
             },
         )
         .await;
     assert!(refused.is_err(), "the unbound value is not an application");
 }
 
-/// The claim half of the cross-application refusal
+/// The identity half of the cross-application refusal
 /// (docs/architecture/data-access.md#rendering).
 ///
 /// Two applications share the one pooled connection. Each transaction carries
 /// the application its host bound and never the other's: not the previous
 /// transaction's, not a session-level value left on the connection, and not a
-/// value that guest SQL names, which the claim guard refuses.
+/// value that guest SQL names, which the identity guard refuses.
 #[tokio::test]
 async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     const ENV_KEY: &str = "application";
@@ -2971,7 +2983,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
@@ -2984,17 +2996,17 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
         row_limit: 1_000,
     })
     .expect("the plugin builds from the guest generation's url");
-    let claims = |application: &str| SessionClaims {
+    let identity = |application: &str| SessionIdentity {
         env_key: ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         application: Some(application.to_string()),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
     let (scope_a, scope_b) = ("application-instance-a", "application-instance-b");
-    pg.bind_session_claims(scope_a, &claims(APPLICATION_A))
+    pg.bind_session_identity(scope_a, &identity(APPLICATION_A))
         .await
         .expect("application A binds");
-    pg.bind_session_claims(scope_b, &claims(APPLICATION_B))
+    pg.bind_session_identity(scope_b, &identity(APPLICATION_B))
         .await
         .expect("application B binds");
     let carried = async |scope: &str| {
@@ -3023,7 +3035,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     );
 
     // Leave B's name as a session-level value on the one pooled connection.
-    // The pool recycles without a reset, so only the bound claim clears it.
+    // The pool recycles without a reset, so only the bound identity clears it.
     let (connection, _policy) = pg
         .checkout_guest(DEFAULT_PROJECT, ENV_KEY)
         .await
@@ -3038,23 +3050,23 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     assert_eq!(
         carried(scope_a).await,
         APPLICATION_A,
-        "a session-level value does not override the bound claim"
+        "a session-level value does not override the bound identity"
     );
 
     // Guest SQL that names another application is refused before it runs.
     assert!(
-        reject_claim_mutation(&format!(
+        reject_identity_mutation(&format!(
             "SELECT set_config('app.application', '{APPLICATION_B}', true)"
         ))
         .is_err(),
         "the guest SQL surface cannot set app.application"
     );
 
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope_a,
-        &SessionClaims {
+        &SessionIdentity {
             application: None,
-            ..claims(APPLICATION_A)
+            ..identity(APPLICATION_A)
         },
     )
     .await
@@ -3092,7 +3104,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     let admin = connect_raw(admin_url).await;
@@ -3114,11 +3126,11 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     })
     .expect("the plugin builds from the guest generation's url");
     let scope = "read-snapshot-instance-0";
-    pg.bind_session_claims(
+    pg.bind_session_identity(
         scope,
-        &SessionClaims {
+        &SessionIdentity {
             env_key: ENV_KEY.to_string(),
-            ..SessionClaims::default()
+            ..SessionIdentity::default()
         },
     )
     .await
@@ -3261,14 +3273,14 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         (Some("pg_catalog"), Some("second")),
         (None, None),
     ] {
-        pg.revoke_session_claims("settings");
-        pg.bind_session_claims(
+        pg.revoke_session_identity("settings");
+        pg.bind_session_identity(
             "settings",
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.into(),
                 schema: schema.map(str::to_owned),
                 runner: runner.map(str::to_owned),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -3322,11 +3334,11 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         assert_eq!(calls, 2, "WAL metadata adds only its own statement");
     }
 }
-/// The server sees one prepared read, with claim statements only when the
+/// The server sees one prepared read, with identity statements only when the
 /// caller carries a role. The cold read also proves that Parse follows the
 /// schema configuration. Cancellation closes the session while rows remain.
 #[tokio::test]
-async fn live_stream_reads_once_and_scopes_claims() {
+async fn live_stream_reads_once_and_scopes_identity() {
     use super::super::run_stream::open_stream;
 
     const ENV_KEY: &str = "stream-sequence";
@@ -3367,14 +3379,14 @@ async fn live_stream_reads_once_and_scopes_claims() {
         })
         .unwrap();
         let scope = "stream-sequence";
-        pg.bind_session_claims(
+        pg.bind_session_identity(
             scope,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.into(),
                 schema: Some("stream_sequence".into()),
                 runner: Some("stream-test".into()),
                 role: role.map(str::to_owned),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -3669,7 +3681,7 @@ async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_identity_hash(ENV_KEY, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, ENV_KEY).await;
     let admin = connect_raw(admin_url).await;
@@ -3771,7 +3783,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let generation = |family| {
         wamn_control_provision::workload_generation_role(
             family,
-            wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+            wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
                 org: "org",
                 project: "project",
                 environment: "prod",

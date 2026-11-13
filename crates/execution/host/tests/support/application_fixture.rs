@@ -1,5 +1,5 @@
 //! The fixture of the application host route tests: a project database with its
-//! scoped logins and rows, a fixture release that serves the application set,
+//! targeted logins and rows, a fixture release that serves the application set,
 //! and a host that serves it to session callers
 //! (docs/architecture/execution.md#host-run-routes).
 //!
@@ -13,7 +13,7 @@ use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -52,7 +52,7 @@ pub(super) fn login(admin_url: &str, role: &str) -> anyhow::Result<String> {
 pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::Result<String> {
     Ok(workload_generation_role(
         family,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: "dev",
@@ -62,7 +62,7 @@ pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::
     )?)
 }
 
-/// The project database, its two scoped logins, and the fixture rows: the
+/// The project database, its two targeted logins, and the fixture rows: the
 /// first principal holds `admin`, and the member holds one authored role.
 pub(super) async fn install(
     admin: &Client,
@@ -161,7 +161,7 @@ pub(super) async fn install(
 pub(super) async fn app_generation(admin: &Client, database: &str) -> anyhow::Result<String> {
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database,
         },
@@ -232,7 +232,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["session_test"]}}))?,
         ),
     )?))

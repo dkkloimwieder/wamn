@@ -14,7 +14,7 @@ use uuid::Uuid;
 use wamn_broker::Publisher;
 use wamn_catalog::HostRouteSet;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
@@ -73,7 +73,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&serde_json::to_value(manifest)?),
         "native files fixture",
-        ReleaseScope::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
+        ReleaseTarget::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
             "files":{"packages":["session_test"],"connections":{}}
         }))?),
     )?))
@@ -88,7 +88,7 @@ struct FileHost {
     blobstore: Arc<WamnBlobstore>,
     registry: files::Registry,
     minio: files::Minio,
-    // Keep the database server alive until its scoped clients and pools drop.
+    // Keep the database server alive until its targeted clients and pools drop.
     host: ApplicationHost,
 }
 
@@ -404,7 +404,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
                 .is_empty()
         );
     }
-    for scope in [
+    for target in [
         ("forged-org", PROJECT, "dev"),
         (ORG, "forged-project", "dev"),
         (ORG, PROJECT, "forged-env"),
@@ -413,7 +413,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
             fixture
                 .registry
                 .reader
-                .query(generations_sql, &[&scope.0, &scope.1, &scope.2])
+                .query(generations_sql, &[&target.0, &target.1, &target.2])
                 .await?
                 .is_empty()
         );
@@ -1181,7 +1181,7 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
 async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_foreign_key()
 -> anyhow::Result<()> {
     use wamn_control_provision::{
-        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
     };
     let mut fixture = FileHost::start("file_referenced_delete").await?;
     let id = fixture.upload("files", b"referenced bytes").await?;
@@ -1189,7 +1189,7 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     fixture.host.admin.batch_execute("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: "file_referenced_delete",
         },
@@ -1276,7 +1276,7 @@ fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -
 #[tokio::test(flavor = "multi_thread")]
 async fn package_operation_returns_a_private_file_signed_url_that_expires() -> anyhow::Result<()> {
     use wamn_engine::artifact_source::LocalComponentSource;
-    use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
+    use wamn_execution_host::{OperationHost, OperationHostConfig, RouterDeliveryBridge};
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
@@ -1338,7 +1338,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         Arc::from([]),
         Arc::clone(&package.release),
         Arc::new(LocalComponentSource::new(package.scratch.path().to_owned())),
-        OperationScope {
+        OperationHostConfig {
             project: PROJECT.into(),
             schema: None,
             owner_prefix: "file-signed-read".into(),

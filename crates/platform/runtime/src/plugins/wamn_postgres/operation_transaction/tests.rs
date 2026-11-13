@@ -18,11 +18,11 @@ use wash_runtime::wit::WitInterface;
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin,
 };
-use crate::plugins::wamn_postgres::claims::tests::{
+use crate::plugins::wamn_postgres::session_identity::tests::{
     LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, ReleaseIdentity, SessionClaims, StatementField, VerifiedStatement,
+    ClassCredentials, ReleaseIdentity, SessionIdentity, StatementField, VerifiedStatement,
     WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_engine::engine::build_engine;
@@ -285,17 +285,17 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     );
     let release = ManifestDigest::parse(format!("sha256:{}", "c".repeat(64))).unwrap();
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             OPERATION_OWNER,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some(OWNER_OPERATION.into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
-        .expect("claims bind");
+        .expect("identity bind");
     postgres
         .set_release_identity(OPERATION_OWNER, ReleaseIdentity::for_test(release))
         .expect("release binds");

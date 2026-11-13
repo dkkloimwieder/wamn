@@ -5,7 +5,7 @@
 //! to `tracing`) this plugin is the **capture path** the S5 gates measure:
 //!
 //!   * **Enrichment (100%).** Every record carries `env_key`/`project`
-//!     (host-injected from a component→claim map — a guest can *not* spoof its
+//!     (host-injected from a component→identity map — a guest can *not* spoof its
 //!     tenant) plus `flow`/`run`/`node` parsed from the guest's `context`
 //!     string (the runner legitimately knows these). All five land as
 //!     structured OTel log attributes.
@@ -49,7 +49,7 @@
 //! Beyond the S5 bench, the production runner emits a few structured
 //! `wasi:logging` records per run (node completion, node error CLASS, run
 //! completion) through THIS plugin, linked into the wamn-run-worker store with
-//! the host-injected (unspoofable) tenant/project claim.
+//! the host-injected (unspoofable) tenant/project identity.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -165,11 +165,11 @@ struct Counters {
 }
 
 // ---------------------------------------------------------------------------
-// Claim + record
+// Identity + record
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
-struct Claim {
+struct Identity {
     env_key: String,
     project: String,
 }
@@ -244,7 +244,7 @@ impl Capture {
 #[derive(Debug)]
 pub struct WamnLogging {
     /// component id → host-trusted {tenant, project}.
-    claims: std::sync::RwLock<HashMap<String, Claim>>,
+    identity: std::sync::RwLock<HashMap<String, Identity>>,
     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
     tx: mpsc::Sender<Rec>,
     counters: Arc<Counters>,
@@ -314,7 +314,7 @@ impl WamnLogging {
         });
 
         Ok(Self {
-            claims: std::sync::RwLock::new(HashMap::new()),
+            identity: std::sync::RwLock::new(HashMap::new()),
             tx,
             counters,
             provider,
@@ -326,35 +326,38 @@ impl WamnLogging {
         Self::new(&WamnLoggingConfig::from_env())
     }
 
-    /// Register the host-trusted claim for a component id. The bench calls this
+    /// Register the host-trusted identity for a component id. The bench calls this
     /// directly; the host path feeds it from workload bind.
-    pub fn set_claim(&self, component_id: &str, env_key: &str, project: &str) {
-        self.claims.write().expect("claims lock poisoned").insert(
-            component_id.to_string(),
-            Claim {
-                env_key: env_key.to_string(),
-                project: project.to_string(),
-            },
-        );
+    pub fn set_identity(&self, component_id: &str, env_key: &str, project: &str) {
+        self.identity
+            .write()
+            .expect("identity lock poisoned")
+            .insert(
+                component_id.to_string(),
+                Identity {
+                    env_key: env_key.to_string(),
+                    project: project.to_string(),
+                },
+            );
     }
 
-    /// Remove the registered claim for a component id (wamn-0h0g.17.10).
+    /// Remove the registered identity for a component id (wamn-0h0g.17.10).
     ///
-    /// The counterpart of [`set_claim`](Self::set_claim), for a claim scope that
+    /// The counterpart of [`set_identity`](Self::set_identity), for an invocation scope that
     /// is a POOLED execution instance rather than a workload: identity arrives
     /// at checkout and must leave when that checkout ends, so an idle instance
     /// does not still resolve the tenant it last served. Removing is not the
     /// same as letting the next bind overwrite — between the two, an
-    /// unregistered scope enriches with the `claim_for` sentinel instead of a
+    /// unregistered scope enriches with the `identity_for` sentinel instead of a
     /// stale tenant.
-    pub fn clear_claim(&self, component_id: &str) {
-        self.claims
+    pub fn clear_identity(&self, component_id: &str) {
+        self.identity
             .write()
-            .expect("claims lock poisoned")
+            .expect("identity lock poisoned")
             .remove(component_id);
     }
 
-    /// The per-REQUEST half of the workload bind: the claim keyed by `scope`.
+    /// The per-REQUEST half of the workload bind: the identity keyed by `scope`.
     ///
     /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
     /// can run this once per request while [`Self::add_linker_entries`] runs
@@ -380,7 +383,7 @@ impl WamnLogging {
                 "component imports wasi:logging but sets no {ENV_KEY_CONFIG_KEY}; logs enrich as 'unregistered'"
             );
         }
-        self.set_claim(scope, &env_key, &project);
+        self.set_identity(scope, &env_key, &project);
     }
 
     /// The per-DIGEST half: the wasi:logging host definitions on `linker`.
@@ -411,25 +414,25 @@ impl WamnLogging {
         self.counters.scope_registrations.load(Ordering::Relaxed)
     }
 
-    /// Read back the registered `(tenant, project)` claim for a component id, or
-    /// `None` when nothing was registered (the `claim_for` sentinel path). The
+    /// Read back the registered `(tenant, project)` identity for a component id, or
+    /// `None` when nothing was registered (the `identity_for` sentinel path). The
     /// run-worker wiring test asserts the host-injected identity landed here.
-    pub fn claim_snapshot(&self, component_id: &str) -> Option<(String, String)> {
-        self.claims
+    pub fn identity_snapshot(&self, component_id: &str) -> Option<(String, String)> {
+        self.identity
             .read()
-            .expect("claims lock poisoned")
+            .expect("identity lock poisoned")
             .get(component_id)
             .map(|c| (c.env_key.clone(), c.project.clone()))
     }
 
-    fn claim_for(&self, component_id: &str) -> Claim {
-        self.claims
+    fn identity_for(&self, component_id: &str) -> Identity {
+        self.identity
             .read()
-            .expect("claims lock poisoned")
+            .expect("identity lock poisoned")
             .get(component_id)
             .cloned()
-            .unwrap_or_else(|| Claim {
-                // A guest that imports wasi:logging without a registered claim
+            .unwrap_or_else(|| Identity {
+                // A guest that imports wasi:logging without a registered identity
                 // still logs, but with a visible sentinel so the enrichment gate
                 // catches the misconfiguration rather than hiding it.
                 env_key: "unregistered".to_string(),
@@ -439,12 +442,12 @@ impl WamnLogging {
 
     /// Enrich + enqueue. Non-blocking: `try_send`, counting drops on overflow.
     fn ingest(&self, component_id: &str, level: Level, context: &str, message: String) {
-        let claim = self.claim_for(component_id);
+        let identity = self.identity_for(component_id);
         let ctx = ParsedContext::parse(context);
         let rec = Rec {
             severity: map_level(level),
-            env_key: claim.env_key,
-            project: claim.project,
+            env_key: identity.env_key,
+            project: identity.project,
             flow: ctx.flow,
             run: ctx.run,
             node: ctx.node,
@@ -758,15 +761,15 @@ mod tests {
         );
     }
 
-    /// Enrichment is HOST-injected: the registered claim's tenant/project win
+    /// Enrichment is HOST-injected: the registered identity's tenant/project win
     /// over any guest-supplied `env_key` in the context, while flow/run/node come
     /// from the (guest-legitimate) context. Kills a mutant that reads the tenant
-    /// from the guest context (spoofable) or drops the claim enrichment.
+    /// from the guest context (spoofable) or drops the identity enrichment.
     #[tokio::test]
-    async fn ingest_enriches_from_host_claim_over_guest_context() {
+    async fn ingest_enriches_from_host_identity_over_guest_context() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "tenant-a", "fixture");
+        plugin.set_identity("comp-1", "tenant-a", "fixture");
         // The context carries a SPOOFED tenant the guest must not be able to set.
         let ctx = format!(
             r#"{{"flow":"widget-flow","run":"run-9","node":"log-node","seq":7,"env_key":"evil-tenant","traceparent":"{VALID_TP}"}}"#
@@ -779,7 +782,7 @@ mod tests {
         let r = &recs[0];
         assert_eq!(
             r.env_key, "tenant-a",
-            "tenant is the host claim, NOT the guest's"
+            "tenant is the host identity, NOT the guest's"
         );
         assert_eq!(r.project, "fixture");
         assert_eq!(r.flow, "widget-flow");
@@ -789,26 +792,26 @@ mod tests {
         assert_eq!(r.trace_id.as_deref(), Some(VALID_TRACE_ID));
     }
 
-    /// wamn-0h0g.17.10 — clearing a claim REMOVES it, so a scope that is no
-    /// longer bound enriches with the `claim_for` sentinel rather than with the
+    /// wamn-0h0g.17.10 — clearing an identity REMOVES it, so a scope that is no
+    /// longer bound enriches with the `identity_for` sentinel rather than with the
     /// tenant it last served.
     ///
-    /// The record assertion is the load-bearing half: a `clear_claim` that only
+    /// The record assertion is the load-bearing half: a `clear_identity` that only
     /// blanked the readback while leaving the enrichment map populated would
     /// still ship another tenant's identity on every record.
     #[tokio::test]
-    async fn clearing_a_claim_returns_the_scope_to_the_unregistered_sentinel() {
+    async fn clearing_an_identity_returns_the_scope_to_the_unregistered_sentinel() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "tenant-a", "fixture");
-        plugin.set_claim("comp-2", "globex", "shipping");
+        plugin.set_identity("comp-1", "tenant-a", "fixture");
+        plugin.set_identity("comp-2", "globex", "shipping");
 
-        plugin.clear_claim("comp-1");
-        assert_eq!(plugin.claim_snapshot("comp-1"), None);
+        plugin.clear_identity("comp-1");
+        assert_eq!(plugin.identity_snapshot("comp-1"), None);
         assert_eq!(
-            plugin.claim_snapshot("comp-2"),
+            plugin.identity_snapshot("comp-2"),
             Some(("globex".to_string(), "shipping".to_string())),
-            "clearing one claim scope must not disturb another's claim"
+            "clearing one invocation scope must not disturb another's identity"
         );
 
         let ctx = r#"{"flow":"f","run":"r","node":"n","seq":0}"#;
@@ -831,7 +834,7 @@ mod tests {
     async fn traceparent_sets_trace_id_on_record() {
         let (plugin, capture) =
             WamnLogging::new_with_capture(&WamnLoggingConfig::default()).expect("plugin");
-        plugin.set_claim("comp-1", "tenant-a", "fixture");
+        plugin.set_identity("comp-1", "tenant-a", "fixture");
         let with_tp =
             format!(r#"{{"flow":"f","run":"r","node":"n","seq":0,"traceparent":"{VALID_TP}"}}"#);
         plugin.ingest("comp-1", Level::Info, &with_tp, "traced".into());

@@ -10,7 +10,7 @@
 //! `wamn-ctl workflow author --schedule`, enabled, and admitted with
 //! `WamnPostgres::admit_schedule_run` as the host's schedule task will admit
 //! it. The real queue service of the release drains it through the router,
-//! under the scoped executor and application logins.
+//! under the targeted executor and application logins.
 
 #[path = "support/schedule_fixture.rs"]
 pub mod support;

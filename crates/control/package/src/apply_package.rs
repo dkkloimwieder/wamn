@@ -42,7 +42,7 @@ pub use package_version::{
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Inputs of one exact package application.
 #[derive(Debug)]
@@ -347,7 +347,7 @@ async fn apply(
     let recorded = read_package_migrations(&tx, env_key, &package_id).await?;
     let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
     crate::migrations::validate_resolution(
-        crate::migrations::ResolutionScope::Package(&package_id),
+        crate::migrations::ResolutionTarget::Package(&package_id),
         &plan.pending,
         &recorded,
         resolution,
@@ -390,7 +390,7 @@ async fn apply(
         name: "catalog.package_migrations",
         keys: &keys,
         recorded: &recorded,
-        scope: crate::migrations::ResolutionScope::Package(&package_id),
+        target: crate::migrations::ResolutionTarget::Package(&package_id),
     };
     let mut hooks = migration::PackageMigrationHooks {
         env_key,
@@ -490,11 +490,11 @@ async fn ensure_model_schemas(
         tx.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {role}; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted()))
             .await
             .with_context(|| format!("ensure package model schema {schema}"))?;
-        let unclaimed: bool = tx.query_one(
+        let unowned: bool = tx.query_one(
             "SELECT NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE schema_name = $1 AND definition_type = 'relation')",
             &[&schema.as_str()],
         ).await?.get(0);
-        if unclaimed {
+        if unowned {
             tx.batch_execute(&format!("ALTER SCHEMA {} OWNER TO {role}", schema.quoted()))
                 .await?;
         }

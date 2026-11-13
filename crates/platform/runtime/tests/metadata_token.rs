@@ -12,8 +12,8 @@ use base64::Engine as _;
 use docker_credential::{CredentialRetrievalError, DockerCredential, get_credential_from_reader};
 use serde_json::json;
 use wamn_catalog::{
-    AdmittedComponent, ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
-    ComponentPortDeclaration, normalize_component_fact,
+    AdmittedComponent, ComponentDeclaration, ComponentOperationDeclaration,
+    ComponentPackageCoordinate, ComponentPortDeclaration, normalize_component_fact,
 };
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, ComponentArtifactFetchErrorType};
@@ -161,7 +161,7 @@ fn basic(token: &str) -> String {
 fn admitted(bytes: &[u8]) -> AdmittedComponent {
     normalize_component_fact(
         ComponentDeclaration {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.0.0".to_owned(),

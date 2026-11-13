@@ -45,8 +45,8 @@ pub(crate) const MAX_HEADERS: usize = 100;
 const MAX_CLIENTS: usize = 128;
 const MAX_SOCKETS: usize = 64;
 const MAX_REQUESTS: usize = 32;
-const MAX_SCOPE_SOCKETS: usize = 8;
-const MAX_SCOPE_REQUESTS: usize = 8;
+const MAX_CONNECTION_SOCKETS: usize = 8;
+const MAX_CONNECTION_REQUESTS: usize = 8;
 const MAX_IDLE_SOCKETS: usize = 2;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -55,7 +55,7 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 type HttpClient = Client<PinnedConnector, Full<Bytes>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ConnectionScope {
+pub(crate) struct ConnectionIdentity {
     pub(crate) env_key: Box<str>,
     pub(crate) project: Box<str>,
     pub(crate) environment: Box<str>,
@@ -63,8 +63,8 @@ pub(crate) struct ConnectionScope {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ClientScope {
-    pub(crate) connection: ConnectionScope,
+pub(crate) struct ClientIdentity {
+    pub(crate) connection: ConnectionIdentity,
     pub(crate) package: Box<str>,
     pub(crate) component_digest: Box<str>,
     pub(crate) requirement: Box<str>,
@@ -96,12 +96,12 @@ struct Inner {
 #[derive(Default)]
 struct State {
     clients: HashMap<ClientKey, CachedClient>,
-    scopes: HashMap<ConnectionScope, Weak<ScopeQuota>>,
+    identities: HashMap<ConnectionIdentity, Weak<ConnectionQuota>>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct ClientKey {
-    scope: ClientScope,
+    identity: ClientIdentity,
     target: Target,
 }
 
@@ -118,7 +118,7 @@ struct CachedClient {
     used: Instant,
 }
 
-struct ScopeQuota {
+struct ConnectionQuota {
     sockets: Arc<Semaphore>,
     requests: Arc<Semaphore>,
 }
@@ -126,7 +126,7 @@ struct ScopeQuota {
 struct ClientLife {
     // Connection tasks, connecting futures, and actual sockets retain this lease.
     _permit: OwnedSemaphorePermit,
-    quota: Arc<ScopeQuota>,
+    quota: Arc<ConnectionQuota>,
 }
 
 impl HttpTransport {
@@ -168,7 +168,7 @@ impl HttpTransport {
 
     pub(crate) async fn execute(
         &self,
-        scope: ClientScope,
+        identity: ClientIdentity,
         decision: &AuthorityDecision,
         mut request: Request<&[u8]>,
     ) -> Result<Response<Bytes>, TransportError> {
@@ -187,8 +187,8 @@ impl HttpTransport {
         header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
 
         let _global = acquire(&self.inner.requests, "HTTP request capacity exhausted")?;
-        let (http, life) = self.client(scope, target)?;
-        let _scoped = acquire(
+        let (http, life) = self.client(identity, target)?;
+        let _connection = acquire(
             &life.quota.requests,
             "HTTP connection request capacity exhausted",
         )?;
@@ -228,7 +228,7 @@ impl HttpTransport {
         }
     }
 
-    /// Send once without retaining a client or acquiring connection scope.
+    /// Send once without retaining a client or acquiring connection identity.
     pub(crate) async fn send_once(
         &self,
         decision: &AuthorityDecision,
@@ -250,7 +250,7 @@ impl HttpTransport {
         let _request = acquire(&self.inner.requests, "HTTP request capacity exhausted")?;
         let life = Arc::new(ClientLife {
             _permit: acquire(&self.inner.clients, "HTTP client capacity exhausted")?,
-            quota: Arc::new(ScopeQuota {
+            quota: Arc::new(ConnectionQuota {
                 sockets: Arc::new(Semaphore::new(1)),
                 requests: Arc::new(Semaphore::new(1)),
             }),
@@ -308,7 +308,7 @@ impl HttpTransport {
 
     fn client(
         &self,
-        scope: ClientScope,
+        identity: ClientIdentity,
         target: Target,
     ) -> Result<(HttpClient, Arc<ClientLife>), TransportError> {
         let mut state = self
@@ -320,7 +320,7 @@ impl HttpTransport {
         state
             .clients
             .retain(|_, client| now.duration_since(client.used) < IDLE_TIMEOUT);
-        let key = ClientKey { scope, target };
+        let key = ClientKey { identity, target };
         if let Some(client) = state.clients.get_mut(&key) {
             client.used = now;
             return Ok((client.http.clone(), Arc::clone(&client.life)));
@@ -337,19 +337,21 @@ impl HttpTransport {
         }
         // Eviction does not grant capacity if a retired client's tasks still live.
         let permit = acquire(&self.inner.clients, "HTTP client capacity exhausted")?;
-        state.scopes.retain(|_, quota| quota.strong_count() != 0);
+        state
+            .identities
+            .retain(|_, quota| quota.strong_count() != 0);
         let quota = state
-            .scopes
-            .get(&key.scope.connection)
+            .identities
+            .get(&key.identity.connection)
             .and_then(Weak::upgrade)
             .unwrap_or_else(|| {
-                let quota = Arc::new(ScopeQuota {
-                    sockets: Arc::new(Semaphore::new(MAX_SCOPE_SOCKETS)),
-                    requests: Arc::new(Semaphore::new(MAX_SCOPE_REQUESTS)),
+                let quota = Arc::new(ConnectionQuota {
+                    sockets: Arc::new(Semaphore::new(MAX_CONNECTION_SOCKETS)),
+                    requests: Arc::new(Semaphore::new(MAX_CONNECTION_REQUESTS)),
                 });
                 state
-                    .scopes
-                    .insert(key.scope.connection.clone(), Arc::downgrade(&quota));
+                    .identities
+                    .insert(key.identity.connection.clone(), Arc::downgrade(&quota));
                 quota
             });
         let life = Arc::new(ClientLife {
@@ -602,7 +604,7 @@ impl Service<Uri> for PinnedConnector {
                 return Err(input("HTTP connector authority mismatch"));
             }
             let global = acquire(&connector.sockets, "HTTP socket capacity exhausted")?;
-            let scoped = acquire(
+            let connection = acquire(
                 &connector.life.quota.sockets,
                 "HTTP connection socket capacity exhausted",
             )?;
@@ -654,7 +656,7 @@ impl Service<Uri> for PinnedConnector {
                     http2,
                     peer,
                     _global: global,
-                    _scoped: scoped,
+                    _connection: connection,
                     _life: connector.life,
                 })
             })
@@ -722,7 +724,7 @@ struct SocketIo {
     http2: bool,
     peer: SocketAddr,
     _global: OwnedSemaphorePermit,
-    _scoped: OwnedSemaphorePermit,
+    _connection: OwnedSemaphorePermit,
     _life: Arc<ClientLife>,
 }
 

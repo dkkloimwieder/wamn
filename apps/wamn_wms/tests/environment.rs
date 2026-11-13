@@ -1,4 +1,4 @@
-//! Shared scope for native WMS business tests.
+//! Shared target for native WMS business tests.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

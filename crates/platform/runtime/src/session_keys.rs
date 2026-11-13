@@ -36,7 +36,7 @@ pub struct IssuerKeysConfig {
 impl IssuerKeysConfig {
     /// Validate explicit HTTPS configuration and a nonempty PEM CA bundle.
     ///
-    /// The issuer string is retained exactly for subsequent claim comparison.
+    /// The issuer string is retained exactly for subsequent JWT claim comparison.
     /// No discovery, redirect, ambient proxy, or additional CA roots are used.
     pub fn new(
         issuer: &str,

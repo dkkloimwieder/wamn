@@ -18,8 +18,8 @@ use wamn_run_state::queue::{
 };
 
 use super::WamnPostgres;
-use super::production_claim::{
-    ProductionClaimError, ProductionClaimErrorType, finish_queue_transaction,
+use super::production_lease::{
+    ProductionLeaseError, ProductionLeaseErrorType, finish_queue_transaction,
     require_executor_authority, storage,
 };
 use super::workflow_resolution::{PINNED_RELEASE_SQL, parse_graph};
@@ -69,20 +69,20 @@ impl WamnPostgres {
         project: &str,
         env_key: &str,
         admission: &ManualRunAdmission<'_>,
-    ) -> Result<ManualRunAdmitted, ProductionClaimError> {
+    ) -> Result<ManualRunAdmitted, ProductionLeaseError> {
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout manual admission connection",
                     format!("{error:?}"),
                 )
             })?;
         let executor = PlatformComponent::Executor.principal_id().to_string();
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
@@ -99,8 +99,8 @@ impl WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin manual admission transaction",
                 format!("{error:?}"),
             ));
@@ -215,20 +215,20 @@ impl WamnPostgres {
         project: &str,
         env_key: &str,
         admission: &ScheduleRunAdmission<'_>,
-    ) -> Result<ScheduleRunAdmitted, ProductionClaimError> {
+    ) -> Result<ScheduleRunAdmitted, ProductionLeaseError> {
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout schedule admission connection",
                     format!("{error:?}"),
                 )
             })?;
         let executor = PlatformComponent::Executor.principal_id().to_string();
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
@@ -245,8 +245,8 @@ impl WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin schedule admission transaction",
                 format!("{error:?}"),
             ));
@@ -273,7 +273,7 @@ impl WamnPostgres {
             let wiring_hash: String = workflow.get(2);
             let execution_role: Option<String> = workflow.get(3);
             let contract = |operation: &'static str, detail: String| {
-                ProductionClaimError::new(ProductionClaimErrorType::Contract, operation, detail)
+                ProductionLeaseError::new(ProductionLeaseErrorType::Contract, operation, detail)
             };
             let graph = parse_graph(&graph_json).map_err(|error| {
                 contract("parse the stored workflow graph", format!("{error:#}"))

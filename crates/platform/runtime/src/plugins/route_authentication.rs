@@ -116,7 +116,7 @@ pub fn role_caller(
     ))
 }
 
-/// Trusted dependencies and scope for PAT-backed route authentication.
+/// Trusted dependencies and target for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
     /// The identity statement, parsed once at construction rather than on
@@ -332,7 +332,7 @@ impl PlatformRouteAuthenticator {
         self
     }
 
-    /// Supply public verification keys and the scoped tenant permission reader.
+    /// Supply public verification keys and the authorized tenant permission reader.
     #[must_use]
     pub fn with_session_authentication(
         mut self,
@@ -468,7 +468,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .ok_or_else(authentication_unavailable)?;
             let grants = authentication
                 .postgres
-                .principal_grants(project, &request.scope.env_key, &principal)
+                .principal_grants(project, &request.target.env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             if !grants.active || grants.user != Some(false) {
@@ -476,7 +476,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             }
             let permissions = authentication
                 .postgres
-                .user_operation_permissions(project, &request.scope.env_key, &principal)
+                .user_operation_permissions(project, &request.target.env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
@@ -489,7 +489,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             )));
         }
         let AuthenticationRequest {
-            scope,
+            target,
             attachment_id,
             headers,
             ..
@@ -500,8 +500,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     attachment_id,
                     token,
                     csrf.map(|required| (headers, required)),
-                    &scope.env_key,
-                    &scope.environment,
+                    &target.env_key,
+                    &target.environment,
                 )
                 .await
                 .map(Some);
@@ -576,7 +576,11 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             // A service receives its roles through `wamn-ctl grant-role`.
             let permissions = authentication
                 .postgres
-                .user_operation_permissions(&authentication.project, &scope.env_key, principal.id())
+                .user_operation_permissions(
+                    &authentication.project,
+                    &target.env_key,
+                    principal.id(),
+                )
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
@@ -767,16 +771,17 @@ pub(crate) mod tests {
         let release = LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "fixture",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "prod").with_applications(
-                [(
-                    "catalog".to_owned(),
-                    wamn_catalog::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: ["cat".to_owned()].into(),
-                    },
-                )]
-                .into(),
-            ),
+            wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "prod")
+                .with_applications(
+                    [(
+                        "catalog".to_owned(),
+                        wamn_catalog::ApplicationDefinition {
+                            connections: std::collections::BTreeMap::new(),
+                            packages: ["cat".to_owned()].into(),
+                        },
+                    )]
+                    .into(),
+                ),
         )
         .expect("fixture manifest loads");
         FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())

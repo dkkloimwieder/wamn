@@ -13,10 +13,10 @@
 
 use super::{
     CLI_ENV, CLI_INSTANCE, CLI_ORG, CLI_PROJECT, Client, CredentialGeneration,
-    ReconcileRunPlaneRequest, SCHEMA, WorkloadRoleFamily, WorkloadRoleScope, connect, connect_as,
-    database_url, drop_database, drop_generation_role, locked_database, mint_guest_generation,
-    project_env_database_name, provision_sql, reconcile_run_plane, recreate_database, reset,
-    seed_system_env_policy, workload_generation_role,
+    ReconcileRunPlaneRequest, SCHEMA, WorkloadRoleFamily, WorkloadRoleIdentity, connect,
+    connect_as, database_url, drop_database, drop_generation_role, locked_database,
+    mint_guest_generation, project_env_database_name, provision_sql, reconcile_run_plane,
+    recreate_database, reset, seed_system_env_policy, workload_generation_role,
 };
 use serde_json::json;
 use wamn_broker::Publisher;
@@ -37,7 +37,7 @@ async fn mint_administration_generation(
 ) -> (String, Client) {
     let generation = workload_generation_role(
         WorkloadRoleFamily::Administration,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: CLI_ORG,
             project: CLI_PROJECT,
             environment: CLI_ENV,
@@ -45,7 +45,7 @@ async fn mint_administration_generation(
         },
         CredentialGeneration::A,
     )
-    .expect("the administration family takes a project-environment scope");
+    .expect("the administration family takes a project-environment target");
     drop_generation_role(su, &generation).await;
     // The stable surface revokes in the production run-plane schema.
     su.batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")

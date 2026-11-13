@@ -51,7 +51,7 @@ pub mod transport;
 
 use network_policy::ConnectionNetworkPolicy;
 
-use transport::{ClientScope, ConnectionScope, HttpTransport};
+use transport::{ClientIdentity, ConnectionIdentity, HttpTransport};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -206,7 +206,7 @@ impl std::fmt::Debug for ConnectionHttp {
     }
 }
 
-/// Host-owned services and claims for the trusted HTTP effect.
+/// Host-owned services and identity for the trusted HTTP effect.
 pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
@@ -460,7 +460,7 @@ impl ConnectionHttp {
         {
             (ConnectionExecutionClosure::Released, Some(release)) => {
                 let manifest = release.manifest();
-                if release.scope().env_key != self.env_key.as_ref()
+                if release.target().env_key != self.env_key.as_ref()
                     || !manifest
                         .release
                         .packages
@@ -471,7 +471,7 @@ impl ConnectionHttp {
                 }
                 (
                     release.release().manifest_digest.as_str(),
-                    release.scope().environment.as_str(),
+                    release.target().environment.as_str(),
                     None,
                 )
             }
@@ -601,8 +601,8 @@ impl ConnectionHttp {
                 used: fact,
             });
         }
-        let scope = ClientScope {
-            connection: ConnectionScope {
+        let identity = ClientIdentity {
+            connection: ConnectionIdentity {
                 env_key: self.env_key.clone(),
                 project: self.project.clone(),
                 environment: environment.into(),
@@ -630,7 +630,7 @@ impl ConnectionHttp {
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
         let (mut response, oauth_token) = self
             .execute_authenticated(
-                scope,
+                identity,
                 &authority,
                 decision,
                 request,
@@ -651,7 +651,7 @@ impl ConnectionHttp {
 
     async fn execute_authenticated(
         &self,
-        scope: ClientScope,
+        identity: ClientIdentity,
         authority: &HttpConnectionAuthority,
         mut decision: AuthorityDecision,
         request: &Request,
@@ -677,14 +677,14 @@ impl ConnectionHttp {
         if !crate::oauth_token::is_oauth(auth_type) {
             let headers =
                 authentication::headers(auth_type, &parameters, material, request, &mut decision)?;
-            return execute(&self.transport, scope, decision, request, headers)
+            return execute(&self.transport, identity, decision, request, headers)
                 .await
                 .map(|response| (response, None));
         }
-        let key = (*connection, scope.generation);
+        let key = (*connection, identity.generation);
         let token = self
             .oauth2_token(
-                &scope,
+                &identity,
                 authority,
                 (auth_type, &parameters, material),
                 &key,
@@ -693,7 +693,7 @@ impl ConnectionHttp {
             .await?;
         execute(
             &self.transport,
-            scope,
+            identity,
             decision,
             request,
             [("authorization".into(), format!("Bearer {token}"))].into(),
@@ -704,7 +704,7 @@ impl ConnectionHttp {
 
     async fn oauth2_token(
         &self,
-        scope: &ClientScope,
+        identity: &ClientIdentity,
         authority: &HttpConnectionAuthority,
         (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
         key: &crate::oauth_token::CacheKey,
@@ -754,9 +754,10 @@ impl ConnectionHttp {
                     Some(&self.allowed_hosts),
                 )
                 .await?;
-                let token = fetch_oauth2_token(&self.transport, scope.clone(), &decision, &request)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
+                let token =
+                    fetch_oauth2_token(&self.transport, identity.clone(), &decision, &request)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
                 Ok(crate::oauth_token::Fetched {
                     token: crate::oauth_token::Token {
                         access_token: Some(token.access_token),
@@ -967,13 +968,13 @@ fn token_request<'a>(
 
 async fn fetch_oauth2_token(
     transport: &HttpTransport,
-    scope: ClientScope,
+    identity: ClientIdentity,
     decision: &AuthorityDecision,
     request: &Oauth2Request,
 ) -> Result<Oauth2Token, ConnectionError> {
     let request = token_request(decision, request)?;
     let response = transport
-        .execute(scope, decision, request)
+        .execute(identity, decision, request)
         .await
         .map_err(|_| ConnectionError::CredentialUnavailable)?;
     parse_oauth2_token(&response)
@@ -1164,7 +1165,7 @@ pub(crate) fn authorize_candidate_closure(
 ///
 /// Each call builds its descriptor and authorizes the effect again.
 /// The shared transport retains clients only under the complete isolation key.
-/// `repo-lint` guards that key and refuses unscoped client retention.
+/// `repo-lint` guards that key and refuses client retention without an identity.
 fn http_descriptor() -> ConnectionTypeDescriptor {
     ConnectionTypeDescriptor::http_v1()
 }
@@ -1318,7 +1319,7 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// silently answers with a no-op span.
 ///
 /// Public because the `trace-test` gate drives THIS function rather than a
-/// copy of it (`wamn-k9ea`): the gate's whole claim is that what crosses the
+/// copy of it (`wamn-k9ea`): the gate's whole assertion is that what crosses the
 /// process boundary is what production injects, so a reimplementation there
 /// does not test this one.
 pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
@@ -1332,7 +1333,7 @@ pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
 
 async fn execute(
     transport: &HttpTransport,
-    scope: ClientScope,
+    identity: ClientIdentity,
     decision: crate::connection_authority::AuthorityDecision,
     request: &Request,
     credentials: HashMap<String, String>,
@@ -1372,7 +1373,7 @@ async fn execute(
         .map_err(|_| ConnectionError::Incompatible)?;
     *outbound.headers_mut() = headers;
     let response = transport
-        .execute(scope, &decision, outbound)
+        .execute(identity, &decision, outbound)
         .await
         .map_err(|error| {
             tracing::warn!(error = %error, "trusted HTTP transport failed");
@@ -1540,13 +1541,13 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<Connecti
 /// separates two calls that name their wiring and node alike (`wamn-b2m6.2`).
 /// `wamn.component_name` appears on no parent span either, and it is the only
 /// key on this span that names the executing component the way a person does:
-/// `wamn.component` is the pooled instance scope and `wamn.component_digest` is
+/// `wamn.component` is the pooled instance id and `wamn.component_digest` is
 /// a manifest key (`wamn-b2m6.7`).
 /// All eight come from the [`ConnectionInvocation`] the router driver binds
 /// before the component runs — the same host-attested record
 /// [`ConnectionHttp::send`] authorizes against, never anything the guest sent.
 ///
-/// A pooled instance with no invocation bound holds no such claim and records the
+/// A pooled instance with no invocation bound holds no such fact and records the
 /// wiring keys empty. That send is about to be refused as
 /// `ConnectionError::AttestationInvalid`, and an empty value says so where a
 /// missing field would look like lost instrumentation.
@@ -2238,7 +2239,7 @@ mod tests {
     }
 
     /// The SAME wiring id, version and node in ANOTHER package, visited at
-    /// another occurrence. A wiring id is package-scoped, so this is a different
+    /// another occurrence. A wiring id is package-owned, so this is a different
     /// wiring wearing the same name.
     fn second_package_invocation() -> ConnectionInvocation {
         let mut invocation = ConnectionInvocation {
@@ -2295,7 +2296,7 @@ mod tests {
         assert_ne!(spans[0], spans[1], "two callers must not read alike");
     }
 
-    /// A pooled instance with no invocation bound holds no wiring claim — the
+    /// A pooled instance with no invocation bound holds no wiring identity — the
     /// send it is about to serve is refused as `AttestationInvalid`. The eight
     /// keys are still emitted, empty, so "this effect was raised outside a node
     /// walk" never reads as "the enrichment was dropped".
@@ -2384,7 +2385,7 @@ mod tests {
 
     /// A wiring failure refuses ONE effect, and so does every other refusal the
     /// platform decides before dispatch. The command that reached this component
-    /// committed before the effect ran, and the observation claims nothing about
+    /// committed before the effect ran, and the observation states nothing about
     /// it: it says the platform declined to dispatch, and stops there.
     #[test]
     fn a_wiring_failure_names_the_refused_effect_and_not_the_command() {
@@ -2418,7 +2419,7 @@ mod tests {
 
     /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED
     /// SECOND. A body lost after the status line arrived was recorded as
-    /// effect-uncertain, which claims an unknown. The far side acted and the
+    /// effect-uncertain, which reports an unknown. The far side acted and the
     /// answer shows it. The guest received nothing, so it is not responded
     /// either. The remedy is to re-read, not to resend.
     #[test]
@@ -2452,12 +2453,12 @@ mod tests {
         assert_ne!(
             in_flight,
             EffectOutcome::Timeout,
-            "a failure in flight must not claim a deadline elapsed",
+            "a failure in flight must not state a deadline elapsed",
         );
         assert_ne!(
             in_flight,
             EffectOutcome::RefusedBeforeDispatch,
-            "a failure in flight must not claim the request never left",
+            "a failure in flight must not state the request never left",
         );
     }
 
@@ -2497,7 +2498,7 @@ mod tests {
 
     /// THE TEST THAT WOULD HAVE CAUGHT THE GAP. An effect span could name the
     /// executing component only by `wamn.component`, which is the pooled
-    /// instance scope, and by `wamn.component_digest`, which is a manifest key.
+    /// instance id, and by `wamn.component_digest`, which is a manifest key.
     /// It named the call only by `effect.operation`, the capability method. So
     /// nothing on the span answered "which component, running which node
     /// operation". Both keys are part of the whole value, and the two operation
@@ -2548,7 +2549,7 @@ mod tests {
         assert_ne!(
             value("wamn.component"),
             value("wamn.component_name"),
-            "the pooled instance scope is not the component identity",
+            "the pooled instance id is not the component identity",
         );
     }
 

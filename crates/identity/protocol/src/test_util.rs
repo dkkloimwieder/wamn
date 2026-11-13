@@ -8,7 +8,7 @@ use crate::{
 use async_trait::async_trait;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Scope<'a> {
+pub struct Audience<'a> {
     pub issuer: &'a str,
     pub org: &'a str,
     pub audience: &'a str,
@@ -48,16 +48,16 @@ impl<'a> KeySource for Keys<'a> {
 pub async fn verify(
     token: &str,
     key: &PublicSessionKey,
-    scope: Scope<'_>,
+    audience: Audience<'_>,
     now: i64,
 ) -> Result<SessionClaims, SessionVerificationError> {
     let (verifier, _) = SessionVerifier::with_test_clock(
         Keys {
-            issuer: scope.issuer,
+            issuer: audience.issuer,
             key,
         },
-        scope.org,
-        scope.audience,
+        audience.org,
+        audience.audience,
         now,
     )?;
     Ok(verifier.verify(token).await?.claims)

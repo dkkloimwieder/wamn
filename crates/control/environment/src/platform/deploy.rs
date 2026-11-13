@@ -141,7 +141,7 @@ pub async fn update(
     if let UpgradeTarget::Host { group, .. } = selection {
         // Validate the target before recovery can write. These values supply only lock identity.
         let inspected = chart.selection_values(document, selection, installed)?;
-        let scope = host_scope(&inspected, group)?;
+        let coordinate = host_target(&inspected, group)?;
         let operator = resources::release_values(target, "platform", "wamn")
             .await?
             .context("host update requires existing release platform/wamn")?;
@@ -163,17 +163,17 @@ pub async fn update(
             .map_err(|()| anyhow::anyhow!("set database port"))?;
         url.set_password(Some(&bootstrap::secret_text(&secret, "password")?))
             .map_err(|()| anyhow::anyhow!("set database password"))?;
-        let lock = match &scope.1 {
+        let lock = match &coordinate.1 {
             Some(application) => {
-                LifecycleLock::acquire_application(url.as_str(), &scope.0, application).await?
+                LifecycleLock::acquire_application(url.as_str(), &coordinate.0, application).await?
             }
-            None => LifecycleLock::acquire(url.as_str(), &scope.0).await?,
+            None => LifecycleLock::acquire(url.as_str(), &coordinate.0).await?,
         };
         let result = async {
             release_chart::recover_pending(&owner, &name).await?;
             let installed = installed_values(&owner, &name).await?;
             anyhow::ensure!(
-                host_scope(&installed, group)? == scope,
+                host_target(&installed, group)? == coordinate,
                 "recovered release changed its environment or application owner"
             );
             let values = chart.selection_values(document, selection, installed)?;
@@ -212,7 +212,7 @@ async fn installed_values(target: &Target, name: &str) -> anyhow::Result<Value> 
         })
 }
 
-fn host_scope<'a>(
+fn host_target<'a>(
     values: &'a Value,
     group: &str,
 ) -> anyhow::Result<(wamn_control_registry::Triple, Option<&'a str>)> {

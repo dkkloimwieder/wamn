@@ -228,7 +228,7 @@ pub fn native_entry_name(digest: &str) -> String {
 
 /// Identify a complete admitted fact before native plugin binding begins.
 ///
-/// This name is metadata identity, not the digest used by the compilation cache.
+/// This name is metadatan identity, not the digest used by the compilation cache.
 pub fn native_component_name(fact: &AdmittedComponent) -> anyhow::Result<String> {
     let value = serde_json::to_value(fact).context("encode admitted component identity")?;
     Ok(format!(
@@ -291,10 +291,10 @@ pub(super) async fn load_native_workload(
             {
                 anyhow::bail!(
                     "imported operation interface {export:?} has ambiguous component providers: {}::{} digest {} and {}::{} digest {}",
-                    previous.scope.package_id,
+                    previous.target.package_id,
                     previous.component,
                     previous.component_digest,
-                    fact.scope.package_id,
+                    fact.target.package_id,
                     fact.component,
                     fact.component_digest,
                 );

@@ -3,7 +3,7 @@
 `wamn-ctl workflow start` starts one run of an environment workflow through the host route `workflow.start`.
 The route is an operation of the application's ACL: `admin` holds it, and another role holds it through a stored permission row of `wamn-control:workflow/start`.
 The other `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
-The host's queue worker uses its existing database roles to claim and execute the run.
+The host's queue worker uses its existing database roles to lease and execute the run.
 
 Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
 Every `workflow` command except `start` needs `--environment` and the project-admin database URL.
@@ -76,7 +76,7 @@ wamn-ctl workflow release --org acme --project orders --environment dev --run-id
 wamn-ctl workflow runs --org acme --project orders --environment dev --limit 20
 ```
 
-A park holds a queued run that no worker holds, so no worker claims it.
+A park holds a queued run that no worker holds, so no worker leases it.
 The run keeps the status `dispatched`, and a park of a parked run changes nothing.
 A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.

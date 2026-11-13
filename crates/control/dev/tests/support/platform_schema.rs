@@ -83,18 +83,18 @@ async fn schema(
     journey: &Journey<'_>,
     label: &str,
     action: &str,
-    scope: &str,
+    target: &str,
     chart: &Path,
 ) -> anyhow::Result<String> {
-    let mut command = journey.command(&["platform", "schema", action, "--scope", scope]);
+    let mut command = journey.command(&["platform", "schema", action, "--target", target]);
     command.arg("--chart").arg(chart);
-    if scope == "project" {
+    if target == "project" {
         command.arg("--env").arg(&journey.file);
     }
     let output = journey.run(label, &mut command).await?;
     ensure!(
         output.status.success(),
-        "{scope} {action} failed; see {}",
+        "{target} {action} failed; see {}",
         journey.run.directory.display()
     );
     Ok(String::from_utf8(output.stdout)?)
@@ -151,12 +151,12 @@ async fn applications(journey: &Journey<'_>) -> anyhow::Result<Value> {
 async fn database_state(journey: &Journey<'_>) -> anyhow::Result<Value> {
     let status = journey.status().await?;
     let mut state = BTreeMap::new();
-    for scope in ["system_schema", "project_schema"] {
-        let report = status[scope]
+    for target in ["system_schema", "project_schema"] {
+        let report = status[target]
             .as_object()
             .context("recorded platform SQL state")?;
         state.insert(
-            scope,
+            target,
             json!({
                 "initialization":report["initialization"], "installed":report["installed"],
                 "uncertain":report["uncertain"]

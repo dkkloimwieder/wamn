@@ -476,11 +476,11 @@ pub(crate) fn is_feed_read(input: &Value) -> bool {
         .is_some_and(Value::is_object)
 }
 
-/// The Cache-Control of a change feed read: the list's scope, revalidated on
+/// The Cache-Control of a change feed read: the list's target, revalidated on
 /// every read. Its weak tag on the cursor makes an unchanged feed a 304.
 fn feed_cache_control(list: &str) -> String {
-    let scope = list.split(',').next().unwrap_or(list).trim();
-    format!("{scope}, no-cache")
+    let target = list.split(',').next().unwrap_or(list).trim();
+    format!("{target}, no-cache")
 }
 
 /// The request header that repeats the readable CSRF cookie.

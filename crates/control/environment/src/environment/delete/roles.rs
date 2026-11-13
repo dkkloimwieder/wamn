@@ -1,9 +1,9 @@
-//! Environment-scoped logins on the shared control database.
+//! Environment-targeted logins on the shared control database.
 
 use anyhow::Context as _;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityKind,
     workload_generation_role,
 };
 use wamn_control_registry::Triple;
@@ -18,7 +18,7 @@ pub(super) async fn delete_control_roles(
         .query_one("SELECT current_database()", &[])
         .await?
         .get(0);
-    let scope = WorkloadRoleScope::Control {
+    let target = WorkloadRoleIdentity::Control {
         org: &triple.org,
         project: &triple.project,
         environment: &triple.env,
@@ -26,10 +26,10 @@ pub(super) async fn delete_control_roles(
     };
     let mut roles = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() == WorkloadRoleScopeKind::Control)
+        .filter(|family| family.identity_kind() == WorkloadRoleIdentityKind::Control)
     {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-            let role = workload_generation_role(family, scope, generation)?;
+            let role = workload_generation_role(family, target, generation)?;
             if admin
                 .query_opt("SELECT 1 FROM pg_roles WHERE rolname=$1", &[&role])
                 .await?

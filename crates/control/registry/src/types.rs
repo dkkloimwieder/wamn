@@ -123,7 +123,7 @@ pub enum RecoveryDomain {
 /// A named, self-contained environment policy — the D18 replacement for the
 /// closed `Tier` sizing/backup semantics. The policy `name` **is** the env slug
 /// ([`Env`]); a project-env's `env` both identifies it in the [`Triple`] and
-/// resolves this policy. Standalone (no inheritance). Policies are **org-scoped**
+/// resolves this policy. Standalone (no inheritance). Policies are **org-targeted**
 /// (wamn-8df.4): each org owns its policy set ([`OrgEnvPolicy`]), stamped from a
 /// [`Template`](crate::Template) and then customized per-env — this value type
 /// stays org-free so templates can carry it.
@@ -357,7 +357,7 @@ impl Triple {
 
 /// The key of a project environment: `<org>--<project>--<env>` (owner
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
-/// `env apply` and the host scope all derive it here, so neither the
+/// `env apply` and the host target all derive it here, so neither the
 /// environment document nor the serving manifest repeats the composed key.
 pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
     format!("{org}--{project}--{env}")
@@ -496,7 +496,7 @@ impl Registry {
     }
 
     /// The policy named `name` in org `org`'s set, if defined (policies are
-    /// org-scoped — wamn-8df.4).
+    /// org-targeted — wamn-8df.4).
     pub fn env_policy(&self, org: &str, name: &Env) -> Option<&EnvPolicy> {
         self.env_policies
             .iter()
@@ -647,7 +647,7 @@ mod tests {
         assert!(json.contains("\"type\": \"pooled\""));
         assert!(json.contains("\"pool\": \"wamn-pg\""));
         assert!(json.contains("\"type\": \"dedicated\""));
-        // env-policies are org-scoped rows with kebab-case wire keys.
+        // env-policies are org-targeted rows with kebab-case wire keys.
         assert!(json.contains("\"env-policies\""));
         assert!(json.contains("\"org\": \"acme\""));
         assert!(json.contains("\"promotion-rank\""));

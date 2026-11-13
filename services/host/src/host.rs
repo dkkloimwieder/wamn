@@ -38,10 +38,10 @@ use wamn_engine::engine::{
 use wamn_engine::flow_http_routing::{
     FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
 };
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, release_label};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, release_label};
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{
-    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
+    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig, RouterDeliveryBridge,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -156,11 +156,11 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_RUNNER")]
     pub runner: Option<String>,
 
-    /// Duration of a durable queue claim before another replica may recover it.
+    /// Duration of a durable queue lease before another replica may recover it.
     #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
     pub queue_lease_ttl_ms: u64,
 
-    /// The environment of this host's release scope, and nothing else. The
+    /// The environment of this host's release target, and nothing else. The
     /// operator chart passes the pod namespace first; a release passes the
     /// environment name again in its `extraArgs`, and the last value wins
     /// (R1, R6).
@@ -369,7 +369,7 @@ pub struct HostArgs {
     )]
     pub registry_token_metadata: bool,
 
-    /// Scoped system connection reader for node credentials and signature routes.
+    /// Targeted system connection reader for node credentials and signature routes.
     #[arg(long, env = "WAMN_CONNECTION_STORE_URL")]
     pub connection_store_url: Option<String>,
 
@@ -380,7 +380,7 @@ pub struct HostArgs {
     /// Organization owning this host's project.
     ///
     /// Required only when the loaded release carries a PAT-protected HTTP
-    /// route; it scopes both the operator subject and identity-reader URL.
+    /// route; it targets both the operator subject and identity-reader URL.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
@@ -550,12 +550,12 @@ async fn load_release(
     registry_auth_file: Option<&Path>,
     registry_token_metadata: bool,
     ca_paths: &[PathBuf],
-    scope: anyhow::Result<ReleaseScope>,
+    target: anyhow::Result<ReleaseTarget>,
 ) -> anyhow::Result<Option<Arc<LoadedRelease>>> {
     let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
         return Ok(None);
     };
-    let scope = scope?;
+    let target = target?;
     let source = match RegistryPullCredential::select(registry_auth_file, registry_token_metadata)?
     {
         RegistryPullCredential::AuthFile(path) => {
@@ -573,7 +573,7 @@ async fn load_release(
         .await
         .context("pull the serving release manifest")?;
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, scope)
+    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, target)
         .map_err(|error| {
             anyhow::anyhow!(
                 "serving release manifest {origin} is unusable ({:?}): {error}",
@@ -590,7 +590,7 @@ async fn load_release(
 /// The manifest names none of them, so they come from `--org`, `--project`,
 /// `--environment` and `--applications`, and the environment key is
 /// [`project_env_key`] of the first three.
-fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
+fn release_target(args: &HostArgs) -> anyhow::Result<ReleaseTarget> {
     let org = args
         .org
         .as_deref()
@@ -610,27 +610,27 @@ fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
         Some(applications) => serde_json::from_str(applications)
             .context("--applications is not the JSON of the declared applications")?,
     };
-    Ok(ReleaseScope::new(
+    Ok(ReleaseTarget::new(
         project_env_key(org, &args.project, environment),
         environment,
     )
     .with_applications(applications))
 }
 
-/// The scope of a host that serves a release from the registry. Env apply
+/// The target of a host that serves a release from the registry. Env apply
 /// renders `--applications` for every such host, and a host without it
 /// refuses to start.
-fn served_release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
+fn served_release_target(args: &HostArgs) -> anyhow::Result<ReleaseTarget> {
     anyhow::ensure!(
         args.applications.is_some(),
         "a host that serves a release requires --applications"
     );
-    let scope = release_scope(args)?;
+    let target = release_target(args)?;
     anyhow::ensure!(
-        scope.applications.len() == 1,
+        target.applications.len() == 1,
         "an application host requires exactly one application"
     );
-    Ok(scope)
+    Ok(target)
 }
 
 /// The `host.plugins` entries of the chart's host configuration file. Only
@@ -1078,7 +1078,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // THE RELEASE LOADS FIRST, and the ordering is load-bearing rather than
     // tidy. Under ruling wamn-0h0g.15.102 the verified manifest is the SOLE carrier
     // of the (effective release id, manifest digest) pair, so every consumer takes the
-    // pair from this object — including the claim-time recording that
+    // pair from this object — including the lease-time recording that
     // wamn-0h0g.15.103 repoints at it. A component that bound before the loaded release
     // existed would have no pair to record. Building it here, ahead of the NATS
     // connections, the engine and every plugin, makes that ordering impossible to
@@ -1091,8 +1091,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let release = if args.control {
         Some(Arc::new(LoadedRelease::control_root()))
     } else if let Some(directory) = args.local_application.as_deref() {
-        let scope = served_release_scope(&args)?;
-        let loaded = LoadedRelease::load_from(directory, scope)?;
+        let target = served_release_target(&args)?;
+        let loaded = LoadedRelease::load_from(directory, target)?;
         anyhow::ensure!(
             Some(loaded.release().manifest_digest.as_str())
                 == args.local_application_digest.as_deref(),
@@ -1101,14 +1101,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         wamn_runtime::local_application::load_local_facts(
             directory,
             loaded.manifest(),
-            &loaded.scope().env_key,
+            &loaded.target().env_key,
         )?;
         let target_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
             .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
         wamn_runtime::local_application::require_local_target(
             &target_url,
-            &loaded.scope().env_key,
-            &loaded.scope().environment,
+            &loaded.target().env_key,
+            &loaded.target().environment,
         )
         .await?;
         Some(Arc::new(loaded))
@@ -1120,7 +1120,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             args.registry_auth_file.as_deref(),
             args.registry_token_metadata,
             &args.oci_ca_paths,
-            served_release_scope(&args),
+            served_release_target(&args),
         )
         .await?
     };
@@ -1157,7 +1157,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .expect("a session route belongs to a loaded release");
         Some(session_verifier(
             &args,
-            &loaded_release.scope().environment,
+            &loaded_release.target().environment,
             http_admitter_url
                 .as_deref()
                 .context("a session route requires WAMN_HTTP_ADMITTER_PG_URL")?,
@@ -1167,10 +1167,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
 
     // The release pull above is what makes the PAT requirement knowable. Once
-    // it is known, settle every scoped input before opening the identity, NATS,
+    // it is known, settle every targeted input before opening the identity, NATS,
     // project-database, or ingress sockets. A release-less or anonymous-only
     // host takes the absent arm and acquires no identity-reader connection.
-    let (route_auth_scope, identity_reader, mut identity_connection) =
+    let (route_auth_target, identity_reader, mut identity_connection) =
         if pat_routes || session_routes {
             let loaded_release = release
                 .as_ref()
@@ -1190,18 +1190,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             http_admitter_url
                 .as_deref()
                 .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-            let subject = operator_subject(org, project, &loaded_release.scope().environment)
-                .context("derive the scoped operator subject")?;
+            let subject = operator_subject(org, project, &loaded_release.target().environment)
+                .context("derive the targeted operator subject")?;
             parse_system_reader_url(
                 SystemReader::Identity,
                 &system_url,
                 org,
                 project,
-                &loaded_release.scope().environment,
+                &loaded_release.target().environment,
             )?;
             let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
                 .await
-                .context("connect the scoped system identity reader")?;
+                .context("connect the targeted system identity reader")?;
             (
                 Some((org.to_owned(), subject)),
                 Some(Arc::new(client)),
@@ -1229,7 +1229,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         args.org.as_deref().map(control_nats_user)
     } else {
         application
-            .map(|release| environment_nats_user(&release.scope().env_key))
+            .map(|release| environment_nats_user(&release.target().env_key))
             .or_else(|| {
                 args.org
                     .as_deref()
@@ -1348,7 +1348,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let local = wamn_runtime::local_application::load_local_application(
             directory,
             release.manifest(),
-            release.scope().clone(),
+            release.target().clone(),
             &database_url,
         )
         .await?;
@@ -1367,7 +1367,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 url,
                 org,
                 &args.project,
-                &release.scope().environment,
+                &release.target().environment,
             )?;
             let (client, connection) = tokio_postgres::connect(url, NoTls)
                 .await
@@ -1390,7 +1390,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
     let changes = connection_memory::replicate(
         &data_nats_client,
-        application.map(|release| release.scope().env_key.as_str()),
+        application.map(|release| release.target().env_key.as_str()),
         Arc::clone(&memory),
     );
     let oauth_encryption = args
@@ -1410,9 +1410,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             changes,
             Arc::clone(&credentials),
             Arc::clone(&postgres),
-            application.map_or("", |release| release.scope().env_key.as_str()),
+            application.map_or("", |release| release.target().env_key.as_str()),
             &args.project,
-            application.map_or("", |release| release.scope().environment.as_str()),
+            application.map_or("", |release| release.target().environment.as_str()),
         )
         .with_oauth_encryption(oauth_encryption.clone()),
     );
@@ -1497,7 +1497,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 allowed_hosts.into(),
                 Arc::clone(release),
                 source,
-                OperationScope {
+                OperationHostConfig {
                     project: args.project.clone(),
                     schema: args.schema.clone(),
                     owner_prefix: router_owner.clone(),
@@ -1525,8 +1525,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Arc::clone(&operations.release),
             reference,
             &component.name,
-            operations.claims(
-                &operations.release.scope().env_key,
+            operations.identity(
+                &operations.release.target().env_key,
                 Some(operations.release_identity()),
             ),
         )?;
@@ -1559,13 +1559,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let env_key = release
         .as_ref()
         .filter(|_| !args.control)
-        .map(|release| release.scope().env_key.clone());
+        .map(|release| release.target().env_key.clone());
     let auth_changes = replicate(&data_nats_client, env_key.as_deref(), Arc::clone(&postgres));
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default()
         .with_signature_authentication(Arc::clone(&facts), args.project.clone());
-    let authenticator = match (&route_auth_scope, &identity_reader) {
+    let authenticator = match (&route_auth_target, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
             authenticator.with_authentication(Arc::new(
                 RouteAuthentication::new(
@@ -1624,13 +1624,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             facts: Arc::clone(&facts),
             org: args.org.clone().unwrap_or_default(),
             project: args.project.clone(),
-            environment: release.scope().environment.clone(),
+            environment: release.target().environment.clone(),
         });
         let blobstore = Arc::new(
             wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
                 Arc::clone(&postgres),
                 Arc::clone(&facts),
-                release.scope().env_key.clone(),
+                release.target().env_key.clone(),
                 args.project.clone(),
                 Some(Arc::clone(release)),
             ),
@@ -1658,7 +1658,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // S5: the custom wamn:logging plugin replaces the native TracingLogger
         // — it enriches (host-trusted environment/project + guest flow/run/node),
         // owns a bounded front queue + drop counter, and ships enriched OTel log
-        // records to the collector. Both claim wasi:logging/logging, so exactly
+        // records to the collector. Both implement wasi:logging/logging, so exactly
         // one may be registered.
         logging,
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
@@ -1673,7 +1673,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // takes the loaded manifest — it does not load one.
         Arc::<WamnJetstream>::clone(&jetstream),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
-        // in-memory; a PAT-protected route additionally carries the scoped
+        // in-memory; a PAT-protected route additionally carries the targeted
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
         Arc::<FlowHttpRouting>::clone(&flow_http),
@@ -1700,7 +1700,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 HostRouteHandlers::Application {
                     postgres: Arc::clone(&postgres),
                     project: args.project.clone(),
-                    identity: route_auth_scope
+                    identity: route_auth_target
                         .as_ref()
                         .zip(identity_reader.as_ref())
                         .map(|((org, _), client)| (Arc::clone(client), org.clone())),
@@ -2548,7 +2548,7 @@ const EXIT_RESERVE: Duration = Duration::from_secs(2);
 /// chart sets in `WASMCLOUD_HOST_ENVIRONMENT`, because the operator's
 /// `allowSharedHosts: false` lock places a WorkloadDeployment only on hosts
 /// of its namespace, which every environment's release shares (R6). It is
-/// never the environment: `--environment` names the release scope only.
+/// never the environment: `--environment` names the release target only.
 fn host_namespace(chart: Option<String>) -> Option<String> {
     chart.filter(|namespace| !namespace.is_empty())
 }
@@ -2667,10 +2667,10 @@ where
     // Admission closes completely before the queue drains.
     let ingress_result = wamn_engine::lifecycle::bounded_cleanup(remaining(), stop_ingress).await;
     let drain_then_cleanup = async {
-        // The queue keeps claiming the runs pinned to this host's release
+        // The queue keeps leasing the runs pinned to this host's release
         // until none remains, then stops (R20). At the deadline the host stops
         // the queue, runs no further cleanup step and exits. The runs left keep
-        // their pin, and another host of the release reclaims them when their
+        // their pin, and another host of the release releases them when their
         // leases lapse.
         let queue_result = if !queue_enabled || queue_finished {
             Ok(())
@@ -2742,7 +2742,7 @@ mod tests {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "startup release",
-                ReleaseScope::new("acme--wms--dev", "dev").with_applications(
+                ReleaseTarget::new("acme--wms--dev", "dev").with_applications(
                     serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
                 ),
             )
@@ -2884,8 +2884,8 @@ host:
     /// A host that serves a release takes the declared applications beside
     /// its environment, and refuses to start without them.
     #[test]
-    fn a_served_release_scope_requires_the_declared_applications() {
-        let scope = |extra: &[&str]| {
+    fn a_served_release_target_requires_the_declared_applications() {
+        let target = |extra: &[&str]| {
             let mut arguments = vec![
                 "wamn-host",
                 "--org=acme",
@@ -2893,22 +2893,22 @@ host:
                 "--environment=dev",
             ];
             arguments.extend_from_slice(extra);
-            served_release_scope(&parse(arguments).unwrap().args)
+            served_release_target(&parse(arguments).unwrap().args)
         };
-        assert!(scope(&[]).is_err());
-        assert!(scope(&["--applications={}"]).is_err());
+        assert!(target(&[]).is_err());
+        assert!(target(&["--applications={}"]).is_err());
         assert!(
-            scope(&[r#"--applications={"a":{"packages":["a"]},"b":{"packages":["b"]}}"#]).is_err()
+            target(&[r#"--applications={"a":{"packages":["a"]},"b":{"packages":["b"]}}"#]).is_err()
         );
-        let scope = scope(&[r#"--applications={"wms":{"packages":["wamn_wms"]}}"#])
+        let target = target(&[r#"--applications={"wms":{"packages":["wamn_wms"]}}"#])
             .expect("the map parses");
         assert_eq!(
-            scope.applications["wms"].packages,
+            target.applications["wms"].packages,
             ["wamn_wms".to_owned()].into()
         );
-        assert_eq!(scope.environment, "dev");
+        assert_eq!(target.environment, "dev");
         assert!(
-            release_scope(
+            release_target(
                 &parse([
                     "wamn-host",
                     "--org=acme",
@@ -3808,7 +3808,7 @@ host:
             None,
             false,
             &[],
-            Ok(ReleaseScope::new("tenant", "test")),
+            Ok(ReleaseTarget::new("tenant", "test")),
         )
         .await
         .expect("no release pair is not a failure");
@@ -3834,7 +3834,7 @@ host:
             Some(auth_file),
             false,
             &[],
-            Ok(ReleaseScope::new("tenant", "test")),
+            Ok(ReleaseTarget::new("tenant", "test")),
         )
         .await
         .expect_err("an unusable release pair must refuse");

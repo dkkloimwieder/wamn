@@ -36,12 +36,12 @@ pub fn package_owner_role(package: &str) -> String {
     )
 }
 
-/// Prefix for the scoped per-tenant guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
+/// Prefix for the targeted per-tenant guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
 ///
 /// It mirrors the family's Postgres generation prefix in the hyphenated K8s
 /// convention. The Secret is
-/// scoped to the project-environment, not to the tenant key: one management
-/// instance serves exactly one `(org, project, environment)` and that scope's
+/// targeted to the project-environment, not to the tenant key: one management
+/// instance serves exactly one `(org, project, environment)` and that target's
 /// single tenant. The tenant travels in the manifest's labels, never in the
 /// name — a tenant id may be 64 bytes and carry characters a DNS-1123 name
 /// cannot.
@@ -202,7 +202,7 @@ pub fn workload_secret_name(
     format!("{}{org}--{project}--{env}", family.secret_prefix())
 }
 
-/// The credential Secret name of an org-scoped family:
+/// The credential Secret name of an org-targeted family:
 /// `<family secret prefix><org>`, for example `wamn-control-<org>`.
 pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &str) -> String {
     format!("{}{org}", family.secret_prefix())
@@ -225,7 +225,7 @@ pub fn control_administration_key(project: &str, env: &str) -> String {
 /// `wamn-<org>--<project>--<env>--<instance>`.
 ///
 /// One wamn environment `(org, project, env)` is one namespace (wamn-0h0g.15.3),
-/// so every environment-scoped resource — the credential Secrets, the release
+/// so every environment-targeted resource — the credential Secrets, the release
 /// manifest, the environment's hosts — is addressed by DERIVING this name from
 /// the triple and the environment's minted instance suffix. It is never
 /// configured alongside the triple and never parsed back out of a resource.
@@ -275,7 +275,7 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
     })
 }
 
-/// The scoped per-tenant guest-SQL credential Secret name.
+/// The targeted per-tenant guest-SQL credential Secret name.
 pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::App, org, project, env)
 }
@@ -588,7 +588,7 @@ mod tests {
             project_env_database_name("org-a", "demo", "dev", INSTANCE),
             project_env_database_name("org-b", "demo", "dev", INSTANCE)
         );
-        // The namespace-scoped Secret keeps the stable triple-only lookup key.
+        // The namespace-targeted Secret keeps the stable triple-only lookup key.
         assert_ne!(
             project_env_secret_name("acme", "billing", "dev"),
             project_env_database_name("acme", "billing", "dev", INSTANCE)

@@ -44,7 +44,7 @@ use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
-    ComponentPackageScope, component_artifact_reference,
+    ComponentPackageCoordinate, component_artifact_reference,
 };
 use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
@@ -111,8 +111,8 @@ pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
 /// `apps/`. Each `<area>/<crate>/declaration.json.in` names its component.
 pub const PLATFORM_DIRECTORY: &str = "../platform";
 
-/// The tenant that admission writes into a component scope. A package
-/// artifact is tenant-free, and a descriptor drops the scope.
+/// The tenant that admission writes into a component target. A package
+/// artifact is tenant-free, and a descriptor drops the target.
 const ADMISSION_ENV_KEY: &str = "package-artifact";
 
 /// The platform packages a package-owned component is admitted with.
@@ -196,7 +196,7 @@ pub(crate) async fn connection_components(
     if !descriptors.is_empty() {
         use wamn_engine::artifact_source::ArtifactSource as _;
         use wamn_runtime::component_artifact_source::ComponentArtifactSource;
-        let scope = ComponentPackageScope::new(
+        let target = ComponentPackageCoordinate::new(
             ADMISSION_ENV_KEY,
             &manifest.package.id,
             &manifest.package.version,
@@ -216,7 +216,7 @@ pub(crate) async fn connection_components(
                     .context("set WAMN_COMPONENT_ARTIFACT_BASE for package install")?
                     .clone(),
             )?;
-            let facts = descriptor.into_admitted(scope.clone());
+            let facts = descriptor.into_admitted(target.clone());
             let bytes = source.pull_verified(&facts.component).await?;
             result.push((facts.component.component_digest, names, bytes));
         }
@@ -224,7 +224,7 @@ pub(crate) async fn connection_components(
     }
     let output = wamn_schema_generator::output_root(root);
     let build_record = wamn_schema_generator::build_record::read(&output)?;
-    let scope = ComponentPackageScope::new(
+    let target = ComponentPackageCoordinate::new(
         ADMISSION_ENV_KEY,
         &manifest.package.id,
         &manifest.package.version,
@@ -238,7 +238,7 @@ pub(crate) async fn connection_components(
                 }
                 ComponentTemplate::Palette {
                     path, store_alias, ..
-                } => render_palette_declaration(&path, &scope, store_alias.as_deref())?,
+                } => render_palette_declaration(&path, &target, store_alias.as_deref())?,
             };
             let declaration: ComponentDeclaration = serde_json::from_value(document)?;
             let bytes = std::fs::read(source.file).context("read package component binary")?;
@@ -702,12 +702,12 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         .context("plan the package migrations")?;
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;
-    let scope = ComponentPackageScope::new(
+    let target = ComponentPackageCoordinate::new(
         ADMISSION_ENV_KEY,
         manifest.package.id.clone(),
         manifest.package.version.clone(),
     )
-    .context("name the admission scope")?;
+    .context("name the admission target")?;
     let mut publication = BTreeMap::new();
     let mut descriptors = Vec::new();
     let mut components = Vec::new();
@@ -726,7 +726,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
                     format!("publication/components/{}.json.in", source.name),
                     bytes.clone(),
                 );
-                let document = render_palette_declaration(path, &scope, store_alias.as_deref())?;
+                let document = render_palette_declaration(path, &target, store_alias.as_deref())?;
                 let packages = declared_platform_packages(path, &document)?;
                 (document, packages)
             }

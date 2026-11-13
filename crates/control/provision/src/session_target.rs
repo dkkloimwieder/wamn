@@ -32,7 +32,7 @@ fn refused(context: &'static str) -> SessionTargetError {
     SessionTargetError { context }
 }
 
-/// Apply the existing tenant-claim spelling, without creating another identity format.
+/// Apply the existing tenant-identity spelling, without creating another identity format.
 pub fn validate_session_env_key(env_key: &str) -> Result<(), SessionTargetError> {
     if !valid_env_key(env_key) {
         return Err(refused("session target tenant refused"));
@@ -68,7 +68,7 @@ struct TargetDocument {
     database_url: String,
 }
 
-/// One validated target; cloning preserves its exact scope and redacted diagnostics.
+/// One validated target; cloning preserves its exact target and redacted diagnostics.
 #[derive(Clone)]
 pub struct SessionTarget {
     document: TargetDocument,
@@ -144,7 +144,7 @@ impl SessionTarget {
         if target.document.audience != document.audience
             || target.document.database != document.database
         {
-            return Err(refused("session target scope mismatch"));
+            return Err(refused("session target target mismatch"));
         }
         Ok(target)
     }
@@ -166,7 +166,7 @@ impl SessionTarget {
     pub fn instance_suffix(&self) -> &str {
         &self.document.instance_suffix
     }
-    /// Borrow the trusted tenant claim used in every role predicate.
+    /// Borrow the trusted tenant identity used in every role predicate.
     pub fn env_key(&self) -> &str {
         &self.document.env_key
     }

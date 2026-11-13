@@ -7,15 +7,15 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
-    ClassCredentials, ProductionClaimResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ProductionLeaseResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
-pub const ENV_KEY: &str = "claim-live";
-pub const COMPONENT: &str = "claim-live-runner";
+pub const ENV_KEY: &str = "lease-live";
+pub const COMPONENT: &str = "lease-live-runner";
 pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
 /// A second pod carrying a different release — the mismatch case.
-pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
+pub const ROLLED_COMPONENT: &str = "lease-live-runner-next";
 pub const SCHEMA: &str = "wamn_run";
 /// The release pinned on every ordinarily seeded run: the digest of
 /// [`POD_MANIFEST_BYTES`].
@@ -26,22 +26,22 @@ pub const POD_MANIFEST_BYTES: &str = r#"{"release":1}"#;
 pub const ROLLED_MANIFEST_DIGEST: &str =
     "sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0";
 pub const ROLLED_MANIFEST_BYTES: &str = r#"{"release":2}"#;
-pub const WIRING_ID: &str = "claim-live-wiring";
+pub const WIRING_ID: &str = "lease-live-wiring";
 pub const WIRING_VERSION: i32 = 1;
 pub const EMPTY_HASH: &str =
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-const EXECUTOR_PASSWORD: &str = "claim-live-executor-password";
+const EXECUTOR_PASSWORD: &str = "lease-live-executor-password";
 pub const PRIOR_WINNER_HASH: &str = "sha256:prior-caller-winner";
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
     tokio::spawn(async move {
         if let Err(error) = connection.await {
-            eprintln!("production-claim live connection failed: {error}");
+            eprintln!("production-lease live connection failed: {error}");
         }
     });
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning;
-    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:claim-fixture', false)", &[&actor.principal_id().to_string()]).await?;
+    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:lease-fixture', false)", &[&actor.principal_id().to_string()]).await?;
     Ok(client)
 }
 
@@ -73,7 +73,9 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
 /// Mint the executor generation separately from the fixture's administrator.
 async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(String, String)> {
     use wamn_control_provision::sql::prepare_workload_generation_sql;
-    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role};
+    use wamn_control_provision::{
+        WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
+    };
 
     let database: String = client
         .query_one("SELECT current_database()::text", &[])
@@ -82,9 +84,9 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
     let family = WorkloadRoleFamily::ExecutorPlatform;
     let role = workload_generation_role(
         family,
-        WorkloadRoleScope::ProjectEnvironment {
-            org: "claim-live-org",
-            project: "claim-live-project",
+        WorkloadRoleIdentity::ProjectEnvironment {
+            org: "lease-live-org",
+            project: "lease-live-project",
             environment: ENVIRONMENT,
             database: &database,
         },
@@ -306,10 +308,10 @@ pub async fn assert_terminal_status_dequeued(
     Ok(())
 }
 
-pub fn ready_run(result: ProductionClaimResult) -> String {
+pub fn ready_run(result: ProductionLeaseResult) -> String {
     match result {
-        ProductionClaimResult::Ready { run_id, .. } => run_id,
-        ProductionClaimResult::Empty => panic!("expected ready claim, got Empty"),
+        ProductionLeaseResult::Ready { run_id, .. } => run_id,
+        ProductionLeaseResult::Empty => panic!("expected ready lease, got Empty"),
     }
 }
 
@@ -317,9 +319,9 @@ pub fn ready_run(result: ProductionClaimResult) -> String {
 ///
 /// `wait_for_advisory_wait` selects the blocked reaper backend by this exact
 /// string, so it is fixture-wide rather than per-suite.
-pub const RUNTIME_APPLICATION_NAME: &str = "production-claim-live-runtime";
+pub const RUNTIME_APPLICATION_NAME: &str = "production-lease-live-runtime";
 
-/// Everything a live claim suite needs, built once per suite.
+/// Everything a live lease suite needs, built once per suite.
 pub struct LiveFixture {
     pub admin: Client,
     pub plugin: Arc<WamnPostgres>,

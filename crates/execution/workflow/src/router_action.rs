@@ -3,7 +3,7 @@
 use wamn_router::{FailureKind as RouterFailureKind, Outcome, Verdict, WalkStatus};
 use wamn_run_state::FailType;
 use wamn_run_state::run_store::{
-    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorType, ProductionCompletion,
+    ProductionCallerOutcome, ProductionCompletion, ProductionLeaseError, ProductionLeaseErrorType,
 };
 
 /// Boundary work selected from a terminal router outcome.
@@ -26,7 +26,7 @@ pub(crate) enum ProductionRouterAction {
 pub(crate) fn production_router_action(
     outcome: &Outcome,
     caller_attached: bool,
-) -> Result<ProductionRouterAction, ProductionClaimError> {
+) -> Result<ProductionRouterAction, ProductionLeaseError> {
     production_router_action_with_mode(
         outcome,
         if caller_attached {
@@ -46,10 +46,10 @@ enum RouterResultMode {
 fn production_router_action_with_mode(
     outcome: &Outcome,
     mode: RouterResultMode,
-) -> Result<ProductionRouterAction, ProductionClaimError> {
+) -> Result<ProductionRouterAction, ProductionLeaseError> {
     if outcome.status == WalkStatus::Running {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "map router outcome",
             "router-returned-running-outcome",
         ));
@@ -79,8 +79,8 @@ fn production_router_action_with_mode(
                 ));
             }
             RouterResultMode::Detached => {
-                return Err(ProductionClaimError::new(
-                    ProductionClaimErrorType::Contract,
+                return Err(ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Contract,
                     "map router response",
                     "router-response-without-result-owner",
                 ));
@@ -106,8 +106,8 @@ fn production_router_action_with_mode(
             ));
         }
         Some(Verdict::Discard) => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "map router discard",
                 "router-discard-with-caller",
             ));
@@ -116,15 +116,15 @@ fn production_router_action_with_mode(
     }
 
     match outcome.status {
-        WalkStatus::Completed => Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        WalkStatus::Completed => Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "map completed router outcome",
             "router-completed-without-verdict",
         )),
         WalkStatus::Failed => {
             let failure = outcome.failure.as_ref().ok_or_else(|| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Contract,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Contract,
                     "map failed router outcome",
                     "router-failed-without-failure",
                 )
@@ -256,7 +256,7 @@ mod tests {
 
         let error = production_router_action(&outcome, false)
             .expect_err("detached delivery cannot own a response");
-        assert_eq!(error.error_type(), ProductionClaimErrorType::Contract);
+        assert_eq!(error.error_type(), ProductionLeaseErrorType::Contract);
         assert!(
             error
                 .to_string()
@@ -359,7 +359,7 @@ mod tests {
 
         let error = production_router_action(&outcome, false)
             .expect_err("an in-progress router result is not a queue terminal");
-        assert_eq!(error.error_type(), ProductionClaimErrorType::Contract);
+        assert_eq!(error.error_type(), ProductionLeaseErrorType::Contract);
         assert!(
             error
                 .to_string()

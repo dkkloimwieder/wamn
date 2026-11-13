@@ -9,7 +9,7 @@
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope, sql,
+    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, sql,
     workload_generation_role,
 };
 
@@ -55,7 +55,7 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
         .await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::Control,
-        WorkloadRoleScope::Org {
+        WorkloadRoleIdentity::Org {
             org: ORG,
             database: &database,
         },

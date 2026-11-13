@@ -291,7 +291,7 @@ describe("Projects and Project", () => {
     expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
   });
 
-  it("rejects incomplete membership input without claiming success", async () => {
+  it("rejects incomplete membership input without reporting success", async () => {
     const transport = createTransport({
       baseUrl: "/api",
       fetch: async (url) => {

@@ -23,14 +23,14 @@
 //!   generation.
 //!
 //! Each test runs as the superuser of a test database on the test PostgreSQL
-//! server (the harness prepares one tenant-scoped App generation) and holds the
+//! server (the harness prepares one tenant-targeted App generation) and holds the
 //! process lock, because it changes cluster-wide roles — the `tests/schema.rs`
 //! live-apply convention.
 
 use std::fmt::Write as _;
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 
 /// The tenant every probe runs under, and the user its seeded rows belong to.
@@ -80,7 +80,7 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-/// The superuser prelude: a production-prepared tenant-scoped App generation,
+/// The superuser prelude: a production-prepared tenant-targeted App generation,
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
 /// `platform` applied verbatim from the DDL of record, one tenant's role rows,
 /// the user and configuration rows of the database, and a sequence of each of
@@ -93,13 +93,13 @@ fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
     let app_generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App accepts tenant scope");
+    .expect("App accepts tenant target");
     let mut script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &database,
@@ -119,7 +119,7 @@ INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
 INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');
 INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platform-fixture:widget/get');
 INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');
-INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
+INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
   ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}'),
   ('{OTHER_SEQUENCE}','wms','purchase_order','P-{{seq:po,width=8}}');"#
@@ -238,7 +238,7 @@ BEGIN
     'DELETE FROM platform.number_counter',
     'INSERT INTO platform.number_sequence (application, name, pattern) VALUES (''receiving'', ''forged'', ''F-{{seq:f}}'')',
     'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
-    'INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
+    'INSERT INTO platform.setting (target_type, target_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
     'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
     'INSERT INTO platform.integration (id,integration_type,name,status) VALUES (gen_random_uuid(),''http'',''forged'',''active'')',
@@ -501,7 +501,7 @@ fn author_sql_reads_and_writes_no_history_table() {
         entry(
             "setting_history",
             Some(-5),
-            r#"{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}"#,
+            r#"{"key": "display.theme", "target_id": "acme", "target_type": "org"}"#,
         ),
         entry(
             "number_sequence_history",

@@ -86,7 +86,7 @@ struct Tokens {
 
 /// The auth facts one host keeps. One instance lives in
 /// [`WamnPostgres`](crate::plugins::wamn_postgres::WamnPostgres), so the
-/// route authenticator and the claim bind share it.
+/// route authenticator and the identity binding share it.
 pub struct AuthCache {
     memory: KvMemory<Answer>,
     tokens: Mutex<Tokens>,
@@ -210,7 +210,7 @@ impl AuthCache {
     }
 
     /// Keep the grants of a principal. A present user row also answers the
-    /// provisioned-principal check of the claim bind.
+    /// provisioned-principal check of the identity binding.
     pub async fn keep_grants(
         &self,
         env_key: &str,

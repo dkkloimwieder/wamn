@@ -8,8 +8,8 @@ use url::Url;
 
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
-    WorkloadRoleScopeKind, project_env_database_name, project_env_guest_secret_name, sql,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity,
+    WorkloadRoleIdentityKind, project_env_database_name, project_env_guest_secret_name, sql,
     workload_generation_role,
 };
 use wamn_environment_control::provision_project_env::{
@@ -56,20 +56,20 @@ fn generation_role(
     database: &str,
     generation: CredentialGeneration,
 ) -> String {
-    let scope = if family == WorkloadRoleFamily::App {
-        WorkloadRoleScope::EnvKey {
+    let target = if family == WorkloadRoleFamily::App {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database,
         }
     } else {
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database,
         }
     };
-    workload_generation_role(family, scope, generation).unwrap()
+    workload_generation_role(family, target, generation).unwrap()
 }
 
 async fn fixture() -> Fixture {
@@ -388,7 +388,8 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
             env: ENVIRONMENT.into(),
             system_database_url: Some(system.url().into()),
             namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
-            target_admin_database_url: (family.scope_kind() != WorkloadRoleScopeKind::Control)
+            target_admin_database_url: (family.identity_kind()
+                != WorkloadRoleIdentityKind::Control)
                 .then(|| target.url().into()),
             cluster: None,
             cluster_namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),

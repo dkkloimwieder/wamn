@@ -7,7 +7,7 @@ use wamn_schema_control::{PendingMigration, RecordedMigration, SqlStatement};
 /// The developer's explicit decision about one uncertain file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationResolution {
-    /// Package ID, or the platform scope name for a platform operation.
+    /// Package ID, or the platform target name for a platform operation.
     pub package: String,
     pub path: String,
     pub action: Resolution,
@@ -75,7 +75,7 @@ pub fn resolution_package<'a>(
                 && resolution.is_none()
             {
                 return Err(uncertain_migration(
-                    ResolutionScope::Package(id),
+                    ResolutionTarget::Package(id),
                     &file.relative_path,
                 ));
             }
@@ -97,13 +97,13 @@ pub fn resolution_package<'a>(
     Ok(matched)
 }
 
-/// Record table, immutable keys, and observed prefix supplied by its owning scope.
+/// Record table, immutable keys, and observed prefix supplied by its owning target.
 #[derive(Debug)]
 pub struct MigrationTable<'a> {
     pub name: &'a str,
     pub keys: &'a [(&'a str, &'a (dyn ToSql + Sync))],
     pub recorded: &'a [RecordedMigration],
-    pub scope: ResolutionScope<'a>,
+    pub target: ResolutionTarget<'a>,
 }
 
 impl MigrationTable<'_> {
@@ -148,7 +148,7 @@ impl MigrationTable<'_> {
     }
 }
 
-/// Scope-specific authority and bookkeeping around shared file execution.
+/// Target-specific authority and bookkeeping around shared file execution.
 pub trait MigrationHooks: Send {
     fn begin<'a>(
         &mut self,
@@ -194,19 +194,19 @@ pub trait MigrationHooks: Send {
     }
 }
 
-/// Diagnostic identity without package authority in platform scopes.
+/// Diagnostic identity without package authority in platform targets.
 #[derive(Debug, Clone, Copy)]
-pub enum ResolutionScope<'a> {
+pub enum ResolutionTarget<'a> {
     Package(&'a str),
     Platform(&'a str),
 }
 
-fn uncertain_migration(scope: ResolutionScope<'_>, path: &str) -> anyhow::Error {
-    match scope {
-        ResolutionScope::Package(id) => anyhow::anyhow!(
+fn uncertain_migration(target: ResolutionTarget<'_>, path: &str) -> anyhow::Error {
+    match target {
+        ResolutionTarget::Package(id) => anyhow::anyhow!(
             "package {id}: migration {path} has an uncertain outcome; inspect its effects and use --resolve {id}:{path}=applied|retry"
         ),
-        ResolutionScope::Platform(name) => anyhow::anyhow!(
+        ResolutionTarget::Platform(name) => anyhow::anyhow!(
             "{name} schema: migration {path} has an uncertain outcome; inspect its effects and use --resolve {path}=applied|retry"
         ),
     }
@@ -214,13 +214,13 @@ fn uncertain_migration(scope: ResolutionScope<'_>, path: &str) -> anyhow::Error 
 
 /// Resolve uncertain files before any mutation, including history-table adoption.
 pub fn validate_resolution(
-    scope: ResolutionScope<'_>,
+    target: ResolutionTarget<'_>,
     pending: &[PendingMigration],
     recorded: &[RecordedMigration],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<()> {
-    let label = match scope {
-        ResolutionScope::Package(id) | ResolutionScope::Platform(id) => id,
+    let label = match target {
+        ResolutionTarget::Package(id) | ResolutionTarget::Platform(id) => id,
     };
     if let Some(choice) = resolution {
         ensure!(
@@ -236,7 +236,7 @@ pub fn validate_resolution(
         if !resolution
             .is_some_and(|choice| choice.package == label && choice.path == file.relative_path)
         {
-            return Err(uncertain_migration(scope, &file.relative_path));
+            return Err(uncertain_migration(target, &file.relative_path));
         }
     }
     Ok(())
@@ -245,7 +245,7 @@ pub fn validate_resolution(
 /// Execute a validated plan while the caller holds its session exclusion.
 ///
 /// Run final bookkeeping in the last transaction. Each pair
-/// contains the exact file SQL and its scope-specific insertion statement.
+/// contains the exact file SQL and its target-specific insertion statement.
 /// The caller must use a dedicated session and close it on cancellation.
 pub async fn execute_migrations(
     client: &mut Client,
@@ -259,7 +259,7 @@ pub async fn execute_migrations(
         statements.len() == pending.len() * 2,
         "migration plan has unmatched statements"
     );
-    validate_resolution(table.scope, pending, table.recorded, resolution)?;
+    validate_resolution(table.target, pending, table.recorded, resolution)?;
     for (file, [sql, _]) in pending.iter().zip(statements.as_chunks::<2>().0) {
         wamn_schema_control::migrations::validate_execution_sql(file, sql)?;
     }

@@ -322,9 +322,9 @@ Evidence: `upgrade_environment.rs:109` defines an eleven-stage driver. `platform
 
 Problem: The drivers disagree about the unit of work and the evidence that permits progress. A completed local stage differs from an observation that the destination still matches. The local installer lock also cannot coordinate callers on different machines.
 
-Proposal: Keep `platform apply` and `env apply` as scope selectors for one reconciler. Use one cluster-scoped Kubernetes Lease to coordinate callers, including first installation. Lease loss stops further effects.
+Proposal: Keep `platform apply` and `env apply` as target selectors for one reconciler. Use one cluster-targeted Kubernetes Lease to coordinate callers, including first installation. Lease loss stops further effects.
 
-The reconciler resolves artifacts, observes installed facts, and requires qualification before destination schema changes. It then stops admission and automation, drains affected work, executes migrations, deploys the selected artifacts, and waits for readiness. It reopens admission only after the affected scope reaches its target.
+The reconciler resolves artifacts, observes installed facts, and requires qualification before destination schema changes. It then stops admission and automation, drains affected work, executes migrations, deploys the selected artifacts, and waits for readiness. It reopens admission only after the affected target reaches its target.
 
 The three upgrade flows use that sequence:
 
@@ -338,7 +338,7 @@ Deletes: Delete `upgrade_environment.rs` and its sole-purpose `delivery/run_reco
 
 Risk: A crash between database commits and rollout can leave a partly upgraded cluster. Extend `platform_apply_kind` and `environment_apply_kind` with interruption, retry, and competing-caller cases. Require one migration application and no admission before readiness.
 
-Owner review 2026-10-31: the deletions stay. The sentences about stopping admission, executing migrations and reopening admission are superseded. The rolling drain stays, no writer pauses, and there are no migrations to execute. The cluster-scoped Lease is D3-7.
+Owner review 2026-10-31: the deletions stay. The sentences about stopping admission, executing migrations and reopening admission are superseded. The rolling drain stays, no writer pauses, and there are no migrations to execute. The cluster-targeted Lease is D3-7.
 
 ## Finding C3-4: Qualification covers separate slices instead of the complete transition
 

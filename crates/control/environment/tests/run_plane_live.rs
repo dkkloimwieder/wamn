@@ -20,7 +20,7 @@ use run_history::persisted_literal_leg;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, project_env_database_name,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name,
     sql as provision_sql, workload_generation_role,
 };
 use wamn_environment_control::reconcile_run_plane::{
@@ -543,7 +543,7 @@ async fn run_plane_reconcile_live() {
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
 /// role reconciliation would hide tenant history, so refuse before even a
-/// dry-run observation can claim completeness.
+/// dry-run observation can assert completeness.
 async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -644,13 +644,13 @@ async fn mint_guest_generation(su: &Client, url: &str, env_key: &str) -> (String
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("the guest family takes a tenant scope");
+    .expect("the guest family takes a tenant target");
     drop_generation_role(su, &generation).await;
     su.batch_execute(&provision_sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
@@ -769,7 +769,7 @@ async fn environment_identity_leg(
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no
-/// project schemas. The fixed runtime roles are cluster-scoped and shared, so
+/// project schemas. The fixed runtime roles are cluster-targeted and shared, so
 /// this leg must preserve them even when another database has an object owned
 /// by `wamn_app`. Dry-run first (strictly read-only), then apply provisions run
 /// plane + `catalog`, and a functional smoke as `wamn_app` shows grants + RLS

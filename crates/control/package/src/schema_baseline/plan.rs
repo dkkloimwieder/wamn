@@ -1,5 +1,5 @@
 use super::{InitializationIdentity, MigrationFile, SchemaPlan, SchemaReport};
-use wamn_control_provision::schema_migrations::MigrationScope;
+use wamn_control_provision::schema_migrations::MigrationDatabase;
 use wamn_schema_control::migrations::{MigrationPlan, plan_migrations, validate_execution_sql};
 use wamn_schema_control::{
     MigrationOutcome, MigrationSource, PackageMigrationError, PackageMigrationErrorType,
@@ -31,9 +31,9 @@ pub(super) fn migrations(
 
 pub(super) fn files(
     sources: &[MigrationSource],
-    scope: MigrationScope,
+    target: MigrationDatabase,
 ) -> anyhow::Result<Vec<MigrationFile>> {
-    let (label, _, _) = super::scope_names(scope);
+    let (label, _, _) = super::target_names(target);
     let planned = plan_migrations(sources, &[], &format!("migrations/{label}/"), None)?;
     Ok(planned
         .pending
@@ -47,12 +47,12 @@ pub(super) fn files(
 }
 
 pub(super) fn report(
-    scope: MigrationScope,
+    target: MigrationDatabase,
     planned: &SchemaPlan,
     sources: &[MigrationSource],
 ) -> SchemaReport {
     observe(
-        scope,
+        target,
         Some(&planned.initialization),
         &planned.recorded,
         sources,
@@ -60,12 +60,12 @@ pub(super) fn report(
 }
 
 pub(super) fn observe(
-    scope: MigrationScope,
+    target: MigrationDatabase,
     initialization: Option<&InitializationIdentity>,
     recorded: &[RecordedMigration],
     sources: &[MigrationSource],
 ) -> SchemaReport {
-    let (label, _, candidate) = super::scope_names(scope);
+    let (label, _, candidate) = super::target_names(target);
     let mut installed = Vec::new();
     let mut uncertain = Vec::new();
     let mut missing = Vec::new();
@@ -84,7 +84,7 @@ pub(super) fn observe(
         }
         Some(_) => true,
     };
-    let image = match files(sources, scope) {
+    let image = match files(sources, target) {
         Ok(files) => Some(files),
         Err(error) => {
             warnings.push(format!(
@@ -134,10 +134,10 @@ pub(super) fn observe(
         ));
     }
     if !pending.is_empty() {
-        warnings.push(format!("selected image has pending {label} SQL; inspect wamn platform schema diff --scope {label} --chart DIR"));
+        warnings.push(format!("selected image has pending {label} SQL; inspect wamn platform schema diff --target {label} --chart DIR"));
     }
     for file in &uncertain {
-        warnings.push(format!("uncertain (started): {}; inspect its effects and use wamn platform schema apply --scope {label} --chart DIR --resolve {}=applied|retry", file.relative_path, file.relative_path));
+        warnings.push(format!("uncertain (started): {}; inspect its effects and use wamn platform schema apply --target {label} --chart DIR --resolve {}=applied|retry", file.relative_path, file.relative_path));
     }
     SchemaReport {
         initialization: initialization.cloned(),
@@ -155,12 +155,12 @@ mod tests {
 
     #[test]
     fn observation_reports_digest_and_checksum_differences_without_refusal() {
-        let scope = MigrationScope::System;
+        let target = MigrationDatabase::System;
         let sources = vec![MigrationSource {
             relative_path: "migrations/system/0001_done.sql".into(),
             bytes: b"SELECT 1;".to_vec(),
         }];
-        let image = files(&sources, scope).unwrap();
+        let image = files(&sources, target).unwrap();
         let identity = InitializationIdentity {
             sha256: "installed-digest".into(),
             installed_at: "original-identity".into(),
@@ -171,12 +171,12 @@ mod tests {
             sha256: image[0].sha256.clone(),
             outcome: MigrationOutcome::Applied,
         }];
-        let observed = observe(scope, Some(&identity), &recorded, &sources);
+        let observed = observe(target, Some(&identity), &recorded, &sources);
         assert_eq!(observed.initialization.as_ref(), Some(&identity));
         assert_eq!(observed.installed, image);
         assert!(observed.pending.is_empty());
         assert!(observed.missing.is_empty());
-        let candidate = super::super::scope_names(scope).2;
+        let candidate = super::super::target_names(target).2;
         assert!(
             observed.warnings.iter().any(|warning| {
                 warning.contains(&identity.sha256) && warning.contains(&candidate)
@@ -191,8 +191,8 @@ mod tests {
             bytes: b"SELECT 2;".to_vec(),
             ..sources.into_iter().next().unwrap()
         }];
-        let candidate = files(&changed, scope).unwrap();
-        let observed = observe(scope, Some(&identity), &recorded, &changed);
+        let candidate = files(&changed, target).unwrap();
+        let observed = observe(target, Some(&identity), &recorded, &changed);
         assert_eq!(observed.initialization.as_ref(), Some(&identity));
         assert_eq!(observed.installed, image);
         assert!(observed.pending.is_empty());
@@ -217,7 +217,7 @@ mod tests {
                 bytes: b"SELECT 3;".to_vec(),
             },
         ];
-        let all = files(&sources, MigrationScope::System).unwrap();
+        let all = files(&sources, MigrationDatabase::System).unwrap();
         let recorded = all[..2]
             .iter()
             .enumerate()
@@ -235,7 +235,7 @@ mod tests {
         let (migrations, missing) = migrations(&sources, &recorded, "migrations/system/").unwrap();
         let planned = SchemaPlan {
             initialization: InitializationIdentity {
-                sha256: super::super::scope_names(MigrationScope::System).2,
+                sha256: super::super::target_names(MigrationDatabase::System).2,
                 installed_at: "identity".into(),
             },
             adoption: false,
@@ -243,7 +243,7 @@ mod tests {
             recorded,
             missing,
         };
-        let observed = report(MigrationScope::System, &planned, &sources);
+        let observed = report(MigrationDatabase::System, &planned, &sources);
         assert_eq!(
             observed.initialization.as_ref(),
             Some(&planned.initialization)
@@ -259,7 +259,7 @@ mod tests {
             missing,
             ..planned
         };
-        let observed = report(MigrationScope::System, &planned, &sources[..1]);
+        let observed = report(MigrationDatabase::System, &planned, &sources[..1]);
         assert_eq!(observed.missing, all[1..2]);
         assert!(observed.pending.is_empty());
     }

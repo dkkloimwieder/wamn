@@ -224,7 +224,7 @@ The six start routes return a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
 The host links no deployment library and keeps no operation history.
 The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
-[Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential scope, deadlines, and result bounds.
+[Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
 The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
@@ -349,7 +349,7 @@ No two applications share a store, and wash-runtime links no application to anot
 Applications in one release can use different lifetimes.
 A call across applications is a workflow call through the host.
 
-Each call receives a new host-owned authority scope.
+Each call receives a new host-owned invocation scope.
 Capability calls use that scope, and cancellation revokes it independently of native store teardown.
 A retained guest context cannot select the next call's permissions.
 A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
@@ -418,19 +418,19 @@ It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
 The pure router, `wamn-router`, owns deterministic graph decisions.
-After initialization, the host records caller, SQL, claims, causation, and effect authority in an invocation scope.
-Native callbacks restore the trace context from that scope.
-Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
-The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
+After initialization, the host records caller, SQL, identity, causation, and effect authority in an invocation scope.
+Native callbacks restore the trace context from that target.
+Cleanup revokes the target and clears bindings after success, failure, cancellation, or owner shutdown.
+The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue leases and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
-Each host replica polls the durable queue and claims work through database leases. Replicas need no wake service or process-local handoff.
-Claims and exhausted-run reaping ignore effect-attempt records.
+Each host replica polls the durable queue and leases work through database leases. Replicas need no wake service or process-local handoff.
+Leases and exhausted-run reaping ignore effect-attempt records.
 Workflow runs have no event ordering guarantee.
 
-The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
+The host opens each identity transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
-For a new logged update, the host sends `BEGIN`, local claims, and the write-log claim together, then waits before it runs the guest.
+For a new logged update, the host sends `BEGIN`, local identity, and the write-log claim together, then waits before it runs the guest.
 A duplicate reads the stored claim and never runs the guest.
 The guest waits for its SQL result before it returns the value that the write log stores.
 The host then sends the write-log finish, the transactional causation message when present, and `COMMIT` together.
@@ -440,7 +440,7 @@ Without causation it takes six statements. Preparation on a cold connection and 
 The guest return value prevents the guest statement and finish from sharing one trip.
 No counter trigger, changed-relation read, or counter reset runs on the write path.
 
-The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
+The host binds the executing principal as `app.user_id` in each identity transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated caller of a route binds its principal id.
@@ -453,7 +453,7 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token of the entry that it runs. A composed callee runs under that token.
 A registration delivery binds the token of its handler.
-A host queue claim, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
+A host queue lease, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
@@ -464,18 +464,18 @@ The `number_counter.set` route binds the requested application after it finds th
 Other host routes, host queue transactions, and platform reads bind no application.
 
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
-The claim is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this claim.
+The identity is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this identity.
 
-A platform claims transaction that only reads binds no principal and no operation.
+A platform identity transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
 
 For that path, each pooled connection remembers its last schema and runner.
 If these values match, the read executes only its application statement.
 If either value changes, the host pipelines the session configuration before the read.
 An absent schema restores the server default, and an absent runner clears the prior runner.
-This reuse stores no principal, role, operation, or application claim. Those claims stay local to each transaction.
+This reuse stores no principal, role, operation, or application identity. Those identity fields stay local to each transaction.
 
-The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
+The [session identity owner](../../crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
 ## Workflows
@@ -484,13 +484,13 @@ A workflow is a released wiring that runs off the request path.
 The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
 
 - `start` admits one released wiring under a service principal. It writes the run and queue row together. A repeated key returns the first run.
-- `park` moves the `available_at` of a queued run to `infinity`, so no claim takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
+- `park` moves the `available_at` of a queued run to `infinity`, so no lease takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
 - `release` returns a parked run to the queue.
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
 `PostgresWorkflows` admits automation with project-admin authority.
 The `wamn-ctl workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
-Its SQL lives in `wamn-run-state` beside the claim SQL.
+Its SQL lives in `wamn-run-state` beside the lease SQL.
 
 An event workflow is an enabled row of `catalog.workflows` in an environment application.
 Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
@@ -519,7 +519,7 @@ The environment document declares its applications: each name with the packages 
 The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn-ctl workflow author` read it.
 A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
-An application is a name, never a package. The workflow gate resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue claims the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
+An application is a name, never a package. The workflow gate resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
 
 Every application host runs one schedule task, which wakes at each minute boundary.
 Its first tick is strictly after startup.
@@ -591,11 +591,11 @@ It refuses `workflow_not_served` when the graph does not gate or its hash differ
 The active role of the caller is `admin` for a holder of `admin`, else the one role that the caller holds.
 Any other caller refuses `active_role_required`.
 The run records the release, the wiring hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
-The idempotency key is scoped to the caller and the workflow.
+The idempotency key is bound to the caller and the workflow.
 A repeated start with the same key and input answers the first run, and another input refuses `idempotency_conflict`.
 The run and its queue row commit in one transaction.
 
-When the queue claims the run, `queued_run_caller` resolves its principal.
+When the queue leases the run, `queued_run_caller` resolves its principal.
 The principal must be an active `service` or `user` that holds the run's role.
 The caller holds the permissions of that role only, and holds `admin` only when the role is `admin`.
 The host reads these grants again before each node, so a role revoked during a run refuses the next node.
@@ -628,7 +628,7 @@ Every layer exposes an interface and depends only on layers below it: base platf
 
 - The base platform and the edge do not link the workflow crate. The dependency tests keep this rule.
 
-Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of scope.
+Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
 
 The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
@@ -674,10 +674,10 @@ The route declares PAT authentication, session authentication, or both.
 Receiving and Acme publish both modes on their existing authenticated application routes.
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
-PAT authentication reads the current principal, credential, organization scope, and applicable membership before admitting the request.
+PAT authentication reads the current principal, credential, organization target, and applicable membership before admitting the request.
 Authorization reads the operation permissions of the principal.
 The host keeps both answers in its [auth memory](#auth-memory).
-Service credentials retain their declared scope and cannot mint a user session.
+Service credentials retain their declared target and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
 For each new request, the host checks the principal, environment membership, and password login.
@@ -730,7 +730,7 @@ Identity offers and mints no audience of an environment whose `registry.project_
 Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
 `authority` is the object `{"login":"<login UUID>"}`.
-The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
+The optional `csrf` JWT claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
 The password issuer binds the existing login record.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
@@ -740,10 +740,10 @@ A browser presents the session token in the `__Host-wamn-session` cookie instead
 The host reads that cookie only when the request has no `Authorization` header and the route admits a session.
 A request that carries both refuses with 401, and so does a repeated session cookie.
 The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF check.
-A cookie token without the `csrf` claim refuses with 401.
-The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
+A cookie token without the `csrf` JWT claim refuses with 401.
+The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the JWT claim.
 A read route (kind `get`, `query` or `projection`) needs no header, because a read changes nothing.
-Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` claim on every route.
+Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` JWT claim on every route.
 
 The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
 Minting anchors expiry to the start of credential validation and records the actual signing time in `iat`.
@@ -920,7 +920,7 @@ Every user session receives the same current authority checks without operation-
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
 The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
-Session-only hosts also require their scoped `WAMN_SYSTEM_URL` identity reader.
+Session-only hosts also require their targeted `WAMN_SYSTEM_URL` identity reader.
 
 Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
 
@@ -1094,7 +1094,7 @@ After password authentication, it returns authorized control audiences, then aut
 Its response retains `environments` and adds nullable `next_cursor` and `total` members with the same meaning as the control lists.
 A control entry carries only `aud` and `org`. The project filter does not exclude control entries.
 The cursor key contains the kind (control 0, application 1) and audience.
-Its scope binds the authenticated principal and the exact optional org and project filters.
+Its cursor binding identifies the authenticated principal and the exact optional org and project filters.
 Invalid limits or cursors return HTTP 400 with `{"error":"password request refused"}`.
 
 Discovery stops after enough authorized candidates establish the page and continuation.
@@ -1245,7 +1245,7 @@ The [table screen style](../../apps/platform_ui/src/page.css) fills the availabl
 [Records](../../apps/platform_ui/src/records.tsx) supplies wfe `TableView` with toolbar actions and pagination, the controls that select a page of rows.
 The project, user, environment, member, control-project, and audience lists request `limit: 25` from their servers.
 The application keeps prior cursors for Previous and replaces rows only after a successful request.
-A scope change or reload starts a new traversal. Pending requests disable the page controls.
+A filter change or reload starts a new traversal. Pending requests disable the page controls.
 The UI passes `totalRows` only when the server supplies a non-null total. Unknown totals show only the current page number.
 Whole-result reference tables retain local paging over their complete arrays.
 The shell bootstrap keeps a whole `control.mine` call, and environment lookups by name keep whole calls.
@@ -1274,7 +1274,7 @@ The application owns addresses, permission filtering, and page actions.
 
 The shell calls the release under `/api` through its [transport](../../apps/platform_ui/src/shell.tsx).
 The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
-Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only scope.
+Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only configuration.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
@@ -1341,7 +1341,7 @@ Queue liveness follows durable polls and successful lease renewals in each host 
 No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
-The host drains readiness, stops queue claims, and starts native HTTP shutdown together.
+The host drains readiness, stops queue leases, and starts native HTTP shutdown together.
 The same admission signal refuses further HTTP requests on existing connections.
 One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.

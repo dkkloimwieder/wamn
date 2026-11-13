@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AdmittedComponent, ComponentPackageScope, DefinitionHash, ServingManifest, WiringDocument,
+    AdmittedComponent, ComponentPackageCoordinate, DefinitionHash, ServingManifest, WiringDocument,
     validate_resolved_wiring_compatibility,
 };
 
@@ -117,14 +117,14 @@ pub fn resolve_workflow_components(
             }
             _ => return Err(ambiguous(node_id)),
         };
-        let scope = ComponentPackageScope {
+        let target = ComponentPackageCoordinate {
             env_key: env_key.to_owned(),
             package_id: chosen.package_id.clone(),
             package_version: versions[chosen.package_id.as_str()].to_owned(),
         };
         resolved.insert(
             node_id.clone(),
-            chosen.descriptor.clone().into_admitted(scope).component,
+            chosen.descriptor.clone().into_admitted(target).component,
         );
     }
     Ok(resolved)
@@ -199,7 +199,7 @@ mod tests {
         digest: char,
     ) -> ServingComponent {
         let fact = AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "t1".to_owned(),
                 package_id: package.to_owned(),
                 package_version: "1.0.0".to_owned(),
@@ -252,12 +252,12 @@ mod tests {
     }
 
     #[test]
-    fn an_application_operation_gates_with_its_scope() {
+    fn an_application_operation_gates_with_its_target() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         let document = document("data", ORDERS_GET);
         let resolved =
             resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
-        assert_eq!(resolved["node"].scope.package_version, "1.0.0");
+        assert_eq!(resolved["node"].target.package_version, "1.0.0");
         assert_eq!(
             gate_workflow_document("t1", &packages(), &manifest, &document).unwrap(),
             document.wiring_hash()
@@ -270,7 +270,7 @@ mod tests {
         let resolved =
             resolve_workflow_components("t1", &packages(), &manifest, &document("jsonata", "map"))
                 .unwrap();
-        assert_eq!(resolved["node"].scope.package_id, "palette");
+        assert_eq!(resolved["node"].target.package_id, "palette");
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
             &document("data", PALETTE_GET),
         )
         .unwrap();
-        assert_eq!(resolved["node"].scope.package_id, "palette");
+        assert_eq!(resolved["node"].target.package_id, "palette");
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
         let document = document("jsonata", "map");
         let resolved =
             resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
-        assert_eq!(resolved["node"].scope.package_id, APPLICATION);
+        assert_eq!(resolved["node"].target.package_id, APPLICATION);
         resolve_workflow_components("t1", &BTreeSet::new(), &manifest, &document)
             .expect_err("without the application's packages the node is ambiguous");
     }

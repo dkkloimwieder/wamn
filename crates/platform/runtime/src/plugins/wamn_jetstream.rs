@@ -65,13 +65,13 @@ use bindings::wamn::jetstream::types::JsError;
 
 pub const WAMN_JETSTREAM_ID: &str = "wamn-jetstream";
 
-/// Trusted workload claim carrying the exact event environment.
+/// Trusted workload identity carrying the exact event environment.
 pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 
 /// The host-owned inputs needed to publish one admitted Emit terminal.
 ///
 /// Tenant, project, and environment are intentionally absent:
-/// [`WamnJetstream::publish_derived`] resolves them from the claim bound to
+/// [`WamnJetstream::publish_derived`] resolves them from the identity bound to
 /// `component_id`. `package_id` is supplied only by the native host caller from
 /// its loaded release/run/wiring identity; it is not a guest WIT operand.
 ///
@@ -79,7 +79,7 @@ pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 /// name the wiring position the Emit terminal was admitted at, and nothing on
 /// the publish path authorizes against them. Both callers are native hosts that
 /// already hold all three — the router bridge from its resolved target and the
-/// executor from its claimed queue row — so neither reads them from guest
+/// executor from its leased queue row — so neither reads them from guest
 /// output. See [`js_span`] for how they reach the effect span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
@@ -106,7 +106,7 @@ pub struct DerivedPublishAck {
 /// Stable host classification for derived publication failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DerivedPublishErrorType {
-    UnboundScope,
+    UnboundIdentity,
     InvalidInput,
     ConnectionUnavailable,
     Serialization,
@@ -162,7 +162,7 @@ pub struct WamnJetstreamConfig {
     /// call returns `connection-unavailable`.
     pub nats: Option<async_nats::Client>,
     /// Trusted event coordinates, separate from tenant and database authority.
-    pub event_scope: Option<Triple>,
+    pub event_target: Option<Triple>,
     /// Declared NATS stream copies, separate from workload instances.
     pub stream_replicas: Option<usize>,
     /// Declared duplicate detection window in seconds.
@@ -175,7 +175,7 @@ impl WamnJetstreamConfig {
     pub fn from_env() -> Self {
         Self {
             nats: None,
-            event_scope: match (
+            event_target: match (
                 std::env::var("WAMN_EVT_ORG"),
                 std::env::var("WAMN_EVT_PROJECT"),
                 std::env::var("WAMN_EVT_ENV"),
@@ -217,18 +217,18 @@ pub struct WamnJetstream {
     /// `OnceCell`) so a transient connect failure is retried on the next call
     /// instead of memoized forever; only a successful connect is stored.
     ctx: Mutex<Option<Context>>,
-    /// Per-component tenant/project/environment claim, registered at workload
+    /// Per-component tenant/project/environment identity, registered at workload
     /// bind from the same trusted `wamn.*` config the `wamn:postgres`
-    /// claims read. It exists only to enrich this plugin's effect spans: before
+    /// identity read. It exists only to enrich this plugin's effect spans: before
     /// `wamn-0h0g.24.3` the bind read the tenant, derived the execution target
     /// from it and discarded it, so nothing here could say whose event plane a
     /// publish or an ack belonged to.
-    claims: std::sync::RwLock<HashMap<String, JetstreamClaim>>,
+    identity: std::sync::RwLock<HashMap<String, JetstreamIdentity>>,
 }
 
-/// One component's bind-time tenant/project claim.
+/// One component's bind-time tenant/project identity.
 #[derive(Clone, Debug)]
-struct JetstreamClaim {
+struct JetstreamIdentity {
     env_key: Box<str>,
     project: Box<str>,
     environment: Box<str>,
@@ -249,7 +249,7 @@ fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), Deriv
     ] {
         if value.is_empty() || value.trim() != value || subject_token(value) != value {
             return Err(DerivedPublishError::new(
-                DerivedPublishErrorType::UnboundScope,
+                DerivedPublishErrorType::UnboundIdentity,
                 format!("event coordinate {name} is absent or not one NATS subject token"),
             ));
         }
@@ -260,7 +260,7 @@ fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), Deriv
 #[derive(Debug)]
 struct PreparedDerivedPublication {
     component_id: String,
-    claim: JetstreamClaim,
+    identity: JetstreamIdentity,
     subject: String,
     message_id: String,
     expected_stream: String,
@@ -280,14 +280,14 @@ struct DerivedPublishWiring {
 }
 
 fn prepare_derived_publication(
-    claim: JetstreamClaim,
+    identity: JetstreamIdentity,
     coordinates: &EventCoordinates,
     request: DerivedPublishRequest,
 ) -> Result<PreparedDerivedPublication, DerivedPublishError> {
     require_event_coordinates(coordinates)?;
-    if claim.environment != coordinates.environment {
+    if identity.environment != coordinates.environment {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorType::UnboundScope,
+            DerivedPublishErrorType::UnboundIdentity,
             "derived event environment differs from the platform event binding",
         ));
     }
@@ -320,7 +320,7 @@ fn prepare_derived_publication(
     }
 
     let event = DerivedEvent::new(
-        claim.env_key.to_string(),
+        identity.env_key.to_string(),
         coordinates.project.to_string(),
         coordinates.environment.to_string(),
         request.package_id,
@@ -338,7 +338,7 @@ fn prepare_derived_publication(
         event.op,
     );
     let message_id = derived_msg_id(
-        &claim.env_key,
+        &identity.env_key,
         &coordinates.project,
         &coordinates.environment,
         &event.package_id,
@@ -359,7 +359,7 @@ fn prepare_derived_publication(
     })?;
     Ok(PreparedDerivedPublication {
         component_id: request.component_id,
-        claim,
+        identity,
         subject: event_subject,
         message_id,
         expected_stream,
@@ -374,26 +374,26 @@ fn prepare_derived_publication(
 }
 
 /// The span one `wamn:jetstream` effect opens, enriched from the component's
-/// bind-time claim and, where the operation has one, its wiring position.
+/// bind-time identity and, where the operation has one, its wiring position.
 ///
 /// Only `publish-derived` passes a `wiring`. It is the one operation this plugin
 /// performs on behalf of an admitted Emit terminal, and its native callers hand
 /// the coordinates down with the request. The registration operations perform
 /// control work at no wiring node, so each records the
 /// keys EMPTY through
-/// [`record_wiring`]'s `None`, which reads as "this effect holds no such claim"
+/// [`record_wiring`]'s `None`, which reads as "this effect holds no such identity"
 /// rather than as dropped instrumentation.
 ///
 /// Four of the eight keys are EMPTY even on `publish-derived`.
 /// `wamn.occurrence`, `wamn.component_digest`, `wamn.component_name` and
 /// `wamn.operation` all belong to a bound `ConnectionInvocation`, and the
-/// publish path never stands in a guest component scope: its two callers are the
+/// publish path never stands in a guest invocation record: its two callers are the
 /// router delivery bridge and the executor queue, both native hosts. They hold
 /// the wiring position but no per-visit invocation, so there is nothing
-/// host-attested to fill those four with and a placeholder would be a claim the
+/// host-attested to fill those four with and a placeholder would be an identity the
 /// platform cannot make.
 fn js_span(
-    claim: &JetstreamClaim,
+    identity: &JetstreamIdentity,
     component_id: &str,
     operation: &'static str,
     wiring: Option<&DerivedPublishWiring>,
@@ -401,8 +401,8 @@ fn js_span(
     let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
-            env_key: &claim.env_key,
-            project: &claim.project,
+            env_key: &identity.env_key,
+            project: &identity.project,
             component: component_id,
         },
         None,
@@ -431,14 +431,14 @@ impl WamnJetstream {
             stream_replicas: cfg.stream_replicas,
             dup_window_secs: cfg.dup_window_secs,
             event_coordinates: cfg
-                .event_scope
-                .map_or_else(EventCoordinates::default, |scope| EventCoordinates {
-                    org: scope.org.into_boxed_str(),
-                    project: scope.project.into_boxed_str(),
-                    environment: scope.env.as_str().into(),
+                .event_target
+                .map_or_else(EventCoordinates::default, |target| EventCoordinates {
+                    org: target.org.into_boxed_str(),
+                    project: target.project.into_boxed_str(),
+                    environment: target.env.as_str().into(),
                 }),
             ctx: Mutex::new(None),
-            claims: std::sync::RwLock::new(HashMap::new()),
+            identity: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -477,14 +477,14 @@ impl WamnJetstream {
                     "WAMN_EVT_DUP_WINDOW_SECS must declare a positive duplicate window".into(),
                 )
             })?;
-        let scope = Triple::new(
+        let target = Triple::new(
             self.event_coordinates.org.as_ref(),
             self.event_coordinates.project.as_ref(),
             self.event_coordinates.environment.as_ref(),
         );
         Ok([
-            source_stream_config(&scope, replicas, duplicate_window),
-            advisory_stream_config(&scope, replicas),
+            source_stream_config(&target, replicas, duplicate_window),
+            advisory_stream_config(&target, replicas),
         ])
     }
 
@@ -498,23 +498,23 @@ impl WamnJetstream {
         ))
     }
 
-    /// Register a component's bind-time scope claim. All values come from the
+    /// Register a component's bind-time target identity. All values come from the
     /// trusted workload config. Generic guest operations use them only for
     /// enrichment; the native derived publisher separately requires a complete
-    /// subject-safe claim.
-    fn set_claim(
+    /// subject-safe identity.
+    fn set_identity(
         &self,
         component_id: &str,
         env_key: Option<&str>,
         project: Option<&str>,
         environment: Option<&str>,
     ) {
-        self.claims
+        self.identity
             .write()
-            .expect("jetstream claims lock poisoned")
+            .expect("jetstream identity lock poisoned")
             .insert(
                 component_id.to_string(),
-                JetstreamClaim {
+                JetstreamIdentity {
                     env_key: env_key.unwrap_or_default().into(),
                     project: project.unwrap_or(DEFAULT_PROJECT).into(),
                     environment: environment.unwrap_or_default().into(),
@@ -522,12 +522,12 @@ impl WamnJetstream {
             );
     }
 
-    /// Bind the exact trusted scope used by native derived publication.
+    /// Bind the exact trusted target used by native derived publication.
     ///
     /// The production driver calls this at instance checkout and revokes it at
-    /// check-in. No scope operand exists on [`DerivedPublishRequest`], so a
+    /// check-in. No target operand exists on [`DerivedPublishRequest`], so a
     /// guest or wiring payload has nothing it can echo or redirect.
-    pub fn bind_derived_scope(
+    pub fn bind_derived_invocation(
         &self,
         component_id: &str,
         env_key: &str,
@@ -542,11 +542,13 @@ impl WamnJetstream {
             if value.is_empty() || value.trim() != value || subject_token(value) != value {
                 return Err(DerivedPublishError::new(
                     DerivedPublishErrorType::InvalidInput,
-                    format!("derived event {field} claim is empty or not one NATS subject token"),
+                    format!(
+                        "derived event {field} identity is empty or not one NATS subject token"
+                    ),
                 ));
             }
         }
-        self.set_claim(
+        self.set_identity(
             component_id,
             Some(env_key),
             Some(project),
@@ -555,59 +557,59 @@ impl WamnJetstream {
         Ok(())
     }
 
-    /// Revoke a native derived-publication claim at instance check-in.
-    pub fn revoke_derived_scope(&self, component_id: &str) {
-        self.claims
+    /// Revoke a native derived-publication identity at instance check-in.
+    pub fn revoke_derived_invocation(&self, component_id: &str) {
+        self.identity
             .write()
-            .expect("jetstream claims lock poisoned")
+            .expect("jetstream identity lock poisoned")
             .remove(component_id);
     }
 
-    /// The claim registered for a component, or the unclaimed default. An
+    /// The identity registered for a component, or the unbound default. An
     /// unregistered component is a store built without the bind path (a bench,
     /// a hand-linked fixture), not a guest that withheld its identity.
-    fn claim_for(&self, component_id: &str) -> JetstreamClaim {
-        self.claims
+    fn identity_for(&self, component_id: &str) -> JetstreamIdentity {
+        self.identity
             .read()
-            .expect("jetstream claims lock poisoned")
+            .expect("jetstream identity lock poisoned")
             .get(component_id)
             .cloned()
-            .unwrap_or_else(|| JetstreamClaim {
+            .unwrap_or_else(|| JetstreamIdentity {
                 env_key: Box::default(),
                 project: DEFAULT_PROJECT.into(),
                 environment: Box::default(),
             })
     }
 
-    fn required_derived_claim(
+    fn required_derived_identity(
         &self,
         component_id: &str,
-    ) -> Result<JetstreamClaim, DerivedPublishError> {
-        let claim = self
-            .claims
+    ) -> Result<JetstreamIdentity, DerivedPublishError> {
+        let identity = self
+            .identity
             .read()
-            .expect("jetstream claims lock poisoned")
+            .expect("jetstream identity lock poisoned")
             .get(component_id)
             .cloned()
             .ok_or_else(|| {
                 DerivedPublishError::new(
-                    DerivedPublishErrorType::UnboundScope,
-                    "derived-event-scope-unbound",
+                    DerivedPublishErrorType::UnboundIdentity,
+                    "derived-event-target-unbound",
                 )
             })?;
         for value in [
-            claim.env_key.as_ref(),
-            claim.project.as_ref(),
-            claim.environment.as_ref(),
+            identity.env_key.as_ref(),
+            identity.project.as_ref(),
+            identity.environment.as_ref(),
         ] {
             if value.is_empty() || value.trim() != value || subject_token(value) != value {
                 return Err(DerivedPublishError::new(
-                    DerivedPublishErrorType::UnboundScope,
-                    "derived-event-scope-incomplete-or-invalid",
+                    DerivedPublishErrorType::UnboundIdentity,
+                    "derived-event-target-incomplete-or-invalid",
                 ));
             }
         }
-        Ok(claim)
+        Ok(identity)
     }
 
     /// Resolve (lazily connect + memoize) the JetStream context. Unconfigured or
@@ -642,13 +644,13 @@ impl WamnJetstream {
         &self,
         request: DerivedPublishRequest,
     ) -> Result<DerivedPublishAck, DerivedPublishError> {
-        let claim = self.required_derived_claim(&request.component_id)?;
-        let publication = prepare_derived_publication(claim, &self.event_coordinates, request)?;
+        let identity = self.required_derived_identity(&request.component_id)?;
+        let publication = prepare_derived_publication(identity, &self.event_coordinates, request)?;
         let mut headers = HeaderMap::new();
         headers.insert(NATS_MESSAGE_ID, publication.message_id.as_str());
 
         let span = js_span(
-            &publication.claim,
+            &publication.identity,
             &publication.component_id,
             "publish-derived",
             Some(&publication.wiring),
@@ -700,7 +702,7 @@ impl WamnJetstream {
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
             "publish-derived",
-            &publication.claim.project,
+            &publication.identity.project,
             started.elapsed(),
         );
         result
@@ -739,7 +741,7 @@ impl HostPlugin for WamnJetstream {
                 config.get(ENVIRONMENT_CONFIG_KEY).cloned(),
             )
         };
-        self.set_claim(
+        self.set_identity(
             item.id(),
             env_key.as_deref(),
             project.as_deref(),
@@ -964,8 +966,8 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         if let Err(error) = postgres.require_event_materializer(&component, &env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
-        let claim = plugin.claim_for(&component);
-        let span = js_span(&claim, &component, "event-triggers", None);
+        let identity = plugin.identity_for(&component);
+        let span = js_span(&identity, &component, "event-triggers", None);
         Ok(
             match postgres
                 .event_triggers(
@@ -999,8 +1001,8 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         if let Err(error) = postgres.require_event_materializer(&component, &env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
-        let claim = plugin.claim_for(&component);
-        let span = js_span(&claim, &component, "route-event", None);
+        let identity = plugin.identity_for(&component);
+        let span = js_span(&identity, &component, "route-event", None);
         Ok(plugin
             .route_event(
                 &postgres,
@@ -1039,8 +1041,8 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         if let Err(error) = postgres.require_event_materializer(&component_id, &env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
-        let claim = plugin.claim_for(&component_id);
-        let span = js_span(&claim, &component_id, "prepare-registration", None);
+        let identity = plugin.identity_for(&component_id);
+        let span = js_span(&identity, &component_id, "prepare-registration", None);
         let started = std::time::Instant::now();
         let result = prepare_consumer(&plugin, &postgres, &config, &package_id, &registration_id)
             .instrument(span)
@@ -1049,7 +1051,7 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
             &JETSTREAM_DURATION_MS,
             EFFECT_OPERATION,
             "prepare-registration",
-            &claim.project,
+            &identity.project,
             started.elapsed(),
         );
         Ok(result)
@@ -1105,20 +1107,20 @@ mod tests {
         }
     }
 
-    /// A plugin bound for derived publication into a valid event scope, with no
+    /// A plugin bound for derived publication into a valid event target, with no
     /// broker URL so `ensure_ctx` refuses before any socket is opened. The span
     /// is opened before that refusal, which is what makes the shape assertable
     /// with no NATS server running.
     fn span_test_plugin() -> WamnJetstream {
         let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         plugin
-            .bind_derived_scope(
+            .bind_derived_invocation(
                 "component-1",
                 "fixture-route-auth",
                 "database-project",
                 "dev",
             )
-            .expect("trusted driver scope binds");
+            .expect("trusted driver target binds");
         plugin.event_coordinates = EventCoordinates {
             org: "fixture".into(),
             project: "widgets".into(),
@@ -1196,10 +1198,10 @@ mod tests {
     }
 
     #[test]
-    fn derived_publication_uses_only_the_bound_scope_and_admitted_selector() {
+    fn derived_publication_uses_only_the_bound_identity_and_admitted_selector() {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
         let publication = prepare_derived_publication(
-            JetstreamClaim {
+            JetstreamIdentity {
                 env_key: "fixture-route-auth".into(),
                 project: "database-project".into(),
                 environment: "dev".into(),
@@ -1211,7 +1213,7 @@ mod tests {
             },
             derived_request("component-1", dangerous_author_id),
         )
-        .expect("trusted scope and admitted selector prepare");
+        .expect("trusted target and admitted selector prepare");
 
         assert_eq!(publication.subject, "evt.fixture.widgets.dev.orders.update");
         assert_eq!(publication.expected_stream, "EVT_7_fixture_7_widgets_3_dev");
@@ -1246,7 +1248,7 @@ mod tests {
 
     #[test]
     fn derived_publication_refuses_a_noncanonical_package_identity() {
-        let claim = JetstreamClaim {
+        let identity = JetstreamIdentity {
             env_key: "fixture".into(),
             project: "app".into(),
             environment: "dev".into(),
@@ -1258,7 +1260,7 @@ mod tests {
             project: "app".into(),
             environment: "dev".into(),
         };
-        let error = prepare_derived_publication(claim, &coordinates, request)
+        let error = prepare_derived_publication(identity, &coordinates, request)
             .expect_err("a noncanonical package identity must refuse");
         assert_eq!(error.error_type(), DerivedPublishErrorType::InvalidInput);
     }
@@ -1268,20 +1270,20 @@ mod tests {
         let plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         assert_eq!(
             plugin
-                .required_derived_claim("component-1")
+                .required_derived_identity("component-1")
                 .unwrap_err()
                 .error_type(),
-            DerivedPublishErrorType::UnboundScope
+            DerivedPublishErrorType::UnboundIdentity
         );
-        plugin.set_claim("component-1", Some("fixture"), Some("app"), None);
+        plugin.set_identity("component-1", Some("fixture"), Some("app"), None);
         assert_eq!(
             plugin
-                .required_derived_claim("component-1")
+                .required_derived_identity("component-1")
                 .unwrap_err()
                 .error_type(),
-            DerivedPublishErrorType::UnboundScope
+            DerivedPublishErrorType::UnboundIdentity
         );
-        plugin.set_claim(
+        plugin.set_identity(
             "component-1",
             Some("other.tenant"),
             Some("app"),
@@ -1289,43 +1291,43 @@ mod tests {
         );
         assert_eq!(
             plugin
-                .required_derived_claim("component-1")
+                .required_derived_identity("component-1")
                 .unwrap_err()
                 .error_type(),
-            DerivedPublishErrorType::UnboundScope
+            DerivedPublishErrorType::UnboundIdentity
         );
         assert!(
             plugin
-                .bind_derived_scope("component-1", "other.tenant", "app", "dev")
+                .bind_derived_invocation("component-1", "other.tenant", "app", "dev")
                 .is_err(),
-            "a claim that can escape one subject token is refused"
+            "an identity that can escape one subject token is refused"
         );
         plugin
-            .bind_derived_scope("component-1", "fixture", "app", "dev")
-            .expect("complete trusted scope binds");
+            .bind_derived_invocation("component-1", "fixture", "app", "dev")
+            .expect("complete trusted target binds");
         assert_eq!(
             plugin
-                .required_derived_claim("component-1")
-                .expect("claim resolves")
+                .required_derived_identity("component-1")
+                .expect("identity resolves")
                 .environment
                 .as_ref(),
             "dev"
         );
-        plugin.revoke_derived_scope("component-1");
-        assert!(plugin.required_derived_claim("component-1").is_err());
+        plugin.revoke_derived_invocation("component-1");
+        assert!(plugin.required_derived_identity("component-1").is_err());
     }
 
     #[tokio::test]
     async fn derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect() {
         let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         plugin
-            .bind_derived_scope(
+            .bind_derived_invocation(
                 "component-1",
                 "fixture-route-auth",
                 "database-project",
                 "dev",
             )
-            .expect("trusted driver scope binds");
+            .expect("trusted driver target binds");
         for coordinates in [
             EventCoordinates::default(),
             EventCoordinates {
@@ -1349,7 +1351,7 @@ mod tests {
                 .publish_derived(derived_request("component-1", "author:orders:7"))
                 .await
                 .expect_err("missing or foreign event coordinates must refuse before connection");
-            assert_eq!(error.error_type(), DerivedPublishErrorType::UnboundScope);
+            assert_eq!(error.error_type(), DerivedPublishErrorType::UnboundIdentity);
         }
     }
 
@@ -1361,7 +1363,7 @@ mod tests {
                 .is_err()
         );
         let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
-            event_scope: Some(Triple::new("fixture", "widgets", "dev")),
+            event_target: Some(Triple::new("fixture", "widgets", "dev")),
             ..Default::default()
         });
         assert!(plugin.expected_event_streams().is_err());
@@ -1485,7 +1487,7 @@ mod tests {
                 "evt.fixture.proj.prod.widgets.>"
             )
             .is_err(),
-            "registration ids are package-scoped and must not collide across packages"
+            "registration ids are package-owned and must not collide across packages"
         );
     }
 
@@ -1543,11 +1545,11 @@ mod tests {
         let stream = "EVT_13_wamnjsderived_3_app_3_dev";
         let event_subject = "evt.wamnjsderived.app.dev.orders.update";
         let _ = ctx.delete_stream(stream).await;
-        let scope = Triple::new("wamnjsderived", "app", "dev");
-        let advisory_config = advisory_stream_config(&scope, 1);
+        let target = Triple::new("wamnjsderived", "app", "dev");
+        let advisory_config = advisory_stream_config(&target, 1);
         let advisory_name = advisory_config.name.clone();
         let _ = ctx.delete_stream(&advisory_name).await;
-        ctx.create_stream(source_stream_config(&scope, 1, Duration::from_secs(120)))
+        ctx.create_stream(source_stream_config(&target, 1, Duration::from_secs(120)))
             .await
             .expect("provision derived stream");
         ctx.create_stream(advisory_config)
@@ -1556,13 +1558,13 @@ mod tests {
 
         let plugin = WamnJetstream::new(WamnJetstreamConfig {
             nats: Some(client),
-            event_scope: Some(scope),
+            event_target: Some(target),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
         });
         plugin
-            .bind_derived_scope("component-1", "wamnjsderived", "app", "dev")
-            .expect("trusted scope binds");
+            .bind_derived_invocation("component-1", "wamnjsderived", "app", "dev")
+            .expect("trusted target binds");
         let first = plugin
             .publish_derived(derived_request("component-1", "author:orders:7"))
             .await

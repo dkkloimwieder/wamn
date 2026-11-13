@@ -5,7 +5,7 @@
 //! provisions nothing and owns no promotion verb.
 
 pub(super) mod plan;
-pub use plan::flow_http_identity_claims;
+pub use plan::flow_http_identity_fields;
 use plan::{
     decode_json, flow_http_request, heartbeat_matches, host_namespace, require_running,
     require_stopped, validate_request, wit_interface, workload_pending,
@@ -1417,13 +1417,13 @@ mod tests {
     }
 
     /// The deploy template and the production path must declare the SAME
-    /// identity claims. Either side gaining or losing one fails here.
+    /// identity fields. Either side gaining or losing one fails here.
     ///
     /// Read from the template rather than restated, and compared against the
     /// producer rather than a second list, so this cannot drift into the third
     /// hand-maintained copy of the thing it exists to prevent.
     #[test]
-    fn the_workload_template_declares_exactly_the_claims_activation_sets() {
+    fn the_workload_template_declares_exactly_the_fields_activation_sets() {
         let template = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../deploy/platform/http-route-workload.example.yaml"),
@@ -1439,9 +1439,9 @@ mod tests {
         declared.sort_unstable();
 
         let identity = identity();
-        let mut set: Vec<&str> = flow_http_identity_claims(&identity)
+        let mut set: Vec<&str> = flow_http_identity_fields(&identity)
             .into_iter()
-            .map(|(claim, _)| claim)
+            .map(|(field_name, _)| field_name)
             .collect();
         set.sort_unstable();
 
@@ -1449,16 +1449,16 @@ mod tests {
             declared, set,
             "deploy/platform/http-route-workload.example.yaml declares {declared:?} \
              but activation sets {set:?}; the cluster journey substitutes what the \
-             template declares, so a claim in one and not the other deploys a \
+             template declares, so a field_name in one and not the other deploys a \
              placeholder identity"
         );
     }
 
-    /// Every claim carries a DISTINCT field. A producer that paired two claims
+    /// Every field_name carries a DISTINCT field. A producer that paired two fields
     /// to the same field would satisfy the set-equality test above while
     /// deploying one identity under another's name.
     #[test]
-    fn each_identity_claim_carries_its_own_field() {
+    fn each_identity_field_carries_its_own_field() {
         let identity = DevActivationIdentity {
             catalog: "catalog-value".to_owned(),
             environment: "environment-value".to_owned(),
@@ -1468,10 +1468,10 @@ mod tests {
             host_name: "host-name-value".to_owned(),
             runner: "runner-value".to_owned(),
         };
-        for (claim, value) in flow_http_identity_claims(&identity) {
-            let field = claim
+        for (field_name, value) in flow_http_identity_fields(&identity) {
+            let field = field_name
                 .strip_prefix("wamn.")
-                .expect("every claim is namespaced");
+                .expect("every field_name is namespaced");
             assert_eq!(
                 value,
                 if field == "env_key" {
@@ -1479,7 +1479,7 @@ mod tests {
                 } else {
                     format!("{field}-value")
                 },
-                "claim {claim} carries the wrong field of the identity"
+                "field_name {field_name} carries the wrong field of the identity"
             );
         }
     }
@@ -1708,7 +1708,7 @@ mod tests {
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
         let staged_http: v2::WorkloadStartRequest =
             serde_json::from_slice(&staged_workload).unwrap();
-        let claims = staged_http
+        let fields = staged_http
             .workload
             .unwrap()
             .wit_world
@@ -1719,7 +1719,7 @@ mod tests {
             .unwrap()
             .config;
         assert_eq!(
-            claims["wamn.env_key"].as_bytes(),
+            fields["wamn.env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         let staged_materializer: v2::WorkloadStartRequest =

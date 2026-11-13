@@ -41,7 +41,7 @@ ambiguous_negative_literals = "deny"
 redundant_lifetimes = "deny"
 trivial_numeric_casts = "deny"
 # 6 handwritten unsafe items at 9f74f86c8, retained by owner ruling 2026-11-04.
-# Each has a scoped expect to keep new unsafe code under review.
+# Each has a targeted expect to keep new unsafe code under review.
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"
@@ -83,7 +83,7 @@ large_types_passed_by_value = "deny"
 # the adoption measurement at ffe54cae (2316 warnings, 64 lints) and are recorded
 # so the exemptions stay arguable instead of becoming folklore. These crates are
 # an APPLICATION workspace -- services plus internal libraries with no external
-# consumers and nothing published -- and the guidelines scope libs-ux rules to
+# consumers and nothing published -- and the guidelines target libs-ux rules to
 # crates with a public API.
 must_use_candidate = "allow"      # 697. #[must_use] on internal APIs nobody else calls.
 missing_errors_doc = "allow"      # 254. Library-API doc contract; no external consumer.

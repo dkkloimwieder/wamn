@@ -5,7 +5,7 @@
 //! `wamn_record_history_log` trigger argument is `P<n>D`, and the verb reads that
 //! argument from `pg_trigger`. It skips an `unlimited` relation.
 //!
-//! **Role:** the verb connects as a scoped `wamn_audit_retention` credential
+//! **Role:** the verb connects as a targeted `wamn_audit_retention` credential
 //! generation and refuses any other login. apply-package grants that role
 //! `DELETE` and `SELECT (row_key, position, changed_at, transaction_id)` on the history
 //! tables that the verb prunes. It also grants the watermark read and write.
@@ -35,7 +35,7 @@ use wamn_control_provision::audit_retention::{
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
 use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope,
+    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity,
     bind_platform_principal_sql, workload_generation_role,
 };
 
@@ -112,14 +112,14 @@ async fn verify_audit_retention_identity(client: &Client, env_key: &str) -> anyh
         .context("read connected audit retention identity")?;
     let role: String = row.get("role");
     let database: String = row.get("database");
-    let scope = WorkloadRoleScope::EnvKey {
+    let target = WorkloadRoleIdentity::EnvKey {
         env_key,
         database: &database,
     };
     let mut expected = Vec::new();
     for generation in [CredentialGeneration::A, CredentialGeneration::B] {
         expected.push(
-            workload_generation_role(WorkloadRoleFamily::AuditRetention, scope, generation)
+            workload_generation_role(WorkloadRoleFamily::AuditRetention, target, generation)
                 .context("derive the expected audit retention generation identity")?,
         );
     }

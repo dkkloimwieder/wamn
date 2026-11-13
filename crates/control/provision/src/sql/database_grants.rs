@@ -5,7 +5,7 @@
 /// The filter is `datallowconn`, not `NOT datistemplate`, and must stay so:
 /// `template1` is a template AND connectable, so a template filter reported a
 /// clean floor while `template1` still carried PostgreSQL's default PUBLIC
-/// `CONNECT`. `template0` (`datallowconn = false`) is correctly out of scope —
+/// `CONNECT`. `template0` (`datallowconn = false`) is correctly out of target —
 /// it keeps its PUBLIC `CONNECT` aclitem, which no session can use.
 pub fn public_connect_databases_sql() -> &'static str {
     "SELECT d.datname::text FROM pg_database d \

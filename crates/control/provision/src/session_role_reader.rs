@@ -1,6 +1,6 @@
-//! Scoped project-environment credentials for fresh session role reads.
+//! Targeted project-environment credentials for fresh session role reads.
 //!
-//! The provisioner supplies the scope and physical database. This pure parser
+//! The provisioner supplies the target and physical database. This pure parser
 //! rejects broad and swapped credentials before I/O; database ACLs enforce the
 //! approved columns. Neither success formatting nor errors reveal the URL.
 
@@ -9,7 +9,7 @@ use std::fmt;
 use url::Url;
 
 use crate::CredentialGeneration;
-use crate::workload_role::{WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role};
+use crate::workload_role::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role};
 
 /// Which predicate refused a session role-reader credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +75,7 @@ impl SessionRoleReaderConnection {
         &self.database
     }
 
-    /// The scoped A/B login name.
+    /// The targeted A/B login name.
     pub fn role(&self) -> &str {
         &self.role
     }
@@ -156,7 +156,7 @@ pub fn parse_session_role_reader_url(
     for generation in [CredentialGeneration::A, CredentialGeneration::B] {
         let role = workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org,
                 project,
                 environment,
@@ -164,7 +164,7 @@ pub fn parse_session_role_reader_url(
             },
             generation,
         )
-        .expect("the session role reader always has project-environment scope");
+        .expect("the session role reader always has project-environment target");
         if parsed.username() == role {
             return Ok(SessionRoleReaderConnection {
                 url: raw.to_owned(),
@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     const DATABASE: &str = "wamn-db-acme--widgets--dev--k3m9x2p7";
-    const SCOPE: WorkloadRoleScope<'_> = WorkloadRoleScope::ProjectEnvironment {
+    const TARGET: WorkloadRoleIdentity<'_> = WorkloadRoleIdentity::ProjectEnvironment {
         org: "acme",
         project: "widgets",
         environment: "dev",
@@ -194,10 +194,10 @@ mod tests {
 
     fn url(
         family: WorkloadRoleFamily,
-        scope: WorkloadRoleScope<'_>,
+        target: WorkloadRoleIdentity<'_>,
         generation: CredentialGeneration,
     ) -> String {
-        let role = workload_generation_role(family, scope, generation).unwrap();
+        let role = workload_generation_role(family, target, generation).unwrap();
         format!("postgres://{role}:fixture-password@database.invalid/{DATABASE}")
     }
 
@@ -206,9 +206,9 @@ mod tests {
     }
 
     #[test]
-    fn both_generations_are_scoped_and_formatted_without_credentials() {
+    fn both_generations_are_targeted_and_formatted_without_credentials() {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-            let raw = url(WorkloadRoleFamily::SessionRoleReader, SCOPE, generation);
+            let raw = url(WorkloadRoleFamily::SessionRoleReader, TARGET, generation);
             let connection = parse(&raw).unwrap();
             assert_eq!(connection.url(), raw);
             assert_eq!(connection.database(), DATABASE);
@@ -227,7 +227,7 @@ mod tests {
             WorkloadRoleFamily::ExecutorPlatform,
         ] {
             assert_eq!(
-                parse(&url(family, SCOPE, CredentialGeneration::A))
+                parse(&url(family, TARGET, CredentialGeneration::A))
                     .unwrap_err()
                     .error_type(),
                 SessionRoleReaderUrlErrorType::Role
@@ -250,7 +250,7 @@ mod tests {
     fn each_target_coordinate_and_database_incarnation_is_bound() {
         let raw = url(
             WorkloadRoleFamily::SessionRoleReader,
-            SCOPE,
+            TARGET,
             CredentialGeneration::A,
         );
         for (org, project, environment, database) in [
@@ -280,7 +280,7 @@ mod tests {
     fn malformed_or_overridable_connections_are_refused_without_echo() {
         let raw = url(
             WorkloadRoleFamily::SessionRoleReader,
-            SCOPE,
+            TARGET,
             CredentialGeneration::A,
         );
         for (input, kind) in [

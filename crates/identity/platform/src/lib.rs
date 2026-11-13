@@ -780,7 +780,7 @@ pub async fn assign_project_role(
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     let service: bool = client.query_one(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
         &[&principal_id.to_string().as_str()],
@@ -789,7 +789,7 @@ pub async fn assign_project_role(
         org::active_member(client, principal_id, &org).await?;
     }
 
-    let project = checked_scope_segment("project", project)?;
+    let project = checked_target_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
     let written = client
         .execute(
@@ -811,8 +811,8 @@ pub async fn project_roles(
     org: &str,
     project: &str,
 ) -> Result<Vec<RoleName>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
     let rows = client
         .query(
             SELECT_PROJECT_ROLES_SQL,
@@ -844,8 +844,8 @@ pub async fn grant_project_env_membership(
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = org::active_member(client, principal_id, org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = checked_target_segment("project", project)?;
+    let env = checked_target_segment("env", env)?;
     client
         .execute(
             GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -867,9 +867,9 @@ pub async fn has_project_env_membership(
     project: &str,
     env: &str,
 ) -> Result<bool, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let org = checked_target_segment("org", org)?;
+    let project = checked_target_segment("project", project)?;
+    let env = checked_target_segment("env", env)?;
     client
         .query_one(
             SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -890,10 +890,10 @@ pub async fn revoke_project_env_membership(
     env: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = checked_target_segment("org", org)?;
     org::lock_membership(client, principal_id, &org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = checked_target_segment("project", project)?;
+    let env = checked_target_segment("env", env)?;
     let removed = client
         .execute(
             REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -938,7 +938,7 @@ impl PreparedIdentityReads {
         })
     }
 
-    /// Authenticate a route PAT and its system scope in one round trip.
+    /// Authenticate a route PAT and its system target in one round trip.
     ///
     /// Services need one of the accepted project roles. The caller must still
     /// enforce the configured service identity and read operation permissions.
@@ -954,8 +954,8 @@ impl PreparedIdentityReads {
             return Ok(None);
         };
         let prefix = parsed.lookup();
-        let org = checked_scope_segment("org", org)?;
-        let project = checked_scope_segment("project", project)?;
+        let org = checked_target_segment("org", org)?;
+        let project = checked_target_segment("project", project)?;
         let roles = accepted_roles
             .iter()
             .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
@@ -1109,7 +1109,7 @@ pub fn check_user_contact(email: &str, display_name: &str) -> Result<(), Identit
     Ok(())
 }
 
-fn checked_scope_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
+fn checked_target_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > 40 {
         return Err(IdentityError::refused(
@@ -1151,7 +1151,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_subject_is_scoped_to_env_key_and_package() {
+    fn application_subject_is_targeted_to_env_key_and_package() {
         assert_eq!(
             application_subject("acme--erp--prod", "integration").unwrap(),
             "wamn-app-acme--erp--prod--integration"
@@ -1238,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_subject_is_exactly_environment_scoped_and_validated() {
+    fn operator_subject_is_exactly_environment_targeted_and_validated() {
         assert_eq!(
             operator_subject("demo", "widgets", "prod").unwrap(),
             "wamn-operator-demo--widgets--prod"

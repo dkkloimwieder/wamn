@@ -2,7 +2,7 @@
 //!
 //! Shared test support seeds the declared requirement, selected version, and
 //! release binding in the environment database. The system database supplies
-//! active parameters and credential references through its scoped reader.
+//! active parameters and credential references through its targeted reader.
 //!
 //! Two beads need this same closure. `wamn-0h0g.11.8` drives it to witness
 //! trace propagation at the wire; `wamn-0h0g.11.3` needs it to test HTTP
@@ -35,13 +35,13 @@ use wamn_catalog::{
     WiringTerminal,
 };
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_execution_host::{OperationHost, OperationScope};
+use wamn_execution_host::{OperationHost, OperationHostConfig};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -52,7 +52,7 @@ use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::RouterDriver;
 
-/// The one tenant every seeded row and every claim is scoped to.
+/// The one tenant every seeded row and every identity is bound to.
 pub const ENV_KEY: &str = "tenant-a";
 pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
@@ -268,7 +268,7 @@ async fn build_with_credentials(
         LoadedRelease::load_canonical_bytes(
             &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT)
+            wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, ENVIRONMENT)
                 .with_applications(
                     [(
                         "orders".to_owned(),
@@ -334,7 +334,7 @@ async fn build_with_credentials(
             Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
             Arc::clone(&release),
             Arc::new(source),
-            OperationScope {
+            OperationHostConfig {
                 project: PROJECT.to_owned(),
                 schema: None,
                 owner_prefix: "trusted-http-route".to_owned(),
@@ -564,11 +564,11 @@ async fn seed_with_client(
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let wiring_hash = document.wiring_hash().as_str().to_owned();
     // Every catalog table FORCEs RLS on `app.env_key`, and a superuser is not
-    // exempt from FORCE — the claim is what makes these writes land at all.
+    // exempt from FORCE — the identity is what makes these writes land at all.
     client
         .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
-        .context("claim the seeding tenant")?;
+        .context("bind the seeding tenant identity")?;
 
     client.batch_execute("SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)").await?;
     let package_manifest = serde_json::json!({
@@ -654,7 +654,7 @@ async fn seed_with_client(
     let database = config
         .get_dbname()
         .context("the disposable admin URL names no database")?;
-    let scope = WorkloadRoleScope::ProjectEnvironment {
+    let target = WorkloadRoleIdentity::ProjectEnvironment {
         org: ENV_KEY,
         project: PROJECT,
         environment: ENVIRONMENT,
@@ -662,7 +662,7 @@ async fn seed_with_client(
     };
     let guest_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
+        WorkloadRoleIdentity::EnvKey {
             env_key: ENV_KEY,
             database,
         },
@@ -677,13 +677,13 @@ async fn seed_with_client(
     );
     let executor_role = workload_generation_role(
         WorkloadRoleFamily::ExecutorPlatform,
-        scope,
+        target,
         CredentialGeneration::A,
     )
     .context("derive the executor-platform generation")?;
     let http_role = workload_generation_role(
         WorkloadRoleFamily::HttpAdmitter,
-        scope,
+        target,
         CredentialGeneration::A,
     )
     .context("derive the callable-HTTP generation")?;
@@ -726,8 +726,8 @@ async fn seed_additional_wirings(
     component: &AdmittedComponent,
     documents: &[WiringDocument],
 ) -> anyhow::Result<()> {
-    let package = &component.scope.package_id;
-    let package_version = &component.scope.package_version;
+    let package = &component.target.package_id;
+    let package_version = &component.target.package_version;
     if package != PACKAGE {
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});

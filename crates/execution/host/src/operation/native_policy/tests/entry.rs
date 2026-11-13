@@ -11,7 +11,7 @@ use wamn_catalog::{
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
@@ -25,7 +25,9 @@ use wamn_runtime::plugins::wamn_postgres::{StaticCredentialProvider, WamnPostgre
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use super::super::super::native_workload::native_entry_name;
-use super::super::super::{NodeAcquisition, OperationHost, OperationScope, component_invocation};
+use super::super::super::{
+    NodeAcquisition, OperationHost, OperationHostConfig, component_invocation,
+};
 use super::super::NativeFacts;
 use super::{Case, NODE_TYPES, ROOT, component_bytes, fact};
 
@@ -54,7 +56,7 @@ fn operation_caller() -> Vec<u8> {
         (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
           (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
           (case "not-begun") (case "already-begun") (case "postgres" $pg-error)
-          (case "reads-claim-nothing")))
+          (case "reads-identity-nothing")))
         (export "refusal" (type $refusal (eq $refusal')))
         (type $begun' (variant (case "new" string) (case "finished" string)))
         (export "begun" (type $begun (eq $begun')))
@@ -139,12 +141,12 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
             reference: format!("file:{}", path.display()),
             route_digest: entry_digest.clone(),
             application: ServingEntryMember {
-                package_id: member.scope.package_id.clone(),
+                package_id: member.target.package_id.clone(),
                 component: member.component.clone(),
                 digest: member.component_digest.clone(),
             },
             members: BTreeSet::from([ServingEntryMember {
-                package_id: member.scope.package_id.clone(),
+                package_id: member.target.package_id.clone(),
                 component: member.component.clone(),
                 digest: member.component_digest.clone(),
             }]),
@@ -159,7 +161,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         composed_entry,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            packages: BTreeSet::from([PackageCoordinate::new(&member.scope.package_id, "1.0.0")
+            packages: BTreeSet::from([PackageCoordinate::new(&member.target.package_id, "1.0.0")
                 .expect("package coordinate")]),
         },
         components: BTreeSet::from([
@@ -174,7 +176,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "composed entry fixture",
-            ReleaseScope::new("tenant-a", "test").with_applications(
+            ReleaseTarget::new("tenant-a", "test").with_applications(
                 serde_json::from_value(
                     serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
                 )
@@ -197,15 +199,15 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            release.scope().env_key.as_str(),
+            release.target().env_key.as_str(),
             "test",
-            release.scope().environment.as_str(),
+            release.target().environment.as_str(),
         )),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default()).expect("logging plugin")),
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
-        OperationScope {
+        OperationHostConfig {
             project: "test".into(),
             schema: None,
             owner_prefix: "entry-test".into(),
@@ -312,7 +314,7 @@ async fn a_wiring_call_on_the_entry_refuses_every_operation_call() {
         deadline_ms: 30_000,
         facts: NativeFacts::entry(
             NodeAcquisition {
-                claims: host.claims("tenant-a", Some(host.release_identity())),
+                identity: host.identity("tenant-a", Some(host.release_identity())),
                 invocation: component_invocation(
                     &release.member,
                     ROOT,

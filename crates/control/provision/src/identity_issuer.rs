@@ -1,6 +1,6 @@
-//! Scoped database credentials for the separate identity authority.
+//! Targeted database credentials for the separate identity authority.
 //!
-//! The resource scope is the exact HTTPS issuer and the T1 system database.
+//! The resource target is the exact HTTPS issuer and the T1 system database.
 //! It is not a project environment or a runtime authority class. This module
 //! emits role SQL only. It does not create or read session signing keys.
 
@@ -226,17 +226,17 @@ pub fn validate_identity_issuer(issuer: &str) -> Result<(), IdentityIssuerUrlErr
 }
 
 /// Derive a 160-bit digest from the exact issuer and fixed system database.
-pub fn identity_issuer_scope_hash(issuer: &str) -> Result<String, IdentityIssuerUrlError> {
+pub fn identity_issuer_identity_hash(issuer: &str) -> Result<String, IdentityIssuerUrlError> {
     validate_identity_issuer(issuer)?;
     let mut digest = Sha256::new();
     for field in [
-        "wamn.identity-issuer.scope.v0.1",
+        "wamn.identity-issuer.identity.v0.1",
         "issuer",
         issuer,
         "database",
         IDENTITY_ISSUER_DATABASE,
     ] {
-        let length = u64::try_from(field.len()).expect("an issuer scope field fits u64");
+        let length = u64::try_from(field.len()).expect("an issuer target field fits u64");
         digest.update(length.to_be_bytes());
         digest.update(field.as_bytes());
     }
@@ -250,12 +250,12 @@ pub fn identity_issuer_generation_role(
 ) -> Result<String, IdentityIssuerUrlError> {
     Ok(format!(
         "{IDENTITY_ISSUER_ROLE}_{}_{}",
-        identity_issuer_scope_hash(issuer)?,
+        identity_issuer_identity_hash(issuer)?,
         generation.as_str()
     ))
 }
 
-/// A parsed scoped credential whose formatted forms never expose its URL.
+/// A parsed targeted credential whose formatted forms never expose its URL.
 #[derive(Clone)]
 pub struct IdentityIssuerConnection {
     url: String,
@@ -274,7 +274,7 @@ impl IdentityIssuerConnection {
         IDENTITY_ISSUER_DATABASE
     }
 
-    /// The exact scoped login role.
+    /// The exact targeted login role.
     pub fn role(&self) -> &str {
         &self.role
     }
@@ -302,7 +302,7 @@ impl fmt::Display for IdentityIssuerConnection {
     }
 }
 
-/// Refuse broad or mis-scoped credentials before any I/O.
+/// Refuse broad or mis-targeted credentials before any I/O.
 pub fn parse_identity_issuer_url(
     raw: &str,
     issuer: &str,

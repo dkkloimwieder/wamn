@@ -244,7 +244,7 @@ impl Fixture {
         use crate::plugins::wamn_postgres::{
             ClassCredentials, ProjectConfig, StaticCredentialProvider,
         };
-        use wamn_engine::release_manifest::ReleaseScope;
+        use wamn_engine::release_manifest::ReleaseTarget;
         use wamn_run_state::AuthorityClass;
 
         for name in ["handle", "other-handle"] {
@@ -283,7 +283,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "oauth2-test",
-                ReleaseScope::new("acme--project-a--dev", "dev"),
+                ReleaseTarget::new("acme--project-a--dev", "dev"),
             )
             .unwrap(),
         );
@@ -441,7 +441,7 @@ impl Fixture {
     }
 
     async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
-        use wamn_engine::release_manifest::ReleaseScope;
+        use wamn_engine::release_manifest::ReleaseTarget;
         let env_key = format!("acme--{project}--dev");
         plugin.release = Some(Arc::new(
             LoadedRelease::load_canonical_bytes(
@@ -452,7 +452,7 @@ impl Fixture {
                     .manifest()
                     .canonical_bytes(),
                 "oauth2-test",
-                ReleaseScope::new(&env_key, "dev"),
+                ReleaseTarget::new(&env_key, "dev"),
             )
             .unwrap(),
         ));

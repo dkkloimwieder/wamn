@@ -374,7 +374,7 @@ fn contains_secret_value(value: &Value) -> bool {
 pub fn partial_response_schema(committed_schema: &Value) -> Value {
     let mut committed_schema = committed_schema.clone();
     if let Some(schema) = committed_schema.as_object_mut() {
-        // Keep document-local references scoped to the original success schema.
+        // Keep document-local references targeted to the original success schema.
         schema
             .entry("$id")
             .or_insert_with(|| Value::String("urn:wamn:committed-result".to_owned()));

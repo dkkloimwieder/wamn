@@ -81,7 +81,7 @@ use wamn_control_provision::session_target::{SessionTarget, validate_session_env
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityKind, WorkloadSecretBody,
     WorkloadSecretBodyKind, bind_platform_principal_sql, project_env_database_name,
     project_env_namespace, project_env_secret_name, render_org_workload_secret_manifest,
     render_project_env_database, render_project_env_secret_manifest,
@@ -122,7 +122,7 @@ pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };
 pub use registry::{
-    claim_environment_instance, finish_database, project_env_key_environment,
+    assign_environment_instance, finish_database, project_env_key_environment,
     read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
 pub use workload::{run_org_workload_action, run_workload_action};
@@ -311,10 +311,10 @@ pub struct WorkloadActionRequest {
     pub control_administration_patch: Option<PathBuf>,
 }
 
-/// Inputs of one org-scoped workload-generation action, run by
+/// Inputs of one org-targeted workload-generation action, run by
 /// `provision-org`.
 pub struct OrgWorkloadActionRequest {
-    /// The org the credential is scoped to.
+    /// The org the credential is bound to.
     pub org: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`), the

@@ -385,7 +385,7 @@ mod tests {
     use super::*;
     const WEBHOOK_REFUSED: &str = "failed calling webhook \"webhook.cert-manager.io\" ... dial tcp 10.96.164.197:443: connect: connection refused";
     #[test]
-    fn operator_archive_owns_only_the_operator_and_its_scoped_permissions() {
+    fn operator_archive_owns_only_the_operator_and_its_targeted_permissions() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let values = super::super::manifests::operator_base_values(&repository).unwrap();
         let entry = operator_entry(

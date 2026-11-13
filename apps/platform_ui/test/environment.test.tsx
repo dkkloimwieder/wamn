@@ -331,7 +331,7 @@ describe("Environment", () => {
   });
 
   it.each(["", "/workloads", "/live-releases", "/operations", "/roles"])(
-    "refuses an environment address outside the project admin's scope: %s",
+    "refuses an environment address outside the project admin's view: %s",
     async (path) => {
       const session = identity(true, [], undefined, {
         org_admin: false,

@@ -1,4 +1,4 @@
-//! Prepare, retire, or abort a scoped identity database credential.
+//! Prepare, retire, or abort a targeted identity database credential.
 //!
 //! Preparation writes a Secret only after the new login authenticates. It
 //! does not install the Secret or access session signing keys. Retirement
@@ -177,7 +177,7 @@ pub async fn provision_identity_issuer(
             "identity credential provisioning requires the system database administrator"
         );
         admin
-            .query_one(sql::workload_scope_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
+            .query_one(sql::workload_identity_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
             .await?;
         if let Some(generation) = request.prepare_generation {
             prepare(&mut admin, &config, &request, generation).await?;
@@ -377,7 +377,7 @@ async fn exact_grants(
     ).await?.get(0);
     anyhow::ensure!(
         !foreign,
-        "identity role has authority outside its system database scope"
+        "identity role has authority outside its system database target"
     );
     Ok(())
 }
@@ -508,7 +508,7 @@ async fn prepare(
         let _ = task.await;
         let observed = observed.context("authenticate prepared identity credential")?;
         anyhow::ensure!(observed.get::<_, String>(0) == role && observed.get::<_, String>(1) == IDENTITY_ISSUER_DATABASE,
-            "prepared identity credential authenticated with an unexpected scope");
+            "prepared identity credential authenticated with an unexpected target");
         stable(admin, false).await?;
         let prepared = state(admin, &role).await?.context("prepared identity credential disappeared")?;
         anyhow::ensure!(active(&prepared) && prepared.get::<_, Option<String>>("valid_until").as_deref() == Some(expires_at.as_str()),
@@ -646,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scoped_prepare_request_is_accepted_and_redacts_admin_credentials() {
+    fn a_targeted_prepare_request_is_accepted_and_redacts_admin_credentials() {
         let request = request();
         assert!(admin_config(&request).is_ok());
         assert!(!format!("{request:?}").contains("hidden-value"));

@@ -116,7 +116,7 @@ fn served_component<'a>(
 ) -> Option<&'a Arc<ComponentPolicy>> {
     let invocation = &acquisition.invocation;
     served.iter().find(|component| {
-        component.fact.scope.package_id == invocation.package_id
+        component.fact.target.package_id == invocation.package_id
             && component.fact.component == invocation.component
             && component.fact.component_digest == invocation.component_digest
     })
@@ -144,7 +144,7 @@ pub(super) fn new_native_policy(
             .components
             .iter()
             .find(|served| {
-                served.package_id == fact.scope.package_id
+                served.package_id == fact.target.package_id
                     && served.descriptor.component == fact.component
                     && served.descriptor.component_digest.as_str() == fact.component_digest
                     && served.descriptor.operations == fact.operations
@@ -166,7 +166,7 @@ pub(super) fn new_native_policy(
                 members,
                 runtime_schema: served.runtime_schema.clone(),
                 application: wamn_catalog::application_for_package(
-                    &resources.release.scope().applications,
+                    &resources.release.target().applications,
                     &served.package_id,
                 )
                 .with_context(|| {
@@ -237,9 +237,9 @@ impl NativePolicy {
             .context("native-invocation-component-identity-mismatch")?;
         let fact = &component.fact;
         anyhow::ensure!(
-            fact.scope.env_key == acquisition.claims.env_key
+            fact.target.env_key == acquisition.identity.env_key
                 && acquisition.invocation.operation == operation
-                && acquisition.claims.project.as_deref() == Some(self.resources.project.as_str()),
+                && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str()),
             "native-invocation-component-identity-mismatch"
         );
         let released = fact
@@ -250,9 +250,9 @@ impl NativePolicy {
         Ok(Arc::clone(component))
     }
 
-    /// Bind the claims of one call to `scope`.
+    /// Bind the identity of one call to `scope`.
     ///
-    /// Every claims transaction binds its executing principal as
+    /// Every identity transaction binds its executing principal as
     /// `app.user_id` and the admitted operation token as `app.operation`,
     /// which the record-history triggers record, and the declared
     /// application of the component as `app.application`.
@@ -261,26 +261,26 @@ impl NativePolicy {
     /// the tenant and refuses a principal that owns none. That refusal is an
     /// authorization fact, so it reaches the caller as the `permission-denied`
     /// the operation vocabulary already carries, not as a host failure.
-    async fn bind_claims(
+    async fn bind_identity(
         &self,
         scope: &str,
         operation: &str,
         facts: &NativeFacts,
         component: &ComponentPolicy,
     ) -> anyhow::Result<()> {
-        let mut claims = facts
+        let mut identity = facts
             .acquisition
-            .executing_claims(facts.caller.as_ref(), &component.application);
+            .executing_identity(facts.caller.as_ref(), &component.application);
         if let Some(schema) = &component.runtime_schema {
-            claims.schema = Some(schema.clone());
+            identity.schema = Some(schema.clone());
         }
         let postgres = &self.resources.postgres;
         // A request element's transaction began under a bind of these same facts, which
         // read the principal, so the call inside it does not read again.
         let bound = if facts.transaction.is_some() {
-            postgres.bind_request_element_session_claims(scope, &claims)
+            postgres.bind_request_element_session_identity(scope, &identity)
         } else {
-            postgres.bind_session_claims(scope, &claims).await
+            postgres.bind_session_identity(scope, &identity).await
         };
         let Err(error) = bound else {
             return Ok(());
@@ -303,8 +303,8 @@ impl InvocationPolicy for NativePolicy {
     type Authority = NativeAuthorityGuard;
     type Transaction = OperationTransaction;
 
-    /// Begin the request element's transaction under the claims of the call, on a scope
-    /// of its own that ends after the transaction captures its claims, when the
+    /// Begin the request element's transaction under the identity of the call, on a scope
+    /// of its own that ends after the transaction captures its identity, when the
     /// admitted operation declares a host transaction. BEGIN waits for the claim.
     async fn admit_and_open_transaction(
         &self,
@@ -325,7 +325,7 @@ impl InvocationPolicy for NativePolicy {
         let postgres = &self.resources.postgres;
         let scope = wamn_engine::operation::next_scope("native-request-element");
         let begun = async {
-            self.bind_claims(&scope, operation, facts, &component)
+            self.bind_identity(&scope, operation, facts, &component)
                 .await?;
             postgres.set_current_run(&scope, facts.acquisition.causation.clone());
             postgres
@@ -356,7 +356,7 @@ impl InvocationPolicy for NativePolicy {
                 })
         }
         .await;
-        postgres.revoke_session_claims(&scope);
+        postgres.revoke_session_identity(&scope);
         begun.map(Some)
     }
 
@@ -384,7 +384,7 @@ impl InvocationPolicy for NativePolicy {
         let acquisition = &request.facts.acquisition;
         let deadline = request.deadline;
         anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
-        // Admission is read TWICE, around the claim bind, because that bind now
+        // Admission is read TWICE, around the identity bind, because that bind now
         // awaits a database read (`wamn-0h0g.9.19`) and this is a std lock. The
         // second read is the one the invariant below needs: it covers every
         // registry install, and a shutdown that lands in between clears the map
@@ -395,7 +395,7 @@ impl InvocationPolicy for NativePolicy {
             scope: scope.to_owned(),
         };
         let resources = &self.resources;
-        self.bind_claims(scope, operation, &request.facts, &component)
+        self.bind_identity(scope, operation, &request.facts, &component)
             .await?;
         // Serialize late activation with caller cancellation. No await follows
         // this lock, so cancellation cannot leave a newly installed authority.
@@ -446,7 +446,7 @@ impl InvocationPolicy for NativePolicy {
         }
         resources
             .logging
-            .set_claim(scope, &acquisition.claims.env_key, &resources.project);
+            .set_identity(scope, &acquisition.identity.env_key, &resources.project);
         resources
             .connection_http
             .bind_invocation(scope, acquisition.invocation.clone())?;
@@ -550,9 +550,9 @@ impl InvocationPolicy for NativePolicy {
             .remove(scope);
         self.resources.blobstore.revoke_invocation(scope);
         self.resources.connection_http.revoke_invocation(scope);
-        self.resources.logging.clear_claim(scope);
+        self.resources.logging.clear_identity(scope);
         self.resources.postgres.revoke_invocation(scope);
-        self.resources.postgres.revoke_session_claims(scope);
+        self.resources.postgres.revoke_session_identity(scope);
         self.resources.postgres.clear_statement_scope(scope);
     }
 }
@@ -628,7 +628,7 @@ impl NativePolicy {
                 .map(|member| {
                     (
                         member.fact.component_digest.as_str(),
-                        member.fact.scope.package_id.as_str(),
+                        member.fact.target.package_id.as_str(),
                     )
                 })
                 .collect::<Vec<_>>();

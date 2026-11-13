@@ -494,11 +494,11 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         .await
         .expect("create the exact host-owned relation maps");
 
-    let unscoped = read_catalog(client, &[APPLICATION_SCHEMA])
+    let untargeted = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
         .expect_err("raw catalog reader admitted a host-owned oid column");
     assert_eq!(
-        unscoped.error_type(),
+        untargeted.error_type(),
         PostgresIntrospectionErrorType::UnsupportedColumnType
     );
 
@@ -506,15 +506,18 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         (APPLICATION_SCHEMA, "wamn_entities"),
         (APPLICATION_SCHEMA, "wamn_cdc_exclusions"),
     ];
-    let scoped = read_catalog_excluding_relations(client, &[APPLICATION_SCHEMA], &excluded)
+    let targeted = read_catalog_excluding_relations(client, &[APPLICATION_SCHEMA], &excluded)
         .await
         .expect("package reader excludes exact host-owned relations");
     let repeated = read_catalog_excluding_relations(client, &[APPLICATION_SCHEMA], &excluded)
         .await
         .expect("repeat exact host-owned relation exclusion");
-    assert_eq!(scoped.canonical_json_bytes(), before.canonical_json_bytes());
     assert_eq!(
-        scoped.canonical_json_bytes(),
+        targeted.canonical_json_bytes(),
+        before.canonical_json_bytes()
+    );
+    assert_eq!(
+        targeted.canonical_json_bytes(),
         repeated.canonical_json_bytes()
     );
 

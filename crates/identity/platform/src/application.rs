@@ -548,11 +548,11 @@ pub async fn permission_rows(
 pub async fn project_authority(
     system: &tokio_postgres::Transaction<'_>,
     target: &(impl GenericClient + Sync),
-    scope: ApplicationScope<'_>,
+    coordinate: ApplicationTarget<'_>,
     principal: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    crate::org::lock_membership(system, principal, scope.org).await?;
+    crate::org::lock_membership(system, principal, coordinate.org).await?;
     let row = system.query_opt(
         "SELECT p.type, p.status, p.email, p.display_name, p.subject, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
@@ -560,10 +560,10 @@ pub async fn project_authority(
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
          OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.role='org-admin') \
          FROM identity.principals p WHERE p.id=$1::text::uuid",
-        &[&principal.to_string().as_str(), &scope.org, &scope.project, &scope.env],
+        &[&principal.to_string().as_str(), &coordinate.org, &coordinate.project, &coordinate.env],
     ).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
-        return remove_user(target, scope.env_key, principal, drops).await;
+        return remove_user(target, coordinate.env_key, principal, drops).await;
     };
     let type_: String = row.get(0);
     let active = row.get::<_, String>(1) == "active";
@@ -587,7 +587,7 @@ pub async fn project_authority(
             let email = format!("{}@{domain}", row.get::<_, String>(4));
             write_service(
                 target,
-                scope.env_key,
+                coordinate.env_key,
                 ApplicationUser {
                     principal_id: principal,
                     email: &email,
@@ -609,14 +609,14 @@ pub async fn project_authority(
                 )
                 .await
                 .map_err(|error| database_error(&error))?;
-            drops.principal(scope.env_key, principal.to_string().as_str());
+            drops.principal(coordinate.env_key, principal.to_string().as_str());
         } else {
-            remove_admin(target, scope.env_key, principal, drops).await?;
+            remove_admin(target, coordinate.env_key, principal, drops).await?;
         }
         return Ok(());
     }
     if type_ != "user" || !active || !row.get::<_, bool>(5) || !row.get::<_, bool>(6) {
-        return remove_user(target, scope.env_key, principal, drops).await;
+        return remove_user(target, coordinate.env_key, principal, drops).await;
     }
     let email: String = row.get(2);
     let display_name: String = row.get(3);
@@ -626,16 +626,16 @@ pub async fn project_authority(
         display_name: &display_name,
     };
     if admin {
-        write_admin(target, scope.env_key, user, drops).await
+        write_admin(target, coordinate.env_key, user, drops).await
     } else {
-        write_user(target, scope.env_key, user, drops).await?;
-        remove_admin(target, scope.env_key, principal, drops).await
+        write_user(target, coordinate.env_key, user, drops).await?;
+        remove_admin(target, coordinate.env_key, principal, drops).await
     }
 }
 
 /// The explicit environment of one authority projection.
 #[derive(Debug, Clone, Copy)]
-pub struct ApplicationScope<'a> {
+pub struct ApplicationTarget<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub env: &'a str,

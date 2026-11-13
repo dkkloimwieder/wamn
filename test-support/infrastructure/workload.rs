@@ -374,7 +374,7 @@ pub async fn cross_environment_refused(
         let answer = String::from_utf8(output.stdout)?.trim().to_owned();
         ensure!(
             answer == if expected { "yes" } else { "no" },
-            "operator Event permission {verb} differs from its declared scope"
+            "operator Event permission {verb} differs from its declared target"
         );
         ensure!(
             output.status.code() == Some(i32::from(!expected)),

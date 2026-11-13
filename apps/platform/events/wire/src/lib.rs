@@ -61,7 +61,7 @@ pub struct Causation {
 /// provenance to report: its identity is the admitted terminal selector, the
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. The environment key, project, and
-/// environment are copied from bound host claims so no guest or wiring field can redirect the
+/// environment are copied from bound host identity so no guest or wiring field can redirect the
 /// event; package identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq)]
@@ -178,7 +178,7 @@ impl<'de> Deserialize<'de> for DerivedEvent {
 }
 
 impl DerivedEvent {
-    /// Construct the record from host-owned scope and selector facts.
+    /// Construct the record from host-owned target and selector facts.
     #[expect(
         clippy::too_many_arguments,
         reason = "the constructor makes every frozen wire field explicit"
@@ -424,12 +424,12 @@ pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
 /// Host-owned, header-safe `Nats-Msg-Id` for a derived event.
 ///
 /// The type discriminator keeps author ids that happen to be decimal apart
-/// from CDC LSN identities. The trusted scope prevents the same author id in a
+/// from CDC LSN identities. The trusted target prevents the same author id in a
 /// different env_key/project/environment/package and admitted terminal selector
 /// from colliding. Only a bounded digest reaches the NATS header; the logical
 /// operand itself remains byte-for-byte author supplied in
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
-/// between scope fields.
+/// between target fields.
 pub fn derived_msg_id(
     env_key: &str,
     project: &str,
@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn derived_msg_id_is_host_scoped_and_keeps_the_author_operand() {
+    fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
             "acme",
             "app",
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(id.len(), "derived:".len() + 64);
         assert_eq!(
             id, "derived:3357ce56ef66f155bc2bb6a09d30fefe01c7a9c2a9d854839d82fc9200b127a3",
-            "the domain, field order, selector scope, and length framing are wire identity"
+            "the domain, field order, selector target, and length framing are wire identity"
         );
         assert!(!id.contains("orders:7:created"));
         assert!(
@@ -611,12 +611,12 @@ mod tests {
                 Op::Insert,
                 "same"
             ),
-            "the admitted entity is part of stream-wide dedup scope"
+            "the admitted entity is part of stream-wide dedup target"
         );
         assert_ne!(
             derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Update, "same"),
-            "the admitted operation is part of stream-wide dedup scope"
+            "the admitted operation is part of stream-wide dedup target"
         );
         assert_ne!(
             derived_msg_id(

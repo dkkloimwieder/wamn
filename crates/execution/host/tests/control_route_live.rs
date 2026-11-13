@@ -1396,7 +1396,7 @@ impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<()> {
+async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_status_counts")?;
     let admin = connect(database.url()).await?;

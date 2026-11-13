@@ -23,8 +23,8 @@ impl TraceReader {
         for resource in record.resource_spans {
             let service =
                 attribute(&resource.resource.attributes, "service.name").unwrap_or_default();
-            for scope in resource.scope_spans {
-                for span in scope.spans {
+            for target in resource.scope_spans {
+                for span in target.spans {
                     let start = span.start_time_unix_nano.parse::<u64>().map_err(|source| {
                         DevObservationError::with_source(
                             "decode collector traces",
@@ -57,7 +57,7 @@ impl TraceReader {
                         ));
                     }
                     let id = span.trace_id.to_ascii_lowercase();
-                    let scoped = attribute(&span.attributes, "wamn.env_key")
+                    let targeted = attribute(&span.attributes, "wamn.env_key")
                         == Some(self.identity.env_key().as_str())
                         && attribute(&span.attributes, "wamn.project")
                             == Some(self.identity.project.as_str())
@@ -76,7 +76,7 @@ impl TraceReader {
                                 duration: Duration::ZERO,
                             },
                             end,
-                            scoped: false,
+                            targeted: false,
                             has_root: false,
                         });
                     if !summary.has_root
@@ -86,7 +86,7 @@ impl TraceReader {
                         summary.observation.root_trace_name = span.name;
                     }
                     summary.has_root |= is_root;
-                    summary.scoped |= scoped;
+                    summary.targeted |= targeted;
                     summary.end = summary.end.max(end);
                     summary.observation.start_time_unix_nanos =
                         summary.observation.start_time_unix_nanos.min(start);

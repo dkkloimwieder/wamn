@@ -503,11 +503,11 @@ async fn main() -> anyhow::Result<()> {
 async fn seed_app_path(database: &tokio_postgres::Client) -> anyhow::Result<String> {
     let row = database
         .query_one(
-            "WITH claims AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
+            "WITH identity AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
              set_config('app.operation', 'admin:benchmark-app-path', true)), inserted AS ( \
              INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
              SELECT purchase_order.id, gen_random_uuid()::text, now() \
-             FROM receiving.purchase_order CROSS JOIN claims ORDER BY purchase_order.id LIMIT 100 \
+             FROM receiving.purchase_order CROSS JOIN identity ORDER BY purchase_order.id LIMIT 100 \
              RETURNING id::text) SELECT id FROM inserted LIMIT 1",
             &[&SEED_PRINCIPAL],
         )

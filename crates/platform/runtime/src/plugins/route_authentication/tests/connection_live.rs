@@ -5,7 +5,7 @@ use crate::plugins::wamn_postgres::{
 };
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 
 async fn connect(url: &str) -> tokio_postgres::Client {
@@ -45,7 +45,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .unwrap();
     let role = workload_generation_role(
         WorkloadRoleFamily::HttpAdmitter,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "host-project",
             environment: "prod",

@@ -127,7 +127,7 @@ async function capture(page, screen) {
   await page.screenshot({ path: join(report, `${screen}.png`), fullPage: false });
   captured.add(screen);
 }
-async function assertTiles(scope, status) {
+async function assertTiles(view, status) {
   const complete = [
     status.rollout.updated_replicas,
     status.rollout.ready_replicas,
@@ -152,7 +152,7 @@ async function assertTiles(scope, status) {
       ? ["Workloads", `${ready} ready / ${notReady} not ready`, notReady ? "warning" : "ok"]
       : ["Workloads", "Unknown", "unknown"],
   ];
-  const row = scope.getByRole("region", { name: "Environment status", exact: true });
+  const row = view.getByRole("region", { name: "Environment status", exact: true });
   for (const [label, value, state] of expected) {
     const tile = row.getByRole("group", { name: label, exact: true });
     await tile.locator(".ui-status-tile-value").filter({ hasText: value }).waitFor();
@@ -162,14 +162,14 @@ async function assertTiles(scope, status) {
   }
   assert.equal(await row.locator(".ui-status-tile").count(), 5);
 }
-function statusScope(request) {
+function statusTarget(request) {
   return Object.fromEntries([...new URL(request.url()).searchParams].map(([name, value]) => [name, JSON.parse(value)]));
 }
 function statusRead(page, project, env) {
   return page
     .waitForResponse((response) => {
       if (!new URL(response.url()).pathname.endsWith("/api/wamn_control/environment/status")) return false;
-      const input = statusScope(response.request());
+      const input = statusTarget(response.request());
       return input.project === project && input.env === env;
     })
     .then(async (response) => {
@@ -518,7 +518,7 @@ try {
   const splashReads = [];
   const recordSplashRead = (request) => {
     if (new URL(request.url()).pathname.endsWith("/api/wamn_control/environment/status"))
-      splashReads.push(statusScope(request));
+      splashReads.push(statusTarget(request));
   };
   page.on("request", recordSplashRead);
   const releaseStatus = statusRead(page, fixture.releaseProject, fixture.releaseEnv);
@@ -692,7 +692,7 @@ try {
     "PASS: Environment navigation, local runtime status, release profile, single activate/inactivate action and reload state",
   );
   console.log(
-    "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, scoped access, activate/inactivate and reload state",
+    "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, viewed access, activate/inactivate and reload state",
   );
   const receiving = await browser.newPage({ viewport });
   await signIn(receiving, required("WAMN_BROWSER_EMAIL"));

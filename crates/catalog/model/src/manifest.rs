@@ -2348,7 +2348,7 @@ pub struct PackageIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientPackage {
-    /// The package name, optionally scoped.
+    /// The package name, optionally targeted.
     pub name: String,
 }
 

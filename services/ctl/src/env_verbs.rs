@@ -402,7 +402,7 @@ async fn project_schema(
             expected: &expected,
             admin_url: &std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?,
             sources: &wamn_environment_control::platform_migrations::embedded_sources(
-                wamn_control_provision::schema_migrations::MigrationScope::Project,
+                wamn_control_provision::schema_migrations::MigrationDatabase::Project,
             ),
             apply,
             resolution,

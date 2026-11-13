@@ -21,7 +21,7 @@ pub use postgres::PostgresWorkflows;
 /// Park, release, and list the workflow runs of one environment.
 #[async_trait::async_trait]
 pub trait Workflows: Send + Sync {
-    /// Hold a queued run, so no claim takes it. Parking a parked run changes
+    /// Hold a queued run, so no lease takes it. Parking a parked run changes
     /// nothing.
     async fn park(&self, run_id: &str) -> Result<(), WorkflowError>;
 
@@ -41,7 +41,7 @@ pub struct WorkflowRun {
     pub wiring_version: u32,
     pub trigger_source: Option<String>,
     pub status: RunStatus,
-    /// A queue row exists: the run waits for a claim or is running.
+    /// A queue row exists: the run waits for a lease or is running.
     pub queued: bool,
     pub parked: bool,
     /// RFC 3339, UTC.

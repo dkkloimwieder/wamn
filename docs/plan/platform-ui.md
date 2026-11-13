@@ -29,7 +29,7 @@ See [caller authentication](../architecture/execution.md#caller-authentication).
 
 See [current caller authorization](../architecture/execution.md#caller-authentication).
 
-Direction, not shipped (owner ruling 2026-10-11): grantable administration, where an ACL-editing operation can confer only what its caller already holds, with `admin` treated as the full set. It is a follow-up after Epic C, rescoped then ([trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd)).
+Direction, not shipped (owner ruling 2026-10-11): grantable administration, where an ACL-editing operation can confer only what its caller already holds, with `admin` treated as the full set. It is a follow-up after Epic C, retargeted then ([trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd)).
 
 ### 2.6 Grant timing
 
@@ -47,7 +47,7 @@ See [organization membership and administration](../architecture/overview.md#org
 
 See [organization membership and administration](../architecture/overview.md#organization-membership-and-administration).
 
-### 2.10 Scoped user deactivation
+### 2.10 Targeted user deactivation
 
 See [organization membership and administration](../architecture/overview.md#organization-membership-and-administration).
 

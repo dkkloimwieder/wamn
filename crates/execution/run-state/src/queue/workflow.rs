@@ -1,10 +1,10 @@
 //! Parameterized SQL for the workflow contract: admit, park, release, and list.
 //!
-//! A park moves the queue row's `available_at` to `infinity`, so the claim's
+//! A park moves the queue row's `available_at` to `infinity`, so the lease's
 //! `available_at <= now()` never takes it. The run keeps its status
 //! `dispatched`: the run-level `parked` status stays retired. Table names stay
 //! unqualified, so the caller's transaction `search_path` selects the run plane,
-//! and every statement reads its tenant from the `app.env_key` claim.
+//! and every statement reads its tenant from the `app.env_key` identity.
 //!
 //! Live workflow tests exercise these statements over a disposable database.
 

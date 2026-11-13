@@ -1,5 +1,5 @@
 {
-  "scope": {
+  "target": {
     "env_key": "tenant-a",
     "package-id": "source_fixture",
     "package-version": "1.0.0"

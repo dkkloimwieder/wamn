@@ -673,7 +673,7 @@ fn physical_select_relations(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the SQL scope and output sets stay explicit"
+    reason = "the SQL target and output sets stay explicit"
 )]
 fn collect_unqualified_fields(
     tokens: &[Token],
@@ -686,9 +686,9 @@ fn collect_unqualified_fields(
     excluded: &BTreeSet<usize>,
     access: &mut BTreeMap<String, RelationAccess>,
 ) {
-    let scope_depth = depths[start];
+    let query_depth = depths[start];
     for index in start + 1..end {
-        if depths[index] < scope_depth || excluded.contains(&index) || is_qualified(tokens, index) {
+        if depths[index] < query_depth || excluded.contains(&index) || is_qualified(tokens, index) {
             continue;
         }
         let Some(field) = identifier(&tokens[index]) else {
@@ -714,7 +714,7 @@ fn collect_unqualified_fields(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the token scope and relation/alias outputs stay explicit"
+    reason = "the token target and relation/alias outputs stay explicit"
 )]
 fn apply_lock_clause(
     tokens: &[Token],

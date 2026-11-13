@@ -25,7 +25,7 @@ END $platform_group$;
 
 -- Stable ACL role for record history retention (`wamn-emtx.13`). apply-package
 -- grants it privileges on the history tables of this database, and
--- provisioning owns its scoped A/B LOGIN generations. It is not a wamn_platform
+-- provisioning owns its targeted A/B LOGIN generations. It is not a wamn_platform
 -- member.
 DO $audit_retention$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
@@ -55,7 +55,7 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
         || int8send(7::bigint) || convert_to('env_key', 'UTF8')
         || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')

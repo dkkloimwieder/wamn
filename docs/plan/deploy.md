@@ -42,7 +42,7 @@ A database reset stops and reconnects every affected writer through these existi
 Deploy and rollback change only the target application's code selection and Helm release.
 They run no schema changes, migrations, resets, seeds, or application data mutations.
 They can read control state and prepare release caches, application release bindings, and application runtime grants.
-These writes are repeatable and scoped to the target application.
+These writes are repeatable and targeted to the target application.
 Shared immutable cache entries can be added or reused.
 Other applications keep their records, effective permissions, selections, routes, and workloads.
 
@@ -108,7 +108,7 @@ With `WAMN_CONTROL_URL`, the CLI uses authenticated control routes.
 Set `WAMN_TOKEN` to the password session token.
 Each request names `project` and `env`. The host supplies the organization and requires project administrator authority.
 The server selects the image, command, namespace, actor, chart, and credential references.
-The current trusted-worker boundary remains accepted. Section 8 defers tighter credential scopes and publication restrictions.
+The current trusted-worker boundary remains accepted. Section 8 defers tighter credential targets and publication restrictions.
 
 | Route | Input and behavior |
 |---|---|
@@ -222,7 +222,7 @@ Event disposal runs only while the pending record exists and writers remain stop
 New events follow completion, so a retry cannot discard newly produced events.
 If workload resume fails after the pending record clears, the reset is complete.
 Reapply the named application's unchanged selection without another reset.
-[Deployment cleanup](../operations/deployment.md#cleanup) owns disposable platform rebuild commands and their data-loss scope.
+[Deployment cleanup](../operations/deployment.md#cleanup) owns disposable platform rebuild commands and their data-loss target.
 
 ### Switching modes
 
@@ -235,7 +235,7 @@ Repeated transitions preserve the same rules. Version 1.0 does not change mode.
 `wamn schema adopt` records an explicit user assertion in the existing package records.
 Matching migration rows keep their checksums and outcomes.
 New or changed asserted files receive `outcome = 'adopted'` and no `applied_at` timestamp.
-Adoption executes no SQL and makes no claim about the live schema.
+Adoption executes no SQL and makes no assertion about the live schema.
 Later apply skips adopted files and executes the remaining continuation.
 An uncertain `started` file requires `--resolve` before adoption.
 
@@ -384,19 +384,19 @@ Retry performs no installation or SQL reversal. Application release digests and 
 Platform SQL commands select the prepared chart explicitly:
 
 ```bash
-wamn platform schema diff --scope system --chart /prepared/platform
-wamn platform schema apply --scope system --chart /prepared/platform
-wamn platform schema diff --scope project --env environments/dev/environment.k --chart /prepared/platform
-wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema diff --target system --chart /prepared/platform
+wamn platform schema apply --target system --chart /prepared/platform
+wamn platform schema diff --target project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform
 ```
 
 Both commands run the chart's immutable `ctl` image and print its digest.
-That image supplies the SQL. Project scope requires `--env`. System scope refuses it.
-Both scopes use bounded Jobs in `platform`.
-Project scope resolves the database and cluster from the system registry and holds the environment's exclusive lifecycle lock.
+That image supplies the SQL. Project target requires `--env`. System target refuses it.
+Both targets use bounded Jobs in `platform`.
+Project target resolves the database and cluster from the system registry and holds the environment's exclusive lifecycle lock.
 It uses the existing CNPG administrator and apply credentials.
 
-| Scope | Frozen initialization SQL | Append-only files | Records |
+| Target | Frozen initialization SQL | Append-only files | Records |
 |---|---|---|---|
 | System | `CONTROL_BOOTSTRAP_SQL` | `deploy/sql/migrations/system/NNNN_name.sql` | `registry.schema_baseline`, `registry.schema_migration` |
 | Project | `CATALOG_SCHEMA_SQL`, then `APP_SCHEMA_SQL` | `deploy/sql/migrations/project/NNNN_name.sql` | `platform.schema_baseline`, `platform.schema_migration` |
@@ -415,22 +415,22 @@ A different initialization digest refuses. A new baseline belongs only to an emp
 Application schema mode never authorizes system database reset.
 
 For an existing matching baseline without migration history, apply creates the empty history table before executing files.
-It runs no initialization SQL and claims no completed file through adoption.
+It runs no initialization SQL and records no completed file through adoption.
 Diff reports this adoption without mutation.
 Transactional files commit with their history rows. Retry skips committed files and refuses changed checksums.
-Both platform scopes and package SQL use one shared executor for ordered prefixes, gaps, drift, locks, and nontransactional outcomes.
-Platform scopes use their own record tables without package authorization or package keys.
+Both platform targets and package SQL use one shared executor for ordered prefixes, gaps, drift, locks, and nontransactional outcomes.
+Platform targets use their own record tables without package authorization or package keys.
 
 The [SQL execution](#sql-execution) rules also apply to platform files.
 A marked file has the same `started` uncertainty. Resolution uses a path without the package prefix:
 
 ```bash
-wamn platform schema apply --scope system --chart /prepared/platform --resolve migrations/system/0001_example.sql=applied
-wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform --resolve migrations/project/0001_example.sql=retry
+wamn platform schema apply --target system --chart /prepared/platform --resolve migrations/system/0001_example.sql=applied
+wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform --resolve migrations/project/0001_example.sql=retry
 ```
 
-System scope holds its own session-level advisory lock. Project scope uses the environment's schema exclusion.
-Apply changes only SQL objects and records in the selected scope.
+System target holds its own session-level advisory lock. Project target uses the environment's schema exclusion.
+Apply changes only SQL objects and records in the selected target.
 It runs no environment provisioning, application activation, service update, credential rotation, or SQL reversal.
 No command migrates every environment.
 Developers choose the order of SQL and compatible service code updates.
@@ -497,7 +497,7 @@ A passing local loop does not establish deployed Kubernetes behavior.
 
 Changing `schema.mode` alone performs no SQL and changes no application release.
 Matching baselines supply migration starting points without replay.
-An explicit adoption asserts records without claiming execution.
+An explicit adoption asserts records without reporting execution.
 A later reset needs the recorded disposable designation and complete retained SQL.
 Repeated transitions retain these rules and never reset the system database.
 
@@ -524,7 +524,7 @@ Output must expose no secrets.
 Each bead below remains open and deferred. None blocks the accepted trusted-worker boundary.
 Use the target's configured artifact repositories.
 
-- `wamn-b26q0`: Deferred credential-scope restrictions. The owner accepted the current trusted-worker boundary on 2026-11-10.
+- `wamn-b26q0`: Deferred credential-target restrictions. The owner accepted the current trusted-worker boundary on 2026-11-10.
 - `wamn-pbh27`: Deferred publication restrictions under the same owner ruling.
 - `wamn-yen7r`: Deferred product project delete operation.
 - `wamn-aasc7`: Deferred Acme deployment in `wamn-dev` for the `acme_record_receipt` benchmark.

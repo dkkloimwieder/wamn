@@ -65,7 +65,7 @@ Proposal: Share one runner that returns status and unmodified output. Keep trans
 
 Deletes: Fourteen local runners and their repeated pipe setup. Small success and refusal wrappers can disappear where direct assertions remain clear.
 
-Risk: Applying one transaction policy everywhere breaks scripts that create databases or use `\connect`. Retain `project_env_database_ownership_and_connect_are_scoped`, the CDC tests, and the existing `admission_live` refusal cases.
+Risk: Applying one transaction policy everywhere breaks scripts that create databases or use `\connect`. Retain `project_env_database_ownership_and_connect_are_targeted`, the CDC tests, and the existing `admission_live` refusal cases.
 
 ## Finding G1-4: Database URL rewriting has several independent implementations
 
@@ -163,7 +163,7 @@ Effort: S
 Area: engine and runtime artifact tests  
 Evidence: `crates/platform/engine/src/artifact_source.rs:276`, `crates/platform/runtime/src/component_artifact_source.rs:457`, and `crates/platform/runtime/tests/metadata_token.rs:161`.
 
-Problem: All three `admitted` helpers construct the same package scope, operation ports, component digest, and logging import. A component declaration change requires the same fixture edit in three places. Each test then varies the artifact source rather than this declaration.
+Problem: All three `admitted` helpers construct the same package target, operation ports, component digest, and logging import. A component declaration change requires the same fixture edit in three places. Each test then varies the artifact source rather than this declaration.
 
 Proposal: Put the minimal admitted-component builder behind catalog’s existing `test-util` boundary. Supply component bytes explicitly and leave source behavior in the tests.
 
@@ -362,7 +362,7 @@ Effort: S
 Area: `crates/control/provision/src/tenant_key.rs`  
 Evidence: `crates/control/provision/src/tenant_key.rs:338`; `crates/control/provision/tests/tenant_key_live.rs:156`; `crates/control/provision/tests/tenant_key_live.rs:186`; `crates/control/provision/tests/tenant_key_live.rs:249`.  
 Problem: `the_emitted_ddl_is_frozen` duplicates the complete generated SQL, including whitespace. Its security contract concerns derivation, ownership, privileges, and function properties. The source names no consumer that requires the entire statement text byte for byte.  
-Closed by the tenant feature removal in progress (owner review 2026-10-31). `crates/control/provision/src/tenant_key.rs`, `crates/control/provision/tests/tenant_key_live.rs` and `crates/execution/run-state/src/tenant_scope.rs` are the retired tenant feature and go whole. There is no snapshot to trim.
+Closed by the tenant feature removal in progress (owner review 2026-10-31). `crates/control/provision/src/tenant_key.rs`, `crates/control/provision/tests/tenant_key_live.rs` and `crates/execution/run-state/src/tenant_identity.rs` are the retired tenant feature and go whole. There is no snapshot to trim.
 
 ## Finding G2-8: Empty prerequisite reasons conceal a built-service dependency
 

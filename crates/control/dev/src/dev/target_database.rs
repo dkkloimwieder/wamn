@@ -269,7 +269,7 @@ pub async fn schema_operation(
         tracing::warn!(affected = ?diffs.iter().flat_map(|diff| &diff.affected_applications).collect::<std::collections::BTreeSet<_>>(),
             "reset development database; all application data is discarded");
         let instance = lease.recreate(&config).await?;
-        super::coordinator::claim_environment_instance(
+        super::coordinator::assign_environment_instance(
             config.system_database_url(),
             &config.activation_identity().env_key(),
             &instance,
@@ -424,7 +424,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
     let lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let instance = lease.recreate(&config).await?;
-    super::coordinator::claim_environment_instance(
+    super::coordinator::assign_environment_instance(
         config.system_database_url(),
         &config.activation_identity().env_key(),
         &instance,
@@ -464,7 +464,7 @@ impl TargetDatabaseErrorType {
     }
 }
 
-/// One refusal from the run-scoped target-database lifecycle.
+/// One refusal from the run-targeted target-database lifecycle.
 pub struct TargetDatabaseError {
     type_: TargetDatabaseErrorType,
     remedy: &'static str,
@@ -818,13 +818,13 @@ impl TargetLease {
         validate_template(&self.client, &template, &fingerprint).await?;
         let substrate = async {
             use wamn_environment_control::platform_migrations::{self, ProjectReset};
-            use wamn_control_provision::schema_migrations::MigrationScope;
+            use wamn_control_provision::schema_migrations::MigrationDatabase;
             let mut template_url = PostgresConfig::from_str(config.target_database_url())?;
             template_url.dbname(template.as_str());
             let (template_client, connection) = template_url.connect(NoTls).await?;
             let connection = tokio::spawn(connection);
             let result = async {
-                let image = platform_migrations::embedded_sources(MigrationScope::Project);
+                let image = platform_migrations::embedded_sources(MigrationDatabase::Project);
                 let exists: bool = self.client
                     .query_one(
                         "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",

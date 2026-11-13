@@ -26,7 +26,7 @@ async fn seed_package(client: &Client) {
     client
         .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
-        .expect("claim the test tenant");
+        .expect("bind the test tenant identity");
     client.execute(
         "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ($1, 'inventory', '1.0.0', $2, $3)",
         &[&ENV_KEY, &format!("sha256:{}", "a".repeat(64)), &format!("sha256:{}", "c".repeat(64))]

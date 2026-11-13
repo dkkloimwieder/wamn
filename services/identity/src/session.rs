@@ -69,7 +69,7 @@ pub(super) fn audience<'a>(inner: &'a Inner, audience: &'a str) -> Option<Audien
     }
 }
 
-/// The claims of a password-login session for the resolved audience, after
+/// The JWT claims of a password-login session for the resolved audience, after
 /// the same current authority checks as discovery.
 pub(super) async fn claims_for_audience(
     inner: &Inner,

@@ -70,7 +70,7 @@ impl fmt::Display for BareSchemaName {
 /// A present index is STALE when the record definition names a record column of
 /// its table that the live definition does not (word-boundary token match, so
 /// `run_id` never matches inside `event_root_run_id`). This is deliberately the
-/// narrow, real drift class — notably the pre-E4 `run_queue_claimable` without
+/// narrow, real drift class — notably the pre-E4 `run_queue_leasable` without
 /// the ordering columns. It does not compare other definition differences.
 pub(super) fn index_definition_stale(
     file: &str,

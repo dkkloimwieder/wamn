@@ -1,4 +1,4 @@
-//! Collect aged file objects through the host's scoped readers.
+//! Collect aged file objects through the host's targeted readers.
 
 use std::time::{Duration, SystemTime};
 
@@ -54,7 +54,7 @@ impl FileRoutes {
     pub async fn collect_orphan_files(&self) -> anyhow::Result<u64> {
         let Some(reader) = self
             .postgres
-            .file_collection(&self.project, &self.release.scope().env_key)
+            .file_collection(&self.project, &self.release.target().env_key)
             .await?
         else {
             return Ok(0);

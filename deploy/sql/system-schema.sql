@@ -11,9 +11,9 @@
 -- (which builds the S2–S6 *tenant-data* fixtures). This is applied into the T1
 -- system DB — a different plane entirely.
 --
--- PLATFORM-GLOBAL, NOT TENANT-SCOPED — the sharpest difference from
+-- PLATFORM-GLOBAL, NOT TENANT-OWNED — the sharpest difference from
 -- catalog-schema.sql: the system DB is the platform's own single-tenant
--- control-plane state. There is NO `app.env_key` claim, NO per-tenant RLS floor,
+-- control-plane state. There is NO `app.env_key` identity, NO per-tenant RLS floor,
 -- NO NULLIF/CHECK(tenant_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
 -- families get their grants from `stable_surface_sql` in wamn-control-provision.
@@ -33,7 +33,7 @@
 -- and wamn-ctl bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
--- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
+-- org-owned policies + templates, wamn-8df.4): the closed tier/env CHECK
 -- enumerations are RETIRED. `env` is a validated slug resolving a
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
 -- composite FK below — replaces the old `env IN ('dev','canary','prod')`
@@ -47,7 +47,7 @@
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
 --   (1) control-plane authority: tenant workloads cannot connect here.
---       Scoped identity readers perform fresh PAT authentication.
+--       Authorized identity readers perform fresh PAT authentication.
 --       The separate identity issuer has explicit key, credential, and throttle grants.
 --   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
 --       *reference* (secret_name + optional secret_namespace) and NO tenant DB
@@ -262,7 +262,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
--- Env policies (D18, wamn-8df.3; ORG-SCOPED by wamn-8df.4) — each org's own
+-- Env policies (D18, wamn-8df.3; ORG-OWNED by wamn-8df.4) — each org's own
 -- environment configurations (crates/control/registry EnvPolicy, keyed per org as
 -- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
 -- identifies it in the triple and (via the composite FK below) resolves its
@@ -548,7 +548,7 @@ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 -- These tables hold credential material and stamps, never row-image history.
 -- The identity library serializes enrollment on the principal row and consumes
 -- all outstanding invitations in the same transaction as password creation.
--- Scoped issuer grants belong to the password endpoint implementation.
+-- Authorized issuer grants belong to the password endpoint implementation.
 CREATE TABLE identity.password_credentials (
     principal_id uuid PRIMARY KEY,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
@@ -824,7 +824,7 @@ ALTER TABLE registry.env_policies
 -- deleted the only record of its `instance_suffix` is gone — and with it every
 -- name derived from it (the Kubernetes namespace above all). The orphaned
 -- namespace and whatever survived inside it then have NO handle: nothing can
--- enumerate them, so nothing can reclaim them.
+-- enumerate them, so nothing can release them.
 --
 -- This is RECLAIM, not collision-prevention. Randomness remains the entire
 -- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when

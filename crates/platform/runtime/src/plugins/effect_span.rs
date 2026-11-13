@@ -26,7 +26,7 @@
 //! was filed on the premise that widening this block enriches all four surfaces
 //! at once, and an owner ruling refuted that for three of them on 2026-08-26:
 //! DECLARING a field here is one edit, but FILLING it is one per surface, and
-//! only a surface that can SOURCE the claim may fill it. So [`EffectWiring`] is
+//! only a surface that can SOURCE the fact may fill it. So [`EffectWiring`] is
 //! declared here once and filled surface by surface, each on its own bead.
 //! `wamn.connection_http` (`wamn-0h0g.24.12`), `wamn.blobstore` and
 //! `wamn:postgres` (`wamn-0h0g.24.14`) each read back a host-bound
@@ -37,9 +37,9 @@
 //! # The vocabulary
 //!
 //! - `wamn.env_key` / `wamn.project` / `wamn.component` — the executing
-//!   component's identity, resolved HOST-side from bind-time claim maps and
+//!   component's identity, resolved HOST-side from bind-time identity maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
-//!   them. An empty string means the surface holds no such claim.
+//!   them. An empty string means the surface holds no such fact.
 //! - `wamn.package_id` / `wamn.wiring_id` / `wamn.wiring_version` /
 //!   `wamn.node_id` / `wamn.occurrence` / `wamn.component_digest` /
 //!   `wamn.component_name` / `wamn.operation` — the
@@ -52,7 +52,7 @@
 //!   place a reader finds them (`wamn-b2m6.2`).
 //!   `wamn.component_name` names the executing component the way the catalog
 //!   admitted it. It is NOT `wamn.component`, which every surface fills with the
-//!   per-request pooled scope. That scope is an instance id and it changes on
+//!   per-request pooled instance id. That id and it changes on
 //!   every call, so it names no component a reader can look up
 //!   (`wamn-b2m6.7`).
 //! - `wamn.run_id` / `wamn.requirement` — declared `Empty`,
@@ -67,7 +67,7 @@
 //! - `effect.outcome` — what the platform says happened to the effect. One of
 //!   six words and never a seventh, declared `Empty` and filled by
 //!   [`EffectOutcomeGuard`] on the surfaces that run their effect through it.
-//!   [`EffectOutcome`] states what each word claims (`wamn-b2m6.3`).
+//!   [`EffectOutcome`] states what each word states (`wamn-b2m6.3`).
 //!
 //! Each surface adds its own leading fields — `db.system` / `db.operation` for
 //! `wamn:postgres` (OTel DB semantic conventions, frozen), `effect.operation`
@@ -76,10 +76,10 @@
 //! # Why resolved strings and not a plugin handle
 //!
 //! Each plugin holds its identity differently — `WamnPostgres` in `pub(super)`
-//! claim maps, `ConnectionHttp` in frozen `Box<str>` fields, and `WamnJetstream`
+//! identity maps, `ConnectionHttp` in frozen `Box<str>` fields, and `WamnJetstream`
 //! in its bind-time map. [`EffectIdentity`] takes
 //! the resolved `&str` triple so this module needs no access to any of them, and
-//! adding a surface here never widens a plugin's private claim API.
+//! adding a surface here never widens a plugin's private identity API.
 //!
 //! # What is deliberately absent
 //!
@@ -116,9 +116,9 @@ use crate::EffectOutcome;
 
 /// Host-resolved identity of the component performing one effect.
 ///
-/// Every field is a claim the platform registered at workload bind or froze
+/// Every field is a fact the platform registered at workload bind or froze
 /// into the plugin at construction; an empty string means "this surface holds
-/// no such claim", never "the guest declined to send one".
+/// no such fact", never "the guest declined to send one".
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectIdentity<'a> {
     pub env_key: &'a str,
@@ -131,11 +131,11 @@ pub(crate) struct EffectIdentity<'a> {
 ///
 /// Host-attested: copied down from the invocation the router driver bound before
 /// entering the pooled component, never from anything the guest sent. An empty
-/// field means "this effect holds no such claim" — the same convention
+/// field means "this effect holds no such fact" — the same convention
 /// [`EffectIdentity`] follows.
 ///
 /// `package_id` and `occurrence` sit beside the position because a reader
-/// attributes an effect to one CALL. A wiring id is package-scoped, so two
+/// attributes an effect to one CALL. A wiring id is package-owned, so two
 /// packages name a wiring alike, and one walk visits the same node more than
 /// once. Without these two fields those calls record identical spans
 /// (`wamn-b2m6.2`).
@@ -351,7 +351,7 @@ pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 ///
 /// `None` records the eight keys EMPTY rather than leaving them unfilled,
 /// following [`EffectIdentity`]'s convention: one span shape per surface, where
-/// an empty value reads as "this effect holds no such claim" and never as "the
+/// an empty value reads as "this effect holds no such fact" and never as "the
 /// enrichment was dropped".
 pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
     let wiring = wiring.unwrap_or(EffectWiring {
@@ -675,13 +675,13 @@ mod tests {
     /// The six words are the whole set. None of them names a rollback, an undo
     /// or a revert, because no effect observation states what a command did.
     #[test]
-    fn no_outcome_word_claims_a_command_was_undone() {
+    fn no_outcome_word_states_a_command_was_undone() {
         for outcome in EffectOutcome::ALL {
             let label = outcome.label();
             for forbidden in ["rollback", "rolled", "undo", "undone", "revert"] {
                 assert!(
                     !label.contains(forbidden),
-                    "{label} claims {forbidden}, which the platform does not know"
+                    "{label} states {forbidden}, which the platform does not know"
                 );
             }
         }

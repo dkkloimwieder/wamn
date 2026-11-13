@@ -1022,7 +1022,7 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
         .connect_timeout(Duration::from_secs(5))
         .options("-c default_transaction_read_only=on -c statement_timeout=5000");
     let (mut client, connection) = configuration.connect(tokio_postgres::NoTls).await?;
-    // The connection future stays scoped to this observation, including cancellation.
+    // The connection future stays targeted to this observation, including cancellation.
     let read = async {
         let transaction = client
             .build_transaction()
@@ -1184,7 +1184,7 @@ pub fn write(status: &PlatformStatus, output: &mut impl Write) -> anyhow::Result
     Ok(())
 }
 
-/// Write one target without claiming readiness of the whole platform.
+/// Write one target without reporting readiness of the whole platform.
 pub fn write_target(target: &TargetStatus, output: &mut impl Write) -> anyhow::Result<()> {
     writeln!(output, "target {}: {}", target.name, target.category)?;
     write_observation(&target.selected, true, output)?;

@@ -32,7 +32,7 @@ import {
   type Transport,
 } from "@wamn/web-runtime";
 import { audienceKind, createAddress, type Address, type Kind } from "./address";
-import type { Scope } from "./scope";
+import type { Config } from "./config";
 import { identityPage, SignInForm } from "./identity";
 import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
 
@@ -93,7 +93,7 @@ export interface ShellSection {
   readonly screens: readonly ShellScreen[];
   readonly routes?: readonly ShellRoute[];
 }
-export interface ShellProps extends Scope {
+export interface ShellProps extends Config {
   readonly title: string;
   readonly sections: readonly ShellSection[];
   readonly controlSections?: readonly ShellSection[];
@@ -167,14 +167,14 @@ export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | 
     environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
     environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
   ]);
-  return (operation, scope) => {
+  return (operation, config) => {
     if (operation === control.CONTROL_MINE_ROUTE.operation)
       return mine.orgAdmin || mine.projects.some((entry) => entry.projectAdmin);
     if (orgOperations.has(operation)) return mine.orgAdmin;
     return (
       projectOperations.has(operation) &&
       (mine.orgAdmin ||
-        mine.projects.some((entry) => entry.projectAdmin && (scope === undefined || entry.project === scope)))
+        mine.projects.some((entry) => entry.projectAdmin && (config === undefined || entry.project === config)))
     );
   };
 }
@@ -233,7 +233,7 @@ export function Shell(props: ShellProps): JSX.Element {
           </Show>
         }
       >
-        {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
+        {(Identity) => <Identity title={props.title} config={props} options={options} address={address} />}
       </Show>
     </Loading>
   );

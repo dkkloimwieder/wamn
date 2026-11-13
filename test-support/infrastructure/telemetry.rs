@@ -106,13 +106,13 @@ fn file_trace(bytes: &[u8], trace_id: &str) -> anyhow::Result<Value> {
             serde_json::from_slice(line).context("parse collector OTLP JSON line")?;
         for resource in document["resourceSpans"].as_array().into_iter().flatten() {
             let mut resource = resource.clone();
-            for scope in resource["scopeSpans"]
+            for target in resource["scopeSpans"]
                 .as_array_mut()
-                .context("collector resource has scopes")?
+                .context("collector resource has targets")?
             {
-                scope["spans"]
+                target["spans"]
                     .as_array_mut()
-                    .context("collector scope has spans")?
+                    .context("collector target has spans")?
                     .retain(|span| span["traceId"].as_str().is_some_and(|id| id == trace_id));
             }
             resources.push(resource);
@@ -211,7 +211,7 @@ fn trace_spans(document: &Value) -> impl Iterator<Item = &Value> {
         .into_iter()
         .flatten()
         .flat_map(|batch| batch["scopeSpans"].as_array().into_iter().flatten())
-        .flat_map(|scope| scope["spans"].as_array().into_iter().flatten())
+        .flat_map(|target| target["spans"].as_array().into_iter().flatten())
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
@@ -443,7 +443,7 @@ pub struct TelemetryInput<'a> {
     pub evidence: &'a Path,
 }
 
-/// Require request identity, PostgreSQL ancestry, and scoped service metrics.
+/// Require request identity, PostgreSQL ancestry, and targeted service metrics.
 pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
     let TelemetryInput {
         cluster,
@@ -591,8 +591,8 @@ mod tests {
         }
         let mut foreign = document.clone();
         for resource in foreign["resourceSpans"].as_array_mut().unwrap() {
-            for scope in resource["scopeSpans"].as_array_mut().unwrap() {
-                for span in scope["spans"].as_array_mut().unwrap() {
+            for target in resource["scopeSpans"].as_array_mut().unwrap() {
+                for span in target["spans"].as_array_mut().unwrap() {
                     span["traceId"] = json!("00000000000000000000000000000017");
                 }
             }
@@ -666,7 +666,7 @@ mod tests {
                 .unwrap()
                 .iter_mut()
                 .flat_map(|batch| batch["scopeSpans"].as_array_mut().unwrap())
-                .flat_map(|scope| scope["spans"].as_array_mut().unwrap());
+                .flat_map(|target| target["spans"].as_array_mut().unwrap());
             for span in spans {
                 if span["name"] == "wamn.postgres" {
                     span[field_name] = if field_name == "endTimeUnixNano" {
@@ -685,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn metrics_require_each_scoped_counter_and_refuse_invalid_counts() {
+    fn metrics_require_each_targeted_counter_and_refuse_invalid_counts() {
         let valid = "guest_invocation_duration_count{workload_namespace=\"owned\",component=\"flow-http\",plugin=\"wasi-http\",http_request_method=\"POST\"} 2\nwamn_postgres_query_duration_ms_count{wamn_project=\"fixture\"} 1\nwamn_jetstream_duration_ms_count{wamn_project=\"fixture\"} 1\n";
         assert!(metrics(valid, "owned", "fixture").is_ok());
         for omitted in 0..3 {

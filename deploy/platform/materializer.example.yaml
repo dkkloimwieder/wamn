@@ -1,6 +1,6 @@
 # wamn-l5i9.17 CDC materializer (D19 v3 §5) — EXAMPLE WorkloadDeployment for
 # ONE project-env. Per-env config (stream/org/project/env + the
-# env_key claim) makes this an example the provisioning runbook
+# env_key identity) makes this an example the provisioning runbook
 # instantiates, not an apply-as-is manifest; the demo values below match the
 # matbench fixture triple.
 #
@@ -15,21 +15,21 @@
 # imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
 # (bind_plugins binds only what is declared here).
 #
-# IDENTITY (host-injected, non-spoofable): `wamn.env_key` scopes the fully
+# IDENTITY (host-injected, non-spoofable): `wamn.env_key` targets the fully
 # qualified `catalog.packages` read;
 # `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
 # (stream name + subject segments + the env_key label checked against the
-# credential-scoped catalog row) — RLS holds regardless of what the env claims.
+# credential-targeted catalog row) — RLS holds regardless of what the env identity.
 #
-# ONE ENV_KEY PER WORKLOAD (v1): registrations and claims use env_key.
+# ONE ENV_KEY PER WORKLOAD (v1): registrations and identity use env_key.
 # Each project-env runs its own materializer workload.
 # Multi-registration fan-out within the env_key is one workload
 # (a durable consumer per registration).
 #
 # Event delivery can repeat. Admission uses the workflow and delivery identity
-# to avoid duplicate runs. Queue claims have no event ordering guarantee.
+# to avoid duplicate runs. Queue leases have no event ordering guarantee.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:

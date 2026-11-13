@@ -7,8 +7,8 @@ fn main() {
     let mut generated = String::new();
     println!("cargo:rerun-if-changed=../../../deploy/sql/migrations/system");
     println!("cargo:rerun-if-changed=../../../deploy/sql/migrations/project");
-    for scope in ["system", "project"] {
-        let directory = root.join("migrations").join(scope);
+    for target in ["system", "project"] {
+        let directory = root.join("migrations").join(target);
         let mut files = fs::read_dir(&directory)
             .expect("read migration directory")
             .map(|entry| entry.expect("read migration entry").path())
@@ -18,7 +18,7 @@ fn main() {
         writeln!(
             generated,
             "/// Ordered migration IDs and exact bytes from the image.\npub const {}_MIGRATIONS: &[(&str, &[u8])] = &[",
-            scope.to_uppercase()
+            target.to_uppercase()
         )
         .expect("write migration list to String");
         for path in files {
@@ -32,7 +32,7 @@ fn main() {
                 .expect("migration has a name")
                 .to_str()
                 .expect("migration name is UTF-8");
-            let id = format!("migrations/{scope}/{name}");
+            let id = format!("migrations/{target}/{name}");
             writeln!(
                 generated,
                 "({id:?}, include_bytes!(\"{}\")),",

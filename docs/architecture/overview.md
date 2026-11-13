@@ -79,8 +79,8 @@ Installation records a digest of the full schema SQL. Apply refuses a changed or
 Migrations are deferred until development is stable and return then with a smaller design.
 
 The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
-That refresh clears the instance claim even when the suffix stays unchanged.
-The developer coordinator claims an instance with one update and refuses a missing projection.
+That refresh clears the instance assignment even when the suffix stays unchanged.
+The developer coordinator assigns an instance with one update and refuses a missing projection.
 
 Workflow authorship validates the graph against the environment’s serving release.
 The application tests exercise effects through runtime interfaces.
@@ -130,7 +130,7 @@ Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
 Without `client`, the host serves no application web client.
 Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
-Apply reads the web artifact without claiming it, so environments can share one artifact.
+Apply reads the web artifact without owning it, so environments can share one artifact.
 `wamn web upload` copies that artifact’s `dist/` to the shared digest root.
 It writes files create-only, then the org and project configuration, then the index.
 An existing index marks completion, so another upload writes nothing.
@@ -294,13 +294,13 @@ The services compose these layers.
 
 A route calls one component export through the route path. A wiring and queued work use the [execution driver](execution.md) in `wamn-workflow`.
 The driver coordinates graph decisions. The engine owns dispatch and workload loading, and the host owns invocation authority.
-The workflow crate owns durable queue claims and settlement through `RunStore`.
+The workflow crate owns durable queue leases and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.
 It requires the expected file digests and a database marker tied to the `env_key`, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
-The normal runtime still owns tenant authority, run claims, credential generations, and effects.
+The normal runtime still owns tenant authority, run leases, credential generations, and effects.
 
 ## Cloud providers
 

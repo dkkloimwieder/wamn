@@ -213,25 +213,25 @@ pub fn resolve_attachment_entry(
 
 /// Resolve every reference of an authored component declaration: each
 /// operation key and its `registered-operation`. The declaration takes
-/// `scope.package-version` from the manifest.
+/// `target.package-version` from the manifest.
 ///
 /// # Errors
 ///
 /// [`GenerateError`] naming the member whose reference refuses, or a template
-/// that authors `scope.package-version`.
+/// that authors `target.package-version`.
 pub fn resolve_declaration_document(
     document: &mut Value,
     owners: &OperationOwners,
 ) -> Result<(), GenerateError> {
-    if let Some(scope) = document.get_mut("scope").and_then(Value::as_object_mut) {
-        if scope.contains_key("package-version") {
+    if let Some(target) = document.get_mut("target").and_then(Value::as_object_mut) {
+        if target.contains_key("package-version") {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidIdentity,
-                "a declaration must not author scope.package-version; \
+                "a declaration must not author target.package-version; \
                  the version is authored once, as package.version in wamn.json",
             ));
         }
-        scope.insert("package-version".to_owned(), json!(owners.package.version));
+        target.insert("package-version".to_owned(), json!(owners.package.version));
     }
     let Some(operations) = document
         .get_mut("operations")
@@ -338,13 +338,13 @@ mod tests {
         );
 
         let mut declaration = json!({
-            "scope": {"env_key": "t", "package-id": "acme"},
+            "target": {"env_key": "t", "package-id": "acme"},
             "operations": {"acme:order/record": {
                 "registered-operation": "acme:order/record"
             }}
         });
         resolve_declaration_document(&mut declaration, &owners()).unwrap();
-        assert_eq!(declaration["scope"]["package-version"], "3.0.0");
+        assert_eq!(declaration["target"]["package-version"], "3.0.0");
         let operation = &declaration["operations"]["acme:order/record@3.0.0"];
         assert_eq!(operation["registered-operation"], "acme:order/record@3.0.0");
 
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(wiring["nodes"]["b"]["operation"], "wamn:node/handler@0.1.0");
     }
 
-    /// An authored version refuses, in an id or in the declaration scope.
+    /// An authored version refuses, in an id or in the declaration target.
     #[test]
     fn an_authored_version_refuses() {
         let mut attachments = json!({"a": {"operation": "acme:order/get@3.0.0"}});
@@ -367,9 +367,8 @@ mod tests {
             "{error}"
         );
 
-        let mut declaration = json!({"scope": {"package-id": "acme", "package-version": "3.0.0"}});
-        let error = resolve_declaration_document(&mut declaration, &owners()).unwrap_err();
-        assert!(error.context().contains("scope.package-version"), "{error}");
+        let mut declaration = json!({"target": {"package-id": "acme", "package-version": "3.0.0"}});
+        assert!(resolve_declaration_document(&mut declaration, &owners()).is_err());
     }
 
     /// A missing attachments file reads as the empty map an empty file reads

@@ -25,7 +25,7 @@ use crate::plugins::effect_span::{EffectIdentity, effect_span, record_wiring};
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;
 use wamn_catalog::ServingManifest;
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 
 use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
@@ -68,14 +68,14 @@ pub struct WamnBlobstore {
 /// - it must belong to THIS tenant, or a manifest served for another one would
 ///   hand a guest an effective release under which some other tenant's binding
 ///   authorizes;
-/// - it must actually CONTAIN the package the invocation claims, or a release
+/// - it must actually CONTAIN the package the invocation names, or a release
 ///   that never shipped this package would still supply coordinates for it.
 ///
 /// Pure and separate from the plugin, so the decision gating every released
 /// effect can be asserted without a database or an object store.
 fn release_coordinates(
     invocation: &ConnectionInvocation,
-    release: Option<(&ServingManifest, &str, &ReleaseScope)>,
+    release: Option<(&ServingManifest, &str, &ReleaseTarget)>,
     env_key: &str,
 ) -> Result<(String, String), BindingError> {
     match (&invocation.closure, release) {
@@ -231,7 +231,7 @@ impl WamnBlobstore {
         let release = self
             .release
             .as_ref()
-            .filter(|release| release.scope().env_key == self.env_key.as_ref())
+            .filter(|release| release.target().env_key == self.env_key.as_ref())
             .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
         let connection_id = *self
             .facts
@@ -326,7 +326,7 @@ impl WamnBlobstore {
                 }
                 binding::BlobstoreProvider::Gcs => {
                     // Without a stored key, object_store signs through IAM signBlob
-                    // using credentials supplied by the pod metadata identity.
+                    // using credentials supplied by the pod metadatan identity.
                     let client = build_gcs_store(&bound.container).map_err(|error| {
                         FileStorageError::new(
                             FileStorageErrorKind::Refused,
@@ -348,7 +348,7 @@ impl WamnBlobstore {
             Some(signer),
             bound.cdn_host.as_deref(),
             generation,
-            &release.scope().environment,
+            &release.target().environment,
         )
     }
 
@@ -409,7 +409,7 @@ impl WamnBlobstore {
                 (
                     release.manifest(),
                     release.release().manifest_digest.as_str(),
-                    release.scope(),
+                    release.target(),
                 )
             }),
             &self.env_key,
@@ -754,7 +754,7 @@ mod tests {
     const MOUNTED_RELEASE: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    fn manifest(env_key: &str, package: &str) -> (ServingManifest, ReleaseScope) {
+    fn manifest(env_key: &str, package: &str) -> (ServingManifest, ReleaseTarget) {
         let manifest = ServingManifest {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -771,7 +771,7 @@ mod tests {
         };
         (
             manifest,
-            ReleaseScope::new(env_key, "warehouse-eu-3").with_applications(
+            ReleaseTarget::new(env_key, "warehouse-eu-3").with_applications(
                 [(
                     "warehouse".to_owned(),
                     wamn_catalog::ApplicationDefinition {

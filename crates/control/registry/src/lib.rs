@@ -19,7 +19,7 @@
 //! The generic deployment model (D18) replaces the closed `Env` / `Tier` enums:
 //! `env` is a validated [`Env`] slug resolving a named [`EnvPolicy`], and an org
 //! carries a minimal [`Placement`] (`pooled` | `dedicated`) from which clusters
-//! derive. Policies are **org-scoped** ([`OrgEnvPolicy`], wamn-8df.4): a
+//! derive. Policies are **org-targeted** ([`OrgEnvPolicy`], wamn-8df.4): a
 //! [`Template`] preset (`trials` / `standard` / `dedicated` — the `Tier`
 //! successor) stamps an org's placement + initial policy set in one step, and
 //! the org customizes its own rows per-env.

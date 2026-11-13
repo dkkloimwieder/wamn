@@ -53,7 +53,7 @@ enum Command {
     ProvisionOrg(provisioning_verbs::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
-    /// Provision the scoped database credential for the identity service.
+    /// Provision the targeted database credential for the identity service.
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
     /// Grant one user access to one project environment.
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn project_environment_membership_verbs_parse_exact_scope() {
+    fn project_environment_membership_verbs_parse_exact_target() {
         for verb in [
             "grant-project-env-membership",
             "revoke-project-env-membership",
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_verbs_parse_their_scope_after_the_verb() {
+    fn workflow_verbs_parse_their_target_after_the_verb() {
         let cli = Cli::try_parse_from([
             "wamn-ctl",
             "workflow",
@@ -348,10 +348,10 @@ mod tests {
         else {
             panic!("expected workflow park");
         };
-        assert_eq!(args.scope.org, "acme");
-        assert_eq!(args.scope.project, "plant");
-        assert_eq!(args.scope.scope.environment, "dev");
-        assert_eq!(args.scope.scope.schema, "wamn_run");
+        assert_eq!(args.target.org, "acme");
+        assert_eq!(args.target.project, "plant");
+        assert_eq!(args.target.target.environment, "dev");
+        assert_eq!(args.target.target.schema, "wamn_run");
         assert_eq!(args.run_id, "run-1");
     }
 

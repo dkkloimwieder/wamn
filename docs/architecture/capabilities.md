@@ -2,7 +2,7 @@
 
 A capability is an interface through which a component accesses platform resources.
 A binding connects a declared requirement to an authorized environment resource.
-The guest names its requirement and logical input. The host owns endpoints, credentials, and deployment scope.
+The guest names its requirement and logical input. The host owns endpoints, credentials, and deployment target.
 
 ## Import admission
 
@@ -77,7 +77,7 @@ The host refuses a name that the calling component did not declare.
 HTTP method authorization and object-store access enforce a declaration's read mode.
 
 The host resolves private credentials through the environment store.
-Each lookup requires the trusted organization, project, and environment scope.
+Each lookup requires the trusted organization, project, and environment target.
 Credential changes use the current generation without a host restart.
 The existing refresh behavior remains in place.
 
@@ -186,9 +186,9 @@ The credential holds a PEM private key. RSA accepts PKCS#8 or PKCS#1, and P-256 
 The host supports PS256, RS256, and ES256. ES256 uses the fixed 64-byte signature format.
 The assertion header carries `alg`, `kid` from `key_id`, and `typ` set to `JWT`.
 
-The claims carry `iss` from `client_id`, `aud` from `token_url`, and `iat` from the host clock.
+The JWT claims carry `iss` from `client_id`, `aud` from `token_url`, and `iat` from the host clock.
 The expiry, `exp`, is 300 seconds later. Each assertion carries a fresh random 256-bit `jti`.
-Optional `scopes` form the `scope` claim and the form field. Empty scopes omit both.
+Optional `scopes` form the `scope` JWT claim and the form field. Empty scopes omit both.
 The `scope_separator` accepts a space or comma and defaults to a space.
 
 The token form carries `grant_type=client_credentials`, the RFC 7523 `client_assertion_type`, and `client_assertion`.
@@ -207,7 +207,7 @@ A token failure before any API request returns `credential-unavailable` without 
 The guest receives no credential. The workflow queue owns other retries.
 
 The transport pins the approved peer and compares the connected peer.
-Its client identity includes the connection scope and credential generation.
+Its client identity includes the connection target and credential generation.
 It does not follow redirects or retry a request automatically.
 Requests share bounded client, socket, and concurrent-request capacity.
 

@@ -53,9 +53,9 @@ const DEFAULT_NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence 
     ON CONFLICT (application, name) DO NOTHING";
 
 const SETTING_SQL: &str = "INSERT INTO platform.setting \
-    (scope_type, scope_id, key, value, locked) \
+    (target_type, target_id, key, value, locked) \
     VALUES ($1, $2, $3, $4::text::jsonb, $5) \
-    ON CONFLICT (scope_type, scope_id, key) DO UPDATE SET \
+    ON CONFLICT (target_type, target_id, key) DO UPDATE SET \
       value = EXCLUDED.value, locked = EXCLUDED.locked \
     WHERE (setting.value, setting.locked) IS DISTINCT FROM (EXCLUDED.value, EXCLUDED.locked)";
 
@@ -99,8 +99,8 @@ pub struct NumberSequence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setting {
     /// `org`, `project`, `application`, `role` or `user`.
-    pub scope_type: String,
-    pub scope_id: String,
+    pub target_type: String,
+    pub target_id: String,
     pub key: String,
     pub value: serde_json::Value,
     pub locked: bool,
@@ -181,8 +181,8 @@ pub async fn write_configuration(
             client,
             SETTING_SQL,
             &[
-                &row.scope_type,
-                &row.scope_id,
+                &row.target_type,
+                &row.target_id,
                 &row.key,
                 &row.value.to_string(),
                 &row.locked,

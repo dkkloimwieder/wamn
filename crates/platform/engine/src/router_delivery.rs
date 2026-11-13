@@ -486,7 +486,7 @@ pub fn route_component<'a>(
     operation: &str,
 ) -> anyhow::Result<&'a AdmittedComponent> {
     let mut providers = components.iter().filter(|fact| {
-        fact.scope.package_id == package_id
+        fact.target.package_id == package_id
             && fact.component == component
             && fact.operations.contains_key(operation)
     });

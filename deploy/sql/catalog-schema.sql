@@ -154,7 +154,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- Cached application releases coexist without selecting executable code. The manifest
 -- digest is the release; this row is an immutable cache of the canonical
 -- manifest bytes, and the bytes must hash to the digest. env_key is the RLS
--- scope of the row, not part of the release identity. Package membership and
+-- target of the row, not part of the release identity. Package membership and
 -- the component closure are read from the bytes.
 CREATE TABLE catalog.releases (
     env_key         text        NOT NULL CHECK (env_key <> ''),

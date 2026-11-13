@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url,
-    sql, workload_generation_role,
+    AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity,
+    compose_url, sql, workload_generation_role,
 };
 use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_test_infrastructure::ctl_process;
@@ -184,7 +184,7 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
 fn generation(family: WorkloadRoleFamily, env_key: &str, database: &str) -> String {
     workload_generation_role(
         family,
-        WorkloadRoleScope::EnvKey { env_key, database },
+        WorkloadRoleIdentity::EnvKey { env_key, database },
         CredentialGeneration::A,
     )
     .unwrap_or_else(|error| panic!("derive the {} generation identity: {error}", family.label()))

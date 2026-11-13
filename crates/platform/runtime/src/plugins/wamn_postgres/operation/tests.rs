@@ -15,7 +15,7 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialType, FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteInFlightLimit,
 };
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
 use wash_runtime::host::HostRef;
@@ -26,11 +26,11 @@ use wash_runtime::types::{Component as WorkloadComponent, Workload};
 use wash_runtime::wasmtime::component::{Accessor, Instance, ResourceAny, Val};
 use wash_runtime::wit::WitInterface;
 
-use crate::plugins::wamn_postgres::claims::tests::{
+use crate::plugins::wamn_postgres::session_identity::tests::{
     LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, ReleaseIdentity, SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
+    ClassCredentials, ReleaseIdentity, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
     WamnPostgresConfig,
 };
 
@@ -108,7 +108,7 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "entry fixture",
-            ReleaseScope::new(ENV_KEY, "test").with_applications(
+            ReleaseTarget::new(ENV_KEY, "test").with_applications(
                 serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
             ),
         )
@@ -262,7 +262,7 @@ async fn fixture() -> (
         include_str!("../../../../../../../deploy/sql/record-history.sql"),
         include_str!("../../../../../../../deploy/sql/record-history-app-grants.sql"),
         "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
-           CONSTRAINT application_claim CHECK (value = 1 OR current_setting('app.application', true) IS NOT DISTINCT FROM 'receiving')); \
+           CONSTRAINT application_identity CHECK (value = 1 OR current_setting('app.application', true) IS NOT DISTINCT FROM 'receiving')); \
          INSERT INTO widget VALUES (1, 1); \
          SELECT wamn_history.create_history_table('public', 'widget', false); \
          CREATE TRIGGER widget_history AFTER UPDATE ON widget FOR EACH ROW \
@@ -287,10 +287,10 @@ async fn fixture() -> (
             Arc::clone(&release),
             &entry_start(&release),
             "entry",
-            SessionClaims {
+            SessionIdentity {
                 env_key: ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .unwrap();
@@ -421,10 +421,10 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
             Arc::clone(&release),
             &entry_start(&release),
             "entry",
-            SessionClaims {
+            SessionIdentity {
                 env_key: ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .unwrap();
@@ -435,18 +435,21 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
 async fn unavailable_principal_database_returns_connection_unavailable() {
     let (postgres, release) = offline_fixture();
     let error = postgres
-        .bind_session_claims(
+        .bind_session_identity(
             "unavailable-principal",
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: ENV_KEY.into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
         .unwrap_err();
-    let error = error.downcast_ref::<super::ClaimError>().unwrap();
-    assert!(matches!(error.kind, super::ClaimErrorKind::Infrastructure));
+    let error = error.downcast_ref::<super::SessionIdentityError>().unwrap();
+    assert!(matches!(
+        error.kind,
+        super::SessionIdentityErrorKind::Infrastructure
+    ));
     assert!(matches!(
         error.source.downcast_ref::<super::super::PgError>(),
         Some(super::super::PgError::ConnectionUnavailable),
@@ -762,10 +765,10 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
         row_limit: 10,
     })
     .unwrap();
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         env_key: ENV_KEY.into(),
         release: Some(ReleaseIdentity::from_loaded(&release)),
-        ..SessionClaims::default()
+        ..SessionIdentity::default()
     };
     assert!(
         postgres
@@ -774,7 +777,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
                 Arc::clone(&release),
                 "registry.example/other@sha256:bad",
                 "entry",
-                claims.clone()
+                identity.clone()
             )
             .is_err()
     );
@@ -784,7 +787,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             Arc::clone(&release),
             &entry_start(&release),
             "entry",
-            claims,
+            identity,
         )
         .unwrap();
     // Every operation binds its package's name from the environment map.

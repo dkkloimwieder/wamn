@@ -182,7 +182,7 @@ targets = [
   { workspace="root", package="wamn-runtime", target="test:guest_environment_isolation", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:metadata_token", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:native_dispatch_deadline", tier="contract" },
-  { workspace="root", package="wamn-runtime", target="test:production_claim_live", tier="live-postgres" },
+  { workspace="root", package="wamn-runtime", target="test:production_lease_live", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:release_manifest_source", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:session_keys", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:session_route_authentication", tier="live-postgres" },

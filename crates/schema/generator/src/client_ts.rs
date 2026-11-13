@@ -588,9 +588,9 @@ fn write_sync(
             .replace(
                 "$REQUEST",
                 if paged {
-                    "page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }"
+                    "page === undefined ? { ...filter, limit } : { ...filter, limit, cursor: page }"
                 } else {
-                    "scope"
+                    "filter"
                 },
             )
             .replace(
@@ -860,7 +860,7 @@ fn emit_operation(
 }
 
 /// Emit the change feed of a list read: its change types, their field map, the
-/// route the feed reads, and `changes`, which reads the changes in the scope of
+/// route the feed reads, and `changes`, which reads the changes in the filter of
 /// a request since a cursor (docs/architecture/execution.md#change-feed).
 ///
 /// The feed is the list read with its feed part, so it calls the list's route.
@@ -899,13 +899,13 @@ fn write_changes(
     let stem = route_const.trim_end_matches("_ROUTE");
     writeln!(
         source,
-        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly rowVersion: Int64;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
+        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the filter of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly rowVersion: Int64;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
     )
     .expect("write");
     write_map_members(source, fields, 5)?;
     writeln!(
         source,
-        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. Only the feed\n * function calls it, so no caller can find it by the operation's name\n * (wamn-rgvi0).\n */\nconst {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function {function}(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}, options),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
+        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. Only the feed\n * function calls it, so no caller can find it by the operation's name\n * (wamn-rgvi0).\n */\nconst {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the filter of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function {function}(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}, options),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
     )
     .expect("write");
     Ok(())

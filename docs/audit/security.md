@@ -40,7 +40,7 @@ Owner review 2026-10-31: keep, Group 3 Do, small. One encoding, no fallback.
 Severity: high  
 Effort: L  
 Area: crates/platform/runtime/src/auth_cache.rs  
-Evidence: `deploy/gcp/auth-nats-clients.yaml:1`; `deploy/platform/host-environment-certs.example.yaml:28`; `crates/platform/runtime/src/auth_cache.rs:292`; `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:2359`  
+Evidence: `deploy/gcp/auth-nats-clients.yaml:1`; `deploy/platform/host-environment-certs.example.yaml:28`; `crates/platform/runtime/src/auth_cache.rs:292`; `crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs:2359`
 Problem: Hosts and identity writers share the `wasmcloud-runtime` NATS identity. The inspected bundled NATS configuration grants that identity no subject restrictions. Hosts accept grant values from the shared bucket, so a stolen runtime certificate can publish an `admin` grant for a principal in another environment.  
 Closed by [alignment](../plan/alignment.md) R4, R5 and R7 (owner addendum 2026-10-31): every client authenticates by a client certificate mapped to a NATS user, each environment has its own certificate and the key prefix `$KV.wamn-auth.<env_key>.>`, and R5's two-environment test proves that environment A's certificate is refused on environment B's subjects and keys. The audit proposal (drop the bucket, read grants from PostgreSQL) is rejected. The bucket stays per R7. The One NATS epic owns the change.
 
@@ -175,13 +175,13 @@ Evidence: `crates/identity/credential-store/src/kubernetes.rs:21`, `crates/ident
 Problem: Names join org, project, and environment with single hyphens, although each component permits single hyphens. Coordinates `a/b-c/d` and `a/b/c-d` therefore produce the same Secret, ServiceAccount, Role, and RoleBinding. Both environments receive access to the same complete credential Secret, so a compromised host crosses the project boundary.  
 Merged into E1-1 (owner review 2026-10-31): one encoding, the double-hyphen convention, no fallback. Question 1 is answered: no current coordinates collide. The only deployed coordinates are `dkk--receiving--dev` and `dkk--wms--dev`.
 
-## Finding E2-2: Org-scoped control credentials retain authority across organizations
+## Finding E2-2: Org-targeted control credentials retain authority across organizations
 
 Severity: high  
 Effort: L  
 Area: crates/control/provision/src/sql.rs; deploy/sql/system-schema.sql  
 Evidence: `crates/control/provision/src/workload_role.rs:220`, `crates/control/provision/src/sql.rs:977`, `crates/control/provision/src/sql.rs:1034`, `deploy/sql/system-schema.sql:14`, `deploy/sql/system-schema.sql:1134`, `deploy/sql/system-schema.sql:1455`  
-Problem: Provisioning describes each control login as org-scoped, but its inherited grants permit writes across entire membership and role tables. These tables have no row isolation between organizations. Owner-executed connection functions also trust caller-supplied org arguments, so a stolen control credential can alter another organization's authority and connection records.  
+Problem: Provisioning describes each control login as org-targeted, but its inherited grants permit writes across entire membership and role tables. These tables have no row isolation between organizations. Owner-executed connection functions also trust caller-supplied org arguments, so a stolen control credential can alter another organization's authority and connection records.
 Proposal: One control login per org, holding that org's environments and no other (the admin-hierarchy ruling). Authority tables in the system database carry the org key. The control login is one database role per org. Row security on the org key covers the membership, role and connection tables. Privileged functions derive the org from the login (`current_user`), never from an argument.  
 Deletes: Broad control table grants and every org argument to a privileged function.  
 Risk: Control operations require new database interfaces. Extend the live denial tests with two organizations and direct SQL attempts against the other organization's rows and functions.
@@ -223,9 +223,9 @@ Proposal: Delete the standing Postgres fixture and create disposable databases f
 Deletes: `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations.  
 Risk: Existing gate and recovery procedures require replacement inputs. Prove backup restoration and deny one cluster's credentials access to another cluster's objects.
 
-Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. `deploy/platform/postgres.yaml` goes with the prototype set (D1-10).
+Owner addendum 2026-10-31, re-targeted: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. `deploy/platform/postgres.yaml` goes with the prototype set (D1-10).
 
-Owner review 2026-10-31, re-scoped again: low, Group 1 In passing. MinIO is a local drop-in only. Cloud backups use Cloud Storage through the cluster's service account (Workload Identity), with no root credential. Delete `deploy/infra/minio.yaml` with the prototype set (D1-10) and the MinIO root wiring in `backup.rs`. No restricted backup credentials are created.
+Owner review 2026-10-31, re-targeted again: low, Group 1 In passing. MinIO is a local drop-in only. Cloud backups use Cloud Storage through the cluster's service account (Workload Identity), with no root credential. Delete `deploy/infra/minio.yaml` with the prototype set (D1-10) and the MinIO root wiring in `backup.rs`. No restricted backup credentials are created.
 
 ## Finding E2-6: Command help can disclose database passwords
 
@@ -292,7 +292,7 @@ Severity: high
 Effort: S  
 Area: `crates/catalog/package-artifact`, `crates/platform/engine`  
 Evidence: `crates/catalog/package-artifact/src/lib.rs:5`, `crates/control/lib/src/publish_release.rs:1621`, `crates/catalog/model/src/component_facts.rs:460`, `crates/platform/engine/src/operation/native_workload.rs:254`, `crates/platform/engine/src/engine.rs:654`  
-Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor claims, while runtime loading checks the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.  
+Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor declarations, while runtime loading checks the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.
 Proposal (final, owner 2026-10-31): The host links application components against their declared world and nothing else. An undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison and no `wasmparser` check. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.  
 Deletes: The unconditional `wasi:sockets` implementation for application components.  
 Risk: Packages with undeclared imports refuse. A crafted package test must hide a socket import and prove refusal at instantiation.

@@ -57,7 +57,7 @@ pub fn derived_event_context(event: &DerivedEvent) -> Value {
 }
 
 /// The row-level tenant carried by an event image. [`RowTenant::Absent`] means
-/// the package row relies on its separately verified database-residency scope:
+/// the package row relies on its separately verified database-residency target:
 ///
 /// - a DELETE under REPLICA IDENTITY DEFAULT — the old image carries the key
 ///   column (`id`) ONLY, not `tenant_id` (the .17 design contract); or
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn delete_under_default_identity_has_no_row_tenant() {
         // The old image of a DELETE carries the PK only (REPLICA IDENTITY
-        // DEFAULT), so database residency must supply the scope.
+        // DEFAULT), so database residency must supply the target.
         let env = envelope(Op::Delete, Some(json!({"id": "7"})), None);
         assert_eq!(row_tenant(&env), RowTenant::Absent);
     }
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn delete_with_a_full_old_image_becomes_scopable() {
         // Forward-compat with the l5i9.31 per-entity FULL knob: a tenant-bearing
-        // old image scopes the delete with zero change here.
+        // old image targets the delete with zero change here.
         let env = envelope(
             Op::Delete,
             Some(json!({"id": "7", "tenant_id": "t1"})),

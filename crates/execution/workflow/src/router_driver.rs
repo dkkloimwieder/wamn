@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
+use crate::wiring_lowering::{WiringTarget, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::AdmittedComponent;
@@ -52,8 +52,8 @@ pub struct RouterDriverRequest {
 /// run row froze at admission.
 ///
 /// `run` carries the application as its package, the workflow id and version
-/// as its wiring coordinate, and the claim-time caller. The run executes on a
-/// host of the release it pins: the claim leases it only there.
+/// as its wiring coordinate, and the lease-time caller. The run executes on a
+/// host of the release it pins: the lease grants it only there.
 #[derive(Debug, Clone)]
 pub struct WorkflowRunRequest {
     pub run: RouterDriverRequest,
@@ -212,7 +212,7 @@ impl RouterDriver {
     }
 
     /// Execute one queued environment workflow, resolving its pinned row on
-    /// every claim. Each node uses the current grants of its execution role.
+    /// every lease. Each node uses the current grants of its execution role.
     pub async fn execute_workflow(
         &self,
         request: WorkflowRunRequest,
@@ -226,13 +226,13 @@ impl RouterDriver {
         } = request;
         // A workflow run's package id is its application, a name the
         // environment declares with its packages, never a package.
-        let scope = self.release.scope();
+        let target = self.release.target();
         anyhow::ensure!(run.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
-            scope.env_key == run.env_key && scope.environment == run.environment,
-            "router-request-release-scope-mismatch"
+            target.env_key == run.env_key && target.environment == run.environment,
+            "router-request-release-target-mismatch"
         );
-        let application_packages = &scope
+        let application_packages = &target
             .applications
             .get(&run.package_id)
             .with_context(|| {
@@ -262,12 +262,12 @@ impl RouterDriver {
             )
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
-        let scope = WiringScope {
+        let target = WiringTarget {
             env_key: &run.env_key,
             package_id: &run.package_id,
             environment: &run.environment,
         };
-        let wiring = lower_resolved_wiring(scope, &resolved).context("lower workflow graph")?;
+        let wiring = lower_resolved_wiring(target, &resolved).context("lower workflow graph")?;
         let active = ActiveWiring {
             version: resolved.version,
             graph_hash: Arc::clone(&resolved.graph_hash),
@@ -286,7 +286,7 @@ impl RouterDriver {
 
     /// `workflow` is the identity of a workflow run: each node is then
     /// authorized with the grants the principal holds for its role now. A
-    /// released or candidate delivery keeps its claim-time caller.
+    /// released or candidate delivery keeps its lease-time caller.
     async fn execute_resolved(
         &self,
         request: RouterDriverRequest,
@@ -501,7 +501,7 @@ impl RouterDriver {
             deadline_ms,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: self.operations.claims(&request.env_key, release),
+                    identity: self.operations.identity(&request.env_key, release),
                     invocation: component_invocation(
                         component,
                         &call.operation,
@@ -802,10 +802,10 @@ mod tests {
     }
 
     /// Queued delivery carries no ingress header at all — the ratified
-    /// host-scoped re-root — so injection is the ONLY thing that gives its guest
+    /// host-targeted re-root — so injection is the ONLY thing that gives its guest
     /// a traceparent.
     #[test]
-    fn queue_node_context_derives_a_traceparent_from_the_host_scoped_root() {
+    fn queue_node_context_derives_a_traceparent_from_the_host_targeted_root() {
         let harness = TraceHarness::install();
         let request = driver_request(None);
         assert!(request.traceparent.is_none());

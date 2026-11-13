@@ -551,7 +551,7 @@ mod tests {
 
     /// The store found the object and its body stopped arriving. That is the
     /// same shape the HTTP surface names, and it reads as response-lost on both.
-    /// Effect-uncertain claims an unknown that the found object rules out.
+    /// Effect-uncertain reports an unknown that the found object rules out.
     #[test]
     fn a_body_lost_after_the_object_was_found_records_response_lost() {
         let lost = StoreError::ResponseLost(object_store::Error::Generic {

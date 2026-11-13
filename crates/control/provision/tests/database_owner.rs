@@ -1,5 +1,5 @@
 //! Live-apply gate for the project-env DATABASE OWNERSHIP floor (R9) and its
-//! database-scoped `CONNECT` grants.
+//! database-targeted `CONNECT` grants.
 //!
 //! The test connects with the superuser URL of a test database on the test
 //! PostgreSQL server (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the
@@ -14,7 +14,7 @@
 //!    `CREATE`, no `TEMPORARY`, and zero owned objects anywhere in the cluster.
 //!    `wamn_db_owner` itself cannot log in and holds no membership in either
 //!    direction — it holds title and nothing else.
-//! 2. **database-scoped privilege reach** — `PUBLIC` loses `CONNECT` on both
+//! 2. **database-targeted privilege reach** — `PUBLIC` loses `CONNECT` on both
 //!    project databases, while a test-owned sibling canary keeps it. This gate
 //!    therefore cannot change the cluster-wide database ACL floor out from
 //!    under another gate.
@@ -59,7 +59,7 @@ fn run_ok(url: &str, script: &str) {
 }
 
 #[test]
-fn project_env_database_ownership_and_connect_are_scoped() {
+fn project_env_database_ownership_and_connect_are_targeted() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -130,7 +130,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
                        aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
                     WHERE d.datname = '{canary}' \
                       AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1, \
-             'the sibling seed must really be in place, or the scope test is vacuous'; \
+             'the sibling seed must really be in place, or the target test is vacuous'; \
          END $$;\n"
         ),
     );
@@ -213,7 +213,7 @@ DO $$ BEGIN
   ASSERT (SELECT rolpassword IS NULL FROM pg_authid WHERE rolname = '{DB_OWNER_ROLE}'),
     'the title role has no password — nothing authenticates as it, nothing rotates';
 
-  -- 5. PUBLIC loses CONNECT on exactly the two project databases whose scoped
+  -- 5. PUBLIC loses CONNECT on exactly the two project databases whose targeted
   --    privilege batches ran.
   ASSERT (SELECT count(*) FROM pg_database d
             CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
@@ -228,7 +228,7 @@ DO $$ BEGIN
              AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1,
     'the sibling database keeps PUBLIC CONNECT';
   ASSERT (SELECT datallowconn FROM pg_database WHERE datname = '{canary}'),
-    'the sibling canary is connectable, so the scope discrimination is real';
+    'the sibling canary is connectable, so the target discrimination is real';
 END $$;
 "
         ),

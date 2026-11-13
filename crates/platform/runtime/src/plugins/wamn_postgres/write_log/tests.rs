@@ -10,11 +10,11 @@ use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
 use wamn_run_state::intent_store::{Begun, Intent, StoredOutcome};
 
 use super::WriteLogStore;
-use crate::plugins::wamn_postgres::claims::tests::{
+use crate::plugins::wamn_postgres::session_identity::tests::{
     LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, SessionClaims, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, SessionIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
 /// Bounds a wait for an observed backend state. It only stops a test that a
@@ -132,13 +132,13 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
         ])
         .unwrap();
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/delete@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -209,13 +209,13 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres) = env_key_database("writelogtx").await;
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -334,13 +334,13 @@ async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres) = env_key_database("writelogtx").await;
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
+            &SessionIdentity {
                 env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -375,7 +375,7 @@ async fn model_versions_follow_wal_without_a_counter() {
     let family = wamn_control_provision::WorkloadRoleFamily::HttpAdmitter;
     let role = wamn_control_provision::workload_generation_role(
         family,
-        wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+        wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
             org: "wal-test",
             project: PROJECT,
             environment: "test",

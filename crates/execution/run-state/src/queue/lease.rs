@@ -1,16 +1,16 @@
 //! Lease liveness + renewal — the pure decisions a runner makes while it holds a
-//! claim. A lease is a visibility timeout: the claimer must renew (heartbeat) it
-//! before it expires, or another replica reclaims the run (crash-safe failover).
+//! lease. A lease is a visibility timeout: the leaseholder must renew (heartbeat) it
+//! before it expires, or another replica recovers the run (crash-safe failover).
 
 use super::model::Millis;
 
 /// Whether a lease is still held at `now` (its deadline is in the future). An
-/// absent deadline is not live (the row is unclaimed / reclaimable).
+/// absent deadline is not live (the row is unacquired / recoverable).
 pub fn lease_live(now: Millis, lease_expires_at: Option<Millis>) -> bool {
     lease_expires_at.is_some_and(|t| t > now)
 }
 
-/// The lease deadline for a claim taken at `now` with the given TTL.
+/// The lease deadline for a lease taken at `now` with the given TTL.
 pub fn lease_deadline(now: Millis, ttl: Millis) -> Millis {
     now + ttl
 }

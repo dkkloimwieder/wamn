@@ -11,7 +11,7 @@
 //! started through the host route `workflow.start` by a session user whose
 //! grants come from its role rows through the session permission reader.
 //! The real queue service of the release drains it through the router, under
-//! the scoped executor, application and admitter logins.
+//! the targeted executor, application and admitter logins.
 //!
 //! The checks that `workflow_lifecycle_live.rs` already proves stay there:
 //! changed bytes under an authored version (1), an enabler without the role
@@ -30,21 +30,23 @@ use wamn_catalog::{
     ServingManifest, WiringDocument,
 };
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_control_registry::Triple;
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_environment_control::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     author_workflow_in_databases,
 };
 use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
-use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope};
+use wamn_execution_host::{
+    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationHostConfig,
+};
 use wamn_identity_protocol::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
@@ -153,7 +155,7 @@ fn read_component() -> Vec<u8> {
 
 fn read_declaration() -> Value {
     json!({
-        "scope": {"env_key": ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
+        "target": {"env_key": ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
         "component": "orders_data", "interface-version": "0.1.0",
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
@@ -248,7 +250,7 @@ fn load(manifest: &ServingManifest) -> Arc<LoadedRelease> {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "manual-live",
-            ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(declared()),
+            ReleaseTarget::new(ENV_KEY, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     )
@@ -379,7 +381,7 @@ async fn fixture() -> Fixture {
         .await
         .expect("install the serving release");
 
-    let postgres = scoped_postgres(&admin, &url).await;
+    let postgres = targeted_postgres(&admin, &url).await;
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     let delivery = host(&postgres, &release);
 
@@ -399,10 +401,10 @@ async fn fixture() -> Fixture {
     }
 }
 
-/// The host's database access under the scoped logins of its families: the
+/// The host's database access under the targeted logins of its families: the
 /// application login for guest SQL, the executor for admission and the
 /// queue, and the admitter for the session permission reads.
-async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
+async fn targeted_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
     let database: String = admin
         .query_one("SELECT current_database()", &[])
         .await
@@ -420,20 +422,20 @@ async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
             AuthorityClass::CallableHttp,
         ),
     ] {
-        let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
+        let target = if family == WorkloadRoleFamily::App {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: ENV_KEY,
                 database: &database,
             }
         } else {
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: ENV_KEY,
                 project: PROJECT,
                 environment: ENVIRONMENT,
                 database: &database,
             }
         };
-        let role = workload_generation_role(family, scope, CredentialGeneration::A).unwrap();
+        let role = workload_generation_role(family, target, CredentialGeneration::A).unwrap();
         admin
             .batch_execute(&sql::prepare_workload_generation_sql(
                 family,
@@ -443,7 +445,7 @@ async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
                 "2099-01-01T00:00:00Z",
             ))
             .await
-            .expect("prepare the scoped login");
+            .expect("prepare the targeted login");
         admin
             .batch_execute(&format!(
                 "ALTER ROLE \"{role}\" SET search_path = application_data"
@@ -494,15 +496,15 @@ impl Fixture {
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     Arc::clone(&self.postgres),
-                    release.scope().env_key.as_str(),
+                    release.target().env_key.as_str(),
                     PROJECT,
-                    release.scope().environment.as_str(),
+                    release.target().environment.as_str(),
                 )),
                 Arc::clone(&self.logging),
                 Arc::from([]),
                 Arc::clone(release),
                 Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
-                OperationScope {
+                OperationHostConfig {
                     project: PROJECT.to_owned(),
                     schema: Some("application_data".to_owned()),
                     owner_prefix: "manual-live".to_owned(),
@@ -511,7 +513,7 @@ impl Fixture {
             )
             .unwrap(),
         );
-        // Compile and initialize before claiming a run. Cold JSONata compilation
+        // Compile and initialize before leasing a run. Cold JSONata compilation
         // otherwise shares the first node's 30-second deadline. If it expires,
         // cancelling the load leaves the run leased for another attempt.
         let preparing = std::time::Instant::now();
@@ -1022,7 +1024,7 @@ async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
 /// the service of the run's release takes it.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
-async fn a_host_of_another_release_cannot_claim_the_run() {
+async fn a_host_of_another_release_cannot_lease_the_run() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
     );
@@ -1033,7 +1035,7 @@ async fn a_host_of_another_release_cannot_claim_the_run() {
 
     let mut other_manifest = manifest(Some(&fixture.read), &fixture.jsonata);
     // Host routes are release content; environment-authored workflows are not.
-    // Keep the same components so the release digest alone prevents the claim.
+    // Keep the same components so the release digest alone prevents the lease.
     other_manifest.host_routes.clear();
     let other = load(&other_manifest);
     assert_ne!(

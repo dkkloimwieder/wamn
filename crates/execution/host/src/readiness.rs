@@ -58,9 +58,9 @@ async fn prepare_synchronous_release(
         .postgres
         .release_component_bindings_ready(
             &operations.project,
-            &operations.release.scope().env_key,
+            &operations.release.target().env_key,
             operations.release.release().manifest_digest.as_str(),
-            &operations.release.scope().environment,
+            &operations.release.target().environment,
             &digests,
         )
         .await?;

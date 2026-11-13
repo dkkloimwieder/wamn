@@ -4,7 +4,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::application::{ApplicationScope, project_authority};
+use wamn_platform_identity::application::{ApplicationTarget, project_authority};
 use wamn_platform_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };
@@ -163,7 +163,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     )
     .await?;
     let principal: PrincipalId = *service.id();
-    let scope = ApplicationScope {
+    let coordinate = ApplicationTarget {
         org: "acme",
         project: "billing",
         env: "dev",
@@ -194,7 +194,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         project_authority(
             &authority,
             &application,
-            scope,
+            coordinate,
             &principal,
             &mut AuthDrops::default(),
         )

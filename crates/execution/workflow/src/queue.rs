@@ -15,22 +15,22 @@ use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::{FailType, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
-    ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
-    ProductionReapResult, ReleaseIdentity, SessionClaims, WamnPostgres, WorkflowResolutionError,
+    ProductionCompletionResult, ProductionLeaseRenewal, ProductionLeaseResult,
+    ProductionReapResult, ReleaseIdentity, SessionIdentity, WamnPostgres, WorkflowResolutionError,
     WorkflowResolutionErrorType,
 };
 
 use crate::router_action::{ProductionRouterAction, production_router_action};
 use crate::{RouterDriver, RouterDriverRequest, Verdict, WorkflowIdentity, WorkflowRunRequest};
 
-/// The claim scope the queue binds; an event admission runs under it too.
-pub(crate) const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
+/// The lease target the queue binds; an event admission runs under it too.
+pub(crate) const QUEUE_LEASE_INVOCATION: &str = "wamn-executor-queue";
 pub const DEFAULT_QUEUE_LEASE_TTL_MS: u64 = 30_000;
 const PRODUCTION_JANITOR_GRACE_MS: i64 = 3_600_000;
 const IDLE_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone)]
-struct QueueScope {
+struct QueueTarget {
     env_key: String,
     project: String,
     package_ids: Vec<String>,
@@ -48,7 +48,7 @@ pub struct QueueService {
     driver: Arc<RouterDriver>,
     postgres: Arc<WamnPostgres>,
     jetstream: Arc<WamnJetstream>,
-    scope: QueueScope,
+    target: QueueTarget,
     lease_ttl_ms: i64,
     liveness: Arc<Liveness>,
 }
@@ -56,7 +56,7 @@ pub struct QueueService {
 impl std::fmt::Debug for QueueService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueueService")
-            .field("scope", &self.scope)
+            .field("target", &self.target)
             .field("lease_ttl_ms", &self.lease_ttl_ms)
             .finish_non_exhaustive()
     }
@@ -74,8 +74,8 @@ impl QueueService {
             .ok()
             .filter(|ttl| *ttl > 0)
             .context("queue lease TTL must be a positive signed 64-bit integer")?;
-        let scope = QueueScope {
-            env_key: release.scope().env_key.clone(),
+        let target = QueueTarget {
+            env_key: release.target().env_key.clone(),
             project: config.project.clone(),
             // Released runs carry a package of the release, and workflow runs
             // the name of a declared application.
@@ -85,17 +85,17 @@ impl QueueService {
                 .packages
                 .iter()
                 .map(|package| package.package_id().to_owned())
-                .chain(release.scope().applications.keys().cloned())
+                .chain(release.target().applications.keys().cloned())
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            environment: release.scope().environment.clone(),
+            environment: release.target().environment.clone(),
         };
         postgres
-            .bind_session_claims(
-                QUEUE_CLAIM_SCOPE,
-                &SessionClaims {
-                    env_key: scope.env_key.clone(),
+            .bind_session_identity(
+                QUEUE_LEASE_INVOCATION,
+                &SessionIdentity {
+                    env_key: target.env_key.clone(),
                     project: Some(config.project.clone()),
                     // Queue state belongs to the run plane, never the application schema.
                     schema: Some("wamn_run".to_owned()),
@@ -109,18 +109,18 @@ impl QueueService {
                 },
             )
             .await?;
-        jetstream.bind_derived_scope(
-            QUEUE_CLAIM_SCOPE,
-            &scope.env_key,
+        jetstream.bind_derived_invocation(
+            QUEUE_LEASE_INVOCATION,
+            &target.env_key,
             &config.project,
-            &scope.environment,
+            &target.environment,
         )?;
         let liveness = Liveness::new(Duration::from_millis(config.lease_ttl_ms).saturating_mul(3));
         Ok(Self {
             driver,
             postgres,
             jetstream,
-            scope,
+            target,
             lease_ttl_ms,
             liveness,
         })
@@ -141,7 +141,7 @@ impl QueueService {
                     &self.driver,
                     &self.postgres,
                     &self.jetstream,
-                    &self.scope,
+                    &self.target,
                     self.lease_ttl_ms,
                     &self.liveness,
                 ))
@@ -151,9 +151,9 @@ impl QueueService {
                 Ok(self
                     .postgres
                     .pinned_backlog(
-                        QUEUE_CLAIM_SCOPE,
-                        &self.scope.package_ids,
-                        &self.scope.environment,
+                        QUEUE_LEASE_INVOCATION,
+                        &self.target.package_ids,
+                        &self.target.environment,
                     )
                     .await?)
             },
@@ -162,12 +162,13 @@ impl QueueService {
     }
 
     pub fn revoke(&self) {
-        self.postgres.revoke_session_claims(QUEUE_CLAIM_SCOPE);
+        self.postgres
+            .revoke_session_identity(QUEUE_LEASE_INVOCATION);
     }
 }
 
 fn queue_delivery_span(
-    scope: &QueueScope,
+    target: &QueueTarget,
     package_id: &str,
     run_id: &str,
     wiring_id: &str,
@@ -175,8 +176,8 @@ fn queue_delivery_span(
 ) -> tracing::Span {
     tracing::info_span!(
         target: "wamn::router", parent: None, "wamn.queue.delivery",
-        wamn.env_key = %scope.env_key, wamn.project = %scope.project,
-        wamn.package_id = %package_id, wamn.environment = %scope.environment,
+        wamn.env_key = %target.env_key, wamn.project = %target.project,
+        wamn.package_id = %package_id, wamn.environment = %target.environment,
         wamn.run_id = %run_id, wamn.wiring_id = %wiring_id,
         wamn.wiring_version = wiring_version,
     )
@@ -232,15 +233,15 @@ async fn drain_one(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
     jetstream: &WamnJetstream,
-    scope: &QueueScope,
+    target: &QueueTarget,
     lease_ttl_ms: i64,
     liveness: &Liveness,
 ) -> anyhow::Result<bool> {
     match postgres
         .reap_exhausted(
-            QUEUE_CLAIM_SCOPE,
-            &scope.package_ids,
-            &scope.environment,
+            QUEUE_LEASE_INVOCATION,
+            &target.package_ids,
+            &target.environment,
             PRODUCTION_JANITOR_GRACE_MS,
         )
         .await?
@@ -252,16 +253,16 @@ async fn drain_one(
     }
 
     match postgres
-        .claim_next(
-            QUEUE_CLAIM_SCOPE,
-            &scope.package_ids,
-            &scope.environment,
+        .lease_next(
+            QUEUE_LEASE_INVOCATION,
+            &target.package_ids,
+            &target.environment,
             lease_ttl_ms,
         )
         .await?
     {
-        ProductionClaimResult::Empty => Ok(false),
-        ProductionClaimResult::Ready {
+        ProductionLeaseResult::Empty => Ok(false),
+        ProductionLeaseResult::Ready {
             run_id,
             package_id,
             payload,
@@ -275,9 +276,9 @@ async fn drain_one(
             workflow,
         } => {
             let wiring_version = u32::try_from(wiring_version)
-                .context("claimed wiring version is not a positive u32")?;
+                .context("acquired wiring version is not a positive u32")?;
             let queue_span =
-                queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
+                queue_delivery_span(target, &package_id, &run_id, &wiring_id, wiring_version);
             let Some(workflow) = workflow else {
                 let (result, fail_type) =
                     workflow_resolution_refusal(WorkflowResolutionErrorType::NotFound, &run_id);
@@ -295,8 +296,8 @@ async fn drain_one(
             let workflow = *workflow;
             let caller = match postgres
                 .queued_run_caller(
-                    &scope.project,
-                    &scope.env_key,
+                    &target.project,
+                    &target.env_key,
                     &workflow.execution_principal_id,
                     Some(&workflow.execution_role),
                 )
@@ -310,16 +311,16 @@ async fn drain_one(
                     ) =>
                 {
                     postgres
-                        .release_claim(QUEUE_CLAIM_SCOPE, &run_id, lease_generation)
+                        .release_lease(QUEUE_LEASE_INVOCATION, &run_id, lease_generation)
                         .await?;
                     return Ok(true);
                 }
                 Err(error) => return Err(error),
             };
             let run = RouterDriverRequest {
-                env_key: scope.env_key.clone(),
+                env_key: target.env_key.clone(),
                 package_id: package_id.clone(),
-                environment: scope.environment.clone(),
+                environment: target.environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version,
                 delivery_id: run_id.clone(),
@@ -339,9 +340,9 @@ async fn drain_one(
                     role: workflow.execution_role,
                 },
             };
-            // Boxed: driving one claim is a large future the queue loop holds.
+            // Boxed: driving one lease is a large future the queue loop holds.
             Box::pin(
-                drive_claim(
+                drive_lease(
                     driver,
                     postgres,
                     jetstream,
@@ -365,7 +366,7 @@ async fn drain_one(
     clippy::too_many_arguments,
     reason = "the queue fence and exact router request are independent trusted facts"
 )]
-async fn drive_claim(
+async fn drive_lease(
     driver: &RouterDriver,
     postgres: &WamnPostgres,
     jetstream: &WamnJetstream,
@@ -395,7 +396,7 @@ async fn drive_claim(
             _ = heartbeat.tick() => {
                 match postgres
                     .renew(
-                        QUEUE_CLAIM_SCOPE,
+                        QUEUE_LEASE_INVOCATION,
                         run_id,
                         lease_generation,
                         lease_ttl_ms,
@@ -421,7 +422,7 @@ async fn drive_claim(
     if !adjustments.is_empty()
         && !postgres
             .record_deadline_adjustments(
-                QUEUE_CLAIM_SCOPE,
+                QUEUE_LEASE_INVOCATION,
                 run_id,
                 lease_generation,
                 &serde_json::to_value(adjustments)?,
@@ -466,7 +467,7 @@ async fn drive_claim(
             // id is a trace coordinate, and `ProductionRouterAction` states what
             // the boundary must DO. Widening it would put a tracing field on the
             // run-store contract, and the outcome that decided the action is
-            // still in scope here, so nothing is lost by reading it directly. An
+            // still in target here, so nothing is lost by reading it directly. An
             // empty node id is unreachable — only an Emit verdict yields an Emit
             // action — and records EMPTY rather than panicking if it ever is.
             let node_id = match &delivery.outcome.verdict {
@@ -475,7 +476,7 @@ async fn drive_claim(
             };
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
-                    component_id: QUEUE_CLAIM_SCOPE.to_owned(),
+                    component_id: QUEUE_LEASE_INVOCATION.to_owned(),
                     package_id: package_id.to_owned(),
                     wiring_id,
                     wiring_version,
@@ -571,7 +572,7 @@ async fn commit_completion(
     completion: &wamn_runtime::plugins::wamn_postgres::ProductionCompletion,
 ) -> anyhow::Result<()> {
     let result = postgres
-        .complete(QUEUE_CLAIM_SCOPE, run_id, lease_generation, completion)
+        .complete(QUEUE_LEASE_INVOCATION, run_id, lease_generation, completion)
         .await?;
     match result {
         ProductionCompletionResult::Terminalized
@@ -591,7 +592,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test]
-    async fn shutdown_finishes_current_turn_without_claiming_again() {
+    async fn shutdown_finishes_current_turn_without_leasing_again() {
         let liveness = Liveness::new(Duration::from_secs(90));
         let turns = AtomicUsize::new(0);
         let release_turn = tokio::sync::Notify::new();
@@ -628,13 +629,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_before_first_turn_never_claims() {
+    async fn shutdown_before_first_turn_never_leases() {
         let liveness = Liveness::new(Duration::from_secs(90));
         let (_stop, stopping) = tokio::sync::watch::channel(true);
         serve_queue(
             stopping,
             &liveness,
-            async || panic!("stopped queue claimed"),
+            async || panic!("stopped queue acquired"),
             async || Ok(false),
         )
         .await
@@ -642,11 +643,11 @@ mod tests {
         assert_eq!(liveness.silence(), None);
     }
 
-    /// R20 (2): after stop the queue claims the runs pinned to its release
-    /// until none remains, then exits. A turn that finds nothing claimable,
+    /// R20 (2): after stop the queue leases the runs pinned to its release
+    /// until none remains, then exits. A turn that finds nothing leasable,
     /// because another replica holds the lease, does not end the drain.
     #[tokio::test]
-    async fn shutdown_claims_the_pinned_backlog_until_it_is_empty() {
+    async fn shutdown_leases_the_pinned_backlog_until_it_is_empty() {
         let liveness = Liveness::new(Duration::from_secs(90));
         let backlog = AtomicUsize::new(2);
         let turns = AtomicUsize::new(0);

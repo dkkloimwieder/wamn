@@ -160,7 +160,7 @@ pub fn authored_base_digests(
 
 /// Renders one authored component declaration into the document admission reads.
 ///
-/// One placeholder, REQUIRED: `scope.env_key`, which the deployment fills.
+/// One placeholder, REQUIRED: `target.env_key`, which the deployment fills.
 /// An unfilled or hand-written value is a refusal naming the file.
 pub fn render_declaration_document(
     template: &Path,
@@ -214,24 +214,24 @@ pub fn render_declaration_document(
 pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__";
 
 /// Renders one palette declaration (`apps/platform/*/*/declaration.json.in`)
-/// into the document admission reads, for the package `scope` it is admitted
+/// into the document admission reads, for the package `target` it is admitted
 /// into (wamn-hw3n).
 ///
 /// A palette component belongs to no package, so its template leaves the whole
-/// scope as placeholders. A connection whose alias is
+/// target as placeholders. A connection whose alias is
 /// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] takes `store_alias`, the
 /// name the binding selection gives the store, as the operator passes it to
 /// the environment document in the cluster.
 pub fn render_palette_declaration(
     template: &Path,
-    scope: &wamn_catalog::ComponentPackageScope,
+    target: &wamn_catalog::ComponentPackageCoordinate,
     store_alias: Option<&str>,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
     let document: Value = serde_json::from_slice(&bytes)
         .map_err(|source| ComponentDeclarationError::parse(template, source))?;
-    plan::render_palette_declaration(template, document, scope, store_alias)
+    plan::render_palette_declaration(template, document, target, store_alias)
 }
 
 /// The platform packages a rendered declaration states it imports: the WIT
@@ -264,27 +264,27 @@ pub fn declared_platform_packages(
 mod tests {
     use super::*;
 
-    /// A palette template renders into the package scope with the store alias
+    /// A palette template renders into the package target with the store alias
     /// of its binding selection, and states the packages it imports. An
     /// unnamed alias is refused (wamn-hw3n).
     #[test]
-    fn a_palette_declaration_renders_its_scope_alias_and_imports() {
+    fn a_palette_declaration_renders_its_target_alias_and_imports() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
-        let scope = wamn_catalog::ComponentPackageScope {
+        let target = wamn_catalog::ComponentPackageCoordinate {
             env_key: "tenant-a".to_owned(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
         let template = palette.join("execution/blob-put/declaration.json.in");
-        let document = render_palette_declaration(&template, &scope, Some("labels"))
+        let document = render_palette_declaration(&template, &target, Some("labels"))
             .expect("the template renders");
-        assert_eq!(document["scope"]["package-id"], "wamn_wms");
+        assert_eq!(document["target"]["package-id"], "wamn_wms");
         assert_eq!(document["connections"][0]["store-alias"], "labels");
         assert_eq!(
             declared_platform_packages(&template, &document).expect("the declaration parses"),
             ["wamn:node", "wasmcloud:blobstore"]
         );
-        let refusal = render_palette_declaration(&template, &scope, None)
+        let refusal = render_palette_declaration(&template, &target, None)
             .expect_err("an unnamed store alias is refused");
         assert!(
             refusal.to_string().contains("no binding selection"),

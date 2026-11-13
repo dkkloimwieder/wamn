@@ -136,7 +136,7 @@ struct MaterializerService {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MaterializerResources {
-    config: MaterializerClaims,
+    config: MaterializerIdentity,
     environment: MaterializerEnvironment,
     #[serde(flatten)]
     extra: Extra,
@@ -144,7 +144,7 @@ struct MaterializerResources {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MaterializerClaims {
+struct MaterializerIdentity {
     #[serde(rename = "wamn.env_key")]
     env_key: String,
     #[serde(rename = "wamn.project")]
@@ -246,11 +246,11 @@ mod tests {
             let spec = &document.spec.template.spec;
             assert_eq!(spec.environment, input.namespace);
             assert_eq!(spec.service.image, input.image);
-            let claims = &spec.service.local_resources.config;
-            assert_eq!(claims.env_key, input.env_key);
-            assert_eq!(claims.project, input.event.project);
-            assert_eq!(claims.environment, input.event.environment);
-            assert_eq!(claims.authority, MaterializerAuthority::EventMaterializer);
+            let identity = &spec.service.local_resources.config;
+            assert_eq!(identity.env_key, input.env_key);
+            assert_eq!(identity.project, input.event.project);
+            assert_eq!(identity.environment, input.event.environment);
+            assert_eq!(identity.authority, MaterializerAuthority::EventMaterializer);
             let environment = &spec.service.local_resources.environment.config;
             assert_eq!(environment.stream, input.event_stream);
             assert_eq!(environment.org, input.event.org);

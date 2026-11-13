@@ -272,14 +272,14 @@ impl OperationTransaction {
                 .prepare_cached(sql)
                 .await
                 .map_err(|error| super::types::map_pg_error(&error))?;
-            let claims = self
-                .claims
+            let identity = self
+                .identity
                 .lock()
-                .expect("request element claims lock poisoned")
+                .expect("request element identity lock poisoned")
                 .take();
-            if let Some(claims) = claims {
+            if let Some(identity) = identity {
                 let (bound, rows) = tokio::join!(biased;
-                    claims.bind(connection.connection()),
+                    identity.bind(connection.connection()),
                     connection.connection().query(&prepared, &params));
                 bound?;
                 rows.map_err(|error| super::types::map_pg_error(&error))

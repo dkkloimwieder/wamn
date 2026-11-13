@@ -9,7 +9,7 @@ use crate::{SessionError, SessionErrorType};
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PublicSessionKey {
-    /// Immutable, issuer-scoped generation identifier.
+    /// Immutable, issuer-bound generation identifier.
     pub kid: String,
     /// Must be `OKP`.
     pub kty: String,

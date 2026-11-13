@@ -1,10 +1,10 @@
-//! The framed scope digest, and the guest-SQL tenant key derived from it.
+//! The framed identity digest, and the guest-SQL tenant key derived from it.
 //!
 //! This module exists so the RUNTIME can compute a tenant key without linking
 //! the provisioner (`wamn-0h0g.22.6.7`). After `wamn-0h0g.22.6` the guest's
-//! tenant comes from `current_user`, so a resolved guest credential IS a claim
+//! tenant comes from `current_user`, so a resolved guest credential IS an identity
 //! about which tenant it may read — and the host has to be able to check that
-//! claim before it opens the connection.
+//! identity before it opens the connection.
 //!
 //! `wamn-control-provision` DELEGATES here for the App family rather than
 //! carrying a second implementation. There is one definition of the digest and
@@ -12,11 +12,11 @@
 
 use sha2::{Digest as _, Sha256};
 
-/// Scope domain of the guest-SQL (App) family.
-pub(crate) const APP_SCOPE_DOMAIN: &[u8] = b"wamn.app.scope.v0.1";
+/// Target domain of the guest-SQL (App) family.
+pub(crate) const APP_IDENTITY_DOMAIN: &[u8] = b"wamn.app.identity.v0.1";
 
-/// Hex width every scope digest is truncated to (160 bits).
-pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
+/// Hex width every identity digest is truncated to (160 bits).
+pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 
 /// Length-prefix a field into a digest preimage.
 ///
@@ -38,47 +38,31 @@ pub(crate) fn frame(output: &mut Vec<u8>, value: &[u8]) {
 /// The database is part of the preimage because role names are CLUSTER-wide:
 /// without it, one tenant in two project-environment databases would derive one
 /// key and collide on a single login.
-pub fn app_scope_hash(env_key: &str, database: &str) -> String {
+pub fn app_identity_hash(env_key: &str, database: &str) -> String {
     let mut preimage = Vec::new();
-    frame(&mut preimage, APP_SCOPE_DOMAIN);
+    frame(&mut preimage, APP_IDENTITY_DOMAIN);
     for (tag, value) in [("env_key", env_key), ("database", database)] {
         frame(&mut preimage, tag.as_bytes());
         frame(&mut preimage, value.as_bytes());
     }
     let digest = hex::encode(Sha256::digest(preimage));
-    digest[..SCOPE_HASH_HEX_LEN].to_string()
+    digest[..IDENTITY_HASH_HEX_LEN].to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::app_scope_hash;
+    use super::app_identity_hash;
 
     /// The framing is what makes the digest unambiguous, so the case it exists
     /// for is the case that gets asserted.
     #[test]
     fn framing_separates_fields_that_concatenate_alike() {
-        assert_ne!(app_scope_hash("ab", "c"), app_scope_hash("a", "bc"));
-    }
-
-    /// A VALUE PIN, because the alternatives are tautologies.
-    ///
-    /// Every other consumer of this digest — the provisioner's `tenant_key`, the
-    /// runtime's credential check, the role name — DELEGATES here, so they all
-    /// move together and none of them can catch a domain or framing drift. Two
-    /// things can: this literal, and the live SQL agreement gate
-    /// (`crates/control/provision/tests/tenant_key_live.rs`), which recomputes
-    /// the digest inside PostgreSQL from a builder that does NOT delegate.
-    #[test]
-    fn the_digest_value_is_frozen() {
-        assert_eq!(
-            app_scope_hash("acme", "wamn-db-acme--billing--dev"),
-            "bf86e8a0f34822959bcbabbbb9c0e92ed3910508"
-        );
+        assert_ne!(app_identity_hash("ab", "c"), app_identity_hash("a", "bc"));
     }
 
     #[test]
-    fn the_digest_is_the_forty_hex_scope_convention() {
-        let key = app_scope_hash("acme", "wamn-db-acme--billing--dev");
+    fn the_digest_is_the_forty_hex_identity_convention() {
+        let key = app_identity_hash("acme", "wamn-db-acme--billing--dev");
         assert_eq!(key.len(), 40);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
     }

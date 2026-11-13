@@ -5,7 +5,7 @@ import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
   it.each(["/", "/invite", "/recover", "/reset", `/${AUD}/pallets`])(
-    "scopes every shell page under one UI root at %s",
+    "views every shell page under one UI root at %s",
     async (path) => {
       const { fetch } = identity(true);
       const { container } = open(path, fetch);

@@ -32,7 +32,7 @@ use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use wamn_engine::operation::native_workload::NativeComponent;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_component_in_release};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget, validate_component_in_release};
 
 use crate::grants::Grants;
 
@@ -68,12 +68,12 @@ impl fmt::Debug for EdgeRelease {
 
 impl EdgeRelease {
     /// Load the bundle in `directory` whose `edge-release.json` has
-    /// `bundle_digest`, and read every component body once. `scope` is the
+    /// `bundle_digest`, and read every component body once. `target` is the
     /// env_key and environment of the box, from its configuration.
     pub async fn load(
         directory: &Path,
         bundle_digest: &str,
-        scope: ReleaseScope,
+        target: ReleaseTarget,
     ) -> Result<Self, EdgeReleaseError> {
         let bundle_bytes = read_pinned(directory, BUNDLE_FILE_NAME, bundle_digest)?;
         let bundle: EdgeBundle = serde_json::from_slice(&bundle_bytes)
@@ -86,9 +86,12 @@ impl EdgeRelease {
         }
 
         let manifest_bytes = read_pinned(directory, RELEASE_MANIFEST_FILE_NAME, &bundle.manifest)?;
-        let release =
-            LoadedRelease::load_canonical_bytes(&manifest_bytes, RELEASE_MANIFEST_FILE_NAME, scope)
-                .map_err(|error| rejected(error.to_string()))?;
+        let release = LoadedRelease::load_canonical_bytes(
+            &manifest_bytes,
+            RELEASE_MANIFEST_FILE_NAME,
+            target,
+        )
+        .map_err(|error| rejected(error.to_string()))?;
 
         let components_bytes = read_pinned(directory, COMPONENTS_FILE_NAME, &bundle.components)?;
         let components: Vec<AdmittedComponent> = serde_json::from_slice(&components_bytes)
@@ -169,11 +172,11 @@ fn check_one_fact_per_component(
         validate_component_in_release(release, component).map_err(|error| {
             rejected(format!(
                 "{COMPONENTS_FILE_NAME} fact {}/{}: {error}",
-                component.scope.package_id, component.component
+                component.target.package_id, component.component
             ))
         })?;
         let key = (
-            component.scope.package_id.as_str(),
+            component.target.package_id.as_str(),
             component.component.as_str(),
         );
         if !seen.insert(key) {
@@ -266,8 +269,8 @@ pub(crate) mod test_util {
     use super::*;
     use std::collections::BTreeMap;
     use wamn_catalog::{
-        AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope, PackageCoordinate,
-        ServingComponent, ServingManifest, ServingRelease,
+        AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
+        PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
     };
 
     pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
@@ -283,7 +286,7 @@ pub(crate) mod test_util {
             statements: BTreeMap::new(),
         };
         let fact = AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".into(),
                 package_id: "scale".into(),
                 package_version: "1.0.0".into(),
@@ -352,14 +355,14 @@ pub(crate) mod test_util {
         }))
         .unwrap();
         std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
-        let scope = ReleaseScope::new("tenant-a", "edge").with_applications(BTreeMap::from([(
+        let target = ReleaseTarget::new("tenant-a", "edge").with_applications(BTreeMap::from([(
             "scale".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".into()]),
                 connections: BTreeMap::new(),
             },
         )]));
-        let release = EdgeRelease::load(&directory, &bytes_sha256(&bundle), scope)
+        let release = EdgeRelease::load(&directory, &bytes_sha256(&bundle), target)
             .await
             .unwrap();
         std::fs::remove_dir_all(directory).unwrap();

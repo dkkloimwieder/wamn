@@ -123,9 +123,9 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     return { ...result, rows: result.environments };
   });
   // The server keeps only the members of the selected environment.
-  const memberScope = () => ({ project: name(), ...(props.params.env ? { environment: props.params.env } : {}) });
+  const memberFilter = () => ({ project: name(), ...(props.params.env ? { environment: props.params.env } : {}) });
   const memberPage = createServerPage<member.MemberListResultMembers>(async (input) => {
-    const result = value(await member.list(props.transport, [{ ...memberScope(), ...input }]));
+    const result = value(await member.list(props.transport, [{ ...memberFilter(), ...input }]));
     return { ...result, rows: result.members };
   });
   const [state, setState] = createSignal<"active" | "inactive">();
@@ -167,7 +167,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     } else {
       const [envs, people] = await Promise.all([
         environment.list(props.transport, [{ project: name() }]),
-        member.list(props.transport, [memberScope()]),
+        member.list(props.transport, [memberFilter()]),
       ]);
       if (!active || current !== refreshGeneration) return;
       if ([envs, people].some((result) => result.status === "refused" && result.code === "project_not_found")) {

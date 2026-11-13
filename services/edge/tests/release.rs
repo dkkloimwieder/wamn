@@ -9,13 +9,13 @@ use wamn_catalog::edge_bundle::{
     BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME,
 };
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope,
+    AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
     PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingManifest,
     ServingRelease,
 };
 use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 
 const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "scale";
@@ -62,7 +62,7 @@ fn manifest() -> ServingManifest {
 
 fn fact() -> AdmittedComponent {
     AdmittedComponent {
-        scope: ComponentPackageScope {
+        target: ComponentPackageCoordinate {
             env_key: ENV_KEY.into(),
             package_id: PACKAGE.into(),
             package_version: VERSION.into(),
@@ -142,8 +142,8 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(directory.join(name), bytes).expect("write a bundle file");
 }
 
-fn scope() -> ReleaseScope {
-    ReleaseScope::new(ENV_KEY, "edge").with_applications(
+fn target() -> ReleaseTarget {
+    ReleaseTarget::new(ENV_KEY, "edge").with_applications(
         [(
             "weighing".to_owned(),
             wamn_catalog::ApplicationDefinition {
@@ -156,7 +156,7 @@ fn scope() -> ReleaseScope {
 }
 
 async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
-    EdgeRelease::load(directory, digest, scope())
+    EdgeRelease::load(directory, digest, target())
         .await
         .expect_err("the bundle is refused")
         .error_type()
@@ -165,7 +165,7 @@ async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
 #[tokio::test]
 async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     let (directory, digest) = Bundle::valid().write();
-    let release = EdgeRelease::load(&directory, &digest, scope())
+    let release = EdgeRelease::load(&directory, &digest, target())
         .await
         .expect("load");
     assert_eq!(release.bundle_digest(), digest);

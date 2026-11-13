@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
+const RUNS_ADMISSION_TARGET_CHECK_DEF: &str =
     "CHECK (package_id <> ''::text AND environment <> ''::text)";
 const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
 /// The execution identities of a run: a candidate case, an
@@ -105,7 +105,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check",
-        definition: RUNS_ADMISSION_SCOPE_CHECK_DEF,
+        definition: RUNS_ADMISSION_TARGET_CHECK_DEF,
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -170,7 +170,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_release_record_check",
-        // The claim-time manifest record: absent, or well formed. The effective
+        // The lease-time manifest record: absent, or well formed. The effective
         // release id is already an immutable admission pin. Table-origin and
         // explicitly named so it can never collide with the retired child-run
         // `runs_check3` numbering.

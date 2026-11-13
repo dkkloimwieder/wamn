@@ -291,12 +291,12 @@ fn assert_native_host_controls(
             {"port": 8081, "protocol": "TCP"},
             {"port": 8082, "protocol": "TCP"},
         ]}]),
-        "native policy must allow traffic and probe ports without changing source scope"
+        "native policy must allow traffic and probe ports without changing source target"
     );
     assert!(network_policy["spec"].get("egress").is_none());
 }
 
-fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
+fn assert_events_overlay_remains_namespace_targeted(root: &Path) {
     let values = read_repository_file(root, VALUES);
     let overlay = read_repository_file(root, EVENTS_RBAC);
     let output = render_chart(root, "wamn", &[VALUES]);
@@ -319,7 +319,11 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
         let objects = manifest["items"]
             .as_array()
             .expect("Events overlay contains a Role and RoleBinding");
-        assert_eq!(objects.len(), 2, "Events overlay must stay narrowly scoped");
+        assert_eq!(
+            objects.len(),
+            2,
+            "Events overlay must stay narrowly targeted"
+        );
         let role = objects
             .iter()
             .find(|object| object["kind"] == "Role")
@@ -431,5 +435,5 @@ fn the_host_tier_renders_the_native_host_controls() {
     let base = rendered_object(&objects, DEPLOYMENT, &name, "platform");
     let base_policy = rendered_object(&objects, NETWORK_POLICY, &name, "platform");
     assert_native_host_controls(base, base_policy, "4", "2", "6");
-    assert_events_overlay_remains_namespace_scoped(&root);
+    assert_events_overlay_remains_namespace_targeted(&root);
 }

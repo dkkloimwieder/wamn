@@ -43,7 +43,7 @@ use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::operation::intent::logs_intent;
-use crate::release_manifest::{LoadedRelease, ReleaseScope};
+use crate::release_manifest::{LoadedRelease, ReleaseTarget};
 use crate::route_bindings::wamn::flow_http_routing::routing::{
     self, Cardinality, Mapping, MappingSource, RouteDefinition,
 };
@@ -123,7 +123,7 @@ struct RouteState {
 /// What one limit counts: the requests of each route, or the requests of all
 /// routes together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LimitScope {
+enum LimitTarget {
     Route,
     Box,
 }
@@ -131,15 +131,15 @@ enum LimitScope {
 #[derive(Debug)]
 struct RouteLimiter {
     limit: RouteInFlightLimit,
-    scope: LimitScope,
+    target: LimitTarget,
     routes: std::sync::Mutex<HashMap<String, RouteState>>,
 }
 
 impl RouteLimiter {
-    fn new(limit: RouteInFlightLimit, scope: LimitScope) -> Arc<Self> {
+    fn new(limit: RouteInFlightLimit, target: LimitTarget) -> Arc<Self> {
         let limiter = Arc::new(Self {
             limit,
-            scope,
+            target,
             routes: std::sync::Mutex::new(HashMap::new()),
         });
         Self::register_metrics(&limiter);
@@ -190,9 +190,9 @@ impl RouteLimiter {
             .routes
             .lock()
             .expect("HTTP route limiter lock is not poisoned");
-        let in_flight = match self.scope {
-            LimitScope::Route => routes.get(route).map_or(0, |state| state.in_flight),
-            LimitScope::Box => routes.values().map(|state| state.in_flight).sum(),
+        let in_flight = match self.target {
+            LimitTarget::Route => routes.get(route).map_or(0, |state| state.in_flight),
+            LimitTarget::Box => routes.values().map(|state| state.in_flight).sum(),
         };
         let state = routes.entry(route.to_string()).or_default();
         if in_flight >= self.limit.get() {
@@ -544,7 +544,7 @@ pub struct AuthenticationRequest<'a> {
     /// The loaded release that carries the attachment.
     pub manifest: &'a ServingManifest,
     /// The tenant and environment of the host that serves the route.
-    pub scope: &'a ReleaseScope,
+    pub target: &'a ReleaseTarget,
     pub attachment_id: &'a str,
     pub attachment: ServedAttachment<'a>,
     /// The attachment's parsed policy. It is never `none`.
@@ -609,7 +609,7 @@ impl std::fmt::Debug for FlowHttpRouting {
                 &self.input_schemas.validators.len(),
             )
             .field("route_in_flight_limit", &self.limiter.limit)
-            .field("route_limit_scope", &self.limiter.scope)
+            .field("route_limit_target", &self.limiter.target)
             .field("authenticator", &self.authenticator)
             .field("environment", &self.environment)
             .finish_non_exhaustive()
@@ -641,7 +641,7 @@ impl FlowHttpRouting {
             input_schemas,
             authenticator: None,
             environment: None,
-            limiter: RouteLimiter::new(route_in_flight_limit, LimitScope::Route),
+            limiter: RouteLimiter::new(route_in_flight_limit, LimitTarget::Route),
             route_hosts: RwLock::default(),
         }
     }
@@ -650,7 +650,7 @@ impl FlowHttpRouting {
     /// all routes together, as an edge box serves them.
     pub fn with_box_limit(release: Option<Arc<LoadedRelease>>, limit: RouteInFlightLimit) -> Self {
         Self {
-            limiter: RouteLimiter::new(limit, LimitScope::Box),
+            limiter: RouteLimiter::new(limit, LimitTarget::Box),
             ..Self::new(release, limit)
         }
     }
@@ -749,7 +749,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
-                .inactive(&loaded_release.scope().env_key)
+                .inactive(&loaded_release.target().env_key)
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "environment status unavailable");
@@ -785,7 +785,7 @@ impl FlowHttpRouting {
         authenticator
             .authenticate(AuthenticationRequest {
                 manifest,
-                scope: loaded_release.scope(),
+                target: loaded_release.target(),
                 attachment_id,
                 attachment,
                 policy,
@@ -1068,15 +1068,15 @@ fn read_cache_control(
     kind: OperationType,
     policy: Option<AttachmentAuthPolicy<'_>>,
 ) -> Option<String> {
-    let scope = if policy == Some(AttachmentAuthPolicy::None) {
+    let target = if policy == Some(AttachmentAuthPolicy::None) {
         "public"
     } else {
         "private"
     };
     match kind {
-        OperationType::Get => Some(format!("{scope}, no-cache")),
+        OperationType::Get => Some(format!("{target}, no-cache")),
         OperationType::Query | OperationType::Projection => {
-            Some(format!("{scope}, max-age=10, stale-while-revalidate=60"))
+            Some(format!("{target}, max-age=10, stale-while-revalidate=60"))
         }
         OperationType::Create
         | OperationType::Update
@@ -1255,8 +1255,8 @@ fn route_type(
 
 /// Check the signed double-submit of a cookie session.
 ///
-/// A cookie token must carry the `csrf` claim. When the route requires it, one
-/// `x-wamn-csrf` header must hash to that claim.
+/// A cookie token must carry the `csrf` JWT claim. When the route requires it, one
+/// `x-wamn-csrf` header must hash to that JWT claim.
 pub fn check_csrf(
     requires_csrf: bool,
     claims_csrf: Option<&str>,
@@ -1274,7 +1274,7 @@ pub fn check_csrf(
         return Err(unauthorized());
     }
     let digest = hex::encode(Sha256::digest(value.value.as_bytes()));
-    // Constant time over the equal-length case; the claim is always 64 hex.
+    // Constant time over the equal-length case; the JWT claim is always 64 hex.
     let difference = digest
         .bytes()
         .zip(claim.bytes())
@@ -1683,7 +1683,7 @@ mod tests {
             Arc::new(
                 LoadedRelease::load_from(
                     &self.root,
-                    crate::release_manifest::ReleaseScope::new("tenant-a", "prod")
+                    crate::release_manifest::ReleaseTarget::new("tenant-a", "prod")
                         .with_applications(
                             [(
                                 "catalog".to_owned(),
@@ -2499,7 +2499,8 @@ mod tests {
         let claim = hex::encode(Sha256::digest(b"csrf-token-value"));
         check_csrf(false, Some(&claim), &[]).expect("no header is needed");
         assert_unauthorized(
-            &check_csrf(false, None, &[]).expect_err("a cookie token without the claim refuses"),
+            &check_csrf(false, None, &[])
+                .expect_err("a cookie token without the JWT claim refuses"),
         );
     }
 
@@ -2574,7 +2575,7 @@ mod tests {
     fn route_slots_are_independent_shed_without_queueing_and_release_on_drop() {
         let limiter = RouteLimiter::new(
             "2".parse().expect("fixture limit is valid"),
-            LimitScope::Route,
+            LimitTarget::Route,
         );
         let first = limiter.try_acquire("orders").expect("first slot");
         let second = limiter.try_acquire("orders").expect("second slot");
@@ -2598,7 +2599,7 @@ mod tests {
     fn a_box_limit_counts_the_requests_of_every_route_together() {
         let limiter = RouteLimiter::new(
             "4".parse().expect("fixture limit is valid"),
-            LimitScope::Box,
+            LimitTarget::Box,
         );
         let orders = [
             limiter.try_acquire("orders").expect("first slot"),

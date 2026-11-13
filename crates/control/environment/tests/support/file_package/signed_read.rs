@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use serde_json::json;
 use wamn_catalog::{AdmittedComponent, HostRouteSet, ServingComponent, ServingManifest};
 use wamn_engine::artifact_source::local_component_path;
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -76,7 +76,7 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../control/environment/tests/support/file_package/publication/components/signed-read.json.in",
         ),
-        &wamn_catalog::ComponentPackageScope {
+        &wamn_catalog::ComponentPackageCoordinate {
             env_key: env_key.into(),
             package_id: "file_fixture".into(),
             package_version: "0.1.0".into(),
@@ -128,7 +128,7 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "signed read file fixture",
-        ReleaseScope::new(env_key, "dev").with_applications(serde_json::from_value(json!({
+        ReleaseTarget::new(env_key, "dev").with_applications(serde_json::from_value(json!({
             "files": {"packages": ["file_fixture"], "connections": {
                 "files": super::files::STORE_NAME, "files-read": super::files::STORE_NAME,
                 "files-no-cdn": "files-no-cdn"

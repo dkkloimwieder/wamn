@@ -6,7 +6,7 @@
 //! terminal state (completed / failed / infrastructure-failure) are eligible; a
 //! `dispatched`/`running` run is never pruned.
 //!
-//! **Role:** connects as a scoped `wamn_run_retention` credential GENERATION
+//! **Role:** connects as a targeted `wamn_run_retention` credential GENERATION
 //! (`wamn-0h0g.12.69`), never as the shared `wamn_app` login. That family's
 //! stable ACL role holds `DELETE` plus a three-column `SELECT` on `wamn_run.runs`
 //! and nothing else anywhere in the cluster, so the credential this verb mounts
@@ -16,8 +16,8 @@
 //!
 //! The verb checks the tenant identity. `--tenant` used to be a free argument
 //! that reached the statement as an `app.env_key` GUC, which fails in two
-//! directions at once: an unset claim makes the predicate NULL, so the delete
-//! removes nothing and the verb still prints a success line; and a claim naming
+//! directions at once: an unset identity makes the predicate NULL, so the delete
+//! removes nothing and the verb still prints a success line; and an identity naming
 //! somebody else's tenant is honoured, because `wamn_run.runs`' one permissive
 //! floor arm is `TO wamn_platform USING (true)` and every platform-grain family
 //! matches it without a tenant predicate. [`verify_retention_identity`] closes
@@ -31,7 +31,7 @@
 use anyhow::{Context as _, bail};
 use tokio_postgres::NoTls;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
 
 /// Inputs of one terminal run history prune.
@@ -121,10 +121,10 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// column-shaped, never row-shaped, so the grant set cannot express it either.
 ///
 /// What the server DOES supply is an unforgeable identity: the generation login
-/// name carries the 160-bit scope digest of `(tenant, database)` under the
+/// name carries the 160-bit target digest of `(tenant, database)` under the
 /// retention family's own domain, and `current_user` cannot be rewritten by a
 /// session. Deriving the expected names from the environment coordinate and `current_database()`
-/// and comparing turns a free CLI argument into a claim the credential has to
+/// and comparing turns a free CLI argument into an identity the credential has to
 /// back. A missing, foreign or mismatched tenant therefore ERRORS here, instead
 /// of reaching a predicate that matches nothing and reporting `pruned 0 terminal
 /// run(s)` with exit 0.
@@ -146,14 +146,14 @@ async fn verify_retention_identity(
     let role: String = row.get("role");
     let database: String = row.get("database");
 
-    let scope = WorkloadRoleScope::EnvKey {
+    let target = WorkloadRoleIdentity::EnvKey {
         env_key,
         database: &database,
     };
     let mut expected = Vec::new();
     for generation in [CredentialGeneration::A, CredentialGeneration::B] {
         expected.push(
-            workload_generation_role(WorkloadRoleFamily::Retention, scope, generation)
+            workload_generation_role(WorkloadRoleFamily::Retention, target, generation)
                 .context("derive the expected retention generation identity")?,
         );
     }
@@ -174,9 +174,9 @@ async fn verify_retention_identity(
 /// exact affected count without mutating. Returns the number of `runs` rows
 /// removed.
 ///
-/// No `app.env_key` claim is injected any more. That GUC keyed the RETIRED floor;
+/// No `app.env_key` identity is injected any more. That GUC keyed the RETIRED floor;
 /// `wamn-0h0g.22.6` re-keyed `runs` onto `current_user`, and the one thing the
-/// claim still did here was supply a predicate that silently matched nothing
+/// identity still did here was supply a predicate that silently matched nothing
 /// when it was absent. The `run_queue` cascade does not need it: measured, a
 /// referential-integrity trigger consults neither the deleter's grants nor that
 /// relation's own `app.env_key` policy.
@@ -217,53 +217,53 @@ mod tests {
     use super::*;
 
     /// The two identities the verb accepts are the A/B generations of ONE
-    /// `(tenant, database)` scope, and another tenant's digest differs — which
+    /// `(tenant, database)` target, and another tenant's digest differs — which
     /// is the whole basis of the refusal, since a login name cannot be made to
-    /// claim a tenant it was not minted for.
+    /// name a tenant it was not minted for.
     #[test]
-    fn the_expected_retention_identities_are_the_two_generations_of_one_scope() {
-        let scope = WorkloadRoleScope::EnvKey {
+    fn the_expected_retention_identities_are_the_two_generations_of_one_target() {
+        let target = WorkloadRoleIdentity::EnvKey {
             env_key: "acme-prod",
             database: "wamn-db-acme--billing--dev--ab12cd",
         };
         let a = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            scope,
+            target,
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a tenant-targeted family");
         let b = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            scope,
+            target,
             CredentialGeneration::B,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a tenant-targeted family");
         assert!(a.starts_with("wamn_run_retention_"), "{a}");
         assert!(a.ends_with("_a"), "{a}");
         assert!(b.ends_with("_b"), "{b}");
         assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
         let other = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::EnvKey {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: "other-tenant",
                 database: "wamn-db-acme--billing--dev--ab12cd",
             },
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a tenant-targeted family");
         assert_ne!(a, other);
         // The same tenant in a DIFFERENT database is a different credential too:
         // the digest frames both fields, so a retention Secret cannot be moved
         // between project-env databases.
         let elsewhere = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::EnvKey {
+            WorkloadRoleIdentity::EnvKey {
                 env_key: "acme-prod",
                 database: "wamn-db-acme--billing--prod--ef34ab",
             },
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a tenant-targeted family");
         assert_ne!(a, elsewhere);
     }
 }

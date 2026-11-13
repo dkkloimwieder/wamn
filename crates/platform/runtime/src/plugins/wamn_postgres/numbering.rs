@@ -2,13 +2,13 @@
 //! (docs/architecture/data-access.md#rendering).
 //!
 //! `next-number` and `peek-number` render the pattern of one sequence of the
-//! declared application, never an argument and never a claim. The plugin
+//! declared application, never an argument and never an identity. The plugin
 //! reads the environment map name from host state: the operation transaction holds
 //! the application it was begun for. The plugin resolves (application,
 //! sequence name) to the sequence id, so a sequence of another application is
-//! not found. The `app.application` claim stays set for logging only; guest
+//! not found. The `app.application` identity stays set for logging only; guest
 //! SQL can rewrite it, so it decides nothing here. Both calls run only in an
-//! open operation transaction, on its connection and under its claims, so a
+//! open operation transaction, on its connection and under its identity, so a
 //! counter that `next-number` advances is consumed on commit and given back
 //! on rollback.
 //!
@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use deadpool_postgres::Object;
 use tokio_postgres::error::SqlState;
 use tracing::Instrument as _;
-use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Scope};
+use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Policy};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::component::Accessor;
 
@@ -72,7 +72,7 @@ const INVALID_INPUT: &str = "22023";
 const NULL_FIELD: &str = "22004";
 
 /// The sequence id and pattern of sequence `$2` of application `$1`, and the
-/// text and JSON type of the `timezone` setting at the scope of `$1`. The
+/// text and JSON type of the `timezone` setting for the target of `$1`. The
 /// host binds `$1` from host state. A sequence that `$1` does not own reads
 /// as null, and so does a setting row that does not exist.
 const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value) \
@@ -80,7 +80,7 @@ const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', json
     LEFT JOIN platform.number_sequence AS s \
       ON s.application = c.application AND s.name = $2 \
     LEFT JOIN platform.setting AS t \
-      ON t.scope_type = 'application' AND t.scope_id = c.application \
+      ON t.target_type = 'application' AND t.target_id = c.application \
         AND t.key = 'timezone'";
 /// The transaction time in time zone `$1`, in every format of the renderer,
 /// in the order of [`DateFormat::ALL`]. When `$2` is true, `YYYY` and `YY`
@@ -298,13 +298,13 @@ async fn render(
 
     let mut counters = BTreeMap::<&str, String>::new();
     for counter in counter_order(&pattern) {
-        let key = match counter.scope().key() {
+        let key = match counter.policy().key() {
             None => String::new(),
             Some(Key::Field(field)) => fields[&**field].to_owned(),
             Some(Key::Counter(other)) => counters[&**other].clone(),
             Some(Key::Date(format)) => date(*format),
         };
-        let per = matches!(counter.scope(), Scope::Per(_));
+        let per = matches!(counter.policy(), Policy::Per(_));
         let value = counter_value(connection, &sequence, counter, &key, per, call)
             .await
             .map_err(|error| {
@@ -482,7 +482,7 @@ fn key_values<'a>(
 fn date_formats(pattern: &Pattern) -> impl Iterator<Item = DateFormat> + '_ {
     pattern.parts().iter().filter_map(|part| match part {
         Part::Date(format) => Some(*format),
-        Part::Counter(counter) => match counter.scope().key() {
+        Part::Counter(counter) => match counter.policy().key() {
             Some(Key::Date(format)) => Some(*format),
             _ => None,
         },
@@ -499,7 +499,7 @@ fn counter_order(pattern: &Pattern) -> Vec<&Counter> {
     while !pending.is_empty() {
         let ready = pending
             .iter()
-            .position(|counter| match counter.scope().key() {
+            .position(|counter| match counter.policy().key() {
                 Some(Key::Counter(other)) => ordered.iter().any(|done| done.name() == &**other),
                 _ => true,
             })

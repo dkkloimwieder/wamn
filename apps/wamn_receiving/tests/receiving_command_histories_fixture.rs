@@ -1085,7 +1085,7 @@ async fn project_admin(
     wamn_platform_identity::application::project_authority(
         &authority,
         &transaction,
-        wamn_platform_identity::application::ApplicationScope {
+        wamn_platform_identity::application::ApplicationTarget {
             org: &inputs.org,
             project: &inputs.project,
             env: &inputs.environment,

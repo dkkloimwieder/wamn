@@ -17,13 +17,13 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 
 /// Package coordinate that owns an admitted component.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentPackageScope {
+pub struct ComponentPackageCoordinate {
     pub env_key: String,
     pub package_id: String,
     pub package_version: String,
 }
 
-impl ComponentPackageScope {
+impl ComponentPackageCoordinate {
     pub fn new(
         env_key: impl Into<String>,
         package_id: impl Into<String>,
@@ -40,21 +40,21 @@ impl ComponentPackageScope {
     }
 }
 
-impl Serialize for ComponentPackageScope {
+impl Serialize for ComponentPackageCoordinate {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct as _;
-        let mut scope = serializer.serialize_struct("ComponentPackageScope", 3)?;
-        scope.serialize_field("env_key", &self.env_key)?;
-        scope.serialize_field("package-id", &self.package_id)?;
-        scope.serialize_field("package-version", &self.package_version)?;
-        scope.end()
+        let mut target = serializer.serialize_struct("ComponentPackageCoordinate", 3)?;
+        target.serialize_field("env_key", &self.env_key)?;
+        target.serialize_field("package-id", &self.package_id)?;
+        target.serialize_field("package-version", &self.package_version)?;
+        target.end()
     }
 }
 
-impl<'de> Deserialize<'de> for ComponentPackageScope {
+impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -64,7 +64,7 @@ impl<'de> Deserialize<'de> for ComponentPackageScope {
             type Value = std::collections::BTreeMap<String, String>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a component scope")
+                formatter.write_str("a component target")
             }
 
             fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -184,7 +184,7 @@ pub struct ComponentOperationDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
-    pub scope: ComponentPackageScope,
+    pub target: ComponentPackageCoordinate,
     pub component: String,
     pub interface_version: String,
     pub operations: BTreeMap<String, ComponentOperationDeclaration>,
@@ -218,7 +218,7 @@ pub struct AdmittedComponentParameter {
 /// One authority leaving the host, with the provenance that shows it.
 ///
 /// Effects are a projection of the closure, never a second declaration: an
-/// author cannot claim fewer effects than the closure reaches, and an empty
+/// author cannot declare fewer effects than the closure reaches, and an empty
 /// list is the positive statement that the occurrence is pure.
 ///
 /// An effect comes from this component's own audited imports, and
@@ -312,7 +312,7 @@ impl AdmittedComponentOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
-    pub scope: ComponentPackageScope,
+    pub target: ComponentPackageCoordinate,
     pub component: String,
     pub interface_version: String,
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
@@ -373,8 +373,8 @@ fn imports_fingerprint(
 
 /// The admitted facts of one component as a package artifact carries them
 /// (docs/operations/building.md#reading-a-pushed-package, contract A): an [`AdmittedComponent`]
-/// without its scope, plus its connections. A package artifact is tenant-free,
-/// so the reader supplies the scope.
+/// without its target, plus its connections. A package artifact is tenant-free,
+/// so the reader supplies the target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDescriptor {
@@ -396,7 +396,7 @@ pub struct ComponentDescriptor {
 }
 
 impl ComponentDescriptor {
-    /// The descriptor of `component`. Its scope is dropped.
+    /// The descriptor of `component`. Its target is dropped.
     pub fn new(component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
         Self {
             component: component.component,
@@ -441,11 +441,11 @@ impl ComponentDescriptor {
         }
     }
 
-    /// The admitted facts of this descriptor in `scope`.
-    pub fn into_admitted(self, scope: ComponentPackageScope) -> AdmittedComponentFacts {
+    /// The admitted facts of this descriptor in `target`.
+    pub fn into_admitted(self, target: ComponentPackageCoordinate) -> AdmittedComponentFacts {
         AdmittedComponentFacts {
             component: AdmittedComponent {
-                scope,
+                target,
                 component: self.component,
                 interface_version: self.interface_version,
                 operations: self.operations,
@@ -525,10 +525,10 @@ pub fn normalize_component_fact(
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
-    ComponentPackageScope::new(
-        &declaration.scope.env_key,
-        &declaration.scope.package_id,
-        &declaration.scope.package_version,
+    ComponentPackageCoordinate::new(
+        &declaration.target.env_key,
+        &declaration.target.package_id,
+        &declaration.target.package_version,
     )
     .map_err(|error| {
         ComponentFactError::new(
@@ -554,8 +554,8 @@ pub fn normalize_component_fact(
     let mut operations = BTreeMap::new();
     for (export, operation) in declaration.operations {
         validate_identity(&export, "operation export")?;
-        validate_registered_operation_scope(
-            &declaration.scope,
+        validate_registered_operation_target(
+            &declaration.target,
             &export,
             operation.registered_operation.as_deref(),
         )?;
@@ -602,7 +602,7 @@ pub fn normalize_component_fact(
 
     Ok(AdmittedComponentFacts {
         component: AdmittedComponent {
-            scope: declaration.scope,
+            target: declaration.target,
             component: declaration.component,
             interface_version: declaration.interface_version,
             operations,
@@ -623,15 +623,15 @@ pub fn normalize_component_fact(
 /// rules over a stored pair decides whether a validator ever derived that
 /// projection — without the component bytes. A row that fails here was written
 /// by something other than the validator (wamn-0h0g.21.10: the converge ALTER
-/// that defaulted pre-existing rows to `'[]'`, the positive claim of purity)
+/// that defaulted pre-existing rows to `'[]'`, the positive assertion of purity)
 /// and its component is unpublishable until it is re-admitted.
 pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
-    ComponentPackageScope::new(
-        &component.scope.env_key,
-        &component.scope.package_id,
-        &component.scope.package_version,
+    ComponentPackageCoordinate::new(
+        &component.target.env_key,
+        &component.target.package_id,
+        &component.target.package_version,
     )
     .map_err(|error| {
         ComponentFactError::new(
@@ -647,8 +647,8 @@ pub fn verify_stored_effect_projection(
     }
     for (export, operation) in &component.operations {
         validate_identity(export, "operation export")?;
-        validate_registered_operation_scope(
-            &component.scope,
+        validate_registered_operation_target(
+            &component.target,
             export,
             operation.registered_operation.as_deref(),
         )?;
@@ -807,21 +807,25 @@ fn is_safe_statement_path(path: &str) -> bool {
             == path
 }
 
-fn validate_registered_operation_scope(
-    scope: &ComponentPackageScope,
+fn validate_registered_operation_target(
+    target: &ComponentPackageCoordinate,
     export: &str,
     operation: Option<&str>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
         return Ok(());
     };
-    validate_canonical_operation_for_package(operation, &scope.package_id, &scope.package_version)
-        .map_err(|error| {
-            ComponentFactError::new(
-                ComponentFactErrorType::NonCanonicalIdentity,
-                error.to_string(),
-            )
-        })?;
+    validate_canonical_operation_for_package(
+        operation,
+        &target.package_id,
+        &target.package_version,
+    )
+    .map_err(|error| {
+        ComponentFactError::new(
+            ComponentFactErrorType::NonCanonicalIdentity,
+            error.to_string(),
+        )
+    })?;
     if operation != export {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::RegisteredOperationMismatch,
@@ -859,7 +863,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// `is_effect_package`: it read "not `wasi` and not `wamn` ⇒ an application
 /// call", which silently misclassified `wasmcloud:blobstore` as a cross-package
 /// operation dependency and made every blobstore-effect component fail its
-/// stored projection with `OperationDependencyMismatch`. §2a's claim that
+/// stored projection with `OperationDependencyMismatch`. §2a's assertion that
 /// interfaces carry name, shape AND posture with no second classifier was not
 /// true until this moved.
 ///
@@ -1129,7 +1133,7 @@ mod tests {
 
     fn declaration() -> ComponentDeclaration {
         ComponentDeclaration {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
@@ -1194,7 +1198,7 @@ mod tests {
         .expect("component fact normalizes");
         let fact = facts.component;
 
-        assert_eq!(fact.scope.package_version, "1.2.0");
+        assert_eq!(fact.target.package_version, "1.2.0");
         let operation = fact.operation("map").expect("map operation is admitted");
         assert_eq!(operation.registered_operation, None);
         assert_eq!(operation.input_ports[0].name, "input");
@@ -1208,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn a_component_descriptor_drops_the_scope_and_the_reader_supplies_it() {
+    fn a_component_descriptor_drops_the_target_and_the_reader_supplies_it() {
         let facts = normalize_component_fact(
             declaration(),
             format!("sha256:{}", "a".repeat(64)),
@@ -1223,7 +1227,7 @@ mod tests {
         let descriptor = ComponentDescriptor::new(facts.component.clone(), connections.clone());
 
         let document = serde_json::to_value(&descriptor).expect("descriptor serializes");
-        assert!(document.get("scope").is_none());
+        assert!(document.get("target").is_none());
         assert_eq!(
             document["connections"],
             json!([{"store-alias": "labels", "requirement-type": "blobstore"}])
@@ -1233,10 +1237,10 @@ mod tests {
         assert_eq!(decoded, descriptor);
 
         let mut unknown = document;
-        unknown["scope"] = json!({});
+        unknown["target"] = json!({});
         assert!(serde_json::from_value::<ComponentDescriptor>(unknown).is_err());
 
-        let admitted = decoded.into_admitted(facts.component.scope.clone());
+        let admitted = decoded.into_admitted(facts.component.target.clone());
         assert_eq!(admitted.component, facts.component);
         assert_eq!(admitted.connections, connections);
     }
@@ -1300,12 +1304,12 @@ mod tests {
     }
 
     #[test]
-    fn persisted_component_scope_uses_the_package_coordinate_guard() {
-        assert!(serde_json::from_str::<ComponentPackageScope>(
+    fn persisted_component_target_uses_the_package_coordinate_guard() {
+        assert!(serde_json::from_str::<ComponentPackageCoordinate>(
             r#"{"env_key":"first","env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
         ).is_err());
         assert!(
-            serde_json::from_value::<ComponentPackageScope>(json!({
+            serde_json::from_value::<ComponentPackageCoordinate>(json!({
                 "env_key": "tenant-a",
                 "package-id": "not-snake",
                 "package-version": "1.0.0"
@@ -1500,7 +1504,7 @@ mod tests {
     /// wrote over them.
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentPackageScope {
+            target: ComponentPackageCoordinate {
                 env_key: "tenant-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
@@ -1527,7 +1531,7 @@ mod tests {
     }
 
     /// wamn-0h0g.21.10. The converge ALTER defaulted every pre-existing row to
-    /// `'[]'` — the positive claim of purity — for a component whose own
+    /// `'[]'` — the positive assertion of purity — for a component whose own
     /// audited imports show it reaches Postgres. No validator derived that, so
     /// reading the row must refuse rather than trust it.
     #[test]
@@ -1535,7 +1539,7 @@ mod tests {
         let stored = migration_defaulted_fact(&["wamn:postgres/client@0.1.0"]);
 
         let error = verify_stored_effect_projection(&stored)
-            .expect_err("an underived purity claim is refused");
+            .expect_err("an underived purity assertion is refused");
 
         assert_eq!(
             error.error_type(),
@@ -1544,8 +1548,8 @@ mod tests {
     }
 
     /// The other half of the same guard: a row whose `'[]'` happens to be the
-    /// value its imports do derive is not a fabricated claim, and stays
-    /// readable. That is what keeps the refusal scoped to exactly the rows a
+    /// value its imports do derive is not a fabricated assertion, and stays
+    /// readable. That is what keeps the refusal targeted to exactly the rows a
     /// validator never produced.
     #[test]
     fn a_stored_pure_projection_its_imports_derive_stays_readable() {
@@ -1563,7 +1567,7 @@ mod tests {
             ["wamn:postgres/client@0.1.0".to_string()],
             Vec::new(),
         )
-        .expect_err("an under-claimed projection is refused at admission");
+        .expect_err("an under-reported projection is refused at admission");
 
         assert_eq!(
             error.error_type(),
@@ -1682,7 +1686,7 @@ mod tests {
         let document = serde_json::to_value(declaration()).expect("declaration serializes");
         assert!(document["operations"]["map"].get("input-ports").is_some());
         assert!(document.get("interface-version").is_some());
-        assert_eq!(document["scope"]["env_key"], "tenant-a");
+        assert_eq!(document["target"]["env_key"], "tenant-a");
         assert_eq!(
             serde_json::from_value::<ComponentDeclaration>(document.clone())
                 .expect("exact declaration parses"),

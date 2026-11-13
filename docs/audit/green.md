@@ -20,7 +20,7 @@ Logs are in `/var/tmp/wamn-green-log`.
 | `wamn-uibzn` | `crates/platform/engine/src/integration.rs` has tests without the `wasm_component_model_implements` feature gate. | Not fixed. The fix is in `crates/platform`, which this epic excludes. |
 | `wamn-fszfy` | The waiting worker stays installed because of the wfe gap `wamn-c361p`. | Not fixed. It depends on `wamn-c361p`, and this epic never edits wfe. |
 | `wamn-b5wcb` | The login limit is 5 requests per minute per email (`password.rs:451`). One sign-in uses two, so offline check 3 gets HTTP 429. | Not fixed. Owner choice: one account per check, one shared sign-in, or a wait for `Retry-After`. |
-| `wamn-h794p` | A user who revokes a role from themselves keeps a session that signs that role. The host refuses such a session with HTTP 401 (`claims.rs:203`). | Not fixed. Owner choice: the UI exchanges the session again, the host drops the role from the session, or the test revokes from a second user. |
+| `wamn-h794p` | A user who revokes a role from themselves keeps a session that signs that role. The host refuses such a session with HTTP 401 (`session_identity.rs:203`). | Not fixed. Owner choice: the UI exchanges the session again, the host drops the role from the session, or the test revokes from a second user. |
 
 ## Acceptance
 

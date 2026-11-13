@@ -1,4 +1,4 @@
-//! Session verification binds signed claims to a configured issuer and scope.
+//! Session verification binds signed JWT claims to a configured issuer and audience.
 //!
 //! The host resolves tenant permissions from the verified roles, then checks
 //! admission immediately before creating its caller. Key and token deadlines
@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use crate::SessionError;
 use crate::keys::PublicSessionKey;
 use crate::token::{
-    SessionClaims, SessionScope, session_key_id, validate_session_age, verify_session_token,
+    SessionAudience, SessionClaims, session_key_id, validate_session_age, verify_session_token,
 };
 
 /// Where a verifier gets the issuer's public keys.
@@ -56,11 +56,13 @@ pub struct SessionVerifier<K> {
 impl<K: KeySource> SessionVerifier<K> {
     /// Bind a key source to a trusted organization and exact audience.
     ///
-    /// The host supplies both scope values from its own loaded configuration.
+    /// The host supplies both audience values from its own loaded configuration.
     /// Neither value comes from a bearer token or request parameter.
     pub fn new(keys: K, org: &str, audience: &str) -> Result<Self, SessionVerificationError> {
         if org.trim().is_empty() || audience.trim().is_empty() {
-            return Err(SessionVerificationError::new("host session scope is empty"));
+            return Err(SessionVerificationError::new(
+                "host session audience is empty",
+            ));
         }
         Ok(Self {
             keys,
@@ -85,7 +87,7 @@ impl<K: KeySource> SessionVerifier<K> {
         let claims = verify_session_token(
             token,
             evidence.public_key(),
-            SessionScope {
+            SessionAudience {
                 issuer: self.keys.issuer(),
                 org: &self.org,
                 audience: &self.audience,
@@ -118,7 +120,7 @@ impl<K: KeySource> SessionVerifier<K> {
     }
 }
 
-/// Signed claims with key evidence, before the host's final request admission.
+/// Signed JWT claims with key evidence, before the host's final request admission.
 pub struct VerifiedSession<E> {
     pub(crate) claims: SessionClaims,
     evidence: E,

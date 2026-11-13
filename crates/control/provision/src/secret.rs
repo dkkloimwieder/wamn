@@ -21,7 +21,7 @@ use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
 ///
 /// The Secret carries no connection URL. `wamn_app` is a passwordless NOLOGIN
 /// ACL role, so no credential exists to put in one. Every workload family mounts
-/// its own scoped generation Secret instead.
+/// its own targeted generation Secret instead.
 pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str) -> Value {
     json!({
         "apiVersion": "v1",
@@ -140,7 +140,7 @@ pub fn render_workload_secret_manifest(
     })
 }
 
-/// Render the single-`url` credential Secret of an org-scoped family, named
+/// Render the single-`url` credential Secret of an org-targeted family, named
 /// by [`org_workload_secret_name`] and labelled with its org only.
 pub fn render_org_workload_secret_manifest(
     family: WorkloadRoleFamily,
@@ -202,12 +202,12 @@ pub fn render_control_administration_patch(triple: &Triple, url: Option<&str>) -
     }
 }
 
-/// Render the scoped per-tenant guest-SQL credential `Secret`
+/// Render the targeted per-tenant guest-SQL credential `Secret`
 /// (`wamn-0h0g.22.6.4`).
 ///
 /// `stringData.url` names the tenant's own LOGIN generation, which is the whole
 /// point: after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
-/// `current_user`, so the credential IS the tenant authority and no claim
+/// `current_user`, so the credential IS the tenant authority and no identity
 /// accompanies it.
 pub fn render_guest_secret_manifest(
     triple: &Triple,
@@ -303,7 +303,7 @@ mod tests {
         let database = crate::project_env_database_name("acme", "widgets", "dev", "k3m9x2p7");
         let role = crate::workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
-            crate::WorkloadRoleScope::ProjectEnvironment {
+            crate::WorkloadRoleIdentity::ProjectEnvironment {
                 org: "acme",
                 project: "widgets",
                 environment: "dev",

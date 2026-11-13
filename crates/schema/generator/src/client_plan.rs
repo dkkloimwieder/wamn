@@ -463,10 +463,10 @@ pub struct TableAction<'a> {
     pub many: bool,
 }
 
-/// Another table that shows the records of one row, scoped by that row.
+/// Another table that shows the records of one row, targeted by that row.
 ///
 /// The child declares a filter on a column that names a record of this
-/// table's model, so the parent row's id is the child's scope value.
+/// table's model, so the parent row's id is the child's target value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildTable<'a> {
     /// Canonical identity of the child's read.
@@ -475,7 +475,7 @@ pub struct ChildTable<'a> {
     pub model: &'a str,
     /// Operation name of the child's read inside its own model.
     pub name: &'a str,
-    /// Result field of the child that its scope filter narrows.
+    /// Result field of the child that its target filter narrows.
     pub field: &'a str,
 }
 
@@ -532,7 +532,7 @@ pub struct ScreenPlan<'a> {
     /// Served operations one table row opens, row links first, then row
     /// forms, each with whether it takes many rows.
     pub actions: Vec<TableAction<'a>>,
-    /// Tables scoped by one row of this table, in plan order.
+    /// Tables targeted by one row of this table, in plan order.
     pub child_tables: Vec<ChildTable<'a>>,
 }
 

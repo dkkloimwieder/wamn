@@ -31,7 +31,7 @@ use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use crate::author_workflow::{AuthorWorkflowError, AuthorWorkflowErrorType, gate_against_release};
 use crate::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
@@ -280,9 +280,9 @@ async fn begin<'a>(
         .await
         .map_err(|error| storage("begin the workflow transaction", error))?;
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+        .query_one(ASSIGN_ENV_KEY_SQL, &[&env_key])
         .await
-        .map_err(|error| storage("claim the workflow tenant", error))?;
+        .map_err(|error| storage("bind the workflow tenant identity", error))?;
     Ok(transaction)
 }
 

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { shellStatus } from "../src/status.js";
 
-it("shows a pending startup without claiming that storage was denied", () => {
+it("shows a pending startup without asserting that storage was denied", () => {
   expect(shellStatus()).toBe("Worker: starting. Persisted: pending. Quota: pending.");
 });
 

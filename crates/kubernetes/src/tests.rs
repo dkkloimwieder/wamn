@@ -109,9 +109,9 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
         (200, secret(3, &concurrent)),
     ])
     .await;
-    let scope = Triple::new("acme", "app", "dev");
+    let target = Triple::new("acme", "app", "dev");
     let id = uuid::Uuid::new_v4();
-    let stored = fixture.store.put(&scope, id, &[3]).await.unwrap();
+    let stored = fixture.store.put(&target, id, &[3]).await.unwrap();
     assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
     let requests = fixture.requests.lock().unwrap();
     let write = requests.last().unwrap();

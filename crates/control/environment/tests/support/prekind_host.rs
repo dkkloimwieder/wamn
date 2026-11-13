@@ -34,10 +34,10 @@ async fn credential_secrets(
     system: &mut tokio_postgres::Client,
     project_url: &str,
     system_url: &str,
-    scope: &Triple,
+    coordinate: &Triple,
 ) -> anyhow::Result<Vec<Value>> {
     let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
-    let mut secrets = render_check::credential_secrets(scope, NAMESPACE);
+    let mut secrets = render_check::credential_secrets(coordinate, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
             CredentialDatabase::Project => (project, project_url),
@@ -65,12 +65,12 @@ async fn credential_secrets(
             CredentialDatabase::Project => workload_generation_role(
                 credential.family,
                 if credential.family == WorkloadRoleFamily::App {
-                    WorkloadRoleScope::EnvKey {
+                    WorkloadRoleIdentity::EnvKey {
                         env_key: &env_key,
                         database: &database,
                     }
                 } else {
-                    WorkloadRoleScope::ProjectEnvironment {
+                    WorkloadRoleIdentity::ProjectEnvironment {
                         org: ORG,
                         project: PROJECT,
                         environment: "http",
@@ -366,7 +366,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let directory = work.path();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
-    let scope = Triple::new(ORG, PROJECT, "http");
+    let coordinate = Triple::new(ORG, PROJECT, "http");
     let database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
     let (project, project_task) = connect(database.url()).await?;
@@ -517,8 +517,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     .context("local NATS did not accept a connection")??;
     let broker = async_nats::jetstream::new(client.clone());
     for stream in [
-        wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120)),
-        wamn_broker::events::advisory_stream_config(&scope, 1),
+        wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120)),
+        wamn_broker::events::advisory_stream_config(&coordinate, 1),
     ] {
         broker.create_stream(stream).await?;
     }
@@ -549,7 +549,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     });
 
     let (device, entry) = fixture_http_entry(directory, &repository)?;
-    let version = &device.facts().scope.package_version;
+    let version = &device.facts().target.package_version;
     let device_descriptor = ComponentDescriptor::new(device.facts().clone(), Vec::new());
     let h = release(MANIFEST_H, version, Some(&device_descriptor))?;
     let mut facts = vec![device.facts().clone()];
@@ -713,8 +713,14 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     std::fs::write(&group_path, serde_yaml::to_string(&group)?)?;
     let rendered = render_check::environment(&document, &published.manifest, &group_path, 70)?;
     let documents = render_check::template(&rendered, NAMESPACE)?;
-    let mut secrets =
-        credential_secrets(&project, &mut system, database.url(), control.url(), &scope).await?;
+    let mut secrets = credential_secrets(
+        &project,
+        &mut system,
+        database.url(),
+        control.url(),
+        &coordinate,
+    )
+    .await?;
     secrets.extend(render_check::operator_prerequisites(NAMESPACE));
     secrets.push(render_check::prerequisite(
         "apply-registry",
@@ -728,7 +734,11 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     secrets.push(render_check::prerequisite(
         &format!(
             "wamn-nats-{}",
-            wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str())
+            wamn_control_registry::project_env_key(
+                &coordinate.org,
+                &coordinate.project,
+                coordinate.env.as_str()
+            )
         ),
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
@@ -743,7 +753,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let environment = integration::WorkflowEnvironment {
         system_url: control.url(),
         project_url: database.url(),
-        scope: &scope,
+        target: &coordinate,
         env_key: &env_key,
         digest,
         applications: &document.membership(),

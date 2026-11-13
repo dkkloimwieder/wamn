@@ -1019,7 +1019,7 @@ fn a_query_read_answers_its_page_as_one_body() {
 }
 
 #[test]
-fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
+fn a_feed_read_is_revalidated_every_time_under_the_target_of_its_list() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/packaging/query".to_string();

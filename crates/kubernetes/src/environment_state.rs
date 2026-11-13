@@ -65,7 +65,7 @@ pub fn application_states(observed: &Observed) -> BTreeMap<String, EnvironmentSt
 /// The three lists one status read takes from the release namespace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observed {
-    /// The Deployments named `hostgroup-<application release name>` in the selected scope.
+    /// The Deployments named `hostgroup-<application release name>` in the selected target.
     pub deployments: Value,
     /// Every WorkloadDeployment of the namespace.
     pub workloads: Value,

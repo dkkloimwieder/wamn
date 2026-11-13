@@ -28,7 +28,7 @@ pub mod verifier;
 /// Stable classes of session failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionErrorType {
-    /// A token failed its profile, signature, scope, or age. Every refusal
+    /// A token failed its profile, signature, audience, or age. Every refusal
     /// has the same public message.
     Refused,
     /// A public key does not match the Ed25519 profile.

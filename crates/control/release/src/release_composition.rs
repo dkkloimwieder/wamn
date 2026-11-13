@@ -73,7 +73,7 @@ pub struct SelectedComponentArtifact {
     pub digest: Box<str>,
 }
 
-/// A palette component admitted into the scope of the package whose wiring
+/// A palette component admitted into the target of the package whose wiring
 /// names it.
 #[derive(Clone, Debug)]
 pub struct SelectedPaletteArtifact {

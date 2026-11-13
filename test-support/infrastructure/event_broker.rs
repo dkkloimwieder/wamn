@@ -64,13 +64,13 @@ struct Subjects {
 /// The broker has its own CA.
 pub fn prepare(
     work: &Path,
-    scope: &Triple,
+    target: &Triple,
     env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
 ) -> anyhow::Result<EventBroker> {
-    prepare_with(None, work, scope, env_key, source, advisory, consumers)
+    prepare_with(None, work, target, env_key, source, advisory, consumers)
 }
 
 /// [`prepare`] with the CA of `authority`, for brokers of several
@@ -78,7 +78,7 @@ pub fn prepare(
 pub fn prepare_in(
     authority: &Authority,
     work: &Path,
-    scope: &Triple,
+    target: &Triple,
     env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
@@ -87,7 +87,7 @@ pub fn prepare_in(
     prepare_with(
         Some(authority),
         work,
-        scope,
+        target,
         env_key,
         source,
         advisory,
@@ -98,16 +98,16 @@ pub fn prepare_in(
 fn prepare_with(
     authority: Option<&Authority>,
     work: &Path,
-    scope: &Triple,
+    target: &Triple,
     env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
 ) -> anyhow::Result<EventBroker> {
     for token in [
-        scope.org.as_str(),
-        scope.project.as_str(),
-        scope.env.as_str(),
+        target.org.as_str(),
+        target.project.as_str(),
+        target.env.as_str(),
         env_key,
         source.name.as_str(),
         advisory.name.as_str(),
@@ -119,9 +119,9 @@ fn prepare_with(
     }
     let subject = format!(
         "evt.{}.{}.{}.>",
-        scope.org,
-        scope.project,
-        scope.env.as_str()
+        target.org,
+        target.project,
+        target.env.as_str()
     );
     ensure!(
         source.subjects == [subject.clone()],
@@ -331,7 +331,7 @@ pub async fn connect(
     credentials
         .connect(server)
         .await
-        .context("connect scoped event broker client")
+        .context("connect targeted event broker client")
 }
 
 #[cfg(test)]
@@ -353,7 +353,7 @@ mod tests {
     }
 
     fn declarations() -> (Triple, stream::Config, stream::Config, pull::Config) {
-        let scope = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "fixture", "dev");
         let source = stream::Config {
             name: "EVT_7_example_7_fixture_3_dev".into(),
             subjects: vec!["evt.example.fixture.dev.>".into()],
@@ -367,16 +367,16 @@ mod tests {
             durable_name: Some("mat_example_platform_fixture_registered".into()),
             ..Default::default()
         };
-        (scope, source, advisory, consumer)
+        (target, source, advisory, consumer)
     }
 
     #[test]
     fn the_broker_files_are_private() {
         let root = directory();
-        let (scope, source, advisory, consumer) = declarations();
+        let (target, source, advisory, consumer) = declarations();
         prepare(
             root.path(),
-            &scope,
+            &target,
             "example",
             &source,
             &advisory,
@@ -402,10 +402,10 @@ mod tests {
     #[test]
     fn runtime_roles_cannot_manage_streams_or_consumers() {
         let root = directory();
-        let (scope, source, advisory, consumer) = declarations();
+        let (target, source, advisory, consumer) = declarations();
         let broker = prepare(
             root.path(),
-            &scope,
+            &target,
             "example",
             &source,
             &advisory,
@@ -454,14 +454,14 @@ mod tests {
     }
 
     #[test]
-    fn invalid_scope_and_repeated_durables_leave_no_broker_files() {
+    fn invalid_target_and_repeated_durables_leave_no_broker_files() {
         let root = directory();
-        let (scope, mut source, advisory, consumer) = declarations();
+        let (target, mut source, advisory, consumer) = declarations();
         source.subjects = vec!["evt.example.*.dev.>".into()];
         assert!(
             prepare(
                 root.path(),
-                &scope,
+                &target,
                 "example",
                 &source,
                 &advisory,
@@ -473,7 +473,7 @@ mod tests {
         assert!(
             prepare(
                 root.path(),
-                &scope,
+                &target,
                 "*",
                 &source,
                 &advisory,
@@ -484,7 +484,7 @@ mod tests {
         assert!(
             prepare(
                 root.path(),
-                &scope,
+                &target,
                 "example",
                 &source,
                 &advisory,

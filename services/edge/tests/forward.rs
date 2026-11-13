@@ -259,7 +259,7 @@ fn configuration(
         .expect("write the token file");
     let text = format!(
         r#"
-[scope]
+[target]
 org = "{ORG}"
 project = "{PROJECT}"
 environment = "{ENVIRONMENT}"

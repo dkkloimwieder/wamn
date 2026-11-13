@@ -58,7 +58,7 @@ pub(super) async fn publish(
     let mut candidates = Vec::new();
     for application in components.facts.values().flatten() {
         if published.manifest.components.iter().any(|released| {
-            released.package_id == application.scope.package_id
+            released.package_id == application.target.package_id
                 && released.descriptor.component_digest == application.component_digest
         }) {
             candidates.push((application, source.pull_verified(application).await?));

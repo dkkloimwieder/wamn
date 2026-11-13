@@ -2,10 +2,10 @@
 //! each key.
 //!
 //! `wamn-edge --config <path>` or `WAMN_EDGE_CONFIG` names the file. Each key
-//! but `scope.environment` has one variable ([`OVERRIDES`]), which replaces
-//! the file's value or supplies a key that the file leaves out. The `[scope]`
+//! but `target.environment` has one variable ([`OVERRIDES`]), which replaces
+//! the file's value or supplies a key that the file leaves out. The `[target]`
 //! keys `org` and `project` take the variables of the cloud host, `WAMN_ORG`
-//! and `WAMN_PROJECT`. `scope.environment` comes only from the file. Every
+//! and `WAMN_PROJECT`. `target.environment` comes only from the file. Every
 //! other key has a `WAMN_EDGE_*` variable. An unknown key is refused.
 //! `services/edge/edge.example.toml` shows every key.
 
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use serde::Deserialize;
 use wamn_control_registry::project_env_key;
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 
 /// The variable that names the configuration file.
 pub const CONFIG_VARIABLE: &str = "WAMN_EDGE_CONFIG";
@@ -30,8 +30,8 @@ enum Shape {
 
 /// Each key's override variable, its path in the file, and its shape.
 const OVERRIDES: &[(&str, &[&str], Shape)] = &[
-    ("WAMN_ORG", &["scope", "org"], Shape::Text),
-    ("WAMN_PROJECT", &["scope", "project"], Shape::Text),
+    ("WAMN_ORG", &["target", "org"], Shape::Text),
+    ("WAMN_PROJECT", &["target", "project"], Shape::Text),
     ("WAMN_EDGE_BUNDLE_DIR", &["release", "dir"], Shape::Text),
     (
         "WAMN_EDGE_BUNDLE_DIGEST",
@@ -106,7 +106,7 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EdgeConfig {
-    pub scope: ScopeConfig,
+    pub target: TargetConfig,
     pub release: ReleaseConfig,
     pub session: SessionConfig,
     pub store: StoreConfig,
@@ -124,17 +124,17 @@ pub struct EdgeConfig {
 /// environment (R1), so the edge takes both from here, as the cloud host does.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScopeConfig {
+pub struct TargetConfig {
     pub org: String,
     pub project: String,
     pub environment: String,
 }
 
-impl ScopeConfig {
+impl TargetConfig {
     /// The env_key and environment of the release, with env_key derived
     /// from the coordinate.
-    pub fn release_scope(&self) -> ReleaseScope {
-        ReleaseScope::new(
+    pub fn release_target(&self) -> ReleaseTarget {
+        ReleaseTarget::new(
             project_env_key(&self.org, &self.project, &self.environment),
             self.environment.clone(),
         )
@@ -285,7 +285,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::EdgeConfig;
-    use wamn_engine::release_manifest::ReleaseScope;
+    use wamn_engine::release_manifest::ReleaseTarget;
 
     const EXAMPLE: &str = include_str!("../edge.example.toml");
 
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(config.device.expect("a device").serial.max_frame, 64);
 
         let from_variables = parse(
-            "[scope]\nenvironment = \"edge\"",
+            "[target]\nenvironment = \"edge\"",
             &[
                 ("WAMN_ORG", "org-a"),
                 ("WAMN_PROJECT", "plant"),
@@ -339,8 +339,8 @@ mod tests {
         .expect("the environment and the variables are a configuration");
         assert!(from_variables.device.is_none(), "no device, no loop");
         assert_eq!(
-            from_variables.scope.release_scope(),
-            ReleaseScope::new("org-a--plant--edge", "edge")
+            from_variables.target.release_target(),
+            ReleaseTarget::new("org-a--plant--edge", "edge")
         );
     }
 

@@ -28,17 +28,17 @@ fn main() -> anyhow::Result<()> {
         "usage: <work> <org> <project> <env> <env_key> <replicas> [<wamn.json>...]"
     );
     let work = PathBuf::from(&arguments[0]);
-    let scope = Triple::new(
+    let target = Triple::new(
         arguments[1].as_str(),
         arguments[2].as_str(),
         arguments[3].as_str(),
     );
     let env_key = &arguments[4];
     let replicas: usize = arguments[5].parse().context("parse the stream replicas")?;
-    let source = source_stream_config(&scope, replicas, Duration::from_secs(120));
-    let advisory = advisory_stream_config(&scope, replicas);
-    let consumers = declared_consumers(&scope, &arguments[6..])?;
-    let broker = event_broker::prepare(&work, &scope, env_key, &source, &advisory, &consumers)?;
+    let source = source_stream_config(&target, replicas, Duration::from_secs(120));
+    let advisory = advisory_stream_config(&target, replicas);
+    let consumers = declared_consumers(&target, &arguments[6..])?;
+    let broker = event_broker::prepare(&work, &target, env_key, &source, &advisory, &consumers)?;
     // One --consumer-config argument of enable-cdc-project-env per line.
     fs::write(
         work.join("consumers.jsonl"),
@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// The materializer consumers of captured entities in the supplied packages.
-fn declared_consumers(scope: &Triple, manifests: &[String]) -> anyhow::Result<Vec<pull::Config>> {
+fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<Vec<pull::Config>> {
     let manifests = manifests
         .iter()
         .map(|path| {
@@ -76,7 +76,7 @@ fn declared_consumers(scope: &Triple, manifests: &[String]) -> anyhow::Result<Ve
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
-    let consumers = wamn_broker::events::entity_consumers(scope, entities);
+    let consumers = wamn_broker::events::entity_consumers(target, entities);
     Ok(consumers)
 }
 

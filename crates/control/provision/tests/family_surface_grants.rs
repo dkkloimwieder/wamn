@@ -36,7 +36,7 @@ use std::process::{Command, Stdio};
 use url::Url;
 
 use wamn_control_provision::sql;
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -132,7 +132,7 @@ fn sqlstate(url: &str, statement: &str) -> Option<String> {
 fn generation(family: WorkloadRoleFamily, database: &str) -> String {
     workload_generation_role(
         family,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENV,
@@ -140,7 +140,7 @@ fn generation(family: WorkloadRoleFamily, database: &str) -> String {
         },
         CredentialGeneration::A,
     )
-    .expect("these families take a project-environment scope")
+    .expect("these families take a project-environment target")
 }
 
 /// The admin URL with its userinfo replaced by one role's login.
@@ -428,7 +428,7 @@ fn expected_executor_grants() -> Vec<String> {
 
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
 #[test]
-fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
+fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin = test_database.url().to_owned();
@@ -465,7 +465,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         load_role_grants(&admin, stable),
         expected_executor_grants(),
         "the stable executor-platform role's aclexplode grants are not the \
-         exact measured claim surface"
+         exact measured lease surface"
     );
     // The generation itself holds only CONNECT, directly: its authority is
     // INHERITED, so a direct grant here would be a second, unmanaged path.
@@ -609,7 +609,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
                'the executor can rewrite runs.{column}: the admission pins and the \
-                frozen wiring identity are not a claim''s to move'; "
+                frozen wiring identity are not a lease''s to move'; "
         )
         .expect("writing to a String cannot fail");
     }
@@ -641,7 +641,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     // outside.
     run_admin(
         &admin,
-        "seed one run the executor may claim",
+        "seed one run the executor may lease",
         &format!(
             "INSERT INTO catalog.packages \
                (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
@@ -769,7 +769,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         load_role_grants(&admin, stable),
         expected,
         "a hand-granted adjacent privilege survived a re-apply: this credential \
-         must never read role definitions or perform admission or claim work"
+         must never read role definitions or perform admission or lease work"
     );
 
     let mut probes = format!(

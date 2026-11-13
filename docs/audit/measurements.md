@@ -723,8 +723,8 @@ Files by duplicated lines (top 40):
 | ---: | --- |
 | 559 | `crates/platform/runtime/src/plugins/wamn_postgres/resources.rs` |
 | 549 | `tests/integration/src/route_interface_live.rs` |
-| 498 | `crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs` |
-| 414 | `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs` |
+| 498 | `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs` |
+| 414 | `crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs` |
 | 281 | `apps/wamn_receiving/tests/route_authentication_live/local_business.rs` |
 | 259 | `crates/control/lib/tests/workflow_manual_run_live.rs` |
 | 242 | `crates/execution/host/tests/control_route_live.rs` |
@@ -811,7 +811,7 @@ Command: `git log --since=90.days --name-only --format= | sort | uniq -c | sort 
 | 208 | `docs/architecture/execution.md` |
 | 191 | `docs/operations/running-tests.md` |
 | 168 | `docs/architecture/data-access.md` |
-| 160 | `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs` |
+| 160 | `crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs` |
 | 137 | `services/host/src/host.rs` |
 | 128 | `crates/control/provision/src/sql.rs` |
 | 124 | `tests/integration/src/route_authentication_live.rs` |

@@ -1,5 +1,5 @@
 //! Shared validators for tenant, project, runner, and schema identifiers.
-//! PostgreSQL claims use bound parameters. Schema names also use these
+//! PostgreSQL identity use bound parameters. Schema names also use these
 //! validators before interpolation into DDL.
 //!
 //! Organization, project, and environment identifiers share this module's
@@ -11,7 +11,7 @@
 //! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
 //! shared identifier budget.
 
-/// A tenant claim: 1–64 chars of `[A-Za-z0-9_-]`.
+/// A tenant identity: 1–64 chars of `[A-Za-z0-9_-]`.
 pub fn valid_env_key(env_key: &str) -> bool {
     !env_key.is_empty()
         && env_key.len() <= 64
@@ -133,7 +133,7 @@ pub fn valid_project(project: &str) -> bool {
 /// A durable-queue lease owner. An identity-format contract: bounded
 /// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
 /// injection boundary on the plugin path — the runner binds as a parameter into
-/// `CLAIM_SQL`, so a quote/backslash is inert data — but a malformed owner still
+/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
 /// fails closed.
 pub fn valid_runner(runner: &str) -> bool {
     !runner.is_empty()
@@ -144,7 +144,7 @@ pub fn valid_runner(runner: &str) -> bool {
 }
 
 /// A `search_path` schema name. Stricter than a tenant: no hyphens. Since R2 the
-/// value binds as a parameter into `CLAIM_SQL` on the plugin path rather than
+/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
 /// being spliced into SQL — but the no-hyphen rule still matters where a schema
 /// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
 /// malformed schema still fails closed.

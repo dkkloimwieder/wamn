@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Six words, and never a seventh. See
 /// `docs/architecture/execution.md#results-and-effects` for the effect rules.
-/// Each word claims only what the platform knows.
-/// Before `wamn-b2m6.3`, the tree made these four invalid claims when every failure rendered as "refused".
-/// These claims must never recur:
+/// Each word states only what the platform knows.
+/// Before `wamn-b2m6.3`, the tree made these four invalid assertions when every failure rendered as "refused".
+/// These assertions must never recur:
 ///
 /// * A TIMEOUT IS NOT A ROLLBACK. The platform sent the request and got no
 ///   answer. What the far side did with that request is unknown, so
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 ///   refuses one effect. The command that reached the component committed
 ///   already, and [`Self::RefusedBeforeDispatch`] describes the effect alone.
 /// * AN ATTEMPT THAT FAILED IN FLIGHT IS NOT A TIMEOUT. A deadline that never
-///   elapsed is as false a claim as the other two, one word earlier. That
+///   elapsed is as false an assertion as the other two, one word earlier. That
 ///   attempt is [`Self::EffectUncertain`] (owner ruling, `wamn-b2m6.3`).
 /// * A LOST RESPONSE IS NEITHER UNCERTAIN NOR DELIVERED. The far side acted and
 ///   the answer confirms it, so nothing is unknown. The guest received no
