@@ -117,7 +117,7 @@ impl fmt::Debug for ComponentArtifactFetchError {
         // safe to log without emitting response bodies or future auth context.
         formatter
             .debug_struct("ComponentArtifactFetchError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("reference", &self.reference)
             .field("refusal", &self.refusal)
             .finish_non_exhaustive()
@@ -277,7 +277,7 @@ mod tests {
         normalize_component_fact(
             ComponentDeclaration {
                 target: ComponentPackageCoordinate {
-                    env_key: "tenant-a".to_owned(),
+                    project_env_key: "org-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),
                 },

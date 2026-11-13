@@ -1,4 +1,4 @@
-//! Live gate for the fenced run-state transitions.
+//! Live acceptance test for the fenced run-state transitions.
 
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
@@ -50,7 +50,7 @@ fn success(url: &str, script: &str) -> String {
 ///
 /// The runtime checks executor membership before these statements run.
 /// This test exercises SQL locks and fences with the production executor grants.
-/// The host-injected tenant still selects each statement's queue rows.
+/// The host-injected project still selects each statement's queue rows.
 ///
 /// A MINTED GENERATION, NOT THE BARE ACL ROLE (`wamn-0h0g.22.31`). The stable
 /// role is `NOLOGIN` and nothing in production ever authenticates as it — the
@@ -64,7 +64,7 @@ const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
 fn executor_preamble() -> String {
     format!(
         "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL search_path TO wamn_run; \
-         SET LOCAL app.env_key = 't1';"
+         SET LOCAL app.project_env_key = 't1';"
     )
 }
 
@@ -108,10 +108,10 @@ fn run_state_live() {
     // membership: `runs_platform` is the only policy an executor session matches, and it
     // is `TO wamn_platform`.
     //
-    // `wamn_authority.current_tenant_key()` WENT WITH THE UNION AND IS NOT RESTORED. The
-    // surface grants `tenant_key(text)` — load bearing, because `runs_tkey` is an
+    // `wamn_authority.current_project_key()` WENT WITH THE UNION AND IS NOT RESTORED. The
+    // surface grants `project_key(text)` — load bearing, because `runs_tkey` is an
     // expression index over it and every status write maintains that index — and withholds
-    // `current_tenant_key()`, because the floor policy that calls it is narrowed
+    // `current_project_key()`, because the base policy that calls it is narrowed
     // `TO wamn_app` and this family only ever matches the permissive `TO wamn_platform`
     // arm. If a leg below ever needs it, that is a real widening to argue, not a fixture
     // gap to patch.
@@ -125,8 +125,8 @@ fn run_state_live() {
         .to_string();
     let app_login = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: "t1",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t1",
             database: &database,
         },
         CredentialGeneration::A,
@@ -170,10 +170,10 @@ fn run_state_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} {app_schema} \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+               (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
@@ -207,7 +207,7 @@ fn run_state_live() {
 
     // THE PRINCIPAL EVERY LEG BELOW RUNS AS, ASSERTED BEFORE ANY OF THEM RUN
     // (`wamn-0h0g.22.31`). A superuser or a `BYPASSRLS` login would satisfy every
-    // transition below while showing nothing about the tenant floor, and would do it
+    // transition below while showing nothing about the project base grants, and would do it
     // SILENTLY — there is no leg here whose failure would name it. The membership edge is
     // asserted with the same force: these legs must reach their privileges by INHERITING
     // the stable role, which is what the runtime's connection probe checks, not by holding
@@ -282,15 +282,15 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.environment_policies \
-           (env_key,expected_environment) \
+           (project_env_key,expected_environment) \
          VALUES ('t1','prod'); \
          INSERT INTO wamn_run.runs \
-           (env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment, \
+           (project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment, \
             wiring_id, wiring_version, attachment_id, status) \
          VALUES ('t1', 'release-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
            'fixture-wiring', 1, 'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key, run_id, lease_owner, lease_expires_at, lease_generation) \
+           (project_env_key, run_id, lease_owner, lease_expires_at, lease_generation) \
          VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
     );
     let release_script = format!(
@@ -321,7 +321,7 @@ fn run_state_live() {
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
                    'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
-           ASSERT replayed.outcome_type = 'responded', 'stored kind returned'; \
+           ASSERT replayed.outcome_type = 'responded', 'stored type returned'; \
          END $test$; COMMIT;",
         executor_preamble(),
         release
@@ -354,7 +354,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
            ('t1','terminal-cron','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'cron-a','running','cron'), \
@@ -363,7 +363,7 @@ fn run_state_live() {
            ('t1','terminal-http-open','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source, \
             caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
@@ -371,7 +371,7 @@ fn run_state_live() {
             'fixture-wiring',1,'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','terminal-cron','worker-source',now()+interval '1 minute',1), \
            ('t1','terminal-event','worker-source',now()+interval '1 minute',1), \
            ('t1','terminal-http-open','worker-source',now()+interval '1 minute',1), \
@@ -442,12 +442,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','race-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
+           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','race-1','stale-worker',now()+interval '1 minute',7);",
     );
     let race_url = url.clone();
@@ -488,12 +488,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','fault-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
+           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','fault-1','worker-f',now()+interval '1 minute',9);",
     );
     let fault_script = format!(
@@ -570,7 +570,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,status) VALUES \
            ('t1','record-lease','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
@@ -581,7 +581,7 @@ fn run_state_live() {
            ('t1','record-standard-effect','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'running'); \
-         INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES \
+         INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES \
            ('t1','record-lease'),('t1','record-foreign');",
     );
 
@@ -663,35 +663,35 @@ fn run_state_live() {
     // asserts the stored row AFTER the statement, never the statement's own
     // exit status.
     //
-    // `t2` is a second tenant in the same database. `run_queue`'s only policy
-    // is `run_queue_env_key`, which carries NO `TO` clause and keys on
-    // `app.env_key` — so the queue fence applies to this family too, unlike
+    // `t2` is a second project in the same database. `run_queue`'s only policy
+    // is `run_queue_project_env_key`, which carries NO `TO` clause and keys on
+    // `app.project_env_key` — so the queue fence applies to this family too, unlike
     // `runs`, whose `runs_platform` arm is `USING (true)`.
     success(
         &url,
         "INSERT INTO catalog.packages \
-           (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+           (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
          VALUES ('sha256:' || repeat('c', 64), 't2','cat','1.0.0', \
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-         INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
+         INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
          VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
          INSERT INTO wamn_run.environment_policies \
-           (env_key,expected_environment) \
+           (project_env_key,expected_environment) \
          VALUES ('t2','prod'); \
          INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
            ('t1','renew-live','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
             'running','{}'), \
            ('t1','renew-expired','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-dead', \
             'running','{}'), \
-           ('t2','renew-other-tenant','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
+           ('t2','renew-other-project','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
             'running','{}'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','renew-live','renew-worker',now()+interval '30 seconds',3), \
            ('t1','renew-expired','renew-worker',now()-interval '30 seconds',3), \
-           ('t2','renew-other-tenant','renew-worker',now()+interval '30 seconds',3);",
+           ('t2','renew-other-project','renew-worker',now()+interval '30 seconds',3);",
     );
     let renew = renew_production_lease_sql();
     let renew_script = format!(
@@ -717,9 +717,9 @@ fn run_state_live() {
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 0 AND refused IS NULL, 'an already expired lease was extended'; \
            EXECUTE $renew${}$renew$ INTO refused \
-             USING 'renew-other-tenant'::text,'renew-worker'::text,3::bigint,600000::bigint; \
+             USING 'renew-other-project'::text,'renew-worker'::text,3::bigint,600000::bigint; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0 AND refused IS NULL, 'the renew reached another tenant queue row'; \
+           ASSERT touched = 0 AND refused IS NULL, 'the renew reached another project queue row'; \
            ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-live') \
                   = live_before, 'a refused renew moved the live deadline'; \
            ASSERT (SELECT q.lease_expires_at FROM run_queue AS q WHERE q.run_id='renew-expired') \
@@ -746,9 +746,9 @@ fn run_state_live() {
         &url,
         "DO $$ BEGIN \
            ASSERT (SELECT q.lease_expires_at FROM wamn_run.run_queue AS q \
-                    WHERE q.env_key='t2' AND q.run_id='renew-other-tenant') \
+                    WHERE q.project_env_key='t2' AND q.run_id='renew-other-project') \
                   < now() + interval '2 minutes', \
-                  'the executor extended another tenant lease'; \
+                  'the executor extended another project lease'; \
          END $$;",
     );
 
@@ -760,7 +760,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
             manifest_digest) VALUES \
            ('t1','recover-dead','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-recover', \
@@ -768,14 +768,14 @@ fn run_state_live() {
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
            ('t1','recover-fresh','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-recover-new', \
             'dispatched','{}',NULL,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-           ('t2','recover-other-tenant','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1, \
+           ('t2','recover-other-project','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1, \
             'http-recover-t2','running','{}','{\"cursor\":9}', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
+           (project_env_key,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
            ('t1','recover-dead','dead-worker',now()-interval '1 minute',5,1), \
            ('t1','recover-fresh',NULL,NULL,0,0), \
-           ('t2','recover-other-tenant','dead-worker',now()-interval '1 minute',5,1);",
+           ('t2','recover-other-project','dead-worker',now()-interval '1 minute',5,1);",
     );
     let advance = advance_lease_attempts_sql();
     let clear = clear_pre_effect_state_sql();
@@ -790,17 +790,17 @@ fn run_state_live() {
            EXECUTE $advance${}$advance$ INTO spent USING 'recover-fresh'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 1 AND spent = 0, 'a first lease spent crash budget'; \
-           EXECUTE $advance${}$advance$ INTO spent USING 'recover-other-tenant'::text; \
+           EXECUTE $advance${}$advance$ INTO spent USING 'recover-other-project'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0, 'the advance reached another tenant queue row'; \
+           ASSERT touched = 0, 'the advance reached another project queue row'; \
            SELECT to_jsonb(r)-'state_json' INTO before_run FROM runs AS r \
              WHERE run_id='recover-dead'; \
            EXECUTE $clear${}$clear$ INTO reopened USING 'recover-dead'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 1 AND reopened = 'recover-dead', 'the recover reopened no run'; \
-           EXECUTE $clear${}$clear$ INTO reopened USING 'recover-other-tenant'::text; \
+           EXECUTE $clear${}$clear$ INTO reopened USING 'recover-other-project'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
-           ASSERT touched = 0, 'the recover reached another tenant run'; \
+           ASSERT touched = 0, 'the recover reached another project run'; \
            ASSERT (SELECT q.attempts FROM run_queue AS q WHERE q.run_id='recover-dead') = 2, \
                   'the advanced crash evidence did not persist'; \
            ASSERT (SELECT to_jsonb(r)-'state_json' FROM runs AS r WHERE run_id='recover-dead') \
@@ -826,16 +826,16 @@ fn run_state_live() {
         &url,
         "DO $$ BEGIN \
            ASSERT (SELECT q.attempts FROM wamn_run.run_queue AS q \
-                    WHERE q.env_key='t2' AND q.run_id='recover-other-tenant') = 1, \
-                  'the executor spent another tenant crash budget'; \
+                    WHERE q.project_env_key='t2' AND q.run_id='recover-other-project') = 1, \
+                  'the executor spent another project crash budget'; \
            ASSERT (SELECT r.state_json FROM wamn_run.runs AS r \
-                    WHERE r.env_key='t2' AND r.run_id='recover-other-tenant') \
+                    WHERE r.project_env_key='t2' AND r.run_id='recover-other-project') \
                   = '{\"cursor\":9}'::jsonb, \
-                  'the executor erased another tenant attempt state'; \
+                  'the executor erased another project attempt state'; \
            ASSERT (SELECT r.manifest_digest FROM wamn_run.runs AS r \
-                    WHERE r.env_key='t2' AND r.run_id='recover-other-tenant') \
+                    WHERE r.project_env_key='t2' AND r.run_id='recover-other-project') \
                   = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                  'the executor erased another tenant release pin'; \
+                  'the executor erased another project release pin'; \
          END $$;",
     );
 
@@ -875,12 +875,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
            ('t1','reap-exhausted','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
             'running','http','{}'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,available_at,lease_owner,lease_expires_at, \
+           (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
             lease_generation,attempts,max_attempts) \
          VALUES ('t1','reap-exhausted','2000-01-01','dead-worker','2000-01-01',5,3,3);",
     );
@@ -943,11 +943,11 @@ fn run_state_live() {
         &url,
         &format!(
             "INSERT INTO wamn_run.runs \
-               (env_key,run_id,package_id,environment,wiring_id,wiring_version, \
+               (project_env_key,run_id,package_id,environment,wiring_id,wiring_version, \
                 wiring_hash,binding_world_json,status,trigger_source) \
              VALUES ('t1','reap-candidate','cat','prod','fixture-wiring',1, \
                'sha256:' || repeat('a',64),'[]','running','test-case'); \
-             INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('t1','reap-candidate'); \
+             INSERT INTO wamn_run.run_queue(project_env_key,run_id) VALUES ('t1','reap-candidate'); \
              {} DO $test$ DECLARE reaped record; BEGIN \
                EXECUTE $reap${terminalize_exhausted}$reap$ INTO STRICT reaped \
                  USING 'reap-candidate'::text,'{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
@@ -975,7 +975,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+           (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','clock-skew','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-skew','running');",
@@ -1013,7 +1013,7 @@ fn run_state_live() {
         "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest, \
+               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest, \
                 environment,wiring_id,wiring_version,status) \
              VALUES ('t1','record-invalid-digest','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:not-a-digest', \
                'prod','fixture-wiring',1,'running'); \

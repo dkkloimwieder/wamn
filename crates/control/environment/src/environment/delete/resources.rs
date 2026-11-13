@@ -9,14 +9,14 @@ use super::super::{Platform, ensure::kubectl};
 async fn get(
     platform: &Platform,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<Option<Value>> {
     wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,
-        kind,
+        type_,
         name,
     )
     .await
@@ -58,11 +58,11 @@ pub(super) async fn check_ownership(
             "refused: Publication {database} does not belong to {triple}"
         );
     }
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    let certificate = format!("wamn-nats-{env_key}");
+    let certificate = format!("wamn-nats-{project_env_key}");
     if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
-        let user = wamn_control_registry::environment_nats_user(&env_key);
+        let user = wamn_control_registry::environment_nats_user(&project_env_key);
         anyhow::ensure!(
             object["spec"]["secretName"] == certificate
                 && object["spec"]["commonName"] == user
@@ -145,16 +145,16 @@ pub(super) async fn delete_publication(platform: &Platform, database: &str) -> a
 
 pub(super) async fn delete_event_certificate(
     platform: &Platform,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<()> {
-    let name = format!("wamn-nats-{env_key}");
-    for kind in ["certificate", "secret"] {
+    let name = format!("wamn-nats-{project_env_key}");
+    for type_ in ["certificate", "secret"] {
         kubectl(
             platform,
             &platform.target.namespace,
             &[
                 "delete",
-                kind,
+                type_,
                 &name,
                 "--ignore-not-found",
                 "--wait=true",

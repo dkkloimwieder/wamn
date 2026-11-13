@@ -1,7 +1,7 @@
 //! Live test of `provision-system` against a disposable PostgreSQL server.
 //!
 //! The test holds the process lock of its server, because the verb changes
-//! cluster-wide roles and the PUBLIC CONNECT floor of every database.
+//! cluster-wide roles and the PUBLIC CONNECT base grants of every database.
 
 use std::os::unix::fs::PermissionsExt as _;
 use tokio::task::JoinHandle;
@@ -757,7 +757,7 @@ async fn migration_database(
     use wamn_control_provision::schema_migrations::MigrationDatabase;
     let database = match database_type {
         MigrationDatabase::System => wamn_test_postgres::database(),
-        MigrationDatabase::Project => wamn_platform_identity::test_database::tenant_platform(),
+        MigrationDatabase::Project => wamn_platform_identity::test_database::project_platform(),
     };
     let (client, connection) = connect(database.url()).await;
     match database_type {
@@ -1348,7 +1348,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     let fresh = reconcile_run_plane_with_migrations(request(), &sources)
         .await
         .unwrap();
-    assert!(fresh.env_key_identity.app_schema_installed);
+    assert!(fresh.project_env_key_identity.app_schema_installed);
     let installed = platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
         .await
         .unwrap();
@@ -1381,7 +1381,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     let repeated = reconcile_run_plane_with_migrations(request(), &sources)
         .await
         .unwrap();
-    assert!(!repeated.env_key_identity.app_schema_installed);
+    assert!(!repeated.project_env_key_identity.app_schema_installed);
     assert_eq!(
         platform_migrations::plan(&project, MigrationDatabase::Project, &sources)
             .await
@@ -1531,7 +1531,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     let repeated = reconcile_run_plane_with_migrations(request(), &sources)
         .await
         .unwrap();
-    assert!(!repeated.env_key_identity.app_schema_installed);
+    assert!(!repeated.project_env_key_identity.app_schema_installed);
     assert_eq!(snapshot(&project).await, before_reapply);
     let observed = wamn_package_control::schema_baseline::observe(
         &project,

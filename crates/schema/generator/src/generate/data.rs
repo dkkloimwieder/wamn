@@ -24,7 +24,7 @@ use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, access_operat
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
 
-/// Every operation kind, for the detail members its error contract declares.
+/// Every operation type, for the detail members its error contract declares.
 const ACTIONS: [CrudAction; 5] = [
     CrudAction::Get,
     CrudAction::Query,
@@ -845,7 +845,7 @@ pub(super) fn emit_package_data(
     }
     // The refusal is the closed vocabulary, so every package spells it the
     // same way. Each literal's members are the ones its error contract
-    // declares: required for every operation kind that declares the literal,
+    // declares: required for every operation type that declares the literal,
     // or optional.
     let mut declared =
         BTreeMap::<AccessOperationErrorLiteral, Vec<(OperationErrorDetailKey, bool)>>::new();
@@ -1089,10 +1089,10 @@ fn emit_error(
     if has(AccessOperationErrorLiteral::ConcurrencyConflict) {
         constructors.push_str("/// The row carries another revision than the caller read.\n#[must_use]\npub fn conflict(expected_row_version: i64, observed_row_version: i64) -> Self { Self::ConcurrencyConflict { expected_row_version, observed_row_version } }\n\n");
     }
-    let violation = |literal, kind: &str, names: &str| {
+    let violation = |literal, type_: &str, names: &str| {
         if has(literal) {
             format!(
-                "StatementErrorType::{kind} => named(constraints.{names}, |constraint| Self::{} {{ constraint }}),\n",
+                "StatementErrorType::{type_} => named(constraints.{names}, |constraint| Self::{} {{ constraint }}),\n",
                 variant(literal)
             )
         } else {

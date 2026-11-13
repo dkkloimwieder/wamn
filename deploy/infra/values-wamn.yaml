@@ -1,6 +1,6 @@
 # Helm values for the CLUSTER-SINGLETON runtime-operator release (S1).
 #
-# TWO KINDS OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
+# TWO TYPES OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
 # first of them (rulings wamn-0h0g.13.49 + .13.50, bead wamn-0h0g.15.15):
 #
 #   1. THIS FILE — the operator and its five CRDs.
@@ -40,7 +40,7 @@
 # the seam re-verification below when you do.
 #
 # [wamn-0h0g.15.54] CHART SEAM RECORD — reinspect on every upstream release change.
-# Install commands pull the distributed OCI chart. The conformance gate also
+# Install commands pull the distributed OCI chart. The conformance acceptance test also
 # renders it and checks the resources below. Reinspect the source when the pin
 # changes, then compare the distributed chart before deployment.
 #
@@ -106,7 +106,7 @@ operator:
   hostNamespaces:
     - wamn-system
   # -- THE WRONG-TARGET LOCK. This ships TRUE, and the chart's own values file
-  # calls that default "permissive across tenants" (chart values.yaml:190-205):
+  # describes that default as permissive across projects (chart values.yaml:190-205):
   # with it on, a WorkloadDeployment in one namespace can schedule onto hosts in
   # another just by naming `spec.template.spec.environment`. False locks
   # scheduling to the workload's own namespace and refuses any other environment

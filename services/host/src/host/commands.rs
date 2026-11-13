@@ -192,7 +192,7 @@ impl HostCommandHandler for Commands {
                     &component.image,
                     &component.name,
                     operations.identity(
-                        &operations.release.target().env_key,
+                        &operations.release.target().project_env_key,
                         Some(operations.release_identity()),
                     ),
                 )?;

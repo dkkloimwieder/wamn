@@ -77,7 +77,7 @@ pub enum DefinitionAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefinitionMutation {
     action: DefinitionAction,
-    kind: DefinitionType,
+    type_: DefinitionType,
     schema: Box<str>,
     relation: Box<str>,
     definition: Box<str>,
@@ -92,7 +92,7 @@ impl DefinitionMutation {
 
     /// Definition grain addressed by the statement.
     pub const fn definition_type(&self) -> DefinitionType {
-        self.kind
+        self.type_
     }
 
     /// Schema selected explicitly by the migration.
@@ -359,7 +359,7 @@ fn definition_mutation(
         return Ok(None);
     }
 
-    let (action, kind, definition_index) = if words(tokens, 5, &["add", "column"]) {
+    let (action, type_, definition_index) = if words(tokens, 5, &["add", "column"]) {
         (DefinitionAction::Add, DefinitionType::Field, Some(7))
     } else if words(tokens, 5, &["add", "constraint"]) {
         (DefinitionAction::Add, DefinitionType::Constraint, Some(7))
@@ -394,7 +394,7 @@ fn definition_mutation(
         tokens,
         2,
         action,
-        kind,
+        type_,
         definition_index,
         configured_schemas,
         path,
@@ -410,7 +410,7 @@ fn qualified_definition_mutation(
     tokens: &[Token<'_>],
     relation_index: usize,
     action: DefinitionAction,
-    kind: DefinitionType,
+    type_: DefinitionType,
     definition_index: Option<usize>,
     configured_schemas: &[&str],
     path: &Path,
@@ -444,7 +444,7 @@ fn qualified_definition_mutation(
     };
     Ok(Some(DefinitionMutation {
         action,
-        kind,
+        type_,
         schema: schema.into(),
         relation: relation.into(),
         definition: definition.into(),
@@ -503,8 +503,8 @@ fn validate_statement(
     } else {
         None
     };
-    if let Some((kind, detail)) = refusal {
-        if kind == MigrationPolicyErrorType::NontransactionalOperation {
+    if let Some((type_, detail)) = refusal {
+        if type_ == MigrationPolicyErrorType::NontransactionalOperation {
             let operation = if word(tokens, 0, "reindex") && contains_word(tokens, "concurrently") {
                 "REINDEX CONCURRENTLY".to_owned()
             } else {
@@ -519,13 +519,13 @@ fn validate_statement(
                     .join(" ")
             };
             return Err(policy_error(
-                kind,
+                type_,
                 path,
                 Some(statement_index),
                 format!("{detail}: {operation}"),
             ));
         }
-        return refuse_statement(kind, path, statement_index, detail);
+        return refuse_statement(type_, path, statement_index, detail);
     }
     if words(tokens, 0, &["create", "table"]) {
         return validate_create_table(tokens, configured_schemas, path, statement_index);
@@ -1252,7 +1252,7 @@ fn validate_segment_constraint_names(
         );
     }
     let has_table_foreign_key = top_level_words_at(segment, &["foreign", "key"]).is_some();
-    for (constraint_kind, words) in [
+    for (constraint_type, words) in [
         ("primary key", &["primary", "key"][..]),
         ("unique", &["unique"][..]),
         ("check", &["check"][..]),
@@ -1263,7 +1263,7 @@ fn validate_segment_constraint_names(
                 MigrationPolicyErrorType::UnnamedConstraint,
                 path,
                 statement_index,
-                format!("table {table_name:?} has an unnamed {constraint_kind} constraint"),
+                format!("table {table_name:?} has an unnamed {constraint_type} constraint"),
             );
         }
     }
@@ -1348,10 +1348,10 @@ fn unnamed_top_level_constraint(tokens: &[Token<'_>], expected: &[&str]) -> Opti
     None
 }
 
-fn has_constraint_name(tokens: &[Token<'_>], kind_index: usize) -> bool {
-    kind_index >= 2
-        && word(tokens, kind_index - 2, "constraint")
-        && matches!(tokens[kind_index - 1], Token::Word(_))
+fn has_constraint_name(tokens: &[Token<'_>], type_index: usize) -> bool {
+    type_index >= 2
+        && word(tokens, type_index - 2, "constraint")
+        && matches!(tokens[type_index - 1], Token::Word(_))
 }
 
 fn lex_statements<'a>(

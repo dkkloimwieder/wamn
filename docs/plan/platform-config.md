@@ -330,7 +330,7 @@ The owner ruled that no kind run follows C2.4. Its rulings replace the C2 ruling
 - Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the check closes.
 - Package backfill SQL is outside the counter check, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
 - Migration 0031 stays rewritten in place, because no wamn-dev database ran it.
-- `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18).
+- `CounterSetError` and `numbering::Failure` become error structs with a type (C2.4.18).
 - No sleep inside the tokio test, no NATS port race, and the numbering live tests reuse `test_database` (C2.4.21).
 
 Rulings for C2 as filed:
@@ -349,12 +349,12 @@ The test budget, the stops and the closeout are the same as for C2.
 
 Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text below where they differ:
 
-1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `env_key`, including its wire fields. The separate `environment` field keeps the short name.
-2. The event field is `env_key`, and credential hashes frame `"env_key"`. No format number changes.
+1. C3.1 removes `project_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `project_env_key`, including its wire fields. The separate `environment` field keeps the short name.
+2. The event field is `project_env_key`, and credential hashes frame `"project_env_key"`. No format number changes.
 3. See [integration and connection schema](integration-schema.md).
 4. See [integration and connection schema](integration-schema.md).
 5. See [integration and connection schema](integration-schema.md).
-6. Both principal kinds stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
+6. Both principal types stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
 8. A failed auth deletion is logged, and the TTL limits the stale fact. A durable retry is `wamn-3gqi1`.
 9. See [integration and connection schema](integration-schema.md).
 10. See [integration and connection schema](integration-schema.md).
@@ -397,7 +397,7 @@ The proposal has no owning bead in the retired plan.
 
 `provision-project-env` stays outside `env apply` (R21).
 The session-target Secret goes to the identity namespace, which no `env apply` input names.
-The gates use local port-forward files for login.
+The conditions use local port-forward files for login.
 The mint-pat Job, the Rust identity journey, and three live tests call `provision-project-env`.
 The work stays open and unscheduled (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
 

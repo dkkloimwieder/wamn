@@ -123,8 +123,11 @@ pub(super) async fn assemble(
         .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await
         .context("create the catalog and application ACL owner roles")?;
-    wamn_dev_control::dev::environment::install_journey_platform_floor(&project, "local.invalid")
-        .await?;
+    wamn_dev_control::dev::environment::install_journey_platform_base_grants(
+        &project,
+        "local.invalid",
+    )
+    .await?;
     let run_schema = wamn_schema_control::BareSchemaName::new("wamn_run")?;
     wamn_environment_control::reconcile_run_plane::reconcile(&project, &run_schema, true).await?;
     project
@@ -173,8 +176,8 @@ pub(super) async fn assemble(
         ),
     ] {
         let target = if family == WorkloadRoleFamily::App {
-            WorkloadRoleIdentity::EnvKey {
-                env_key: input.env_key,
+            WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: input.project_env_key,
                 database: &database,
             }
         } else {
@@ -319,10 +322,10 @@ pub(super) async fn assemble(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
-        wamn_engine::release_manifest::ReleaseTarget::new(input.env_key, input.environment)
+        wamn_engine::release_manifest::ReleaseTarget::new(input.project_env_key, input.environment)
             .with_applications(applications),
     )?);
-    project.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    project.execute("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.project_env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
 
     let project_config = ProjectConfig {
         credentials,
@@ -344,7 +347,7 @@ pub(super) async fn assemble(
         &entry_reference,
         "flow-http",
         wamn_runtime::plugins::wamn_postgres::SessionIdentity {
-            env_key: input.env_key.to_owned(),
+            project_env_key: input.project_env_key.to_owned(),
             project: Some(input.project.to_owned()),
             schema: Some(input.schema.to_owned()),
             runner: Some("local-application".into()),
@@ -360,7 +363,7 @@ pub(super) async fn assemble(
     let auth_nats = super::LocalAuthNats::start(input.scratch).await?;
     wamn_runtime::auth_cache::replicate(
         &auth_nats.client,
-        Some(input.env_key),
+        Some(input.project_env_key),
         Arc::clone(&postgres),
     );
     let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
@@ -372,7 +375,7 @@ pub(super) async fn assemble(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            &release.target().env_key,
+            &release.target().project_env_key,
             input.project,
             &release.target().environment,
         )),
@@ -413,7 +416,7 @@ pub(super) async fn assemble(
     let system_database = system_database_name(input.system_database_url)?;
     let identity_role = system_reader_generation_role(
         SystemReader::Identity,
-        input.env_key,
+        input.project_env_key,
         input.project,
         input.environment,
         &system_database,
@@ -478,7 +481,7 @@ pub(super) async fn assemble(
         route_host: input.route_host.to_owned(),
         bearer,
         caller_secret_path: secret,
-        env_key: input.env_key.to_owned(),
+        project_env_key: input.project_env_key.to_owned(),
         caller_role: input.caller_role.to_owned(),
         component_digests,
     })
@@ -518,7 +521,7 @@ fn render_declaration(
     }
     let value = wamn_package_control::component_declaration::render_declaration_document(
         source,
-        input.env_key,
+        input.project_env_key,
     )?;
     std::fs::write(target, serde_json::to_vec(&value)?)?;
     Ok(base_digests.into_values().map(String::from).collect())

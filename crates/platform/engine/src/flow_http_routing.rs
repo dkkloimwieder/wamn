@@ -462,7 +462,7 @@ impl AuthenticatedCaller {
         &self.principal_id
     }
 
-    /// Return the original credential kind, unchanged across nested calls.
+    /// Return the original credential type, unchanged across nested calls.
     pub fn credential_type(&self) -> CredentialType {
         self.credential_type
     }
@@ -534,8 +534,8 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
 /// `authentication-unavailable`.
 #[async_trait::async_trait]
 pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
-    /// Whether the environment of `env_key` is inactive.
-    async fn inactive(&self, env_key: &str) -> anyhow::Result<bool>;
+    /// Whether the environment of `project_env_key` is inactive.
+    async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool>;
 }
 
 /// One request to a protected route, as the route plugin resolved it.
@@ -543,7 +543,7 @@ pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
 pub struct AuthenticationRequest<'a> {
     /// The loaded release that carries the attachment.
     pub manifest: &'a ServingManifest,
-    /// The tenant and environment of the host that serves the route.
+    /// The project and environment of the host that serves the route.
     pub target: &'a ReleaseTarget,
     pub attachment_id: &'a str,
     pub attachment: ServedAttachment<'a>,
@@ -570,7 +570,7 @@ impl std::fmt::Debug for AuthenticationRequest<'_> {
 /// Authoritative HTTP route supply for the flow-http adapter.
 pub struct FlowHttpRouting {
     /// `None` in a process that was given no manifest root. Absence is a
-    /// deployment fact, not a fallback: a gate or a bench runs this host with
+    /// deployment fact, not a fallback: a condition or a bench runs this host with
     /// nothing mounted, and every `routes` call on it refuses rather than serving
     /// routes from somewhere else. A *serving* pod is given a manifest root, and a
     /// root it cannot load refuses host construction outright — that decision is
@@ -749,7 +749,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
-                .inactive(&loaded_release.target().env_key)
+                .inactive(&loaded_release.target().project_env_key)
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "environment status unavailable");
@@ -888,15 +888,15 @@ fn route_definitions(
         .collect()
 }
 
-/// The two kinds that carry an HTTP route. An `internal` or `cron` attachment has
+/// The two types that carry an HTTP route. An `internal` or `cron` attachment has
 /// none and must never be reachable over HTTP.
-fn carries_http_route(kind: AttachmentType) -> bool {
-    matches!(kind, AttachmentType::Http | AttachmentType::Studio)
+fn carries_http_route(type_: AttachmentType) -> bool {
+    matches!(type_, AttachmentType::Http | AttachmentType::Studio)
 }
 
 /// Return whether a serving release requires PAT-backed route authentication.
 ///
-/// Only externally selectable HTTP route kinds participate. An internal or
+/// Only externally selectable HTTP route types participate. An internal or
 /// cron attachment carrying an otherwise identical document cannot make the
 /// host acquire route-authentication credentials it will never use.
 pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
@@ -1019,10 +1019,10 @@ fn route_definition(
                     .unwrap_or_else(|| "request_id".to_owned())
             }),
         etag_inputs: operation.filter(|_| !signs_files).and_then(|route| {
-            let kind = match route.type_ {
-                OperationType::Get => routing::EtagKind::Get(route.revision.clone()?),
+            let type_ = match route.type_ {
+                OperationType::Get => routing::EtagType::Get(route.revision.clone()?),
                 OperationType::Query | OperationType::Projection if !route.reads.is_empty() => {
-                    routing::EtagKind::List(
+                    routing::EtagType::List(
                         route
                             .reads
                             .iter()
@@ -1037,7 +1037,7 @@ fn route_definition(
             };
             Some(routing::EtagInputs {
                 release: release_digest.to_owned(),
-                kind,
+                type_,
             })
         }),
         attachment_id: attachment_id.to_string(),
@@ -1054,18 +1054,21 @@ fn route_definition(
         cache_control: if signs_files {
             None
         } else {
-            route_type(manifest, attachment).and_then(|kind| {
-                read_cache_control(kind, parse_attachment_auth_policy(attachment.auth_policy()))
+            route_type(manifest, attachment).and_then(|type_| {
+                read_cache_control(
+                    type_,
+                    parse_attachment_auth_policy(attachment.auth_policy()),
+                )
             })
         },
     })
 }
 
 /// The Cache-Control value of a successful read response
-/// (`docs/architecture/execution.md`), or `None` for a kind that is not
+/// (`docs/architecture/execution.md`), or `None` for a type that is not
 /// a read. A read is private unless its route admits anonymous callers.
 fn read_cache_control(
-    kind: OperationType,
+    type_: OperationType,
     policy: Option<AttachmentAuthPolicy<'_>>,
 ) -> Option<String> {
     let target = if policy == Some(AttachmentAuthPolicy::None) {
@@ -1073,7 +1076,7 @@ fn read_cache_control(
     } else {
         "private"
     };
-    match kind {
+    match type_ {
         OperationType::Get => Some(format!("{target}, no-cache")),
         OperationType::Query | OperationType::Projection => {
             Some(format!("{target}, max-age=10, stale-while-revalidate=60"))
@@ -1228,14 +1231,14 @@ pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection>
     Ok(found)
 }
 
-/// Whether an attachment only reads: it targets a route whose operation kind is
-/// one of `OperationType::READ_KINDS`. A wiring can write, so it never reads
+/// Whether an attachment only reads: it targets a route whose operation type is
+/// one of `OperationType::READ_TYPES`. A wiring can write, so it never reads
 /// only.
 pub fn serves_read(manifest: &ServingManifest, attachment: ServedAttachment<'_>) -> bool {
     route_type(manifest, attachment).is_some_and(OperationType::is_read)
 }
 
-/// The operation kind of the route an attachment targets. A wiring has none.
+/// The operation type of the route an attachment targets. A wiring has none.
 fn route_type(
     manifest: &ServingManifest,
     attachment: ServedAttachment<'_>,
@@ -1559,9 +1562,9 @@ mod tests {
         }])
     }
 
-    fn attachment(kind: AttachmentType, definition: Value) -> ServingAttachment {
+    fn attachment(type_: AttachmentType, definition: Value) -> ServingAttachment {
         ServingAttachment {
-            type_: kind,
+            type_,
             package_id: "cat".into(),
             target: wamn_catalog::AttachmentTarget::Route {
                 component: "http-request".into(),
@@ -1580,7 +1583,7 @@ mod tests {
     fn orders_definition() -> Value {
         json!({
             "id": "orders",
-            "kind": "http",
+            "type": "http",
             "source-id": "public",
             "route": {"path": "/orders/{order}", "method": "POST"},
             "mappings": [
@@ -1683,17 +1686,16 @@ mod tests {
             Arc::new(
                 LoadedRelease::load_from(
                     &self.root,
-                    crate::release_manifest::ReleaseTarget::new("tenant-a", "prod")
-                        .with_applications(
-                            [(
-                                "catalog".to_owned(),
-                                wamn_catalog::ApplicationDefinition {
-                                    connections: std::collections::BTreeMap::new(),
-                                    packages: ["cat".to_owned()].into(),
-                                },
-                            )]
-                            .into(),
-                        ),
+                    crate::release_manifest::ReleaseTarget::new("org-a", "prod").with_applications(
+                        [(
+                            "catalog".to_owned(),
+                            wamn_catalog::ApplicationDefinition {
+                                connections: std::collections::BTreeMap::new(),
+                                packages: ["cat".to_owned()].into(),
+                            },
+                        )]
+                        .into(),
+                    ),
                 )
                 .expect("fixture mount loads"),
             )
@@ -1706,7 +1708,7 @@ mod tests {
         }
     }
 
-    /// Each kind's Cache-Control value (docs/architecture/execution.md).
+    /// Each type's Cache-Control value (docs/architecture/execution.md).
     /// A read is private unless its route admits anonymous callers, and a
     /// route that is not a read, or a wiring, carries none.
     #[test]
@@ -1804,14 +1806,14 @@ mod tests {
     }
 
     #[test]
-    fn a_read_route_carries_the_cache_control_of_its_kind_and_auth_policy() {
+    fn a_read_route_carries_the_cache_control_of_its_type_and_auth_policy() {
         const SHORT: &str = "max-age=10, stale-while-revalidate=60";
         let session = json!({"modes": ["session"]});
         let both = json!({"modes": ["pat", "session"]});
         let none = json!({"modes": ["none"]});
         let signature =
             json!({"modes": ["signature"], "header": "X-Signature", "credential": "webhook"});
-        for (kind, policy, expected) in [
+        for (type_, policy, expected) in [
             (
                 OperationType::Get,
                 &session,
@@ -1854,11 +1856,11 @@ mod tests {
                 AttachmentType::Http,
                 json!({
                     "id": "route",
-                    "kind": "http",
+                    "type": "http",
                     "source-id": "public",
                     "route": {
                         "path": "/orders",
-                        "method": kind.http_method()
+                        "method": type_.http_method()
                     }
                 }),
             );
@@ -1872,7 +1874,7 @@ mod tests {
                     package_id: "cat".into(),
                     component: "http-request".into(),
                     operation: "request".into(),
-                    type_: kind,
+                    type_,
                     reads: BTreeSet::new(),
                     revision: None,
                     idempotency: None,
@@ -1880,12 +1882,12 @@ mod tests {
                 BTreeMap::from([("route".to_string(), route)]),
             );
 
-            let served = route_definitions(&manifest, kind.http_method());
+            let served = route_definitions(&manifest, type_.http_method());
 
             let [definition] = served.as_slice() else {
-                panic!("the {kind:?} route is served");
+                panic!("the {type_:?} route is served");
             };
-            assert_eq!(definition.cache_control, expected, "{kind:?} {policy}");
+            assert_eq!(definition.cache_control, expected, "{type_:?} {policy}");
         }
 
         let write = route_definitions(&one_http_route(), "POST");
@@ -1902,7 +1904,7 @@ mod tests {
             component: "http-request".into(),
             operation: "request".into(),
         };
-        for kind in [
+        for type_ in [
             OperationType::Command,
             OperationType::Update,
             OperationType::Get,
@@ -1913,13 +1915,13 @@ mod tests {
                     package_id: "cat".into(),
                     component: "http-request".into(),
                     operation: "request".into(),
-                    type_: kind,
+                    type_,
                     reads: BTreeSet::from([wamn_catalog::ServingRelation {
                         schema: "app".into(),
                         relation: "orders".into(),
                     }]),
                     revision: Some("revision".into()),
-                    idempotency: (kind == OperationType::Command).then(|| "value.key".into()),
+                    idempotency: (type_ == OperationType::Command).then(|| "value.key".into()),
                 }]),
                 BTreeMap::from([("route".into(), attachment.clone())]),
             );
@@ -1932,10 +1934,10 @@ mod tests {
                 definition.operation_deadline_ms,
                 crate::router_delivery::bounded_node_deadline_ms(None)
             );
-            if logs_intent(kind) {
+            if logs_intent(type_) {
                 assert_eq!(
                     definition.idempotency_rule.as_deref(),
-                    Some(if kind == OperationType::Command {
+                    Some(if type_ == OperationType::Command {
                         "value.key"
                     } else {
                         "request_id"
@@ -1946,9 +1948,9 @@ mod tests {
                 assert!(definition.idempotency_rule.is_none());
                 let inputs = definition.etag_inputs.as_ref().unwrap();
                 assert_eq!(inputs.release, manifest.digest().as_str());
-                match &inputs.kind {
-                    routing::EtagKind::Get(field) => assert_eq!(field, "revision"),
-                    routing::EtagKind::List(relations) => {
+                match &inputs.type_ {
+                    routing::EtagType::Get(field) => assert_eq!(field, "revision"),
+                    routing::EtagType::List(relations) => {
                         assert_eq!(relations.len(), 1);
                         assert_eq!(relations[0].schema, "app");
                         assert_eq!(relations[0].name, "orders");
@@ -2238,16 +2240,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_attachment_kinds_that_carry_an_http_route_are_served() {
-        // Every kind is given a route document, including the one that cannot
-        // legally have one: the filter under test is the kind, not the route.
+    fn only_the_attachment_types_that_carry_an_http_route_are_served() {
+        // Every type is given a route document, including the one that cannot
+        // legally have one: the filter under test is the type, not the route.
         let attachments = [
             ("http-attachment", AttachmentType::Http),
             ("internal-attachment", AttachmentType::Internal),
             ("studio-attachment", AttachmentType::Studio),
         ]
         .into_iter()
-        .map(|(id, kind)| (id.to_string(), attachment(kind, orders_definition())))
+        .map(|(id, type_)| (id.to_string(), attachment(type_, orders_definition())))
         .collect();
 
         let served = route_definitions(&release_manifest(attachments), "POST");
@@ -2288,15 +2290,15 @@ mod tests {
             (json!(["session"]), false, true),
             (json!(["pat", "session"]), true, true),
         ] {
-            for kind in [
+            for type_ in [
                 AttachmentType::Http,
                 AttachmentType::Studio,
                 AttachmentType::Internal,
             ] {
-                let mut route = attachment(kind, orders_definition());
+                let mut route = attachment(type_, orders_definition());
                 route.auth_policy = json!({"modes": modes});
                 let manifest = release_manifest(BTreeMap::from([("orders".to_string(), route)]));
-                let external = kind != AttachmentType::Internal;
+                let external = type_ != AttachmentType::Internal;
                 assert_eq!(
                     requires_pat_route_authentication(&manifest),
                     pat && external
@@ -2315,7 +2317,7 @@ mod tests {
         // nothing this host can serve.
         let broken = json!({
             "id": "broken",
-            "kind": "http",
+            "type": "http",
             "source-id": "public",
             "route": {"method": "POST"}
         });
@@ -2543,13 +2545,13 @@ mod tests {
             "platform-fixture:widget/get"
         );
         assert_eq!(caller.credential_type(), CredentialType::Pat);
-        for kind in [CredentialType::Pat, CredentialType::Session] {
+        for type_ in [CredentialType::Pat, CredentialType::Session] {
             let caller = AuthenticatedCaller {
-                credential_type: kind,
+                credential_type: type_,
                 ..caller.clone()
             };
             let nested = caller.clone();
-            assert_eq!(nested.credential_type(), kind);
+            assert_eq!(nested.credential_type(), type_);
             assert_eq!(nested.principal_id(), caller.principal_id());
             assert!(nested.permits("platform-fixture:widget/get@1.0.0"));
         }

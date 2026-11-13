@@ -13,7 +13,7 @@ use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
-use super::session_identity::{SessionIdentityError, SessionIdentityErrorKind};
+use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
 use super::write_log::OpaqueBegun;
 use super::{
     OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
@@ -41,7 +41,7 @@ impl Default for OperationMetrics {
 impl OperationMetrics {
     fn record(&self, source: &str, class: DeliveryClass) {
         let mut attributes = vec![
-            opentelemetry::KeyValue::new("wamn.source.kind", "attachment"),
+            opentelemetry::KeyValue::new("wamn.source.type", "attachment"),
             opentelemetry::KeyValue::new("wamn.source.id", source.to_owned()),
         ];
         self.attempts.add(1, &attributes);
@@ -88,7 +88,7 @@ impl WamnPostgres {
             "composed entry reference differs from the release"
         );
         anyhow::ensure!(
-            identity.env_key == release.target().env_key
+            identity.project_env_key == release.target().project_env_key
                 && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
             "operation release mismatch"
         );
@@ -300,13 +300,13 @@ fn state(table: &mut ResourceTable) -> Option<&mut StoreOperation> {
 /// Context for failures below the WIT boundary.
 #[derive(Debug)]
 struct OperationError {
-    kind: OperationErrorKind,
+    type_: OperationErrorType,
     scope: String,
     source: SessionIdentityError,
 }
 
 #[derive(Debug)]
-enum OperationErrorKind {
+enum OperationErrorType {
     Identity,
     Statements,
     Transaction,
@@ -317,7 +317,7 @@ impl std::fmt::Display for OperationError {
         write!(
             f,
             "bind {:?} for {}: {}",
-            self.kind, self.scope, self.source
+            self.type_, self.scope, self.source
         )
     }
 }
@@ -328,25 +328,25 @@ impl std::error::Error for OperationError {
     }
 }
 
-fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -> Refusal {
+fn binding_error(type_: OperationErrorType, scope: &str, source: anyhow::Error) -> Refusal {
     // Principal reads classify their failures. The other binding steps only
     // validate identity and install local authority.
     let source = source
         .downcast::<SessionIdentityError>()
         .unwrap_or_else(|source| SessionIdentityError {
-            kind: SessionIdentityErrorKind::Authorization,
+            type_: SessionIdentityErrorType::Authorization,
             context: "bind operation authority",
             source,
         });
     let error = OperationError {
-        kind,
+        type_,
         scope: scope.to_owned(),
         source,
     };
-    tracing::warn!(category = ?error.source.kind, error = %error, "operation binding refused");
-    Refusal::Postgres(match error.source.kind {
-        SessionIdentityErrorKind::Authorization => super::PgError::PermissionDenied,
-        SessionIdentityErrorKind::Infrastructure => super::PgError::ConnectionUnavailable,
+    tracing::warn!(category = ?error.source.type_, error = %error, "operation binding refused");
+    Refusal::Postgres(match error.source.type_ {
+        SessionIdentityErrorType::Authorization => super::PgError::PermissionDenied,
+        SessionIdentityErrorType::Infrastructure => super::PgError::ConnectionUnavailable,
     })
 }
 
@@ -637,7 +637,7 @@ fn entry_invocation_span(
     let release = facts.release.target();
     let span = wamn_engine::invocation_trace::invocation_span(
         &wamn_engine::invocation_trace::InvocationSite {
-            env_key: &release.env_key,
+            project_env_key: &release.project_env_key,
             project: facts.identity.project.as_deref().unwrap_or_default(),
             environment: &release.environment,
             wiring_id: "",
@@ -736,12 +736,12 @@ async fn begin(
         // The host-issued caller already passed authentication and grant checks.
         postgres
             .bind_request_element_session_identity(&open.scope, &identity)
-            .map_err(|error| binding_error(OperationErrorKind::Identity, &open.scope, error))?;
+            .map_err(|error| binding_error(OperationErrorType::Identity, &open.scope, error))?;
     } else {
         postgres
             .bind_session_identity(&open.scope, &identity)
             .await
-            .map_err(|error| binding_error(OperationErrorKind::Identity, &open.scope, error))?;
+            .map_err(|error| binding_error(OperationErrorType::Identity, &open.scope, error))?;
     }
     postgres.set_current_run(
         &open.scope,
@@ -757,7 +757,7 @@ async fn begin(
             postgres.bind_prepared_statement_operation(&open.scope, &open.operation, statements)
         })
         .and_then(|()| postgres.activate_statement_operation(&open.scope, &open.operation))
-        .map_err(|error| binding_error(OperationErrorKind::Statements, &open.scope, error))?;
+        .map_err(|error| binding_error(OperationErrorType::Statements, &open.scope, error))?;
     if authorize_only {
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
@@ -785,7 +785,7 @@ async fn begin(
     }
     postgres
         .bind_operation_transaction(&open.scope, &transaction)
-        .map_err(|error| binding_error(OperationErrorKind::Transaction, &open.scope, error))?;
+        .map_err(|error| binding_error(OperationErrorType::Transaction, &open.scope, error))?;
     open.transaction = Some(transaction);
     open.settled = false;
     Ok((Some(open), Begun::New(delivery)))

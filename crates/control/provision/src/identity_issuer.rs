@@ -194,11 +194,8 @@ impl fmt::Display for IdentityIssuerUrlError {
 
 impl std::error::Error for IdentityIssuerUrlError {}
 
-fn refuse(kind: IdentityIssuerUrlErrorType, reason: &'static str) -> IdentityIssuerUrlError {
-    IdentityIssuerUrlError {
-        type_: kind,
-        reason,
-    }
+fn refuse(type_: IdentityIssuerUrlErrorType, reason: &'static str) -> IdentityIssuerUrlError {
+    IdentityIssuerUrlError { type_, reason }
 }
 
 /// Require an HTTPS issuer without user information, a query, or a fragment.
@@ -532,7 +529,7 @@ mod tests {
         let other =
             identity_issuer_generation_role("https://other.example", CredentialGeneration::A)
                 .unwrap();
-        for (raw, kind) in [
+        for (raw, type_) in [
             (String::new(), IdentityIssuerUrlErrorType::Absent),
             (
                 "not-a-url-hidden-value".into(),
@@ -572,7 +569,7 @@ mod tests {
             ),
         ] {
             let error = parse_identity_issuer_url(&raw, ISSUER).unwrap_err();
-            assert_eq!(error.error_type(), kind);
+            assert_eq!(error.error_type(), type_);
             assert!(!format!("{error:?} {error}").contains("hidden-value"));
         }
     }

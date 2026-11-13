@@ -51,7 +51,7 @@ pub async fn retry<T, E: From<io::Error>, F: std::future::Future<Output = Result
             Ok(value) => return Ok(value),
             Err(error) => error,
         };
-        let Some((kind, status)) = retry_reason(source(&error)) else {
+        let Some((type_, status)) = retry_reason(source(&error)) else {
             return Err(error);
         };
         let delay = Duration::from_secs(1 << (attempt - 1));
@@ -60,7 +60,7 @@ pub async fn retry<T, E: From<io::Error>, F: std::future::Future<Output = Result
         }
         tracing::warn!(
             attempt = attempt + 1,
-            error_kind = kind,
+            error_type = type_,
             status,
             reference = %reference,
             "retry registry pull"

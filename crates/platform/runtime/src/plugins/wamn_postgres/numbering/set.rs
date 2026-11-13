@@ -61,7 +61,7 @@ pub enum CounterSetRefusal {
 /// Why a set did not commit.
 #[derive(Debug)]
 pub struct CounterSetError {
-    kind: CounterSetErrorKind,
+    type_: CounterSetErrorType,
     source: Option<anyhow::Error>,
     context: String,
     set: Box<CounterSet>,
@@ -69,7 +69,7 @@ pub struct CounterSetError {
 }
 
 #[derive(Debug)]
-enum CounterSetErrorKind {
+enum CounterSetErrorType {
     Refused(CounterSetRefusal),
     Failed,
 }
@@ -77,9 +77,9 @@ enum CounterSetErrorKind {
 impl CounterSetError {
     /// The refusal that the host route translates to its declared literal.
     pub fn refusal(&self) -> Option<&CounterSetRefusal> {
-        match &self.kind {
-            CounterSetErrorKind::Refused(refusal) => Some(refusal),
-            CounterSetErrorKind::Failed => None,
+        match &self.type_ {
+            CounterSetErrorType::Refused(refusal) => Some(refusal),
+            CounterSetErrorType::Failed => None,
         }
     }
 
@@ -117,7 +117,7 @@ impl std::error::Error for CounterSetError {
 fn refused(set: &CounterSet, request_id: &str, refusal: CounterSetRefusal) -> CounterSetError {
     CounterSetError {
         context: format!("the counter set was refused: {refusal:?}"),
-        kind: CounterSetErrorKind::Refused(refusal),
+        type_: CounterSetErrorType::Refused(refusal),
         source: None,
         set: Box::new(set.clone()),
         request_id: request_id.to_owned(),
@@ -131,7 +131,7 @@ fn failed(
     source: Option<anyhow::Error>,
 ) -> CounterSetError {
     CounterSetError {
-        kind: CounterSetErrorKind::Failed,
+        type_: CounterSetErrorType::Failed,
         source,
         context: context.into(),
         set: Box::new(set.clone()),
@@ -145,7 +145,7 @@ const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 impl WamnPostgres {
     /// Set one counter of a sequence of `set.application` for the caller
     /// `user_id`, in one operation transaction of the guest authority of
-    /// `env_key` in `project`, logged in the write log under `operation` and
+    /// `project_env_key` in `project`, logged in the write log under `operation` and
     /// `request_id`. Returns the value the counter renders next. A retry of a
     /// committed set answers its stored value.
     ///
@@ -157,7 +157,7 @@ impl WamnPostgres {
     pub async fn set_number_counter(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         user_id: &str,
         operation: &str,
         request_id: &str,
@@ -181,7 +181,7 @@ impl WamnPostgres {
         }
         let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
         let identity = SessionIdentity {
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             project: Some(project.to_owned()),
             user_id: Some(user_id.to_owned()),
             operation: Some(operation.to_owned()),

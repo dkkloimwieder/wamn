@@ -1,10 +1,10 @@
 import { createSignal, onCleanup } from "solid-js";
 import type { Config } from "./config";
 
-export type Kind = "application" | "control";
+export type Type = "application" | "control";
 
 /** An audience belongs to this deployment's org. */
-export function audienceKind(aud: string, config: Config): Kind | undefined {
+export function audienceType(aud: string, config: Config): Type | undefined {
   if (aud.startsWith(`urn:wamn:project-env:${config.org}:`)) return "application";
   return aud === `urn:wamn:control:${config.org}` ? "control" : undefined;
 }

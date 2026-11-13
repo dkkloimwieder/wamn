@@ -119,11 +119,11 @@ fn a_custom_operation_refuses_the_page_result_class() {
     command["transaction"] = json!("explicit_per_input");
     command["automatic_retry"] = json!(false);
     command["idempotent_by"] = json!({"state": {"guards": {"gadget": "gadget_id"}}});
-    for (kind, mut operation) in [("projection", projection), ("command", command)] {
+    for (type_, mut operation) in [("projection", projection), ("command", command)] {
         let mut admitted = manifest();
         admitted["custom_operations"]["quality.load_gadget_part"] = operation.clone();
         validate_operation_vocabulary(&parsed_manifest(&admitted))
-            .unwrap_or_else(|error| panic!("the {kind} fixture is valid with class one: {error}"));
+            .unwrap_or_else(|error| panic!("the {type_} fixture is valid with class one: {error}"));
 
         operation["result"]["class"] = json!("page");
         let mut paged = manifest();
@@ -133,12 +133,12 @@ fn a_custom_operation_refuses_the_page_result_class() {
         assert_eq!(
             refusal.error_type(),
             GenerateErrorType::InvalidOperation,
-            "{kind}"
+            "{type_}"
         );
         assert_eq!(
             refusal.context(),
             format!(
-                "{kind} quality.load_gadget_part must not declare result class page; \
+                "{type_} quality.load_gadget_part must not declare result class page; \
                  page belongs to the generated query"
             ),
         );
@@ -2910,15 +2910,15 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         GenerateErrorType::InvalidModel,
         &long_object,
     ));
-    for (label, manifest, kind, object) in cases {
+    for (label, manifest, type_, object) in cases {
         let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest)).expect_err(label);
-        assert_eq!(refusal.error_type(), kind, "{label}");
+        assert_eq!(refusal.error_type(), type_, "{label}");
         assert_eq!(refusal.object(), Some(object), "{label}");
         assert_eq!(
             run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
                 .expect_err(label)
                 .error_type(),
-            kind,
+            type_,
             "{label}"
         );
     }

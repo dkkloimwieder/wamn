@@ -162,7 +162,7 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
     normalize_component_fact(
         ComponentDeclaration {
             target: ComponentPackageCoordinate {
-                env_key: "tenant-a".to_owned(),
+                project_env_key: "org-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -258,7 +258,7 @@ async fn the_token_is_the_password_of_oauth2accesstoken(script: &Script) {
 }
 
 async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
-    for (status, body, kind, refusal) in [
+    for (status, body, type_, refusal) in [
         (
             500,
             "{}",
@@ -282,7 +282,7 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
         let error = read_metadata_registry_credentials(REGISTRY)
             .await
             .expect_err("an unusable answer refuses");
-        assert_eq!((error.error_type(), error.refusal()), (kind, refusal));
+        assert_eq!((error.error_type(), error.refusal()), (type_, refusal));
         let rendered = format!("{error:?} {error}");
         assert!(rendered.contains(REGISTRY));
         assert!(!rendered.contains("private-value"));

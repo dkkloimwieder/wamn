@@ -145,7 +145,7 @@ pub fn rewrite_schema(ddl: &str, schema: &BareSchemaName) -> String {
     // missing it left `CREATE SCHEMA IF NOT EXISTS wamn_run` unrewritten (the
     // pre-wamn-1wdq bug: publish --runstate silently created a stray
     // `wamn_run` schema on the target DB while publish pre-created the real
-    // target — caught by this verb's from-zero gate leg).
+    // target — caught by this verb's from-zero condition leg).
     .replace(
         "SCHEMA IF NOT EXISTS wamn_run",
         &format!("SCHEMA IF NOT EXISTS {schema}"),

@@ -28,7 +28,7 @@ pub struct MaterializerInput {
     pub workload: String,
     pub namespace: String,
     pub image: String,
-    pub env_key: String,
+    pub project_env_key: String,
     pub event: EventIdentity,
     pub event_stream: String,
     pub fetch_ms: u64,
@@ -48,7 +48,7 @@ pub fn render_materializer(
     let service = &mut spec.service;
     service.image.clone_from(&input.image);
     let config = &mut service.local_resources.config;
-    config.env_key.clone_from(&input.env_key);
+    config.project_env_key.clone_from(&input.project_env_key);
     config.project.clone_from(&input.event.project);
     config.environment.clone_from(&input.event.environment);
     let environment = &mut service.local_resources.environment.config;
@@ -56,7 +56,9 @@ pub fn render_materializer(
     environment.org.clone_from(&input.event.org);
     environment.project.clone_from(&input.event.project);
     environment.environment.clone_from(&input.event.environment);
-    environment.env_key.clone_from(&input.env_key);
+    environment
+        .project_env_key
+        .clone_from(&input.project_env_key);
     environment.fetch_ms = Some(input.fetch_ms.to_string());
     environment.sweep_ms = Some(input.sweep_ms.to_string());
     serde_yaml::to_string(&workload)
@@ -76,7 +78,8 @@ struct Metadata {
 #[serde(rename_all = "camelCase")]
 struct MaterializerDocument {
     api_version: String,
-    kind: WorkloadKind,
+    #[serde(rename = "kind")]
+    type_: WorkloadKind,
     metadata: Metadata,
     spec: DeploymentSpec,
     #[serde(flatten)]
@@ -145,8 +148,8 @@ struct MaterializerResources {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MaterializerIdentity {
-    #[serde(rename = "wamn.env_key")]
-    env_key: String,
+    #[serde(rename = "wamn.project_env_key")]
+    project_env_key: String,
     #[serde(rename = "wamn.project")]
     project: String,
     #[serde(rename = "wamn.environment")]
@@ -179,8 +182,8 @@ struct MaterializerConfig {
     project: String,
     #[serde(rename = "WAMN_MAT_ENV")]
     environment: String,
-    #[serde(rename = "WAMN_MAT_ENV_KEY")]
-    env_key: String,
+    #[serde(rename = "WAMN_MAT_PROJECT_ENV_KEY")]
+    project_env_key: String,
     #[serde(rename = "WAMN_MAT_MAX_DELIVER")]
     max_deliver: String,
     #[serde(
@@ -209,7 +212,7 @@ mod tests {
             workload: "fixture-materializer".into(),
             namespace: "warehouse-eu-3".into(),
             image: "registry.test.invalid:5000/materializer@sha256:abc123".into(),
-            env_key: "fixture-route-auth".into(),
+            project_env_key: "fixture-route-auth".into(),
             event: EventIdentity {
                 org: "example".into(),
                 project: "fixture".into(),
@@ -226,7 +229,7 @@ mod tests {
         let first = materializer_input();
         let second = MaterializerInput {
             workload: "hopper-materializer".into(),
-            env_key: "quay-9-route-auth".into(),
+            project_env_key: "quay-9-route-auth".into(),
             event: EventIdentity {
                 org: "zamboni".into(),
                 project: "quay9".into(),
@@ -247,7 +250,7 @@ mod tests {
             assert_eq!(spec.environment, input.namespace);
             assert_eq!(spec.service.image, input.image);
             let identity = &spec.service.local_resources.config;
-            assert_eq!(identity.env_key, input.env_key);
+            assert_eq!(identity.project_env_key, input.project_env_key);
             assert_eq!(identity.project, input.event.project);
             assert_eq!(identity.environment, input.event.environment);
             assert_eq!(identity.authority, MaterializerAuthority::EventMaterializer);
@@ -256,7 +259,7 @@ mod tests {
             assert_eq!(environment.org, input.event.org);
             assert_eq!(environment.project, input.event.project);
             assert_eq!(environment.environment, input.event.environment);
-            assert_eq!(environment.env_key, input.env_key);
+            assert_eq!(environment.project_env_key, input.project_env_key);
             assert_eq!(
                 environment.fetch_ms.as_deref(),
                 Some(input.fetch_ms.to_string().as_str())
@@ -294,7 +297,7 @@ mod tests {
             "WAMN_MAT_ORG",
             "WAMN_MAT_PROJECT",
             "WAMN_MAT_ENV",
-            "WAMN_MAT_ENV_KEY",
+            "WAMN_MAT_PROJECT_ENV_KEY",
         ] {
             let mut document: Value = serde_yaml::from_str(MATERIALIZER).unwrap();
             document["spec"]["template"]["spec"]["service"]["localResources"]["environment"]["config"]
@@ -311,7 +314,7 @@ mod tests {
             );
         }
         for field in [
-            "WAMN_MAT_LEGACY_TENANT",
+            "WAMN_MAT_LEGACY_PROJECT",
             "WAMN_EVT_NATS_PASSWORD",
             "WAMN_MAT_NATS_BINDING_FILE",
         ] {
@@ -344,7 +347,7 @@ mod tests {
                 "service",
                 "localResources",
                 "config",
-                "wamn.env_key",
+                "wamn.project_env_key",
             ],
             vec![
                 "spec",

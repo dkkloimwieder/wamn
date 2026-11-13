@@ -22,7 +22,7 @@ use super::{escape_identifier, escape_literal};
 /// on that cluster. The accepted T3 boundary is compound: production HBA has
 /// no physical-replication entry; PUBLIC CONNECT is revoked and this role gets
 /// CONNECT only on its own database; ordinary DML remains denied; and each
-/// reader is configured with its own slot and publication. The M1 gate shows
+/// reader is configured with its own slot and publication. The M1 condition shows
 /// those production-shaped legs.
 ///
 /// An existing role gets the same password and attributes through `ALTER
@@ -151,8 +151,8 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
 /// *decoding* reads WAL, not tables, and the shipped reader performs no
 /// initial snapshot and no backfill (`StreamingMode::Off` is the pgoutput
 /// in-progress-transaction option, not a snapshot), so the blanket grant bought
-/// nothing and cost a plain-SQL read of every tenant table to the same
-/// credential — with none of the gates (the `REPLICATION` attribute, the
+/// nothing and cost a plain-SQL read of every project table to the same
+/// credential — with none of the conditions (the `REPLICATION` attribute, the
 /// walsender protocol, slot ownership) that guard the replication path.
 ///
 /// The `REVOKE … ON ALL TABLES` is the **retroactive** half: environments
@@ -218,7 +218,7 @@ pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
 /// only updates the informational `table_name`. Maintained by `apply-package`
 /// in the same transaction as the DDL;
 /// rows are upsert-only (a dropped entity's row keeps old-WAL decode
-/// resolvable). No RLS: it holds no tenant data, and the CDC role's decode
+/// resolvable). No RLS: it holds no project data, and the CDC role's decode
 /// stream sees every row of every table anyway.
 /// The schema owner owns the map, including when an administrator creates it.
 pub fn ensure_entity_map_sql(schema: &str) -> String {
@@ -260,7 +260,7 @@ pub fn upsert_entity_map_sql(schema: &str) -> String {
     )
 }
 
-/// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / gate only.
+/// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / condition only.
 pub fn drop_publication_sql(publication: &str) -> String {
     format!(
         "DROP PUBLICATION IF EXISTS {}",
@@ -268,7 +268,7 @@ pub fn drop_publication_sql(publication: &str) -> String {
     )
 }
 
-/// Drop the replication slot if it exists (teardown / gate only — dropping a
+/// Drop the replication slot if it exists (teardown / condition only — dropping a
 /// live slot severs the reader and releases the pinned WAL). Run connected to
 /// the slot's database.
 pub fn drop_replication_slot_sql(slot: &str) -> String {

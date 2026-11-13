@@ -157,7 +157,7 @@ async fn render_number(
                 match render(connection.connection(), &application, &name, &keys, call).await {
                     Ok(number) => Ok(Ok(number)),
                     Err(Failure {
-                        kind: FailureKind::Postgres(error),
+                        type_: FailureType::Postgres(error),
                         ..
                     }) => Err(error),
                     Err(refused) => Ok(Err(statement_failure(refused))),
@@ -175,12 +175,12 @@ async fn render_number(
 /// Why one render did not produce a number.
 #[derive(Debug)]
 struct Failure {
-    kind: FailureKind,
+    type_: FailureType,
     context: String,
 }
 
 #[derive(Debug)]
-enum FailureKind {
+enum FailureType {
     /// The renderer refused. Only the boundary constructs a WIT error.
     Refused {
         code: &'static str,
@@ -202,19 +202,19 @@ impl std::fmt::Display for Failure {
 
 impl std::error::Error for Failure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.kind {
-            FailureKind::Refused { source, .. } => source.as_deref().map(|source| source as _),
-            FailureKind::Postgres(error) => Some(error),
+        match &self.type_ {
+            FailureType::Refused { source, .. } => source.as_deref().map(|source| source as _),
+            FailureType::Postgres(error) => Some(error),
         }
     }
 }
 
 fn statement_failure(failure: Failure) -> StatementError {
-    match failure.kind {
-        FailureKind::Refused { code, .. } => {
+    match failure.type_ {
+        FailureType::Refused { code, .. } => {
             StatementError::Postgres(PgError::QueryError((code.to_owned(), failure.context)))
         }
-        FailureKind::Postgres(error) => {
+        FailureType::Postgres(error) => {
             StatementError::Postgres(super::types::map_pg_error(&error))
         }
     }
@@ -222,7 +222,7 @@ fn statement_failure(failure: Failure) -> StatementError {
 
 fn refusal(code: &'static str, context: String) -> Failure {
     Failure {
-        kind: FailureKind::Refused { code, source: None },
+        type_: FailureType::Refused { code, source: None },
         context,
     }
 }
@@ -233,7 +233,7 @@ fn caused_refusal(
     source: impl Into<anyhow::Error>,
 ) -> Failure {
     Failure {
-        kind: FailureKind::Refused {
+        type_: FailureType::Refused {
             code,
             source: Some(source.into()),
         },
@@ -249,7 +249,7 @@ async fn render(
     call: NumberCall,
 ) -> Result<String, Failure> {
     let failed = |error| Failure {
-        kind: FailureKind::Postgres(error),
+        type_: FailureType::Postgres(error),
         context: format!("render number sequence {name} of application {application}"),
     };
     let statement = connection
@@ -313,7 +313,7 @@ async fn render(
                     call.operation(),
                     counter.name()
                 );
-                Failure { kind: FailureKind::Postgres(error), context }
+                Failure { type_: FailureType::Postgres(error), context }
             })?;
         let Some(value) = value else {
             return Err(refusal(
@@ -359,7 +359,7 @@ async fn read_dates(
     iso_year: bool,
 ) -> Result<Vec<String>, Failure> {
     let failed = |error| Failure {
-        kind: FailureKind::Postgres(error),
+        type_: FailureType::Postgres(error),
         context: format!("read numbering dates for application {application}"),
     };
     let split = |text: String| text.split('|').map(str::to_owned).collect::<Vec<_>>();

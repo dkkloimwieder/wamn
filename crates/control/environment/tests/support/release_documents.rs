@@ -1,4 +1,4 @@
-//! Canonical release documents shared by kind and render-only cases.
+//! Canonical release documents shared by type and render-only cases.
 
 use std::path::{Path, PathBuf};
 use wamn_environment_control::environment::{
@@ -54,7 +54,7 @@ pub fn release(
         let fact = device
             .clone()
             .into_admitted(wamn_catalog::ComponentPackageCoordinate {
-                env_key: String::new(),
+                project_env_key: String::new(),
                 package_id: PACKAGE.to_owned(),
                 package_version: version.to_owned(),
             })
@@ -284,7 +284,7 @@ pub mod http {
         let declaration = serde_json::from_value(declaration(
             &template
                 .replace(
-                    "__ENV_KEY__",
+                    "__PROJECT_ENV_KEY__",
                     &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
                 )
                 .replace("__PACKAGE_ID__", package)
@@ -383,7 +383,7 @@ pub mod http {
         components: Vec<ComponentDescriptor>,
     ) -> anyhow::Result<Vec<u8>> {
         let target = ComponentPackageCoordinate {
-            env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
+            project_env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
             package_id: "http_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
@@ -566,7 +566,7 @@ pub mod workflow {
         pub system_url: &'a str,
         pub project_url: &'a str,
         pub target: &'a wamn_control_registry::Triple,
-        pub env_key: &'a str,
+        pub project_env_key: &'a str,
         /// The release the environment serves.
         pub digest: &'a str,
         /// The applications the environment declares, as the serving Helm
@@ -654,8 +654,8 @@ pub mod workflow {
     ).await?;
         let bytes: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&environment.env_key, &environment.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
+            &[&environment.project_env_key, &environment.digest],
         )
         .await?
         .get(0);
@@ -664,7 +664,7 @@ pub mod workflow {
                 &bytes,
                 "manual fixture workflow",
                 wamn_engine::release_manifest::ReleaseTarget::new(
-                    environment.env_key,
+                    environment.project_env_key,
                     environment.target.env.as_str(),
                 )
                 .with_applications(environment.applications.clone()),
@@ -695,7 +695,7 @@ pub mod workflow {
         let held = postgres
             .session_operation_permissions(
                 "default",
-                environment.env_key,
+                environment.project_env_key,
                 &["admin".parse().unwrap()],
                 &ENABLER.parse()?,
             )
@@ -780,8 +780,8 @@ pub mod workflow {
 
         let bytes: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&environment.env_key, &environment.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
+            &[&environment.project_env_key, &environment.digest],
         )
         .await?
         .get(0);
@@ -800,7 +800,7 @@ pub mod workflow {
         let workflow = postgres
             .enabled_workflow(
                 "default",
-                environment.env_key,
+                environment.project_env_key,
                 environment.target.env.as_str(),
                 application,
                 workflow_id,
@@ -818,7 +818,7 @@ pub mod workflow {
             .packages;
         let node_digests: serde_json::Map<String, Value> =
             wamn_catalog::resolve_workflow_components(
-                environment.env_key,
+                environment.project_env_key,
                 packages,
                 &manifest,
                 &workflow.graph,
@@ -830,7 +830,7 @@ pub mod workflow {
         let admitted = postgres
             .admit_manual_run(
                 "default",
-                environment.env_key,
+                environment.project_env_key,
                 &ManualRunAdmission {
                     package_id: application,
                     manifest_digest: environment.digest,
@@ -895,7 +895,7 @@ pub mod workflow {
         trigger: WorkflowTrigger<'_>,
         events: Option<&wamn_broker::EventBroker>,
     ) -> anyhow::Result<()> {
-        let env_key = environment.env_key;
+        let project_env_key = environment.project_env_key;
         let (mut project, project_task) = connect_owned(environment.project_url).await?;
         project
             .execute(
@@ -941,7 +941,7 @@ pub mod workflow {
                 let mut drops = wamn_broker::auth_changes::AuthDrops::default();
                 let outcome = wamn_platform_identity::application::mutate_grant(
                     &tx,
-                    env_key,
+                    project_env_key,
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
                         user_id: &user_id,

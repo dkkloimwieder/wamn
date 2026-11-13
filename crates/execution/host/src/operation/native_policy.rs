@@ -237,7 +237,7 @@ impl NativePolicy {
             .context("native-invocation-component-identity-mismatch")?;
         let fact = &component.fact;
         anyhow::ensure!(
-            fact.target.env_key == acquisition.identity.env_key
+            fact.target.project_env_key == acquisition.identity.project_env_key
                 && acquisition.invocation.operation == operation
                 && acquisition.identity.project.as_deref() == Some(self.resources.project.as_str()),
             "native-invocation-component-identity-mismatch"
@@ -258,7 +258,7 @@ impl NativePolicy {
     /// application of the component as `app.application`.
     ///
     /// The bind also reads the executing principal's `platform."user"` row in
-    /// the tenant and refuses a principal that owns none. That refusal is an
+    /// the project and refuses a principal that owns none. That refusal is an
     /// authorization fact, so it reaches the caller as the `permission-denied`
     /// the operation vocabulary already carries, not as a host failure.
     async fn bind_identity(
@@ -444,9 +444,11 @@ impl InvocationPolicy for NativePolicy {
                 .postgres
                 .bind_operation_transaction(scope, transaction)?;
         }
-        resources
-            .logging
-            .set_identity(scope, &acquisition.identity.env_key, &resources.project);
+        resources.logging.set_identity(
+            scope,
+            &acquisition.identity.project_env_key,
+            &resources.project,
+        );
         resources
             .connection_http
             .bind_invocation(scope, acquisition.invocation.clone())?;

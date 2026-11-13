@@ -3,11 +3,11 @@
 //!
 //! Postgres stays the owner of every fact here. The memory is the local
 //! replica of the NATS KV bucket [`BUCKET`] on the scheduler NATS. The key
-//! `<env_key>.<principal>` holds the grants of a principal, and the key
-//! `<env_key>.environment` holds the environment status. A host that reads a
+//! `<project_env_key>.<principal>` holds the grants of a principal, and the key
+//! `<project_env_key>.environment` holds the environment status. A host that reads a
 //! fact from Postgres puts it with the revision of the key from before the
 //! read, so a delete in between refuses the put. Every host watches the keys
-//! of its tenant and keeps each value it sees. Every writer of a fact deletes
+//! of its project and keeps each value it sees. Every writer of a fact deletes
 //! its key after the commit ([`wamn_broker::auth_changes`]). The
 //! bucket keeps a value for at most [`MEMORY_TTL`], and so does the replica.
 //!
@@ -31,7 +31,7 @@ use wamn_broker::Publisher;
 use async_nats::jetstream::kv::Store;
 use sha2::{Digest as _, Sha256};
 use wamn_broker::auth_changes::{
-    BUCKET, IDENTITY_TOKEN, env_key as environment_status_key, principal_key,
+    BUCKET, IDENTITY_TOKEN, principal_key, project_env_key as environment_status_key,
 };
 pub use wamn_broker::kv_memory::MEMORY_TTL;
 use wamn_platform_identity::AuthenticatedPrincipal;
@@ -39,10 +39,10 @@ use wamn_platform_identity::AuthenticatedPrincipal;
 pub use crate::kv_memory::Ticket;
 use crate::kv_memory::{KvMemory, SWEEP_AT, Watched};
 
-/// The roles a principal holds in one tenant, with the permissions of each.
+/// The roles a principal holds in one project, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrincipalGrants {
-    /// Whether the tenant has an `platform."user"` row for the principal.
+    /// Whether the project has an `platform."user"` row for the principal.
     pub present: bool,
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,
@@ -57,7 +57,7 @@ pub struct PrincipalGrants {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum Answer {
     /// The grants of a principal, when the host read them, and whether the
-    /// tenant has its user row.
+    /// project has its user row.
     Principal {
         grants: Option<PrincipalGrants>,
         provisioned: bool,
@@ -197,8 +197,12 @@ impl AuthCache {
     }
 
     /// The grants of a principal, or the ticket of a read of them.
-    pub fn grants(&self, env_key: &str, principal: &str) -> Result<PrincipalGrants, Ticket> {
-        let key = principal_key(env_key, principal);
+    pub fn grants(
+        &self,
+        project_env_key: &str,
+        principal: &str,
+    ) -> Result<PrincipalGrants, Ticket> {
+        let key = principal_key(project_env_key, principal);
         match self.memory.answer(&key) {
             Ok(Answer::Principal {
                 grants: Some(grants),
@@ -213,12 +217,12 @@ impl AuthCache {
     /// provisioned-principal check of the identity binding.
     pub async fn keep_grants(
         &self,
-        env_key: &str,
+        project_env_key: &str,
         principal: &str,
         ticket: Ticket,
         grants: PrincipalGrants,
     ) {
-        let key = principal_key(env_key, principal);
+        let key = principal_key(project_env_key, principal);
         let provisioned = grants.present
             || matches!(
                 self.memory.replaced(&key, ticket),
@@ -234,10 +238,10 @@ impl AuthCache {
         self.memory.put(key, ticket, answer).await;
     }
 
-    /// Whether the tenant has the user row of a principal, or the ticket of
+    /// Whether the project has the user row of a principal, or the ticket of
     /// a read of it.
-    pub fn provisioned(&self, env_key: &str, principal: &str) -> Result<(), Ticket> {
-        let key = principal_key(env_key, principal);
+    pub fn provisioned(&self, project_env_key: &str, principal: &str) -> Result<(), Ticket> {
+        let key = principal_key(project_env_key, principal);
         match self.memory.answer(&key) {
             Ok(Answer::Principal {
                 provisioned: true, ..
@@ -247,8 +251,8 @@ impl AuthCache {
         }
     }
 
-    pub async fn keep_provisioned(&self, env_key: &str, principal: &str, ticket: Ticket) {
-        let key = principal_key(env_key, principal);
+    pub async fn keep_provisioned(&self, project_env_key: &str, principal: &str, ticket: Ticket) {
+        let key = principal_key(project_env_key, principal);
         let grants = match self.memory.replaced(&key, ticket) {
             Some(Answer::Principal { grants, .. }) => grants,
             _ => None,
@@ -261,8 +265,8 @@ impl AuthCache {
     }
 
     /// Whether the environment is inactive, or the ticket of a read of it.
-    pub fn environment_inactive(&self, env_key: &str) -> Result<bool, Ticket> {
-        let key = environment_status_key(env_key);
+    pub fn environment_inactive(&self, project_env_key: &str) -> Result<bool, Ticket> {
+        let key = environment_status_key(project_env_key);
         match self.memory.answer(&key) {
             Ok(Answer::Environment { inactive }) => Ok(inactive),
             Ok(_) => Err(self.memory.ticket(&key)),
@@ -270,10 +274,15 @@ impl AuthCache {
         }
     }
 
-    pub async fn keep_environment_inactive(&self, env_key: &str, ticket: Ticket, inactive: bool) {
+    pub async fn keep_environment_inactive(
+        &self,
+        project_env_key: &str,
+        ticket: Ticket,
+        inactive: bool,
+    ) {
         self.memory
             .put(
-                environment_status_key(env_key),
+                environment_status_key(project_env_key),
                 ticket,
                 Answer::Environment { inactive },
             )
@@ -315,15 +324,18 @@ impl AsRef<AuthCache> for AuthCache {
 
 /// Watch the bucket on the scheduler NATS into the memory that `holder`
 /// holds, and return the writer of the host's own changes. A host with
-/// `env_key` watches the keys of that `env_key` and the identity keys. The
-/// control host serves every tenant, so it watches every key.
+/// `project_env_key` watches the keys of that `project_env_key` and the identity keys. The
+/// control host serves every project, so it watches every key.
 pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
-    env_key: Option<&str>,
+    project_env_key: Option<&str>,
     holder: Arc<H>,
 ) -> Publisher {
-    let filters = match env_key {
-        Some(env_key) => vec![format!("{env_key}.>"), format!("{IDENTITY_TOKEN}.>")],
+    let filters = match project_env_key {
+        Some(project_env_key) => vec![
+            format!("{project_env_key}.>"),
+            format!("{IDENTITY_TOKEN}.>"),
+        ],
         None => vec![">".to_owned()],
     };
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
@@ -449,7 +461,7 @@ pub(crate) mod tests {
             ..PrincipalGrants::default()
         };
 
-        // A fact one host keeps reaches the other host of the tenant only.
+        // A fact one host keeps reaches the other host of the project only.
         let ticket = a.grants("t", "p").unwrap_err();
         a.keep_grants("t", "p", ticket, present.clone()).await;
         assert_eq!(a.grants("t", "p"), Ok(present.clone()));
@@ -479,7 +491,7 @@ pub(crate) mod tests {
         a.keep_grants("t", "p", ticket, present.clone()).await;
         assert!(a.grants("t", "p").is_err());
 
-        // A tenant change deletes every key of the tenant.
+        // A project change deletes every key of the project.
         until("host a sees the second delete", || {
             a.memory.ticket(&principal_key("t", "p")) != ticket
         })
@@ -493,9 +505,9 @@ pub(crate) mod tests {
         })
         .await;
         let mut drops = AuthDrops::default();
-        drops.env_key("t");
+        drops.project_env_key("t");
         writer.publish(drops).await;
-        until("host b drops the tenant", || {
+        until("host b drops the project", || {
             b.environment_inactive("t").is_err() && b.grants("t", "p").is_err()
         })
         .await;

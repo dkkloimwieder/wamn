@@ -23,8 +23,8 @@ pub const MAX_RETRY_BACKOFF_MS: Millis = 300_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct QueueEntry {
-    #[serde(flatten, with = "env_key")]
-    pub env_key: String,
+    #[serde(flatten, with = "project_env_key")]
+    pub project_env_key: String,
     pub run_id: String,
     /// When this row becomes leasable. Future = queue-parked (for example,
     /// bounded-retry backoff).
@@ -51,7 +51,7 @@ pub struct QueueEntry {
 }
 
 // Keep the composed key's exact spelling beside the queue's kebab-case fields.
-mod env_key {
+mod project_env_key {
     use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap as _};
 
     pub fn serialize<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
@@ -59,7 +59,7 @@ mod env_key {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(1))?;
-        map.serialize_entry("env_key", value)?;
+        map.serialize_entry("project_env_key", value)?;
         map.end()
     }
 
@@ -69,22 +69,22 @@ mod env_key {
     {
         #[derive(Deserialize)]
         struct Key {
-            env_key: String,
+            project_env_key: String,
         }
-        Ok(Key::deserialize(deserializer)?.env_key)
+        Ok(Key::deserialize(deserializer)?.project_env_key)
     }
 }
 
 impl QueueEntry {
     /// A fresh, immediately-leasable queue entry (no lease, first attempt).
     pub fn ready(
-        env_key: impl Into<String>,
+        project_env_key: impl Into<String>,
         run_id: impl Into<String>,
         available_at: Millis,
         max_attempts: i32,
     ) -> QueueEntry {
         QueueEntry {
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             run_id: run_id.into(),
             available_at,
             // An immediately-leasable row was enqueued when it became

@@ -26,7 +26,7 @@ pub use operation::{
 };
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
-    RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_kind,
+    RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_type,
     synchronous_route_count,
 };
 pub use router_delivery::{DeadlineAdjustment, RouterDeliveryBridge};

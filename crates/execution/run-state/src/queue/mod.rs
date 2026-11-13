@@ -41,7 +41,7 @@
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
 //! real prepared-statement path (SR12b).
 
 mod acquire;

@@ -157,7 +157,7 @@ impl Wiring {
     /// Override the per-delivery hop limit. Cycles are a wiring feature, so
     /// termination is bounded at runtime instead: once the walk has handed out
     /// this many invocations (retries included) for one delivery, it fails with
-    /// the terminal [`FailureKind::HopLimit`](crate::FailureKind::HopLimit) —
+    /// the terminal [`FailureType::HopLimit`](crate::FailureType::HopLimit) —
     /// never routed to an error path, which could itself be part of the loop.
     pub fn set_hop_limit(&mut self, limit: u64) {
         self.hop_limit = limit;

@@ -137,7 +137,7 @@ pub struct CustomOperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automatic_retry: Option<bool>,
     /// How this command survives a repeat. Required for a command and refused
-    /// for every other kind. Nothing about it is inferred.
+    /// for every other type. Nothing about it is inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotent_by: Option<CommandIdempotence>,
     /// Authored screen text for the operation itself. A component exports the
@@ -151,7 +151,7 @@ pub struct CustomOperationDeclaration {
     pub lists: Option<ListDeclaration>,
 }
 
-/// Closed non-CRUD operation kinds admitted by the package manifest.
+/// Closed non-CRUD operation types admitted by the package manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CustomOperationType {
@@ -161,7 +161,7 @@ pub enum CustomOperationType {
 }
 
 impl CustomOperationDeclaration {
-    /// Closed authored operation kind.
+    /// Closed authored operation type.
     pub const fn operation_type(&self) -> &'static str {
         match self.type_ {
             CustomOperationType::Projection => "projection",
@@ -1155,7 +1155,7 @@ fn validate_custom_operation(
         }
     }
 
-    validate_custom_operation_kind(operation_name, operation)?;
+    validate_custom_operation_type(operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
@@ -1198,7 +1198,7 @@ fn validate_signed_reads(
     Ok(())
 }
 
-fn validate_custom_operation_kind(
+fn validate_custom_operation_type(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1927,18 +1927,18 @@ fn validate_static_sql_declarations(
 
 fn validate_named_values(
     operation: &str,
-    kind: &str,
+    type_: &str,
     values: &[String],
 ) -> Result<(), ManifestError> {
     let unique = values.iter().collect::<BTreeSet<_>>();
     if unique.len() != values.len() {
         return Err(ManifestError::new(
             ManifestErrorType::InvalidOperation,
-            format!("{operation} repeats a declared {kind} name"),
+            format!("{operation} repeats a declared {type_} name"),
         ));
     }
     for value in values {
-        validate_identifier(value, kind)?;
+        validate_identifier(value, type_)?;
     }
     Ok(())
 }
@@ -1946,17 +1946,17 @@ fn validate_named_values(
 fn validate_static_sql_values(
     operation: &str,
     statement: &str,
-    kind: &str,
+    type_: &str,
     values: &[StaticSqlValueDeclaration],
 ) -> Result<(), ManifestError> {
     let mut names = BTreeSet::new();
     for value in values {
-        validate_identifier(&value.name, kind)?;
+        validate_identifier(&value.name, type_)?;
         if rust_identifier(&value.name).is_none() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidIdentity,
                 format!(
-                    "{operation}.{statement} {kind} `{}` is not a usable Rust identifier",
+                    "{operation}.{statement} {type_} `{}` is not a usable Rust identifier",
                     value.name
                 ),
             ));
@@ -1964,7 +1964,7 @@ fn validate_static_sql_values(
         if !names.insert(value.name.as_str()) {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
-                format!("{operation}.{statement} repeats {kind} {}", value.name),
+                format!("{operation}.{statement} repeats {type_} {}", value.name),
             ));
         }
     }

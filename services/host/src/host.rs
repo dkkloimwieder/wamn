@@ -580,7 +580,7 @@ async fn load_release(
                 error.error_type()
             )
         })?;
-    // Shared by reference-count rather than by borrow: every release-gated
+    // Shared by reference-count rather than by borrow: every release-conditioned
     // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
     // tied to `run`'s stack. One allocation remains the process's only manifest.
     Ok(Some(Arc::new(loaded_release)))
@@ -934,7 +934,7 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 /// error) hands the first connect to the client's own retry, so the host
 /// starts while NATS is down; a refused credential or TLS setup fails startup,
 /// because no probe would show a host that never connects. A `ClientError`
-/// event carries only the error kind, so each line also counts the failed
+/// event carries only the error type, so each line also counts the failed
 /// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
 /// The data client and its `name`: the connection of the host's own code by the
@@ -1101,13 +1101,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         wamn_runtime::local_application::load_local_facts(
             directory,
             loaded.manifest(),
-            &loaded.target().env_key,
+            &loaded.target().project_env_key,
         )?;
         let target_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
             .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
         wamn_runtime::local_application::require_local_target(
             &target_url,
-            &loaded.target().env_key,
+            &loaded.target().project_env_key,
             &loaded.target().environment,
         )
         .await?;
@@ -1229,7 +1229,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         args.org.as_deref().map(control_nats_user)
     } else {
         application
-            .map(|release| environment_nats_user(&release.target().env_key))
+            .map(|release| environment_nats_user(&release.target().project_env_key))
             .or_else(|| {
                 args.org
                     .as_deref()
@@ -1291,7 +1291,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // Trusted component HTTP effects remain executor-only (wamn-0h0g.10.16),
     // but wamn-10yt.3.2 reuses that exact pool family for the host-owned
     // platform.permission read that PAT/session routes require. Connection
-    // resolution also uses this class. The manifest-derived gate retains the
+    // resolution also uses this class. The manifest-derived condition retains the
     // pool for either demand; a host with neither retains the absent arm.
     // EventMaterializer uses the same explicit-source rule: only the dedicated
     // URL names that class, and absence removes the shared guest placeholder.
@@ -1390,7 +1390,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
     let changes = connection_memory::replicate(
         &data_nats_client,
-        application.map(|release| release.target().env_key.as_str()),
+        application.map(|release| release.target().project_env_key.as_str()),
         Arc::clone(&memory),
     );
     let oauth_encryption = args
@@ -1410,7 +1410,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             changes,
             Arc::clone(&credentials),
             Arc::clone(&postgres),
-            application.map_or("", |release| release.target().env_key.as_str()),
+            application.map_or("", |release| release.target().project_env_key.as_str()),
             &args.project,
             application.map_or("", |release| release.target().environment.as_str()),
         )
@@ -1526,7 +1526,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             reference,
             &component.name,
             operations.identity(
-                &operations.release.target().env_key,
+                &operations.release.target().project_env_key,
                 Some(operations.release_identity()),
             ),
         )?;
@@ -1556,11 +1556,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
     // (docs/architecture/execution.md#auth-memory).
-    let env_key = release
+    let project_env_key = release
         .as_ref()
         .filter(|_| !args.control)
-        .map(|release| release.target().env_key.clone());
-    let auth_changes = replicate(&data_nats_client, env_key.as_deref(), Arc::clone(&postgres));
+        .map(|release| release.target().project_env_key.clone());
+    let auth_changes = replicate(
+        &data_nats_client,
+        project_env_key.as_deref(),
+        Arc::clone(&postgres),
+    );
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default()
@@ -1630,7 +1634,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
                 Arc::clone(&postgres),
                 Arc::clone(&facts),
-                release.target().env_key.clone(),
+                release.target().project_env_key.clone(),
                 args.project.clone(),
                 Some(Arc::clone(release)),
             ),
@@ -1667,7 +1671,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::<WamnPostgres>::clone(&postgres),
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. It uses the host's data connection.
-        // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is gated on the serving
+        // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is conditioned on the serving
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
@@ -2003,7 +2007,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
     );
     // Whether this host carries a release is the first thing an operator needs from
-    // the log: it decides whether the release-gated interfaces have a manifest to
+    // the log: it decides whether the release-conditioned interfaces have a manifest to
     // serve from at all. The binding also has to outlive this point — `release`
     // holds the process's only loaded manifest for as long as `run` is on the
     // stack, which is the whole serving period.
@@ -2017,7 +2021,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             "wamn-host loaded its release"
         ),
         None => {
-            tracing::info!("wamn-host carries no release; no release-gated interface is served");
+            tracing::info!(
+                "wamn-host carries no release; no release-conditioned interface is served"
+            );
         }
     }
     let mut file_tasks = tokio::task::JoinSet::new();
@@ -3745,7 +3751,7 @@ host:
                     definition_hash: DefinitionHash::parse(RELEASE_DIGEST).unwrap(),
                     definition: serde_json::json!({
                         "id": "orders",
-                        "kind": "http",
+                        "type": "http",
                         "source-id": "public",
                         "route": {"path": "/orders", "method": "POST"}
                     }),
@@ -3808,7 +3814,7 @@ host:
             None,
             false,
             &[],
-            Ok(ReleaseTarget::new("tenant", "test")),
+            Ok(ReleaseTarget::new("project", "test")),
         )
         .await
         .expect("no release pair is not a failure");
@@ -3834,7 +3840,7 @@ host:
             Some(auth_file),
             false,
             &[],
-            Ok(ReleaseTarget::new("tenant", "test")),
+            Ok(ReleaseTarget::new("project", "test")),
         )
         .await
         .expect_err("an unusable release pair must refuse");

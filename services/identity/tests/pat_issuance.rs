@@ -23,7 +23,9 @@ use wamn_control_provision::identity_issuer::{
     prepare_identity_issuer_generation_sql,
 };
 use wamn_control_provision::session_target::SessionTarget;
-use wamn_control_provision::sql::{ensure_db_owner_role_sql, revoke_public_connect_floor_sql};
+use wamn_control_provision::sql::{
+    ensure_db_owner_role_sql, revoke_public_connect_base_grants_sql,
+};
 use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
@@ -168,13 +170,13 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("restore fixture admin");
     system
-        .batch_execute(revoke_public_connect_floor_sql())
+        .batch_execute(revoke_public_connect_base_grants_sql())
         .await
-        .expect_redacted("production CONNECT floor");
+        .expect_redacted("production CONNECT minimum");
     system
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
         .await
-        .expect_redacted("production TEMPORARY floor");
+        .expect_redacted("production TEMPORARY minimum");
     system
         .batch_execute(
             &prepare_identity_issuer_generation_sql(
@@ -783,7 +785,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_path(&database);
     url.set_query(None);
     url.set_fragment(None);
-    SessionTarget::new(&triple, "pattest1", "pat-tenant", url.as_str())
+    SessionTarget::new(&triple, "pattest1", "pat-project", url.as_str())
         .expect_redacted("unused configured audience")
 }
 

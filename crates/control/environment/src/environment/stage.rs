@@ -23,7 +23,7 @@ pub async fn initialize(
     manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
 ) -> anyhow::Result<Vec<PackageManifest>> {
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
 
     // Refuse a changed SQL record, independently of executable versions.
@@ -100,7 +100,7 @@ pub async fn initialize(
     materialize_application_principals(
         &platform.system_database_url,
         project_url,
-        &env_key,
+        &project_env_key,
         manifest,
         &packages
             .iter()
@@ -166,7 +166,7 @@ pub(super) async fn reconcile_installed_sql_grants(
 pub async fn materialize_application_principals(
     system_url: &str,
     project_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     changes: &wamn_broker::Publisher,
@@ -198,7 +198,7 @@ pub async fn materialize_application_principals(
     transaction
         .query_one(
             wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-            &[&env_key],
+            &[&project_env_key],
         )
         .await?;
     transaction
@@ -208,7 +208,8 @@ pub async fn materialize_application_principals(
         .await?;
     let mut drops = AuthDrops::default();
     for package in applications {
-        let subject = wamn_platform_identity::application_subject(env_key, &package.package.id)?;
+        let subject =
+            wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
         let principal = crate::provision_project_env::resolve_or_create_service(
             &mut system,
             &subject,
@@ -232,16 +233,21 @@ pub async fn materialize_application_principals(
             )
             .await?;
         if written != 0 {
-            drops.principal(env_key, principal.id().to_string().as_str());
+            drops.principal(project_env_key, principal.id().to_string().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        wamn_platform_identity::application::create_role(&transaction, env_key, &role, &mut drops)
-            .await?;
+        wamn_platform_identity::application::create_role(
+            &transaction,
+            project_env_key,
+            &role,
+            &mut drops,
+        )
+        .await?;
     }
     write_runtime_grants(
         &system,
         &transaction,
-        env_key,
+        project_env_key,
         manifest,
         packages,
         &mut drops,
@@ -257,7 +263,7 @@ pub async fn materialize_application_principals(
 pub async fn write_runtime_grants(
     system: &tokio_postgres::Client,
     transaction: &tokio_postgres::Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
@@ -269,7 +275,8 @@ pub async fn write_runtime_grants(
     for package in packages.iter().filter(|package| {
         wamn_release_control::publish_release::composes_integration(package, &manifest.components)
     }) {
-        let subject = wamn_platform_identity::application_subject(env_key, &package.package.id)?;
+        let subject =
+            wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
         let principal = wamn_platform_identity::resolve_subject(
             system,
             wamn_platform_identity::PrincipalType::Service,
@@ -307,7 +314,7 @@ pub async fn write_runtime_grants(
         )? {
             wamn_platform_identity::application::mutate_grant(
                 transaction,
-                env_key,
+                project_env_key,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::Permission {
                     role: &role,
@@ -320,7 +327,7 @@ pub async fn write_runtime_grants(
         }
         wamn_platform_identity::application::mutate_grant(
             transaction,
-            env_key,
+            project_env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::UserRole {
                 user_id: principal.id().to_string().as_str(),
@@ -361,14 +368,14 @@ pub async fn retire(
     if candidates.is_empty() {
         return Ok(());
     }
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let url = super::ensure::project_url(platform, &document.triple()).await?;
     let mut project = super::analyse::connect_project(&url).await?;
     let cached = project
         .query(
-            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE env_key=$1",
-            &[&env_key],
+            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
+            &[&project_env_key],
         )
         .await?;
     let mut releases = BTreeMap::new();
@@ -390,20 +397,23 @@ pub async fn retire(
     let tx = project.transaction().await?;
     tx.query_one(
         wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-        &[&env_key],
+        &[&project_env_key],
     )
     .await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_identity_protocol::PlatformComponent::Provisioning,
     ))
     .await?;
-    tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-        .await?;
+    tx.query_one(
+        "SELECT set_config('app.project_env_key', $1, true)",
+        &[&project_env_key],
+    )
+    .await?;
     // A competing preparation must be included before any permission is removed.
     let now = tx
         .query(
-            "SELECT manifest_digest FROM catalog.releases WHERE env_key=$1",
-            &[&env_key],
+            "SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1",
+            &[&project_env_key],
         )
         .await?;
     let before: BTreeSet<String> = cached.iter().map(|row| row.get(0)).collect();
@@ -425,7 +435,7 @@ pub async fn retire(
     let mut connections = wamn_broker::connection_changes::ConnectionDrops::default();
     let retired = super::bindings::contract(
         &tx,
-        &env_key,
+        &project_env_key,
         application,
         &document.membership(),
         &candidates.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -436,11 +446,11 @@ pub async fn retire(
     // Cache retention never selects a release. Keep requirements only for the selection,
     // live hosts, unfinished pins and preparations that still own bindings.
     let mut needed: BTreeSet<String> = tx.query(
-        "SELECT manifest_digest FROM catalog.release_connection WHERE env_key=$1 \
-         UNION SELECT manifest_digest FROM catalog.connection_binding WHERE env_key=$1 \
-         UNION SELECT manifest_digest FROM wamn_run.runs WHERE env_key=$1 AND manifest_digest IS NOT NULL \
+        "SELECT manifest_digest FROM catalog.release_connection WHERE project_env_key=$1 \
+         UNION SELECT manifest_digest FROM catalog.connection_binding WHERE project_env_key=$1 \
+         UNION SELECT manifest_digest FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest IS NOT NULL \
          AND status NOT IN ('completed','failed','infrastructure-failure')",
-        &[&env_key],
+        &[&project_env_key],
     ).await?.into_iter().map(|row| row.get(0)).collect();
     needed.extend(live.into_keys());
     if let Some(target) = target {
@@ -449,7 +459,15 @@ pub async fn retire(
     releases.retain(|digest, _| retired.contains(digest) || needed.contains(digest));
     let mut auth = wamn_broker::auth_changes::AuthDrops::default();
     let system = connect(&platform.system_database_url).await?;
-    retire_runtime_grants(&system, &tx, &env_key, &releases, &retired, &mut auth).await?;
+    retire_runtime_grants(
+        &system,
+        &tx,
+        &project_env_key,
+        &releases,
+        &retired,
+        &mut auth,
+    )
+    .await?;
     tx.commit().await?;
     let changes = platform.auth_changes().await?;
     changes.publish(auth).await;
@@ -462,7 +480,7 @@ pub async fn retire(
 pub async fn retire_runtime_grants(
     system: &tokio_postgres::Client,
     tx: &tokio_postgres::Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     releases: &BTreeMap<String, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
     retired: &[String],
     drops: &mut wamn_broker::auth_changes::AuthDrops,
@@ -502,7 +520,7 @@ pub async fn retire_runtime_grants(
         .to_string();
     for (package, permissions) in removed {
         let role = format!("application-{}", package.replace('_', "-"));
-        let subject = wamn_platform_identity::application_subject(env_key, &package)?;
+        let subject = wamn_platform_identity::application_subject(project_env_key, &package)?;
         let principal = wamn_platform_identity::resolve_subject(
             system,
             wamn_platform_identity::PrincipalType::Service,
@@ -533,7 +551,7 @@ pub async fn retire_runtime_grants(
             if generated {
                 wamn_platform_identity::application::mutate_grant(
                     tx,
-                    env_key,
+                    project_env_key,
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::Permission {
                         role: &role,
@@ -630,7 +648,7 @@ pub(super) async fn open(
 /// When `manifest` does not hash to `digest`, or the write fails.
 pub async fn write_release(
     project_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
     actor: &str,
@@ -655,20 +673,23 @@ pub async fn write_release(
         .await
         .context("bind the release publisher and provisioning operation")?;
     transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&project_env_key],
+        )
         .await
-        .context("bind the tenant identity")?;
+        .context("bind the project identity")?;
     transaction
         .query_one(
             wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-            &[&env_key],
+            &[&project_env_key],
         )
         .await?;
     transaction
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&env_key, &digest, &bytes],
+            &[&project_env_key, &digest, &bytes],
         )
         .await
         .context("write the release cache row")?;
@@ -692,7 +713,7 @@ mod tests {
     #[tokio::test]
     async fn release_writer_stamps_publisher_and_keeps_first_stamp_on_retry() {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_platform_identity::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::project_platform();
         database
             .execute(&[&format!(
                 "BEGIN; {} COMMIT;",
@@ -732,7 +753,7 @@ mod tests {
             let row = client
                 .query_one(
                     "SELECT created_by, updated_by, created_at::text, updated_at::text \
-                 FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
+                 FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
                     &[&"history", &digest.as_str()],
                 )
                 .await

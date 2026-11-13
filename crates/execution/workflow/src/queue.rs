@@ -31,7 +31,7 @@ const IDLE_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone)]
 struct QueueTarget {
-    env_key: String,
+    project_env_key: String,
     project: String,
     package_ids: Vec<String>,
     environment: String,
@@ -75,7 +75,7 @@ impl QueueService {
             .filter(|ttl| *ttl > 0)
             .context("queue lease TTL must be a positive signed 64-bit integer")?;
         let target = QueueTarget {
-            env_key: release.target().env_key.clone(),
+            project_env_key: release.target().project_env_key.clone(),
             project: config.project.clone(),
             // Released runs carry a package of the release, and workflow runs
             // the name of a declared application.
@@ -95,7 +95,7 @@ impl QueueService {
             .bind_session_identity(
                 QUEUE_LEASE_INVOCATION,
                 &SessionIdentity {
-                    env_key: target.env_key.clone(),
+                    project_env_key: target.project_env_key.clone(),
                     project: Some(config.project.clone()),
                     // Queue state belongs to the run plane, never the application schema.
                     schema: Some("wamn_run".to_owned()),
@@ -111,7 +111,7 @@ impl QueueService {
             .await?;
         jetstream.bind_derived_invocation(
             QUEUE_LEASE_INVOCATION,
-            &target.env_key,
+            &target.project_env_key,
             &config.project,
             &target.environment,
         )?;
@@ -176,7 +176,7 @@ fn queue_delivery_span(
 ) -> tracing::Span {
     tracing::info_span!(
         target: "wamn::router", parent: None, "wamn.queue.delivery",
-        wamn.env_key = %target.env_key, wamn.project = %target.project,
+        wamn.project_env_key = %target.project_env_key, wamn.project = %target.project,
         wamn.package_id = %package_id, wamn.environment = %target.environment,
         wamn.run_id = %run_id, wamn.wiring_id = %wiring_id,
         wamn.wiring_version = wiring_version,
@@ -297,7 +297,7 @@ async fn drain_one(
             let caller = match postgres
                 .queued_run_caller(
                     &target.project,
-                    &target.env_key,
+                    &target.project_env_key,
                     &workflow.execution_principal_id,
                     Some(&workflow.execution_role),
                 )
@@ -318,7 +318,7 @@ async fn drain_one(
                 Err(error) => return Err(error),
             };
             let run = RouterDriverRequest {
-                env_key: target.env_key.clone(),
+                project_env_key: target.project_env_key.clone(),
                 package_id: package_id.clone(),
                 environment: target.environment.clone(),
                 wiring_id: wiring_id.clone(),
@@ -504,7 +504,7 @@ async fn drive_lease(
                     tracing::warn!(
                         run_id,
                         error = %error,
-                        error_kind = ?error.error_type(),
+                        error_type = ?error.error_type(),
                         "derived event was not server-acknowledged; lease left for replay"
                     );
                     return Ok(());

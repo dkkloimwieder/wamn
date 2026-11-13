@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const ENV_KEY: &str = "rest--publication--test";
+const PROJECT_ENV_KEY: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";
 const PASSWORD: &str = "rest-consumer-live-test";
 /// The execution role of the rest_connector item: exactly the operation its
@@ -106,12 +106,12 @@ pub async fn workflow_host(
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ($1,'test')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ($1,'test')", &[&PROJECT_ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(
         database.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         digest.as_str(),
         manifest,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -133,7 +133,7 @@ pub async fn workflow_host(
         let role = workload_generation_role(
             family,
             WorkloadRoleIdentity::ProjectEnvironment {
-                org: ENV_KEY,
+                org: PROJECT_ENV_KEY,
                 project: "test",
                 environment: "test",
                 database: database.name(),
@@ -261,7 +261,7 @@ pub async fn schedule_run(
     match host
         .admit_schedule_run(
             "test",
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &ScheduleRunAdmission {
                 environment: "test",
                 application,
@@ -300,7 +300,7 @@ pub async fn run_caller(
             && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
-    host.workflow_node_caller("test", ENV_KEY, &principal, &execution_role)
+    host.workflow_node_caller("test", PROJECT_ENV_KEY, &principal, &execution_role)
         .await?
         .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
 }
@@ -357,8 +357,8 @@ pub async fn install(
     .await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: database.name(),
         },
         CredentialGeneration::A,
@@ -397,7 +397,7 @@ pub async fn install(
     wamn_environment_control::environment::stage::materialize_application_principals(
         system.url(),
         database.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         manifest,
         &manifests,
         &wamn_broker::Publisher::default(),
@@ -470,7 +470,8 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseTarget::new(ENV_KEY, "test").with_applications(declared("rest_connector", manifest)),
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+            .with_applications(declared("rest_connector", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
@@ -499,7 +500,7 @@ pub async fn invoke(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "test",
             "test",
         )),
@@ -638,7 +639,7 @@ pub async fn invoke(
             deadline_ms: 10000,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    identity: host.identity(ENV_KEY, Some(host.release_identity())),
+                    identity: host.identity(PROJECT_ENV_KEY, Some(host.release_identity())),
                     invocation: wamn_execution_host::component_invocation(
                         component,
                         operation,

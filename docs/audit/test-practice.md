@@ -97,7 +97,7 @@ The cuts total 68 lines.
 | 1520-1556 | 37 | The ES256 and RS256 host-path copies and the malformed-key matrix | `crates/platform/runtime/src/plugins/connection_http/jwt/tests.rs:88`, `:139` |
 | 1792-1806 | 15 | Two POSTs and two HEADs counted across two modes | 1778-1790, `jwt/tests.rs:271` |
 
-The text assertions at 1410-1425, 1453-1460, 1584-1604, 1635-1659 and 1913-1916 stay for now. The callback error has no error kind today. It carries only `reason` (`crates/platform/runtime/src/oauth_authorization.rs:17-20`). A kind on that error is the fix, and that is a product change for the owner.
+The text assertions at 1410-1425, 1453-1460, 1584-1604, 1635-1659 and 1913-1916 stay for now. The callback error has no error type today. It carries only `reason` (`crates/platform/runtime/src/oauth_authorization.rs:17-20`). A kind on that error is the fix, and that is a product change for the owner.
 
 ## Part B: the new ignore attributes
 

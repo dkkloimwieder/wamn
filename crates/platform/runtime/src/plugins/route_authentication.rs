@@ -141,7 +141,7 @@ impl std::fmt::Debug for RouteAuthentication {
 impl RouteAuthentication {
     /// Bind the two read authorities to trusted package coordinates.
     ///
-    /// Environment and tenant remain single-sourced from the loaded release.
+    /// Environment and project remain single-sourced from the loaded release.
     /// Async because it parses the identity statements on `identity_reader`
     /// here, once, instead of on every request. A reader that cannot parse them
     /// cannot authenticate anything, so this fails at startup rather than on the
@@ -194,14 +194,14 @@ impl EnvironmentStatusReader {
 
 #[async_trait::async_trait]
 impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusReader {
-    async fn inactive(&self, env_key: &str) -> anyhow::Result<bool> {
+    async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool> {
         self.postgres
-            .environment_inactive(&self.project, env_key)
+            .environment_inactive(&self.project, project_env_key)
             .await
     }
 }
 
-/// Session authentication with current identity and tenant permission reads.
+/// Session authentication with current identity and project permission reads.
 pub struct SessionRouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
     verifier: SessionVerifier<IssuerKeys>,
@@ -332,7 +332,7 @@ impl PlatformRouteAuthenticator {
         self
     }
 
-    /// Supply public verification keys and the authorized tenant permission reader.
+    /// Supply public verification keys and the authorized project permission reader.
     #[must_use]
     pub fn with_session_authentication(
         mut self,
@@ -350,7 +350,7 @@ impl PlatformRouteAuthenticator {
         attachment_id: &str,
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
-        env_key: &str,
+        project_env_key: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let authentication = self
@@ -370,7 +370,7 @@ impl PlatformRouteAuthenticator {
             .postgres
             .session_operation_permissions(
                 &authentication.project,
-                env_key,
+                project_env_key,
                 &session.claims().roles,
                 &principal,
             )
@@ -468,7 +468,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .ok_or_else(authentication_unavailable)?;
             let grants = authentication
                 .postgres
-                .principal_grants(project, &request.target.env_key, &principal)
+                .principal_grants(project, &request.target.project_env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             if !grants.active || grants.user != Some(false) {
@@ -476,7 +476,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             }
             let permissions = authentication
                 .postgres
-                .user_operation_permissions(project, &request.target.env_key, &principal)
+                .user_operation_permissions(project, &request.target.project_env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
@@ -500,7 +500,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     attachment_id,
                     token,
                     csrf.map(|required| (headers, required)),
-                    &target.env_key,
+                    &target.project_env_key,
                     &target.environment,
                 )
                 .await
@@ -578,7 +578,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .postgres
                 .user_operation_permissions(
                     &authentication.project,
-                    &target.env_key,
+                    &target.project_env_key,
                     principal.id(),
                 )
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
@@ -771,17 +771,16 @@ pub(crate) mod tests {
         let release = LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "prod")
-                .with_applications(
-                    [(
-                        "catalog".to_owned(),
-                        wamn_catalog::ApplicationDefinition {
-                            connections: std::collections::BTreeMap::new(),
-                            packages: ["cat".to_owned()].into(),
-                        },
-                    )]
-                    .into(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "prod").with_applications(
+                [(
+                    "catalog".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: ["cat".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
         )
         .expect("fixture manifest loads");
         FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())

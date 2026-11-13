@@ -3,7 +3,7 @@
 #[test]
 fn host_storage_and_release_history() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database
         .execute(&[include_str!("fixtures/connections.sql")])
         .unwrap();

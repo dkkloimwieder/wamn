@@ -176,7 +176,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "composed entry fixture",
-            ReleaseTarget::new("tenant-a", "test").with_applications(
+            ReleaseTarget::new("org-a", "test").with_applications(
                 serde_json::from_value(
                     serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
                 )
@@ -199,7 +199,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            release.target().env_key.as_str(),
+            release.target().project_env_key.as_str(),
             "test",
             release.target().environment.as_str(),
         )),
@@ -314,7 +314,7 @@ async fn a_wiring_call_on_the_entry_refuses_every_operation_call() {
         deadline_ms: 30_000,
         facts: NativeFacts::entry(
             NodeAcquisition {
-                identity: host.identity("tenant-a", Some(host.release_identity())),
+                identity: host.identity("org-a", Some(host.release_identity())),
                 invocation: component_invocation(
                     &release.member,
                     ROOT,

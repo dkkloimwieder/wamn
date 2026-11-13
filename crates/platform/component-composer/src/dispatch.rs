@@ -260,9 +260,9 @@ fn lift(
     offset: usize,
 ) -> anyhow::Result<Vec<(&'static str, String)>> {
     use wit_parser::{Int, Type};
-    let load = |kind, instruction| {
+    let load = |type_, instruction| {
         (
-            kind,
+            type_,
             format!("local.get $result {instruction} offset={offset}"),
         )
     };
@@ -322,20 +322,20 @@ fn lift(
     );
     let flat = flat.to_vec();
     let mut output = vec![load("i32", "i32.load8_u")];
-    for (slot, kind) in flat.iter().skip(1).map(|ty| core_type(*ty)).enumerate() {
-        let mut code = format!("{kind}.const 0");
+    for (slot, type_) in flat.iter().skip(1).map(|ty| core_type(*ty)).enumerate() {
+        let mut code = format!("{type_}.const 0");
         for (tag, value) in values.iter().enumerate().rev() {
             let arm = match value.get(slot) {
-                Some((actual, value)) if *actual == kind => value.clone(),
-                Some(("i32", value)) if kind == "i64" => format!("{value} i64.extend_i32_u"),
+                Some((actual, value)) if *actual == type_ => value.clone(),
+                Some(("i32", value)) if type_ == "i64" => format!("{value} i64.extend_i32_u"),
                 Some(_) => anyhow::bail!("unsupported dispatch result join"),
-                None => format!("{kind}.const 0"),
+                None => format!("{type_}.const 0"),
             };
             code = format!(
-                "local.get $result i32.load8_u offset={offset} i32.const {tag} i32.eq if (result {kind}) {arm} else {code} end"
+                "local.get $result i32.load8_u offset={offset} i32.const {tag} i32.eq if (result {type_}) {arm} else {code} end"
             );
         }
-        output.push((kind, code));
+        output.push((type_, code));
     }
     Ok(output)
 }

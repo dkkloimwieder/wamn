@@ -2,7 +2,7 @@
 //!
 //! The test creates the database wamn_system on the PostgreSQL server of its test
 //! process and holds the process lock of that server. It resets the system
-//! schemas and closes the cluster PUBLIC CONNECT floor.
+//! schemas and closes the cluster PUBLIC CONNECT base grants.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -709,7 +709,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
         ))
         .await?;
     admin
-        .batch_execute(sql::revoke_public_connect_floor_sql())
+        .batch_execute(sql::revoke_public_connect_base_grants_sql())
         .await?;
     admin
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC;")

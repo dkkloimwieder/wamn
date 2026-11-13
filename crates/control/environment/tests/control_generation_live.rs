@@ -72,7 +72,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
     let database = wamn_control_provision::test_database::system();
     let admin_url = database.url().to_owned();
     let mut admin = connect(&admin_url).await;
-    // provision-system closes the PUBLIC TEMPORARY floor of the control
+    // provision-system closes the PUBLIC TEMPORARY base grants of the control
     // database, and the lifecycle refuses a database that has it open.
     admin
         .batch_execute(&format!(
@@ -80,7 +80,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
             database.name()
         ))
         .await
-        .expect("close the PUBLIC TEMPORARY floor");
+        .expect("close the PUBLIC TEMPORARY base grants");
     admin
         .batch_execute("SET ROLE wamn_system")
         .await

@@ -43,7 +43,7 @@ struct Server {
     accepts: Arc<AtomicUsize>,
     requests: Arc<AtomicUsize>,
     observed: Arc<Mutex<Vec<Observed>>>,
-    gate: Arc<Semaphore>,
+    condition: Arc<Semaphore>,
     task: JoinHandle<()>,
     tls: Option<rustls::ClientConfig>,
 }
@@ -64,11 +64,11 @@ impl Server {
         let accepts = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(AtomicUsize::new(0));
         let observed = Arc::new(Mutex::new(Vec::new()));
-        let gate = Arc::new(Semaphore::new(0));
+        let condition = Arc::new(Semaphore::new(0));
         let counted_accepts = Arc::clone(&accepts);
         let counted_requests = Arc::clone(&requests);
         let recorded = Arc::clone(&observed);
-        let held = Arc::clone(&gate);
+        let held = Arc::clone(&condition);
         let task = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
@@ -78,20 +78,20 @@ impl Server {
                         counted_accepts.fetch_add(1, Ordering::SeqCst);
                         let requests = Arc::clone(&counted_requests);
                         let observed = Arc::clone(&recorded);
-                        let gate = Arc::clone(&held);
+                        let condition = Arc::clone(&held);
                         let acceptor = acceptor.clone();
                         connections.spawn(async move {
                             if let Some(acceptor) = acceptor {
                                 if let Ok(tls) = acceptor.accept(tcp).await {
                                     assert_eq!(tls.get_ref().1.server_name(), Some("logical.invalid"));
                                     if tls_http2 == Some(true) {
-                                        serve_h2(tls, requests, observed, gate, reply).await;
+                                        serve_h2(tls, requests, observed, condition, reply).await;
                                     } else {
-                                        serve_h1(tls, requests, observed, gate, reply).await;
+                                        serve_h1(tls, requests, observed, condition, reply).await;
                                     }
                                 }
                             } else {
-                                serve_h1(tcp, requests, observed, gate, reply).await;
+                                serve_h1(tcp, requests, observed, condition, reply).await;
                             }
                         });
                     }
@@ -106,7 +106,7 @@ impl Server {
             accepts,
             requests,
             observed,
-            gate,
+            condition,
             task,
             tls,
         }
@@ -171,7 +171,7 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
     io: I,
     requests: Arc<AtomicUsize>,
     observed: Arc<Mutex<Vec<Observed>>>,
-    gate: Arc<Semaphore>,
+    condition: Arc<Semaphore>,
     reply: Reply,
 ) {
     let mut io = BufReader::new(io);
@@ -240,7 +240,7 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
                 if io.flush().await.is_err() {
                     return;
                 }
-                gate.acquire().await.expect("body gate").forget();
+                condition.acquire().await.expect("body condition").forget();
                 if io.write_all(b"ok").await.is_err() {
                     return;
                 }
@@ -281,13 +281,13 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     io: I,
     requests: Arc<AtomicUsize>,
     observed: Arc<Mutex<Vec<Observed>>>,
-    gate: Arc<Semaphore>,
+    condition: Arc<Semaphore>,
     reply: Reply,
 ) {
     let service = service_fn(move |request: Request<hyper::body::Incoming>| {
         let requests = Arc::clone(&requests);
         let observed = Arc::clone(&observed);
-        let gate = Arc::clone(&gate);
+        let condition = Arc::clone(&condition);
         async move {
             let (request, body) = request.into_parts();
             let body = body
@@ -318,7 +318,11 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 ));
             }
             if matches!(reply, Reply::HeldBody) {
-                gate.acquire().await.expect("H2 head gate").forget();
+                condition
+                    .acquire()
+                    .await
+                    .expect("H2 head condition")
+                    .forget();
             }
             let body = if matches!(reply, Reply::LargeBody) {
                 Bytes::from(vec![b'x'; MAX_BODY_BYTES + 1])
@@ -407,7 +411,7 @@ async fn host_authentication_reaches_the_peer_without_changing_the_guest_request
 fn identity(generation: i64) -> ClientIdentity {
     ClientIdentity {
         connection: ConnectionIdentity {
-            env_key: "tenant".into(),
+            project_env_key: "project".into(),
             project: "project".into(),
             environment: "environment".into(),
             instance: "connection".into(),
@@ -642,7 +646,7 @@ async fn http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ni
     let server = Server::start(Reply::HeldBody, Some(true)).await;
     let transport = server.transport();
     let decision = server.decision();
-    server.gate.add_permits(1);
+    server.condition.add_permits(1);
     transport
         .execute(identity(1), &decision, request(&decision))
         .await
@@ -667,7 +671,7 @@ async fn http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ni
             .expect_err("connection H2 requests full")
             .is_before_dispatch()
     );
-    server.gate.add_permits(MAX_CONNECTION_REQUESTS);
+    server.condition.add_permits(MAX_CONNECTION_REQUESTS);
     while let Some(result) = requests.join_next().await {
         result.expect("request task").expect("H2 response");
     }
@@ -731,7 +735,7 @@ async fn every_client_identity_field_and_peer_separates_pools() {
     changed.connection.instance = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.connection.env_key = "other".into();
+    changed.connection.project_env_key = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
     changed.connection.project = "other".into();
@@ -904,7 +908,7 @@ async fn connection_requests_are_shared_across_generations_until_bodies_finish()
         transport.inner.requests.available_permits(),
         MAX_REQUESTS - MAX_CONNECTION_REQUESTS
     );
-    server.gate.add_permits(MAX_CONNECTION_REQUESTS);
+    server.condition.add_permits(MAX_CONNECTION_REQUESTS);
     while let Some(result) = requests.join_next().await {
         result.expect("task").expect("body complete");
     }
@@ -997,7 +1001,7 @@ async fn idle_pool_retains_two_sockets_then_expires_them() {
         });
     }
     wait_for(|| server.requests.load(Ordering::SeqCst) == 3).await;
-    server.gate.add_permits(3);
+    server.condition.add_permits(3);
     while let Some(result) = requests.join_next().await {
         result.expect("task").expect("body complete");
     }

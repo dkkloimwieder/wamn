@@ -386,7 +386,7 @@ The generator runs the script itself, so you do not install KCL by hand.
 If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
 
-- Plain English names in the schema module; `type` never `kind`; no plurals that the manifest does not already use.
+- Plain English names in the schema module; use `type` for variant names; no plurals that the manifest does not already use.
 
 An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a declaration (package, version, digest, operations) as today, because the pin is the contract and a language-level import would let the overlay drift from the sealed base. The language adds comments and defaults to the overlay; it does not compose the two packages.
 

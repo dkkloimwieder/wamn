@@ -101,9 +101,9 @@ impl RetryPolicy {
     }
 }
 
-/// The identity a shared throttle gate is keyed on: `(component, credential
+/// The identity a shared throttle condition is keyed on: `(component, credential
 /// handle, target host)`. Two invocations that would hammer the same upstream
-/// share a gate; everything else is independent. The router only *emits* the
+/// share a condition; everything else is independent. The router only *emits* the
 /// key on a rate-limited retry — coordinating on it belongs to the host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThrottleKey {

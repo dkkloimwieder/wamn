@@ -14,7 +14,7 @@ license.workspace = true
 # NEVER move this onto a normal dependency of any crate. That silently deletes
 # the fence for the whole dependency graph.
 [features]
-# `test-util` also provides the tenant test database floor (`test_database`),
+# `test-util` also provides the project test database minimum (`test_database`),
 # which starts a private PostgreSQL server for the test process.
 test-util = ["dep:wamn-test-postgres"]
 
@@ -37,7 +37,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 # compilation unit that cannot see its parent's features — builds with
 # `test-util` under a plain `cargo test -p wamn-catalog`. Requiring
 # `--features test-util` on every invocation instead would break every existing
-# sweep command and gate recipe. Under resolver 2 a dev-dependency feature does
+# sweep command and condition recipe. Under resolver 2 a dev-dependency feature does
 # not reach a lib-only build, so `cargo check -p wamn-catalog` remains the
 # production configuration.
 [dev-dependencies]

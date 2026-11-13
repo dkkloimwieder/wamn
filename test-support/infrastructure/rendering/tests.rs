@@ -472,7 +472,7 @@ fn http_input(project: &str, catalog: &str) -> HttpWorkloadInput {
         image: "registry.test.invalid:5000/flow-http@sha256:abc123".into(),
         route_host: "route.test.invalid".into(),
         identity: HttpIdentity {
-            env_key: format!("{project}-route-auth"),
+            project_env_key: format!("{project}-route-auth"),
             catalog: catalog.into(),
             environment: "dev".into(),
             project: project.into(),
@@ -531,7 +531,7 @@ fn http_workload_renders_both_namespaces_all_identity_and_one_route() {
 fn http_workload_refuses_incomplete_identity_unknown_identity_and_duplicate_fields() {
     let input = http_input(FIXTURE, "default");
     for field in [
-        "wamn.env_key",
+        "wamn.project_env_key",
         "wamn.catalog",
         "wamn.environment",
         "wamn.project",

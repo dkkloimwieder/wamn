@@ -44,8 +44,8 @@ async fn install(client: &Client) {
     client
         .batch_execute(
             "CREATE SCHEMA ri_data; \
-             CREATE TABLE ri_data.orders (id bigint PRIMARY KEY, env_key text NOT NULL); \
-             CREATE TABLE ri_data.lines (id bigint PRIMARY KEY, env_key text NOT NULL);",
+             CREATE TABLE ri_data.orders (id bigint PRIMARY KEY, project_env_key text NOT NULL); \
+             CREATE TABLE ri_data.lines (id bigint PRIMARY KEY, project_env_key text NOT NULL);",
         )
         .await
         .expect("install RI application tables");
@@ -53,7 +53,7 @@ async fn install(client: &Client) {
 
 #[tokio::test]
 async fn captured_models_stay_full_without_registration_storage() {
-    let url = locked_database::database(wamn_catalog::test_database::tenant);
+    let url = locked_database::database(wamn_catalog::test_database::project);
     let client = connect(&url).await;
     install(&client).await;
     client

@@ -1,10 +1,7 @@
 //! Fixture setup through the org connection authority.
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_environment_control::environment::{
-    self, Platform,
-    document::EnvironmentDocument,
-};
+use wamn_environment_control::environment::{self, Platform, document::EnvironmentDocument};
 
 pub async fn bind(
     platform: &Platform,
@@ -79,9 +76,14 @@ pub async fn bind(
     };
     let referenced = cluster_credential(
         platform,
-        &wamn_control_registry::credential_secret_name(&document.org, &document.project, &document.env),
+        &wamn_control_registry::credential_secret_name(
+            &document.org,
+            &document.project,
+            &document.env,
+        ),
         credential.to_string().as_bytes(),
-    ).await?;
+    )
+    .await?;
     let store = wamn_test_infrastructure::credentials::ReferencedCredentials(&referenced);
     wamn_test_infrastructure::credentials::define(&tx,&document.org,&serde_json::json!({"project":document.project,"env":document.env,"name":name,"integration_type":integration,"auth_type":auth_type,"external_system":if integration=="http" {Some(name)} else {None},"parameters":parameters,"credential":credential.to_string()}),&store).await?;
     tx.commit().await?;
@@ -111,10 +113,17 @@ async fn cluster_credential(
     let target = &platform.target;
     let version = uuid::Uuid::new_v4().to_string();
     let encoded = base64::engine::general_purpose::STANDARD.encode(value);
-    wamn_kubernetes::secret::update(&target.kubeconfig, &target.context, &target.namespace, secret, |secret| {
-        secret.data.insert(version.clone(), encoded.clone());
-        Ok(())
-    }).await?;
+    wamn_kubernetes::secret::update(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        secret,
+        |secret| {
+            secret.data.insert(version.clone(), encoded.clone());
+            Ok(())
+        },
+    )
+    .await?;
     Ok(wamn_kubernetes::StoreVersion {
         store: "k8s",
         reference: secret.to_owned(),
@@ -154,7 +163,7 @@ pub async fn publish_declarations(
         std::fs::write(
             declarations.join("fixture.json.in"),
             serde_json::to_vec(&json!({
-                "target":{"env_key":"__ENV_KEY__","package-id":name},
+                "target":{"project_env_key":"__PROJECT_ENV_KEY__","package-id":name},
                 "component":"fixture","interface-version":"0.1.0",
                 "operations":{&operation:{"registered-operation":operation,
                     "input-ports":[],"output-ports":[],"parameters":[]}},

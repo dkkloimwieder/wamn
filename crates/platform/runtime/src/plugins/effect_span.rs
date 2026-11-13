@@ -9,7 +9,7 @@
 //! said so in a span, so "what did this component do off box" had no answer.
 //!
 //! What every one of those spans should agree on is the ENRICHMENT: which
-//! tenant, project and component, resolved host-side and unspoofable. What they
+//! project, project and component, resolved host-side and unspoofable. What they
 //! must NOT share is the name — `wamn.postgres` is a published identifier that
 //! trace consumers and `tests/integration/src/metricbench.rs`
 //! match on, and the other surfaces need names of their own.
@@ -36,7 +36,7 @@
 //!
 //! # The vocabulary
 //!
-//! - `wamn.env_key` / `wamn.project` / `wamn.component` — the executing
+//! - `wamn.project_env_key` / `wamn.project` / `wamn.component` — the executing
 //!   component's identity, resolved HOST-side from bind-time identity maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such fact.
@@ -121,7 +121,7 @@ use crate::EffectOutcome;
 /// no such fact", never "the guest declined to send one".
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectIdentity<'a> {
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
     pub project: &'a str,
     pub component: &'a str,
 }
@@ -285,7 +285,7 @@ impl Drop for EffectOutcomeGuard {
 /// refuses ANY `static` / `LazyLock` / `OnceLock` in `connection_http.rs` — a
 /// deliberately coarse rule that keeps a credentialed HTTP client from ever
 /// being cached process-wide. Keeping them together honours it without
-/// weakening it: that file still holds no process-wide cell of any kind.
+/// weakening it: that file still holds no process-wide cell of any type.
 ///
 /// `$instrument` is an expression, not a literal, so an instrument whose name is
 /// itself a published identifier can be declared from the `const` that pins it
@@ -380,7 +380,7 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 /// ```text
 /// effect_span!(
 ///     "wamn.postgres",
-///     EffectIdentity { env_key: &env_key, project: &project, component: component_id },
+///     EffectIdentity { project_env_key: &project_env_key, project: &project, component: component_id },
 ///     None,
 ///     db.system = "postgresql",
 ///     db.operation = op,      // <- the trailing comma is required
@@ -420,7 +420,7 @@ macro_rules! effect_span {
         let span = tracing::info_span!(
             $name,
             $($surface_field)*
-            wamn.env_key = %identity.env_key,
+            wamn.project_env_key = %identity.project_env_key,
             wamn.project = %identity.project,
             wamn.component = %identity.component,
             wamn.package_id = tracing::field::Empty,
@@ -553,7 +553,7 @@ pub(crate) mod span_tests {
         extra: &[(&str, &str)],
     ) -> Vec<(String, String)> {
         let keys = [
-            "wamn.env_key",
+            "wamn.project_env_key",
             "wamn.project",
             "wamn.component",
             "wamn.package_id",
@@ -635,7 +635,7 @@ mod tests {
             let span = effect_span!(
                 "wamn.outcome_test",
                 EffectIdentity {
-                    env_key: "tenant-a",
+                    project_env_key: "org-a",
                     project: "project-a",
                     component: "component-a",
                 },

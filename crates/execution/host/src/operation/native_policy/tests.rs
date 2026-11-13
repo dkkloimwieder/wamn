@@ -620,7 +620,7 @@ impl HostPlugin for Observe {
 fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
         target: ComponentPackageCoordinate {
-            env_key: "tenant-a".into(),
+            project_env_key: "org-a".into(),
             package_id: operation
                 .split_once(':')
                 .expect("qualified operation")
@@ -765,7 +765,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
-                wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "test")
+                wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test")
                     .with_applications(
                         serde_json::from_value(
                             serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
@@ -785,7 +785,7 @@ impl Fixture {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            "tenant-a",
+            "org-a",
             "test",
             release.target().environment.as_str(),
         ));
@@ -799,7 +799,7 @@ impl Fixture {
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&facts),
-                    "tenant-a",
+                    "org-a",
                     "test",
                     Arc::from(Vec::new()),
                     Some(Arc::clone(&release)),
@@ -807,7 +807,7 @@ impl Fixture {
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
                     facts,
-                    "tenant-a",
+                    "org-a",
                     "test",
                     Some(Arc::clone(&release)),
                 )),
@@ -922,7 +922,7 @@ impl Fixture {
             facts: NativeFacts::entry(
                 NodeAcquisition {
                     identity: SessionIdentity {
-                        env_key: "tenant-a".into(),
+                        project_env_key: "org-a".into(),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
@@ -1170,7 +1170,7 @@ async fn run_case(case: Case) {
                 .identity
                 .as_ref()
                 .expect("execution has host identity");
-            assert_eq!(identity.env_key, "tenant-a");
+            assert_eq!(identity.project_env_key, "org-a");
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     identity.user_id,
@@ -1185,7 +1185,7 @@ async fn run_case(case: Case) {
             }
             assert_eq!(
                 event.logging,
-                Some(("tenant-a".into(), "test".into())),
+                Some(("org-a".into(), "test".into())),
                 "execution has a logging identity"
             );
             let invocation = event
@@ -1333,7 +1333,7 @@ async fn assert_postgres_bind_warns() {
         .expect("the isolated test process installs the warn capture first");
 
     // The driver's native path: preload, then one request, with an empty
-    // workload config that a wash bind would treat as a missing tenant.
+    // workload config that a wash bind would treat as a missing project.
     let fixture = Fixture::new(Case::PostgresImport).await;
     let target = fixture.target().await;
     prepare_native(&target, Instant::now() + CLEANUP)
@@ -1358,7 +1358,7 @@ async fn assert_postgres_bind_warns() {
         .await
         .expect("unbind fixture workload");
 
-    // A wash bind of the same import with no tenant still warns, so the
+    // A wash bind of the same import with no project still warns, so the
     // capture above counts this warn when it happens.
     let wash = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(HashMap::new(), None),
@@ -1398,7 +1398,7 @@ async fn assert_postgres_bind_warns() {
         .await
         .expect("resolve the wash workload");
     assert_eq!(wash.scope_registrations(), 1);
-    assert_eq!(warns.count(), 1, "a wash bind with no tenant warns once");
+    assert_eq!(warns.count(), 1, "a wash bind with no project warns once");
     resolved
         .unbind_all_plugins()
         .await
@@ -1406,9 +1406,9 @@ async fn assert_postgres_bind_warns() {
 }
 
 #[test]
-fn native_postgres_guest_binds_without_the_env_key_warn() {
+fn native_postgres_guest_binds_without_the_project_env_key_warn() {
     run_isolated_test(
-        "native_postgres_guest_binds_without_the_env_key_warn",
+        "native_postgres_guest_binds_without_the_project_env_key_warn",
         assert_postgres_bind_warns(),
     );
 }
@@ -1602,13 +1602,12 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "validation fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "test")
-                .with_applications(
-                    serde_json::from_value(
-                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                    )
-                    .unwrap(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );
@@ -1657,13 +1656,12 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &next_manifest.canonical_bytes(),
             "another release",
-            wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "test")
-                .with_applications(
-                    serde_json::from_value(
-                        serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
-                    )
-                    .unwrap(),
-                ),
+            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );

@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentityKind};
+use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentityType};
 use wamn_digest::bytes_sha256;
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
@@ -20,7 +20,7 @@ use wamn_environment_control::provision_project_env::{
 use wamn_environment_control::provision_project_env::{finish_database, require_connected};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const ENV_KEY: &str = "acme--apps--dev";
+const PROJECT_ENV_KEY: &str = "acme--apps--dev";
 const STATE_DIGEST: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -147,7 +147,9 @@ fn component(
     let admitted = descriptor
         .clone()
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
-            ENV_KEY, name, "1.0.0",
+            PROJECT_ENV_KEY,
+            name,
+            "1.0.0",
         )?);
     let config =
         wamn_engine::component_artifact::component_artifact_config_bytes(&admitted.component);
@@ -542,8 +544,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .flat_map(|package| package.models.values().map(|model| model.schema.as_str()))
         .collect::<BTreeSet<_>>();
     let installed_schemas = observer.query(
-        "SELECT DISTINCT schema_name FROM catalog.package_definition_owners WHERE env_key=$1 AND definition_type='relation'",
-        &[&ENV_KEY],
+        "SELECT DISTINCT schema_name FROM catalog.package_definition_owners WHERE project_env_key=$1 AND definition_type='relation'",
+        &[&PROJECT_ENV_KEY],
     ).await?.into_iter().map(|row| row.get::<_, String>(0)).collect::<BTreeSet<_>>();
     assert_eq!(
         schemas,
@@ -641,7 +643,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .join(","),
     );
     let before_b_effective = rows(&observer, &b_effective_sql).await?;
-    let principal = |name: &str| wamn_platform_identity::application_subject(ENV_KEY, name);
+    let principal = |name: &str| wamn_platform_identity::application_subject(PROJECT_ENV_KEY, name);
     let a_user = wamn_platform_identity::resolve_subject(
         &admin,
         wamn_platform_identity::PrincipalType::Service,
@@ -659,13 +661,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mounted = wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &old_a.canonical_bytes(),
         "running application a",
-        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
-            wamn_environment_control::environment::analyse::select_application(
-                &document,
-                Some("a"),
-            )?
-            .membership(),
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
+            .with_applications(
+                wamn_environment_control::environment::analyse::select_application(
+                    &document,
+                    Some("a"),
+                )?
+                .membership(),
+            ),
     )?;
     let b_permissions = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &observer,
@@ -744,7 +747,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     for release in [&old_a, &new_a] {
         for component in &release.components {
             for connection in &component.descriptor.connections {
-                assert!(observer.query_opt("SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5", &[&ENV_KEY, &release.digest().as_str(), &component.descriptor.component_digest, &component.package_id, &connection.store_alias]).await?.is_some());
+                assert!(observer.query_opt("SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5", &[&PROJECT_ENV_KEY, &release.digest().as_str(), &component.descriptor.component_digest, &component.package_id, &connection.store_alias]).await?.is_some());
             }
         }
     }
@@ -772,7 +775,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .await?;
     wamn_platform_identity::application::mutate_grant(
         &tx,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: b_user.id().to_string().as_str(),
@@ -833,7 +836,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let resolved = postgres
         .resolve_release_components(
             wamn_runtime::plugins::wamn_postgres::DEFAULT_PROJECT,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "dev",
             mounted.release().manifest_digest.as_str(),
         )
@@ -852,8 +855,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(
         observer
             .query_opt(
-                "SELECT 1 FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-                &[&ENV_KEY, &failed_release.digest().as_str()],
+                "SELECT 1 FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
+                &[&PROJECT_ENV_KEY, &failed_release.digest().as_str()],
             )
             .await?
             .is_some()
@@ -890,13 +893,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let tx = project.transaction().await?;
     tx.query_one(
         wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-        &[&ENV_KEY],
+        &[&PROJECT_ENV_KEY],
     )
     .await?;
     assert!(
         wamn_environment_control::environment::bindings::contract(
             &tx,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "a",
             &document.membership(),
             &[b.digest().as_str()],
@@ -908,7 +911,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     let retired = wamn_environment_control::environment::bindings::contract(
         &tx,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         "a",
         &document.membership(),
         &[old_a.digest().as_str()],
@@ -920,7 +923,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment_control::environment::stage::retire_runtime_grants(
             &admin,
             &tx,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &releases,
             &retired,
             &mut wamn_broker::auth_changes::AuthDrops::default()
@@ -932,14 +935,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(
         observer
             .query_opt(
-                "SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2",
-                &[&ENV_KEY, &old_a.digest().as_str()]
+                "SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2",
+                &[&PROJECT_ENV_KEY, &old_a.digest().as_str()]
             )
             .await?
             .is_some()
     );
-    observer.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'old-work','a','dev','dispatched',$2,'work',1,$2,'[]')", &[&ENV_KEY, &old_a.digest().as_str()]).await?;
-    observer.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'b-work','b','dev','dispatched',$2,'work',1,$2,'[]')", &[&ENV_KEY, &b.digest().as_str()]).await?;
+    observer.execute("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'old-work','a','dev','dispatched',$2,'work',1,$2,'[]')", &[&PROJECT_ENV_KEY, &old_a.digest().as_str()]).await?;
+    observer.execute("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'b-work','b','dev','dispatched',$2,'work',1,$2,'[]')", &[&PROJECT_ENV_KEY, &b.digest().as_str()]).await?;
     for (live, pinned) in [(true, true), (false, true), (false, false)] {
         if !pinned {
             observer
@@ -952,7 +955,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         let tx = project.transaction().await?;
         tx.query_one(
             wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
         tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -964,7 +967,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         if live {
             wamn_platform_identity::application::mutate_grant(
                 &tx,
-                ENV_KEY,
+                PROJECT_ENV_KEY,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::UserRole {
                     user_id: b_user.id().to_string().as_str(),
@@ -984,7 +987,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         };
         let retired = wamn_environment_control::environment::bindings::contract(
             &tx,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "a",
             &document.membership(),
             &[old_digest.as_str()],
@@ -993,14 +996,19 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         )
         .await?;
         wamn_environment_control::environment::stage::retire_runtime_grants(
-            &admin, &tx, ENV_KEY, &releases, &retired, &mut auth,
+            &admin,
+            &tx,
+            PROJECT_ENV_KEY,
+            &releases,
+            &retired,
+            &mut auth,
         )
         .await?;
         tx.commit().await?;
         assert_eq!(retired.is_empty(), live || pinned);
         let stranded = wamn_environment_control::environment::drain::stranded(
             observer_url.as_str(),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "dev",
             Some(&["a".to_owned()]),
             &BTreeMap::from([(new_a.digest().to_string(), 1)]),
@@ -1077,8 +1085,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(
         observer
             .query_opt(
-                "SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2",
-                &[&ENV_KEY, &old_a.digest().as_str()]
+                "SELECT 1 FROM catalog.connection_binding WHERE project_env_key=$1 AND manifest_digest=$2",
+                &[&PROJECT_ENV_KEY, &old_a.digest().as_str()]
             )
             .await?
             .is_some()
@@ -1222,7 +1230,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     };
     let mut credential_checks = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.identity_kind() != WorkloadRoleIdentityKind::Control)
+        .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
     {
         let mut project_admin = url::Url::parse(system.url())?;
         project_admin.set_path(&database_name);
@@ -1250,8 +1258,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         run_workload_action(&request).await?;
         let secret: serde_json::Value =
             serde_json::from_slice(&std::fs::read(request.secret.unwrap())?)?;
-        let credential_url = match family.secret_body_kind() {
-            wamn_control_provision::WorkloadSecretBodyKind::SessionTarget => {
+        let credential_url = match family.secret_body_type() {
+            wamn_control_provision::WorkloadSecretBodyType::SessionTarget => {
                 wamn_control_provision::session_target::SessionTarget::from_json(
                     secret["stringData"]
                         [wamn_control_provision::session_target::SESSION_TARGET_KEY]
@@ -1361,8 +1369,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     let installed = candidate_admin
         .query(
-            "SELECT package_id FROM catalog.packages WHERE env_key=$1",
-            &[&ENV_KEY],
+            "SELECT package_id FROM catalog.packages WHERE project_env_key=$1",
+            &[&PROJECT_ENV_KEY],
         )
         .await?
         .into_iter()

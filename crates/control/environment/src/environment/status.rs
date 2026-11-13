@@ -256,9 +256,16 @@ async fn stranded_runs(
         anyhow::bail!("environment has no provisioned database");
     }
     let url = project_url(platform, triple).await?;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
-    stranded(&url, &env_key, triple.env.as_str(), Some(packages), live).await
+    stranded(
+        &url,
+        &project_env_key,
+        triple.env.as_str(),
+        Some(packages),
+        live,
+    )
+    .await
 }
 
 #[cfg(test)]

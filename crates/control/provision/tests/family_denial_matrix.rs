@@ -2,7 +2,7 @@
 //!
 //! For every ORDERED PAIR of authority families, a principal of one family is
 //! REFUSED the operations that belong to the others. The arms are per-family so
-//! a red NAMES the family that over-holds; they compose into this one gate
+//! a red NAMES the family that over-holds; they compose into this one condition
 //! binary.
 //!
 //! # Everything here is the server's own answer
@@ -20,13 +20,13 @@
 //! locked-out one — and under `FORCE ROW LEVEL SECURITY` a principal matching no
 //! policy reads ZERO ROWS WITH NO ERROR. Every arm whose assertion is about RLS
 //! REACH therefore asserts the POST-STATE ROW COUNT from a MINTED GENERATION
-//! LOGIN, never from the bare stable ACL role — which derives a NULL tenant key
+//! LOGIN, never from the bare stable ACL role — which derives a NULL project key
 //! and matches nothing silently.
 //!
 //! # Hermetic, and it owns its server
 //!
 //! Roles are CLUSTER-WIDE and `deploy/sql/postgres-init.sql` carries a bare
-//! `CREATE DATABASE wamn`, so this gate rebuilds its whole world on a
+//! `CREATE DATABASE wamn`, so this acceptance test rebuilds its whole world on a
 //! PostgreSQL server that the test process starts for it alone.
 
 use std::collections::BTreeSet;
@@ -39,7 +39,7 @@ use url::Url;
 use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityKind,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
     workload_generation_role,
 };
 use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL};
@@ -54,7 +54,7 @@ const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// generation login's digest is taken over, so it cannot be chosen freely.
 const DATABASE: &str = "wamn";
 
-/// The control database of this gate. The control-plane families reach it
+/// The control database of this acceptance test. The control-plane families reach it
 /// and nothing else.
 const CONTROL_DATABASE: &str = "wamn_matrix_control";
 
@@ -62,13 +62,13 @@ const ORG: &str = "acme";
 const PROJECT: &str = "billing";
 const ENVIRONMENT: &str = "dev";
 
-/// The tenant every tenant-targeted generation in this gate is minted for, and
-/// the tenant the guest may read. `TENANT_B` is the neighbour it may not.
-const ENV_KEY_A: &str = "t1";
-const ENV_KEY_B: &str = "t2";
+/// The project every project-targeted generation in this acceptance test is minted for, and
+/// the project the guest may read. `PROJECT_B` is the neighbour it may not.
+const PROJECT_ENV_KEY_A: &str = "t1";
+const PROJECT_ENV_KEY_B: &str = "t2";
 
 /// Throwaway password for the probe logins. Not a credential of record: the
-/// gate builds and drops these roles inside a disposable container.
+/// condition builds and drops these roles inside a disposable container.
 const PROBE_PASSWORD: &str = "w68-matrix-probe";
 
 // ---------------------------------------------------------------------------
@@ -115,8 +115,8 @@ const MATRIX_PRIVILEGES: [&str; 4] = ["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// deliberately absent: they are invoker-rights triggers, not a family's
 /// authority.
 const MATRIX_ROUTINES: [&str; 2] = [
-    "wamn_authority.current_tenant_key()",
-    "wamn_authority.tenant_key(text)",
+    "wamn_authority.current_project_key()",
+    "wamn_authority.project_key(text)",
 ];
 
 /// One family's REACH over [`MATRIX_RELATIONS`] and [`MATRIX_ROUTINES`], spelled
@@ -177,8 +177,8 @@ const MATRIX: [FamilyReach; 9] = [
             "wamn_run.runs|SELECT|table",
         ],
         routines: &[
-            "wamn_authority.current_tenant_key()",
-            "wamn_authority.tenant_key(text)",
+            "wamn_authority.current_project_key()",
+            "wamn_authority.project_key(text)",
         ],
     },
     FamilyReach {
@@ -206,7 +206,7 @@ const MATRIX: [FamilyReach; 9] = [
             "wamn_run.runs|SELECT|table",
             "wamn_run.runs|UPDATE|column",
         ],
-        routines: &["wamn_authority.tenant_key(text)"],
+        routines: &["wamn_authority.project_key(text)"],
     },
     FamilyReach {
         family: WorkloadRoleFamily::HttpAdmitter,
@@ -498,9 +498,11 @@ fn login_url(admin_url: &str, role: &str) -> String {
 
 /// The database a family's credential reaches.
 fn database_of(family: WorkloadRoleFamily) -> &'static str {
-    match family.identity_kind() {
-        WorkloadRoleIdentityKind::EnvKey | WorkloadRoleIdentityKind::ProjectEnvironment => DATABASE,
-        WorkloadRoleIdentityKind::Control | WorkloadRoleIdentityKind::Org => CONTROL_DATABASE,
+    match family.identity_type() {
+        WorkloadRoleIdentityType::ProjectEnvKey | WorkloadRoleIdentityType::ProjectEnvironment => {
+            DATABASE
+        }
+        WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org => CONTROL_DATABASE,
     }
 }
 
@@ -517,24 +519,24 @@ struct Fixture {
 
 /// The deterministic generation name the real mint would issue for one family.
 fn generation(family: WorkloadRoleFamily) -> String {
-    let target = match family.identity_kind() {
-        WorkloadRoleIdentityKind::EnvKey => WorkloadRoleIdentity::EnvKey {
-            env_key: ENV_KEY_A,
+    let target = match family.identity_type() {
+        WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY_A,
             database: DATABASE,
         },
-        WorkloadRoleIdentityKind::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
+        WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: DATABASE,
         },
-        WorkloadRoleIdentityKind::Control => WorkloadRoleIdentity::Control {
+        WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: CONTROL_DATABASE,
         },
-        WorkloadRoleIdentityKind::Org => WorkloadRoleIdentity::Org {
+        WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
             org: ORG,
             database: CONTROL_DATABASE,
         },
@@ -543,7 +545,7 @@ fn generation(family: WorkloadRoleFamily) -> String {
         .unwrap_or_else(|error| panic!("mint a {family:?} generation: {error}"))
 }
 
-/// Roles this gate creates, drops or re-mints. Roles are CLUSTER-WIDE.
+/// Roles this acceptance test creates, drops or re-mints. Roles are CLUSTER-WIDE.
 fn managed_roles() -> Vec<String> {
     let mut roles: Vec<String> = MATRIX
         .iter()
@@ -591,29 +593,29 @@ fn reset(admin: &str) {
     // login below reach a database its family was never provisioned for.
     apply(
         admin,
-        "close the stock PUBLIC connect floor",
+        "close the stock PUBLIC connect minimum",
         "REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;\n\
          REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;\n",
     );
 }
 
-/// Two tenants' worth of rows in every relation an RLS-reach arm reads back.
+/// Two projects' worth of rows in every relation an RLS-reach arm reads back.
 ///
-/// Two, not one: an arm that reads its own tenant cannot tell confinement from
+/// Two, not one: an arm that reads its own project cannot tell confinement from
 /// an empty table, and the platform arm's whole assertion is that it reads BOTH.
 const SEED: &str = "\
 DO $seed$ DECLARE t text; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.packages
-    (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest)
+    (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest)
     VALUES ('sha256:' || repeat('c', 64), t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
-    (env_key, manifest_digest, canonical_bytes)
+    (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.environment_policies (env_key, expected_environment)
+  INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment)
     VALUES (t, 'dev');
   INSERT INTO wamn_run.runs
-    (env_key, run_id, package_id, environment, status, trigger_source,
+    (project_env_key, run_id, package_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
     VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'internal', 'w', 1,
             'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
@@ -666,7 +668,7 @@ fn build() -> Fixture {
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, "apply a schema artifact", artifact);
     }
-    apply(&db_url, "seed two tenants", SEED);
+    apply(&db_url, "seed two projects", SEED);
     apply(
         &db_url,
         "create the logged fixture relations",
@@ -736,7 +738,7 @@ fn build_control_plane(admin: &str) -> String {
 /// `postgres-init.sql` and `ensure_workload_acl_role_sql(App)` both converge
 /// `wamn_app` to `NOLOGIN PASSWORD NULL NOINHERIT`, so preparing a generation
 /// no longer repairs a contradictory install-time LOGIN as a side effect. This
-/// gate therefore exercises the production App builder directly.
+/// condition therefore exercises the production App builder directly.
 fn mint(db_url: &str, family: WorkloadRoleFamily) {
     let login = generation(family);
     apply(
@@ -1163,17 +1165,17 @@ const CONTAINED_PAIRS: [(&str, &str); 6] = [
 // THE PLATFORM-GRAIN ARMS
 // ---------------------------------------------------------------------------
 
-/// A PLATFORM FAMILY WITH GRANTS AND NO TENANT CONTEXT READS EXACTLY ITS GRANTS
+/// A PLATFORM FAMILY WITH GRANTS AND NO PROJECT CONTEXT READS EXACTLY ITS GRANTS
 /// (`wamn-0h0g.22.17`).
 ///
-/// The tenant floor is narrowed `TO wamn_app`, and PostgreSQL DEFAULT-DENIES
+/// The project base grants are narrowed `TO wamn_app`, and PostgreSQL DEFAULT-DENIES
 /// when RLS is on and no policy matches — so the narrowing does not EXEMPT a
 /// platform principal, it LOCKS IT OUT at zero rows with no exception. What
 /// admits it is one permissive `TO wamn_platform` arm per relation, and what
 /// still BOUNDS it is its own table grants. Both halves are read back here: rows
 /// where a grant exists, `42501` where it does not.
 #[test]
-fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say() {
+fn a_platform_family_without_project_env_key_context_reads_exactly_what_its_grants_say() {
     let fixture = fixture();
     let executor = WorkloadRoleFamily::ExecutorPlatform;
     assert!(
@@ -1196,19 +1198,19 @@ fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say()
     );
 
     let as_executor = login_url(&fixture.admin, &login);
-    // It has NO tenant context and structurally cannot acquire one: the session
+    // It has NO project context and structurally cannot acquire one: the session
     // derivation is the guest's, and a platform family holds neither `USAGE` on
-    // `wamn_authority` nor `EXECUTE` on it. So BOTH tenants' rows are the
+    // `wamn_authority` nor `EXECUTE` on it. So BOTH projects' rows are the
     // correct answer below — the confinement is the grant set, not a predicate.
     assert_eq!(
         sqlstate(
             &as_executor,
-            "SELECT wamn_authority.current_tenant_key();\n"
+            "SELECT wamn_authority.current_project_key();\n"
         )
         .as_deref(),
         Some("42501"),
         "a platform family reached the guest session derivation; if it can \
-         derive a tenant key, this arm is measuring a guest"
+         derive a project key, this arm is measuring a guest"
     );
     assert_eq!(
         query(&as_executor, "SELECT count(*) FROM wamn_run.runs"),
@@ -1217,30 +1219,32 @@ fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say()
     );
 }
 
-/// THE TENANT-TARGETED PLATFORM MEMBER (`wamn-0h0g.22.25`).
+/// THE PROJECT-TARGETED PLATFORM MEMBER (`wamn-0h0g.22.25`).
 ///
 /// # A premise of that ruling no longer holds
 ///
-/// The ruling named TWO tenant-targeted `wamn_platform` members, the effect
+/// The ruling named TWO project-targeted `wamn_platform` members, the effect
 /// writer and `Retention`. `wamn-0h0g.22.32` then DEMOTED the writer out of the group,
 /// and `wamn-0h0g.10.15` removed the effect-writer family, so `Retention` is the
 /// only subject the arm still has. That is asserted here
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
-fn the_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
+fn the_project_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
     let fixture = fixture();
-    let env_key_targeted_members: Vec<WorkloadRoleFamily> = MATRIX
+    let project_env_key_targeted_members: Vec<WorkloadRoleFamily> = MATRIX
         .iter()
         .map(|reach| reach.family)
         .filter(|family| {
-            matches!(family.identity_kind(), WorkloadRoleIdentityKind::EnvKey)
-                && family.is_platform_grain()
+            matches!(
+                family.identity_type(),
+                WorkloadRoleIdentityType::ProjectEnvKey
+            ) && family.is_platform_grain()
         })
         .collect();
     assert_eq!(
-        env_key_targeted_members,
+        project_env_key_targeted_members,
         vec![WorkloadRoleFamily::Retention],
-        "the set of TENANT-TARGETED platform members moved; wamn-0h0g.22.25 was \
+        "the set of PROJECT-TARGETED platform members moved; wamn-0h0g.22.25 was \
          ruled for exactly the families in this set"
     );
 
@@ -1248,7 +1252,7 @@ fn the_env_key_targeted_platform_member_reads_nothing_outside_its_grants() {
     let as_retention = login_url(&fixture.admin, &login);
     // Its grant set names ONE relation, and the shared arm is USING (true), so
     // the honest assertion is: every row of that relation, and 42501 everywhere
-    // else. The tenant predicate it keeps in its own statements is what
+    // else. The project predicate it keeps in its own statements is what
     // re-narrows it, and that is not a database-enforced boundary.
     assert_eq!(
         query(&as_retention, "SELECT count(*) FROM wamn_run.runs"),
@@ -1312,14 +1316,14 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
     }
 }
 
-/// THE GUEST IS THE ONE FAMILY THE FLOOR CONFINES BY ROW.
+/// THE GUEST IS THE ONE FAMILY THE MINIMUM CONFINES BY ROW.
 ///
 /// Its ACL says `SELECT` on `wamn_run.runs` and the server agrees; what the ACL
-/// cannot say is that it sees ONE tenant's row out of two. This is the arm that
+/// cannot say is that it sees ONE project's row out of two. This is the arm that
 /// separates an isolated credential from a blind one for the family whose
 /// confinement is RLS-shaped rather than grant-shaped.
 #[test]
-fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
+fn the_guest_family_reads_its_own_project_env_key_and_only_its_own() {
     let fixture = fixture();
     let login = generation(WorkloadRoleFamily::App);
     let as_guest = login_url(&fixture.admin, &login);
@@ -1328,21 +1332,21 @@ fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
             &as_guest,
             &format!(
                 "SELECT count(*)::text || ' ' || \
-                        count(*) FILTER (WHERE env_key = '{ENV_KEY_B}')::text \
+                        count(*) FILTER (WHERE project_env_key = '{PROJECT_ENV_KEY_B}')::text \
                    FROM wamn_run.runs"
             ),
         ),
         "1 0",
-        "the guest generation does not read exactly its own tenant's row: a \
-         second row is a CROSS-TENANT READ and zero rows is a silent lockout"
+        "the guest generation does not read exactly its own project's row: a \
+         second row is a CROSS-PROJECT READ and zero rows is a silent lockout"
     );
-    // A settable identity must not move it. The floor keys on `current_user`, and
-    // this shows that the retired `app.env_key` path is inert for the guest.
+    // A settable identity must not move it. The minimum keys on `current_user`, and
+    // this shows that the retired `app.project_env_key` path is inert for the guest.
     assert_eq!(
         query(
             &as_guest,
             &format!(
-                "BEGIN; SET LOCAL app.env_key = '{ENV_KEY_B}'; \
+                "BEGIN; SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_B}'; \
                  SELECT count(*) FROM wamn_run.runs; COMMIT"
             ),
         ),
@@ -1356,7 +1360,7 @@ fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
 // ---------------------------------------------------------------------------
 
 /// The expression every governed relation's index must carry, verbatim.
-const TENANT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.tenant_key(env_key)";
+const PROJECT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.project_key(project_env_key)";
 
 /// EVERY RELATION CARRYING THE GUEST PREDICATE HAS ITS EXPRESSION INDEX, AND
 /// THE EXPRESSION IS READ BACK.
@@ -1373,7 +1377,7 @@ const TENANT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.tenant_key(env_key)";
 /// two-way form is also what removes the need for a second copy of the governed
 /// COUNT: the sets are compared to each other, not to a remembered number.
 #[test]
-fn every_governed_relation_carries_the_tenant_key_expression_index() {
+fn every_governed_relation_carries_the_project_key_expression_index() {
     let fixture = fixture();
     let governed = rows(
         &fixture.db_url,
@@ -1381,7 +1385,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
            FROM pg_catalog.pg_policy p \
            JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%' \
+          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%' \
           ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\"",
     );
     let indexed = rows(
@@ -1393,20 +1397,20 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
               WHERE i.indexprs IS NOT NULL \
                 AND pg_get_expr(i.indexprs, i.indrelid) = CASE WHEN n.nspname = 's2' \
-                    THEN 'wamn_authority.tenant_key(tenant_id)' \
-                    ELSE '{TENANT_KEY_INDEX_EXPRESSION}' END \
+                    THEN 'wamn_authority.project_key(project_id)' \
+                    ELSE '{PROJECT_KEY_INDEX_EXPRESSION}' END \
               ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\""
         ),
     );
     assert_eq!(
         governed, indexed,
-        "the relations carrying the guest tenant predicate and the relations \
-         carrying an index on {TENANT_KEY_INDEX_EXPRESSION} are not the same \
+        "the relations carrying the guest project predicate and the relations \
+         carrying an index on {PROJECT_KEY_INDEX_EXPRESSION} are not the same \
          set: a governed relation missing from the second list makes every guest \
          read non-sargable, and one missing from the first is an index nothing \
          governs"
     );
-    // A floor, so an empty schema cannot satisfy the equality above trivially.
+    // A minimum, so an empty schema cannot satisfy the equality above trivially.
     // The five run-plane relations are named because they are the ones whose
     // policies the platform arms share.
     for relation in ["wamn_run.runs", "wamn_run.environment_policies"] {
@@ -1422,7 +1426,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
             &fixture.db_url,
             "SELECT p.provolatile::text FROM pg_catalog.pg_proc p \
                JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_authority' AND p.proname = 'tenant_key'",
+              WHERE n.nspname = 'wamn_authority' AND p.proname = 'project_key'",
         ),
         "i",
         "the derivation lost IMMUTABLE; the expression indexes above are not \
@@ -1436,25 +1440,25 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
 
 /// `sha256(pg_get_functiondef(...))` for the two authority derivations, PINNED.
 ///
-/// `tenant_key`'s body carries the database name and its octet length, so its
+/// `project_key`'s body carries the database name and its octet length, so its
 /// digest is per-database; this is the value for the `wamn` database
-/// `deploy/sql/postgres-init.sql` creates, which is the database this gate
-/// builds. `current_tenant_key` carries no target and its digest is absolute.
+/// `deploy/sql/postgres-init.sql` creates, which is the database this acceptance test
+/// builds. `current_project_key` carries no target and its digest is absolute.
 ///
 /// Measured on PostgreSQL 18.6. `pg_get_functiondef` is a RENDERING, so a server
 /// that reformats it moves these digests without anything about the derivation
 /// changing; the assertion prints the observed definition so that case is
 /// diagnosable rather than merely red.
 const FROZEN_DERIVATION_DIGESTS: [&str; 2] = [
-    "current_tenant_key 448719229148c4c5051b50ecbe55d70d8ff22bbcf652e3f12387296dd3fa1eb8",
-    "tenant_key 4d12e9a29b297c5e6fa00d39b0f93e4e283f08da734c06ac1ced00f67a5e7a53",
+    "current_project_key 448719229148c4c5051b50ecbe55d70d8ff22bbcf652e3f12387296dd3fa1eb8",
+    "project_key 4d12e9a29b297c5e6fa00d39b0f93e4e283f08da734c06ac1ced00f67a5e7a53",
 ];
 
 /// THE DERIVATIONS ARE FROZEN BY DIGEST.
 ///
-/// An attacker who can redefine `wamn_authority.tenant_key` owns EVERY governed
-/// predicate at once, and `current_tenant_key` is the half worth owning more:
-/// redefining it to return a chosen key unlocks every tenant without touching a
+/// An attacker who can redefine `wamn_authority.project_key` owns EVERY governed
+/// predicate at once, and `current_project_key` is the half worth owning more:
+/// redefining it to return a chosen key unlocks every project without touching a
 /// single policy. Neither can be rewritten without moving a digest here.
 #[test]
 fn the_authority_derivations_match_their_pinned_definition_digest() {
@@ -1492,9 +1496,9 @@ fn authority_derivations_are_not_public_execute() {
         query(
             &fixture.db_url,
             "SELECT has_function_privilege('public', \
-               'wamn_authority.tenant_key(text)', 'EXECUTE')::text || ' ' || \
+               'wamn_authority.project_key(text)', 'EXECUTE')::text || ' ' || \
              has_function_privilege('public', \
-               'wamn_authority.current_tenant_key()', 'EXECUTE')::text",
+               'wamn_authority.current_project_key()', 'EXECUTE')::text",
         ),
         "false false",
         "PUBLIC must not execute the authority derivations"
@@ -1600,7 +1604,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
 // THE PASS-ALL POLICIES of the control database
 // ---------------------------------------------------------------------------
 
-/// Every table of the control database has a tenant, so no policy admits
+/// Every table of the control database has a project, so no policy admits
 /// every row. Read from the server.
 #[test]
 fn no_control_policy_passes_every_row() {
@@ -1617,6 +1621,6 @@ fn no_control_policy_passes_every_row() {
               ORDER BY (n.nspname || '.' || c.relname || ' ' || p.polname) COLLATE \"C\"",
         ),
         Vec::<String>::new(),
-        "a pass-all policy exists on a table that has a tenant"
+        "a pass-all policy exists on a table that has a project"
     );
 }

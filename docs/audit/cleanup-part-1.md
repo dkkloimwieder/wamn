@@ -59,7 +59,7 @@ The explicit out-of-target list was the hard stop, and named deletions were in t
   - part 2: `deploy/platform/values-host-receiving-pat.yaml`, read by `host_values_files.rs:76,154` and `apps/wamn_receiving/tests/route_authentication_live/cluster.rs:578`.
   - part 2: `deploy/infra/cnpg-cluster.yaml`, read by `test-support/infrastructure/delivery_cluster.rs:438` and `crates/control/lib/tests/environment_apply_kind.rs:846`.
 - G2-1 adds a lock-under-queued-prune case that does not use a version bump.
-- `test-support/harness/src/case_release.rs:704` writes `floors`, which blocks the Rust field, the KCL declaration and the fixture blocks.
+- `test-support/harness/src/case_release.rs:704` writes `minimums`, which blocks the Rust field, the KCL declaration and the fixture blocks.
 - `test-support/fixture-package/src/lib.rs:79,83,93` blocks removal of fixture upgrade support and `predecessor_version`.
 - `delivery/environment.rs` ENVIRONMENTS, path and read lost their production caller.
 - part 2b (owner ruling 2026-11-03): `deploy/infra/cnpg-cluster.yaml`, read by the hard stop `crates/control/lib/src/platform/journey.rs:103`.

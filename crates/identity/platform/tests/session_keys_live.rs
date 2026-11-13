@@ -380,7 +380,7 @@ async fn relay_until_commit(
     upstream.write_u32(length).await?;
     upstream.write_all(&payload).await?;
     loop {
-        let kind = frontend.read_u8().await?;
+        let type_ = frontend.read_u8().await?;
         let length = frontend.read_u32().await?;
         assert!(
             (4..=65_536).contains(&length),
@@ -388,15 +388,15 @@ async fn relay_until_commit(
         );
         payload.resize(length as usize - 4, 0);
         frontend.read_exact(&mut payload).await?;
-        if kind == b'Q' && payload == b"COMMIT\0" {
+        if type_ == b'Q' && payload == b"COMMIT\0" {
             held.send(()).expect("test stopped observing COMMIT");
             release.await.expect("test did not release COMMIT");
-            upstream.write_u8(kind).await?;
+            upstream.write_u8(type_).await?;
             upstream.write_u32(length).await?;
             upstream.write_all(&payload).await?;
             return Ok(());
         }
-        upstream.write_u8(kind).await?;
+        upstream.write_u8(type_).await?;
         upstream.write_u32(length).await?;
         upstream.write_all(&payload).await?;
     }

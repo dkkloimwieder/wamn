@@ -19,8 +19,8 @@ use crate::workload::HostObservation;
 /// How long the A1 probe waits for a host it must not get.
 const PROBE_WAIT: Duration = Duration::from_secs(120);
 
-/// The namespaced kinds whose objects an environment owns, or its owners create.
-const OWNED_KINDS: [&str; 7] = [
+/// The namespaced types whose objects an environment owns, or its owners create.
+const OWNED_TYPES: [&str; 7] = [
     "deployments",
     "services",
     "workloaddeployments",
@@ -455,9 +455,9 @@ pub async fn environments_isolated(
     );
     let mut owned_names = BTreeMap::<&str, Vec<String>>::new();
     let mut shared = Vec::new();
-    for kind in OWNED_KINDS {
+    for type_ in OWNED_TYPES {
         let names =
-            checked(kubectl(cluster, work).args(["-n", namespace, "get", kind, "-o", "name"]))
+            checked(kubectl(cluster, work).args(["-n", namespace, "get", type_, "-o", "name"]))
                 .await?;
         for object in String::from_utf8(names)?.lines() {
             let owners: Vec<&Environment> = environments
@@ -525,13 +525,13 @@ pub async fn environments_isolated(
     Ok(observed)
 }
 
-/// The objects of `kind` in the release namespace whose owner has `uid`.
-pub async fn owned(release: &Release<'_>, kind: &str, uid: &str) -> anyhow::Result<Vec<Value>> {
+/// The objects of `type` in the release namespace whose owner has `uid`.
+pub async fn owned(release: &Release<'_>, type_: &str, uid: &str) -> anyhow::Result<Vec<Value>> {
     let objects = command_json(kubectl(release.cluster, release.work).args([
         "-n",
         release.namespace,
         "get",
-        kind,
+        type_,
         "-o",
         "json",
     ]))
@@ -547,13 +547,13 @@ pub async fn owned(release: &Release<'_>, kind: &str, uid: &str) -> anyhow::Resu
         .collect())
 }
 
-/// One object of `kind` named `name` in the release namespace.
-pub async fn get(release: &Release<'_>, kind: &str, name: &str) -> anyhow::Result<Value> {
+/// One object of `type` named `name` in the release namespace.
+pub async fn get(release: &Release<'_>, type_: &str, name: &str) -> anyhow::Result<Value> {
     command_json(kubectl(release.cluster, release.work).args([
         "-n",
         release.namespace,
         "get",
-        kind,
+        type_,
         name,
         "-o",
         "json",

@@ -378,10 +378,10 @@ fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
     secrets.push(oauth);
     // cert-manager issues the environment's NATS certificate, which the host
     // mounts as its data certificate (docs/plan/alignment.md R5).
-    let env_key =
+    let project_env_key =
         wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
     secrets.push(prerequisite(
-        &format!("wamn-nats-{env_key}"),
+        &format!("wamn-nats-{project_env_key}"),
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
     ));

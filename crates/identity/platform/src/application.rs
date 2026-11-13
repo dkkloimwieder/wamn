@@ -55,7 +55,7 @@ pub struct ApplicationUser<'a> {
 }
 
 /// Refuse a project database without platform rows. The database is the org
-/// boundary, so its rows name no tenant: the caller derives the tenant of
+/// boundary, so its rows name no project: the caller derives the project of
 /// the environment from its triple (`project_env_key`).
 pub async fn require_platform_rows(
     client: &(impl GenericClient + Sync),
@@ -79,7 +79,7 @@ pub async fn require_platform_rows(
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     status: crate::org::EnvironmentStatus,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -87,14 +87,14 @@ pub async fn write_environment_status(
         .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&status.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.env_key(env_key);
+    drops.project_env_key(project_env_key);
     Ok(())
 }
 
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -109,14 +109,14 @@ pub async fn write_user(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, user.principal_id.to_string().as_str());
+    drops.principal(project_env_key, user.principal_id.to_string().as_str());
     Ok(())
 }
 
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     service: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -131,7 +131,7 @@ pub async fn write_service(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, service.principal_id.to_string().as_str());
+    drops.principal(project_env_key, service.principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -139,11 +139,11 @@ pub async fn write_service(
 /// when the environment has none yet.
 pub async fn write_admin(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    write_user(client, env_key, user, drops).await?;
+    write_user(client, project_env_key, user, drops).await?;
     client
         .execute(ROLE_SQL, &[&ADMIN_ROLE])
         .await
@@ -161,7 +161,7 @@ pub async fn write_admin(
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -172,7 +172,7 @@ pub async fn remove_admin(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, principal_id.to_string().as_str());
+    drops.principal(project_env_key, principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -180,7 +180,7 @@ pub async fn remove_admin(
 /// rows and its API keys.
 pub async fn remove_user(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -188,7 +188,7 @@ pub async fn remove_user(
         .execute(DROP_USER_ROW_SQL, &[&principal_id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, principal_id.to_string().as_str());
+    drops.principal(project_env_key, principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -306,13 +306,13 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
     WHERE role_name = $1 AND permission = $2";
 
 // The writes below run in a transaction that the caller prepared: it holds
-// the tenant's operation grant lock and binds the actor of the writes.
+// the project's operation grant lock and binds the actor of the writes.
 // `wamn-ctl` binds `wamn:provisioning`, and a host route binds its caller.
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -332,7 +332,7 @@ pub async fn create_role(
         .execute(ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.env_key(env_key);
+    drops.project_env_key(project_env_key);
     Ok(written == 1)
 }
 
@@ -340,7 +340,7 @@ pub async fn create_role(
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -351,7 +351,7 @@ pub async fn delete_role(
         .execute(DROP_ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.env_key(env_key);
+    drops.project_env_key(project_env_key);
     Ok(removed == 1)
 }
 
@@ -380,7 +380,7 @@ pub async fn require_role(
 /// release serves it or not.
 async fn grant_permission(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -389,7 +389,7 @@ async fn grant_permission(
         .execute(PERMISSION_SQL, &[&role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.env_key(env_key);
+    drops.project_env_key(project_env_key);
     Ok(PermissionGrantOutcome { rows_added })
 }
 
@@ -397,7 +397,7 @@ async fn grant_permission(
 /// does not hold refuses.
 async fn revoke_permission(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -413,7 +413,7 @@ async fn revoke_permission(
         }
         .into());
     }
-    drops.env_key(env_key);
+    drops.project_env_key(project_env_key);
     Ok(())
 }
 
@@ -421,7 +421,7 @@ async fn revoke_permission(
 /// changes nothing.
 async fn grant_user_role(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -430,7 +430,7 @@ async fn grant_user_role(
         .execute(USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, user_id);
+    drops.principal(project_env_key, user_id);
     Ok(written == 1)
 }
 
@@ -438,7 +438,7 @@ async fn grant_user_role(
 /// does not hold changes nothing.
 async fn revoke_user_role(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -447,7 +447,7 @@ async fn revoke_user_role(
         .execute(DROP_USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, user_id);
+    drops.principal(project_env_key, user_id);
     Ok(removed == 1)
 }
 
@@ -563,7 +563,7 @@ pub async fn project_authority(
         &[&principal.to_string().as_str(), &coordinate.org, &coordinate.project, &coordinate.env],
     ).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
-        return remove_user(target, coordinate.env_key, principal, drops).await;
+        return remove_user(target, coordinate.project_env_key, principal, drops).await;
     };
     let type_: String = row.get(0);
     let active = row.get::<_, String>(1) == "active";
@@ -587,7 +587,7 @@ pub async fn project_authority(
             let email = format!("{}@{domain}", row.get::<_, String>(4));
             write_service(
                 target,
-                coordinate.env_key,
+                coordinate.project_env_key,
                 ApplicationUser {
                     principal_id: principal,
                     email: &email,
@@ -609,14 +609,14 @@ pub async fn project_authority(
                 )
                 .await
                 .map_err(|error| database_error(&error))?;
-            drops.principal(coordinate.env_key, principal.to_string().as_str());
+            drops.principal(coordinate.project_env_key, principal.to_string().as_str());
         } else {
-            remove_admin(target, coordinate.env_key, principal, drops).await?;
+            remove_admin(target, coordinate.project_env_key, principal, drops).await?;
         }
         return Ok(());
     }
     if type_ != "user" || !active || !row.get::<_, bool>(5) || !row.get::<_, bool>(6) {
-        return remove_user(target, coordinate.env_key, principal, drops).await;
+        return remove_user(target, coordinate.project_env_key, principal, drops).await;
     }
     let email: String = row.get(2);
     let display_name: String = row.get(3);
@@ -626,10 +626,10 @@ pub async fn project_authority(
         display_name: &display_name,
     };
     if admin {
-        write_admin(target, coordinate.env_key, user, drops).await
+        write_admin(target, coordinate.project_env_key, user, drops).await
     } else {
-        write_user(target, coordinate.env_key, user, drops).await?;
-        remove_admin(target, coordinate.env_key, principal, drops).await
+        write_user(target, coordinate.project_env_key, user, drops).await?;
+        remove_admin(target, coordinate.project_env_key, principal, drops).await
     }
 }
 
@@ -639,7 +639,7 @@ pub struct ApplicationTarget<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub env: &'a str,
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
 }
 
 /// The authenticated actor of an authored application grant.
@@ -681,7 +681,7 @@ pub fn permission_is_grantable(reference: &str) -> bool {
 /// The caller serializes role and permission writes with the application lock.
 pub async fn mutate_grant(
     client: &(impl GenericClient + Sync),
-    env_key: &str,
+    project_env_key: &str,
     authority: GrantAuthority<'_>,
     change: GrantChange<'_>,
     drops: &mut AuthDrops,
@@ -748,9 +748,9 @@ pub async fn mutate_grant(
                 require_user(client, user_id).await?;
             }
             let changed = if grant {
-                grant_user_role(client, env_key, user_id, role, drops).await?
+                grant_user_role(client, project_env_key, user_id, role, drops).await?
             } else {
-                revoke_user_role(client, env_key, user_id, role, drops).await?
+                revoke_user_role(client, project_env_key, user_id, role, drops).await?
             };
             return Ok(GrantOutcome {
                 changed,
@@ -762,7 +762,7 @@ pub async fn mutate_grant(
             reference,
             grant: true,
         } => {
-            grant_permission(client, env_key, role, reference, drops)
+            grant_permission(client, project_env_key, role, reference, drops)
                 .await?
                 .rows_added
         }
@@ -771,7 +771,7 @@ pub async fn mutate_grant(
             reference,
             grant: false,
         } => {
-            revoke_permission(client, env_key, role, reference, drops).await?;
+            revoke_permission(client, project_env_key, role, reference, drops).await?;
             return Ok(GrantOutcome {
                 changed: true,
                 rows_added: 0,
@@ -784,7 +784,7 @@ pub async fn mutate_grant(
     })
     }.await;
     result.map_err(|source| GrantError {
-        env_key: env_key.to_owned(),
+        project_env_key: project_env_key.to_owned(),
         source,
     })
 }
@@ -792,7 +792,7 @@ pub async fn mutate_grant(
 /// A failed application mutation with its environment and original error.
 #[derive(Debug)]
 pub struct GrantError {
-    env_key: String,
+    project_env_key: String,
     source: AdministrationError,
 }
 
@@ -810,7 +810,7 @@ impl fmt::Display for GrantError {
         write!(
             formatter,
             "application grant in {}: {}",
-            self.env_key, self.source
+            self.project_env_key, self.source
         )
     }
 }

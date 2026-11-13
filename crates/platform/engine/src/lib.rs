@@ -17,7 +17,7 @@
 //!   implements it over its own store.
 //! - [`expected_router`]: the native HTTP router that refuses an unbound
 //!   release hostname as unavailable.
-//! - [`component_admission`]: pure byte admission for tenant components.
+//! - [`component_admission`]: pure byte admission for project components.
 //! - [`component_artifact`]: the wire contract for digest-addressed component
 //!   artifacts.
 //! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)

@@ -4,7 +4,7 @@
 -- provisioning bind wamn:provisioning. Release connections and bindings also log history.
 
 CREATE TABLE catalog.packages (
-    env_key            text        NOT NULL CHECK (env_key <> ''),
+    project_env_key            text        NOT NULL CHECK (project_env_key <> ''),
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
     registered_at      timestamptz NOT NULL DEFAULT now(),
@@ -19,7 +19,7 @@ CREATE TABLE catalog.packages (
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
-    CONSTRAINT packages_pkey PRIMARY KEY (env_key, package_id),
+    CONSTRAINT packages_pkey PRIMARY KEY (project_env_key, package_id),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     CONSTRAINT packages_package_version_check CHECK (
@@ -45,9 +45,9 @@ AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         NEW.baseline_fingerprint := NEW.physical_schema_fingerprint;
-    ELSIF ROW(NEW.env_key, NEW.package_id, NEW.baseline_fingerprint, NEW.registered_at)
+    ELSIF ROW(NEW.project_env_key, NEW.package_id, NEW.baseline_fingerprint, NEW.registered_at)
           IS DISTINCT FROM
-          ROW(OLD.env_key, OLD.package_id, OLD.baseline_fingerprint, OLD.registered_at) THEN
+          ROW(OLD.project_env_key, OLD.package_id, OLD.baseline_fingerprint, OLD.registered_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-baseline-immutable';
     END IF;
     RETURN NEW;
@@ -61,7 +61,7 @@ CREATE TRIGGER packages_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TABLE catalog.package_migrations (
-    env_key         text        NOT NULL CHECK (env_key <> ''),
+    project_env_key         text        NOT NULL CHECK (project_env_key <> ''),
     package_id      text        NOT NULL CHECK (package_id <> ''),
     package_version text        NOT NULL CHECK (package_version <> ''),
     ordinal         int         NOT NULL CHECK (ordinal > 0),
@@ -74,9 +74,9 @@ CREATE TABLE catalog.package_migrations (
     updated_at      timestamptz NOT NULL,
     updated_by      uuid        NOT NULL,
     CONSTRAINT package_migrations_pkey
-        PRIMARY KEY (env_key, package_id, ordinal),
+        PRIMARY KEY (project_env_key, package_id, ordinal),
     CONSTRAINT package_migrations_path_key
-        UNIQUE (env_key, package_id, relative_path),
+        UNIQUE (project_env_key, package_id, relative_path),
     CONSTRAINT package_migrations_completion_check
         CHECK ((outcome = 'applied') = (applied_at IS NOT NULL))
 );
@@ -88,14 +88,14 @@ CREATE FUNCTION catalog.guard_migration_outcome()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.outcome = 'adopted' AND OLD.outcome <> 'started'
-       AND ROW(NEW.env_key, NEW.package_id, NEW.ordinal)
-           IS NOT DISTINCT FROM ROW(OLD.env_key, OLD.package_id, OLD.ordinal) THEN
+       AND ROW(NEW.project_env_key, NEW.package_id, NEW.ordinal)
+           IS NOT DISTINCT FROM ROW(OLD.project_env_key, OLD.package_id, OLD.ordinal) THEN
         RETURN NEW;
     END IF;
-    IF ROW(NEW.env_key, NEW.package_id, NEW.package_version, NEW.ordinal,
+    IF ROW(NEW.project_env_key, NEW.package_id, NEW.package_version, NEW.ordinal,
            NEW.relative_path, NEW.sha256)
        IS DISTINCT FROM
-       ROW(OLD.env_key, OLD.package_id, OLD.package_version, OLD.ordinal,
+       ROW(OLD.project_env_key, OLD.package_id, OLD.package_version, OLD.ordinal,
            OLD.relative_path, OLD.sha256)
        OR OLD.outcome <> 'started' OR NEW.outcome <> 'applied' THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-migration-immutable';
@@ -119,7 +119,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- map: shared relations retain their source package while fields and named
 -- constraints added by an overlay retain their own package owner.
 CREATE TABLE catalog.package_definition_owners (
-    env_key                text    NOT NULL CHECK (env_key <> ''),
+    project_env_key                text    NOT NULL CHECK (project_env_key <> ''),
     schema_name            text    NOT NULL
         CHECK (schema_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     relation_name          text    NOT NULL
@@ -136,7 +136,7 @@ CREATE TABLE catalog.package_definition_owners (
     updated_at             timestamptz NOT NULL,
     updated_by             uuid        NOT NULL,
     CONSTRAINT package_definition_owners_pkey PRIMARY KEY (
-        env_key, schema_name, relation_name, definition_type, definition_name
+        project_env_key, schema_name, relation_name, definition_type, definition_name
     ),
     CONSTRAINT package_definition_owners_relation_shape_check CHECK (
         definition_type <> 'relation' OR definition_name = relation_name
@@ -153,11 +153,11 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- Cached application releases coexist without selecting executable code. The manifest
 -- digest is the release; this row is an immutable cache of the canonical
--- manifest bytes, and the bytes must hash to the digest. env_key is the RLS
+-- manifest bytes, and the bytes must hash to the digest. project_env_key is the RLS
 -- target of the row, not part of the release identity. Package membership and
 -- the component closure are read from the bytes.
 CREATE TABLE catalog.releases (
-    env_key         text        NOT NULL CHECK (env_key <> ''),
+    project_env_key         text        NOT NULL CHECK (project_env_key <> ''),
     manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     canonical_bytes bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
     recorded_at     timestamptz NOT NULL DEFAULT now(),
@@ -165,7 +165,7 @@ CREATE TABLE catalog.releases (
     created_by      uuid        NOT NULL,
     updated_at      timestamptz NOT NULL,
     updated_by      uuid        NOT NULL,
-    CONSTRAINT releases_pkey PRIMARY KEY (env_key, manifest_digest),
+    CONSTRAINT releases_pkey PRIMARY KEY (project_env_key, manifest_digest),
     CONSTRAINT releases_exact_hash
         CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
@@ -202,17 +202,17 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
 
 CREATE TABLE catalog.connection_requirement (
-    env_key text NOT NULL,
+    project_env_key text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id text NOT NULL,
     name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
     interface text NOT NULL,
     mode text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, component_digest, package_id, name)
 );
 
 CREATE TABLE catalog.release_connection (
-    env_key text NOT NULL,
+    project_env_key text NOT NULL,
     manifest_digest text NOT NULL,
     connection_id uuid NOT NULL,
     version integer NOT NULL,
@@ -220,13 +220,13 @@ CREATE TABLE catalog.release_connection (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest),
+    PRIMARY KEY (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, manifest_digest) REFERENCES catalog.releases (project_env_key, manifest_digest),
     FOREIGN KEY (connection_id) REFERENCES platform.connection (id)
 );
 
 CREATE TABLE catalog.connection_binding (
-    env_key text NOT NULL,
+    project_env_key text NOT NULL,
     manifest_digest text NOT NULL,
     component_digest text NOT NULL,
     package_id text NOT NULL,
@@ -236,11 +236,11 @@ CREATE TABLE catalog.connection_binding (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (env_key, manifest_digest, connection_id)
-        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, component_digest, package_id, name)
-        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, manifest_digest, component_digest, package_id, name),
+    FOREIGN KEY (project_env_key, manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (project_env_key, component_digest, package_id, name)
 );
 
 DO $connection_history$
@@ -256,7 +256,7 @@ BEGIN
 END $connection_history$;
 
 CREATE TABLE catalog.wiring_tombstones (
-    env_key     text        NOT NULL CHECK (env_key <> ''),
+    project_env_key     text        NOT NULL CHECK (project_env_key <> ''),
     package_id  text        NOT NULL CHECK (package_id <> ''),
     environment text        NOT NULL CHECK (environment <> ''),
     wiring_id   text        NOT NULL CHECK (wiring_id <> ''),
@@ -267,7 +267,7 @@ CREATE TABLE catalog.wiring_tombstones (
     updated_at  timestamptz NOT NULL,
     updated_by  uuid        NOT NULL,
     CONSTRAINT wiring_tombstones_pkey
-        PRIMARY KEY (env_key, package_id, environment, wiring_id)
+        PRIMARY KEY (project_env_key, package_id, environment, wiring_id)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -276,11 +276,11 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- One version of one workflow of an environment (docs/plan/workflows.md R8).
--- The control connection writes it after `author_workflow` gates the graph
+-- The control connection writes it after `author_workflow` evaluates the graph conditions
 -- against the serving release. A version row is immutable except `enabled`,
 -- and at most one version of a workflow is enabled.
 CREATE TABLE catalog.workflows (
-    env_key        text        NOT NULL CHECK (env_key <> ''),
+    project_env_key        text        NOT NULL CHECK (project_env_key <> ''),
     environment    text        NOT NULL CHECK (environment <> ''),
     application    text        NOT NULL CHECK (application <> ''),
     workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
@@ -301,7 +301,7 @@ CREATE TABLE catalog.workflows (
     created_by     uuid        NOT NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT workflows_pkey
-        PRIMARY KEY (env_key, environment, application, workflow_id, version),
+        PRIMARY KEY (project_env_key, environment, application, workflow_id, version),
     CONSTRAINT workflows_execution_identity_check
         CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
     CONSTRAINT workflows_schedule_check
@@ -322,7 +322,7 @@ CREATE TABLE catalog.workflows (
             AND ops IS NULL AND condition IS NULL AND enable_sequence IS NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
-    ON catalog.workflows (env_key, environment, application, workflow_id)
+    ON catalog.workflows (project_env_key, environment, application, workflow_id)
     WHERE enabled;
 
 CREATE FUNCTION catalog.guard_workflow_update()
@@ -330,12 +330,12 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.env_key, NEW.environment, NEW.application, NEW.workflow_id,
+    IF ROW(NEW.project_env_key, NEW.environment, NEW.application, NEW.workflow_id,
            NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
-       ROW(OLD.env_key, OLD.environment, OLD.application, OLD.workflow_id,
+       ROW(OLD.project_env_key, OLD.environment, OLD.application, OLD.workflow_id,
            OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
@@ -357,9 +357,9 @@ CREATE TRIGGER workflows_delete_immutable
     BEFORE DELETE ON catalog.workflows
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
--- Tenant floors are one mechanism applied to the complete current relation
+-- Project base grants are one mechanism applied to the complete current relation
 -- set. The server catalog, rather than checked-in SQL text, shows the result.
-DO $tenant_floors$
+DO $project_base_grants$
 DECLARE
     relation_name text;
 BEGIN
@@ -372,20 +372,20 @@ BEGIN
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
         EXECUTE format(
-            'CREATE POLICY %I ON catalog.%I TO wamn_app USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()) WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())',
-            relation_name || '_tenant', relation_name
+            'CREATE POLICY %I ON catalog.%I TO wamn_app USING (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()) WITH CHECK (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key())',
+            relation_name || '_project', relation_name
         );
         EXECUTE format(
             'CREATE POLICY %I ON catalog.%I AS PERMISSIVE FOR ALL TO wamn_platform USING (true) WITH CHECK (true)',
             relation_name || '_platform', relation_name
         );
         EXECUTE format(
-            'CREATE INDEX %I ON catalog.%I ((wamn_authority.tenant_key(env_key)))',
+            'CREATE INDEX %I ON catalog.%I ((wamn_authority.project_key(project_env_key)))',
             relation_name || '_tkey', relation_name
         );
     END LOOP;
 END
-$tenant_floors$;
+$project_base_grants$;
 
 -- Immutable facts reject both mutation and removal. Heads and connection
 -- instances are the deliberately mutable control rows.

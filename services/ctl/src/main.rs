@@ -29,7 +29,7 @@ struct Cli {
 
 /// The verbs the shipped `wamn-ctl` binary carries.
 ///
-/// DO NOT gate a variant here on the `ops` feature. The `build-ctl` stage in
+/// DO NOT condition a variant here on the `ops` feature. The `build-ctl` stage in
 /// `Dockerfile` builds this binary with NO features (`cargo build --locked
 /// --release -p wamn-ctl`) and passes `--features ops` only to the separate
 /// `wamn-ctl-ops` binary on the next line. A variant added here behind
@@ -98,7 +98,7 @@ enum Command {
     /// Publish one application's immutable release from verified registry artifacts.
     /// No destination database or provisioned environment is required.
     PublishRelease(release_verbs::PublishReleaseArgs),
-    /// Print the SQL that creates the platform principal rows of one tenant.
+    /// Print the SQL that creates the platform principal rows of one project.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Author, enable, disable and list workflows, and start, park, release and list runs.
     #[command(subcommand)]

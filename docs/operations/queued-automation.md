@@ -51,7 +51,7 @@ The command prints the stored run id.
 `--application` names an application that the environment document declares under `applications`.
 The host refuses another name with `application_not_declared`.
 The host admits the enabled version against the release it serves.
-It gates the graph against that release and refuses `workflow_not_served` when the graph does not gate or its hash differs from the stored hash.
+It evaluates the graph conditions against that release and refuses `workflow_not_served` when the graph fails its conditions or its hash differs from the stored hash.
 A workflow with no enabled version refuses `workflow_not_enabled`.
 The run records the release, the graph hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
 An identical retry by the same caller returns that id and creates no second queue row.

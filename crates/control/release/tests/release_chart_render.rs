@@ -83,7 +83,7 @@ fn input(env: &str) -> ValuesInput {
     .expect("yaml");
     group.insert("env".into(), base);
     let mut config = Mapping::new();
-    config.insert("wamn.env_key".into(), "acme".into());
+    config.insert("wamn.project_env_key".into(), "acme".into());
     ValuesInput {
         org: "acme".into(),
         project: "wms".into(),
@@ -321,8 +321,12 @@ fn web_only_changes_leave_all_workloads_byte_equal() {
             .collect()
     };
     let before = documents(&before);
-    assert!(before.keys().any(|(kind, _)| kind == "Deployment"));
-    assert!(before.keys().any(|(kind, _)| kind == "WorkloadDeployment"));
+    assert!(before.keys().any(|(type_, _)| type_ == "Deployment"));
+    assert!(
+        before
+            .keys()
+            .any(|(type_, _)| type_ == "WorkloadDeployment")
+    );
     // Each edit changes one web map only. All other objects, including every
     // Deployment, StatefulSet and workload pod template, keep their exact bytes.
     for key in ["webDigests", "webClients"] {

@@ -165,7 +165,7 @@ impl StatementError {
     }
 
     fn from_postgres(source: wire::PgError) -> Self {
-        let (kind, constraint, context) = match source {
+        let (type_, constraint, context) = match source {
             wire::PgError::SerializationFailure => (
                 StatementErrorType::SerializationFailure,
                 None,
@@ -222,7 +222,7 @@ impl StatementError {
             }
         };
         Self {
-            type_: kind,
+            type_,
             statement: None,
             constraint,
             contract_mismatch: None,

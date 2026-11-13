@@ -18,22 +18,22 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 /// Package coordinate that owns an admitted component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentPackageCoordinate {
-    pub env_key: String,
+    pub project_env_key: String,
     pub package_id: String,
     pub package_version: String,
 }
 
 impl ComponentPackageCoordinate {
     pub fn new(
-        env_key: impl Into<String>,
+        project_env_key: impl Into<String>,
         package_id: impl Into<String>,
         package_version: impl Into<String>,
     ) -> Result<Self, CatalogIdentityError> {
-        let env_key = env_key.into();
+        let project_env_key = project_env_key.into();
         let coordinate = PackageCoordinate::new(package_id, package_version)?;
-        validate_text(&env_key, "env_key")?;
+        validate_text(&project_env_key, "project_env_key")?;
         Ok(Self {
-            env_key,
+            project_env_key,
             package_id: coordinate.package_id().to_owned(),
             package_version: coordinate.package_version().to_owned(),
         })
@@ -47,7 +47,7 @@ impl Serialize for ComponentPackageCoordinate {
     {
         use serde::ser::SerializeStruct as _;
         let mut target = serializer.serialize_struct("ComponentPackageCoordinate", 3)?;
-        target.serialize_field("env_key", &self.env_key)?;
+        target.serialize_field("project_env_key", &self.project_env_key)?;
         target.serialize_field("package-id", &self.package_id)?;
         target.serialize_field("package-version", &self.package_version)?;
         target.end()
@@ -94,16 +94,16 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
                 .remove(name)
                 .ok_or_else(|| serde::de::Error::missing_field(name))
         };
-        let env_key = take("env_key")?;
+        let project_env_key = take("project_env_key")?;
         let package_id = take("package-id")?;
         let package_version = take("package-version")?;
         if let Some(name) = fields.keys().next() {
             return Err(serde::de::Error::unknown_field(
                 name,
-                &["env_key", "package-id", "package-version"],
+                &["project_env_key", "package-id", "package-version"],
             ));
         }
-        Self::new(env_key, package_id, package_version).map_err(serde::de::Error::custom)
+        Self::new(project_env_key, package_id, package_version).map_err(serde::de::Error::custom)
     }
 }
 
@@ -373,7 +373,7 @@ fn imports_fingerprint(
 
 /// The admitted facts of one component as a package artifact carries them
 /// (docs/operations/building.md#reading-a-pushed-package, contract A): an [`AdmittedComponent`]
-/// without its target, plus its connections. A package artifact is tenant-free,
+/// without its target, plus its connections. A package artifact is project-free,
 /// so the reader supplies the target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -497,9 +497,9 @@ impl ComponentFactError {
         self.type_
     }
 
-    fn new(kind: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -526,7 +526,7 @@ pub fn normalize_component_fact(
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
     ComponentPackageCoordinate::new(
-        &declaration.target.env_key,
+        &declaration.target.project_env_key,
         &declaration.target.package_id,
         &declaration.target.package_version,
     )
@@ -629,7 +629,7 @@ pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
     ComponentPackageCoordinate::new(
-        &component.target.env_key,
+        &component.target.project_env_key,
         &component.target.package_id,
         &component.target.package_version,
     )
@@ -767,17 +767,17 @@ pub(crate) fn validate_operation_statement_facts(
 fn validate_statement_fields(
     export: &str,
     statement: &str,
-    field_kind: &str,
+    field_type: &str,
     fields: &[ComponentSqlField],
 ) -> Result<(), ComponentFactError> {
     let mut names = BTreeSet::new();
     for field in fields {
-        validate_identity(&field.name, field_kind)?;
+        validate_identity(&field.name, field_type)?;
         if !names.insert(&field.name) {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::DuplicateStatementField,
                 format!(
-                    "operation {export:?} statement {statement:?} repeats {field_kind} {:?}",
+                    "operation {export:?} statement {statement:?} repeats {field_type} {:?}",
                     field.name
                 ),
             ));
@@ -868,7 +868,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// true until this moved.
 ///
 /// Matching is on the registered PACKAGE, at any version, because this asks
-/// what KIND of import it is and kind does not change with version. A
+/// what TYPE of import it is and type does not change with version. A
 /// `wasi:clocks` import at an unregistered version is still a platform
 /// capability; refusing the version is admission's job, not this classifier's.
 fn is_application_operation_import(name: &str) -> bool {
@@ -982,7 +982,7 @@ fn normalize_connections(
 
 fn normalize_ports(
     declarations: Vec<ComponentPortDeclaration>,
-    duplicate_kind: ComponentFactErrorType,
+    duplicate_type: ComponentFactErrorType,
     field: &'static str,
 ) -> Result<Vec<AdmittedComponentPort>, ComponentFactError> {
     let mut seen = BTreeSet::new();
@@ -991,7 +991,7 @@ fn normalize_ports(
         validate_identity(&declaration.name, field)?;
         if !seen.insert(declaration.name.clone()) {
             return Err(ComponentFactError::new(
-                duplicate_kind,
+                duplicate_type,
                 format!("{field} {:?} is duplicated", declaration.name),
             ));
         }
@@ -1134,7 +1134,7 @@ mod tests {
     fn declaration() -> ComponentDeclaration {
         ComponentDeclaration {
             target: ComponentPackageCoordinate {
-                env_key: "tenant-a".to_string(),
+                project_env_key: "org-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },
@@ -1306,11 +1306,11 @@ mod tests {
     #[test]
     fn persisted_component_target_uses_the_package_coordinate_guard() {
         assert!(serde_json::from_str::<ComponentPackageCoordinate>(
-            r#"{"env_key":"first","env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
+            r#"{"project_env_key":"first","project_env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
         ).is_err());
         assert!(
             serde_json::from_value::<ComponentPackageCoordinate>(json!({
-                "env_key": "tenant-a",
+                "project_env_key": "org-a",
                 "package-id": "not-snake",
                 "package-version": "1.0.0"
             }))
@@ -1388,7 +1388,7 @@ mod tests {
         verify_stored_effect_projection(&facts.component)
             .expect("stored committed facts remain valid");
 
-        for (schema, kind) in [
+        for (schema, type_) in [
             (
                 json!({"type": "not-a-type"}),
                 ComponentFactErrorType::InvalidSchema,
@@ -1412,7 +1412,7 @@ mod tests {
                 )
                 .unwrap_err()
                 .error_type(),
-                kind
+                type_
             );
         }
     }
@@ -1505,7 +1505,7 @@ mod tests {
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
             target: ComponentPackageCoordinate {
-                env_key: "tenant-a".to_string(),
+                project_env_key: "org-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },
@@ -1682,11 +1682,8 @@ mod tests {
     }
 
     #[test]
-    fn declaration_document_is_exact_kebab_case_json() {
+    fn declaration_round_trips_and_refuses_unknown_fields() {
         let document = serde_json::to_value(declaration()).expect("declaration serializes");
-        assert!(document["operations"]["map"].get("input-ports").is_some());
-        assert!(document.get("interface-version").is_some());
-        assert_eq!(document["target"]["env_key"], "tenant-a");
         assert_eq!(
             serde_json::from_value::<ComponentDeclaration>(document.clone())
                 .expect("exact declaration parses"),

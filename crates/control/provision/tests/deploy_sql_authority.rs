@@ -1,13 +1,13 @@
-//! The hand-written DDL's tenant floor derives from `current_user`.
+//! The hand-written DDL's project base grants derives from `current_user`.
 //!
-//! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
+//! `wamn-0h0g.22.6.3` established the guest project base grants across four artifacts;
 //! the current package-era relation set contains 21 governed relations, all off
-//! the settable `app.env_key` identity and onto
-//! `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
+//! the settable `app.project_env_key` identity and onto
+//! `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
-//! `wamn-0h0g.22.17` gave every governed relation a SECOND arm. The floor is the GUEST
-//! floor, narrowed `TO wamn_app`; PostgreSQL default-denies when RLS is enabled
+//! `wamn-0h0g.22.17` gave every governed relation a SECOND arm. The minimum is the GUEST
+//! minimum, narrowed `TO wamn_app`; PostgreSQL default-denies when RLS is enabled
 //! and no policy matches the connected role, so that narrowing LOCKS OUT every
 //! platform principal rather than exempting it — and locks it out at zero rows,
 //! not at an error. One permissive arm `TO wamn_platform` per relation is what
@@ -31,8 +31,8 @@ use std::fmt::Write as _;
 use std::process::Command;
 
 use wamn_control_provision::CredentialGeneration;
+use wamn_control_provision::project_key::project_key;
 use wamn_control_provision::sql;
-use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
@@ -50,12 +50,12 @@ const RECORD_HISTORY_APP_GRANTS: &str =
 /// The role this file's live arm mints as its control probe. Named here so
 /// `reset` can drop it: roles are CLUSTER-wide, and the arm's whole point is
 /// that a leftover healthy membership masks a mutated builder.
-const PLATFORM_PROBE_OUTSIDER: &str = "wamn_floor_outsider";
+const PLATFORM_PROBE_OUTSIDER: &str = "wamn_minimum_outsider";
 
 /// The superuser login, not named `postgres`, that one case installs the
 /// catalog schema and the `platform` schema as (`wamn-txmd`, `wamn-ccj4`).
 /// Named here so `reset` can drop it.
-const CATALOG_INSTALLER: &str = "wamn_floor_installer";
+const CATALOG_INSTALLER: &str = "wamn_minimum_installer";
 
 /// The PLATFORM-GRAIN generation login the shared `TO wamn_platform` arm is
 /// probed with, composed by the real mint rather than spelled by hand.
@@ -65,13 +65,13 @@ const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 fn platform_probe_retention() -> String {
     workload_generation_role(
         WorkloadRoleFamily::Retention,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: "t1",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("Retention takes a tenant target")
+    .expect("Retention takes a project target")
 }
 
 /// The host injects the identity for this relation. The guest ACL role holds
@@ -86,7 +86,7 @@ const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 /// function it was measuring, so mutating `is_platform_grain` moved BOTH SIDES
 /// and the assertion stayed true. SHOWN, not suspected: a mutant setting
 /// `is_platform_grain(Retention)` to false AND removing the matching edge from
-/// `postgres-init.sql` did NOT kill that test. Only the live retention gate saw
+/// `postgres-init.sql` did NOT kill that test. Only the live retention condition saw
 /// the consequence — `reported_one = false`, `old_gone = false`: a SILENT
 /// LOCKOUT WITH EXIT 0.
 ///
@@ -103,7 +103,7 @@ const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 /// `wamn-0h0g.10.15` later removed the effect-writer family.
 ///
 /// `wamn-ctc8.15.2` adds the approved session-role reader to the platform group.
-/// Its explicit column grants and tenant predicates bound its reads.
+/// Its explicit column grants and project predicates bound its reads.
 ///
 /// Sorted, because both consumers compare against a sorted list.
 const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
@@ -119,8 +119,8 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
 /// THE PURE HALF OF THE PLATFORM-ARM GUARD, and the reason
 /// `wamn-0h0g.15.137.1` is closed.
 ///
-/// The membership assertion that matters lives in a LIVE gate, and a mutant
-/// that dies only in a live gate ships green in the ordinary sweep. This one
+/// The membership assertion that matters lives in a LIVE condition, and a mutant
+/// that dies only in a live acceptance test ships green in the ordinary sweep. This one
 /// needs no server: it compares `is_platform_grain`'s output against the pinned
 /// value, so flipping any arm of that function fails HERE, in a plain
 /// `cargo test`, with the family named.
@@ -135,8 +135,8 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
     assert_eq!(
         derived, PLATFORM_GRAIN_ACL_ROLES,
         "is_platform_grain moved. A family that gains the arm reads EVERY \
-         tenant's rows on the relations it holds grants on; one that loses it \
-         reads ZERO ROWS with no error and no failing live gate. Move the pin \
+         project's rows on the relations it holds grants on; one that loses it \
+         reads ZERO ROWS with no error and no failing live acceptance test. Move the pin \
          deliberately, or put the family back"
     );
 }
@@ -249,7 +249,7 @@ fn reset(admin_url: &str) {
         "wamn_audit_retention",
         "wamn_platform",
         // Probe roles this file's live arms mint. A leftover one fails the next
-        // run's `CREATE ROLE` rather than masking anything, but the gate is
+        // run's `CREATE ROLE` rather than masking anything, but the condition is
         // supposed to be re-runnable against a surviving cluster.
         PLATFORM_PROBE_OUTSIDER,
         CATALOG_INSTALLER,
@@ -268,15 +268,15 @@ fn reset(admin_url: &str) {
     }
 }
 
-/// THE FLOOR, AS THE SERVER SEES IT.
+/// THE MINIMUM, AS THE SERVER SEES IT.
 ///
 /// Applies the real files to a fresh cluster and then asks `pg_policy`,
 /// `pg_index` and `has_table_privilege` — never the file text — three things:
 /// no guest-reachable relation is still on a settable identity, every re-keyed
 /// relation carries its expression index, and a minted guest reads its own
-/// tenant and only its own.
+/// project and only its own.
 #[test]
-fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
+fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     let (_database, admin) = shared_server();
 
     // HERMETIC, and it has to be: `postgres-init.sql` carries a bare
@@ -319,7 +319,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
            SELECT n.nspname||'.'||c.relname AS rel \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.env_key%' \
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.project_env_key%' \
               AND has_table_privilege('wamn_app', c.oid, 'SELECT')) t",
     );
     assert_eq!(
@@ -336,7 +336,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
            SELECT n.nspname||'.'||c.relname AS rel \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.env_key%') t",
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.project_env_key%') t",
     );
     assert_eq!(
         kept,
@@ -346,7 +346,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 
     // 2. EVERY re-keyed relation carries its expression index. Without it the
     //    predicate sequential-scans, which is the cliff option (c) had to
-    //    answer for. wamn-0h0g.22.15 makes this a standing denial-gate arm.
+    //    answer for. wamn-0h0g.22.15 makes this a standing denial-acceptance-test arm.
     let uncovered = psql(
         &db_url,
         None,
@@ -354,20 +354,20 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
            SELECT n.nspname||'.'||c.relname AS rel, p.polrelid AS oid \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%') k \
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%') k \
           WHERE NOT EXISTS (SELECT 1 FROM pg_index i \
                              WHERE i.indrelid = k.oid \
-                               AND pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')",
+                               AND pg_get_indexdef(i.indexrelid) LIKE '%project_key%')",
     );
     assert_eq!(
         uncovered, "<none>",
-        "a re-keyed relation has no tenant-key expression index"
+        "a re-keyed relation has no project-key expression index"
     );
     let governed = psql(
         &db_url,
         None,
         "SELECT count(*)::text FROM pg_policy p \
-          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
+          WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%'",
     );
     assert_eq!(
         governed, "15",
@@ -375,28 +375,28 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
          catalog connection tables with connection_requirement, release_connection and \
          connection_binding; C3.1 removes role, \
          user_role, permission, api_key, environment, role_history, user_role_history, \
-         permission_history, api_key_history and environment_history from the tenant \
-         floor; project 0036 removes catalog.wirings and catalog.event_registrations; \
+         permission_history, api_key_history and environment_history from the project \
+         minimum; project 0036 removes catalog.wirings and catalog.event_registrations; \
          user, the platform configuration tables and their \
-         history tables already have no tenant floor (wamn-83eth.6)"
+         history tables already have no project base grants (wamn-83eth.6)"
     );
 
-    // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
+    // 3. A MINTED GUEST READS ITS OWN PROJECT AND ONLY ITS OWN. The role name is
     //    composed by the mint, not by hand, so this also shows the digest the
     //    provisioner would issue matches the key the predicate computes.
     let guest = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: "t1",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("App takes a tenant target");
+    .expect("App takes a project target");
     assert_eq!(
         &guest[guest.len() - 42..guest.len() - 2],
-        tenant_key("t1", "wamn"),
-        "the minted role must carry the tenant key the predicate computes"
+        project_key("t1", "wamn"),
+        "the minted role must carry the project key the predicate computes"
     );
     apply(
         &admin,
@@ -414,18 +414,18 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         &format!(
             "SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
              VALUES \
                ('sha256:' || repeat('c', 64), 't1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), \
                ('sha256:' || repeat('c', 64), 't2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
              BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             SET LOCAL app.env_key = 't2';\n\
+             SET LOCAL app.project_env_key = 't2';\n\
              DO $$ BEGIN\n\
                  ASSERT (SELECT count(*) FROM catalog.packages) = 1, \
-                        'the guest sees exactly its own tenant';\n\
-                 ASSERT (SELECT count(*) FROM catalog.packages WHERE env_key = 't2') = 0, \
-                        'CROSS-TENANT READ';\n\
+                        'the guest sees exactly its own project';\n\
+                 ASSERT (SELECT count(*) FROM catalog.packages WHERE project_env_key = 't2') = 0, \
+                        'CROSS-PROJECT READ';\n\
              END $$;\n\
              COMMIT;\n"
         ),
@@ -437,8 +437,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 ///
 /// # What this closes, and why the old arms could not see it
 ///
-/// The floor was UNTARGETED, so it applied to every role — and it calls
-/// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
+/// The minimum was UNTARGETED, so it applied to every role — and it calls
+/// `wamn_authority.current_project_key()`, which only `wamn_app` may EXECUTE.
 #[test]
 fn the_platform_arm_admits_every_platform_family_from_the_server() {
     let (_database, admin) = shared_server();
@@ -472,7 +472,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
          replication, password set)"
     );
 
-    // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
+    // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH TYPE, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
     //    one with none sum to the same 40 and leave a silent lockout standing.
     let missing_arm = psql(
@@ -483,7 +483,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
             WHERE EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid \
                             AND pg_get_expr(p.polqual, p.polrelid) \
-                                LIKE '%current_tenant_key%')) g \
+                                LIKE '%current_project_key%')) g \
           WHERE (SELECT count(*) FROM pg_policy p JOIN pg_roles r ON r.oid = ANY(p.polroles) \
                   WHERE p.polrelid = g.oid AND p.polpermissive \
                     AND r.rolname = 'wamn_platform') <> 1",
@@ -493,23 +493,23 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         "a governed relation does not carry exactly one permissive wamn_platform \
          arm — every platform principal reads it at ZERO ROWS, silently"
     );
-    let unnarrowed_floor = psql(
+    let unnarrowed_base_grants = psql(
         &db_url,
         None,
         "SELECT coalesce(string_agg(rel, ' ' ORDER BY rel), '<none>') FROM (\
            SELECT n.nspname||'.'||c.relname AS rel \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%' \
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_project_key%' \
               AND p.polroles <> ARRAY[(SELECT oid FROM pg_roles WHERE rolname = 'wamn_app')]) t",
     );
     assert_eq!(
-        unnarrowed_floor, "<none>",
-        "the tenant floor is the GUEST floor and must name wamn_app alone"
+        unnarrowed_base_grants, "<none>",
+        "the project base grants are the GUEST minimum and must name wamn_app alone"
     );
     // …and NOTHING on a governed relation is untargeted. An arm widened to
     // PUBLIC still carries `USING (true)`, so it passes every predicate-shaped
-    // check above while handing every tenant's rows to any role holding the
+    // check above while handing every project's rows to any role holding the
     // table grant. `polroles = '{0}'` is how PostgreSQL spells PUBLIC.
     let public_arm = psql(
         &db_url,
@@ -521,7 +521,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
             WHERE p.polroles = '{0}' \
               AND EXISTS (SELECT 1 FROM pg_policy g WHERE g.polrelid = c.oid \
                             AND pg_get_expr(g.polqual, g.polrelid) \
-                                LIKE '%current_tenant_key%')) t",
+                                LIKE '%current_project_key%')) t",
     );
     assert_eq!(
         public_arm, "<none>",
@@ -580,7 +580,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     assert_eq!(
         guest_is_not_a_member, "f",
         "the guest family must not reach the platform arm: it would read every \
-         tenant's rows, which is the exact hole wamn-0h0g.22.6 closed"
+         project's rows, which is the exact hole wamn-0h0g.22.6 closed"
     );
 
     // 4. THE ADMISSION ITSELF, END TO END (`wamn-0h0g.22.40`).
@@ -589,9 +589,9 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     //    governed relation. The probe reads the relation its own family holds a
     //    grant on, and names the arm and the family it measures when it fails.
     //
-    //    Two tenants' rows on the relation. The platform-grain principal reads
-    //    BOTH (the shared arm is `USING (true)`, and `current_tenant_key` derives
-    //    NULL for a retention login, so there is no tenant grain to narrow to),
+    //    Two projects' rows on the relation. The platform-grain principal reads
+    //    BOTH (the shared arm is `USING (true)`, and `current_project_key` derives
+    //    NULL for a retention login, so there is no project grain to narrow to),
     //    and a login holding the same grant and no membership reads NONE.
     let hash = "'sha256:' || repeat('0', 64)";
     apply(
@@ -599,14 +599,14 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &format!(
             "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:authority-fixture', false); \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
              SELECT 'sha256:' || repeat('c', 64), t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.environment_policies \
-               (env_key, expected_environment) \
+               (project_env_key, expected_environment) \
              SELECT t, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.runs \
-               (env_key, run_id, package_id, environment, \
+               (project_env_key, run_id, package_id, environment, \
                 wiring_id, wiring_version, wiring_hash, binding_world_json) \
              SELECT t, 'r', 'platform_fixture', 'dev', 'fixture', 1, \
                     'sha256:' || repeat('d', 64), '[]'::jsonb \
@@ -631,7 +631,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &db_url,
         &format!(
             "GRANT USAGE ON SCHEMA wamn_run TO {PLATFORM_PROBE_OUTSIDER};\n\
-             GRANT SELECT (env_key, status, created_at) \
+             GRANT SELECT (project_env_key, status, created_at) \
                ON wamn_run.runs TO {PLATFORM_PROBE_OUTSIDER};\n"
         ),
     );
@@ -670,7 +670,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
             "BEGIN;\n\
              SET LOCAL ROLE \"{retention}\";\n\
              DO $$ BEGIN\n\
-                 ASSERT (SELECT count(env_key) FROM wamn_run.runs) = 2, \
+                 ASSERT (SELECT count(project_env_key) FROM wamn_run.runs) = 2, \
                         'THE PLATFORM ARM DOES NOT ADMIT: the retention family is \
                          platform grain and reads wamn_run.runs short';\n\
              END $$;\n\
@@ -678,8 +678,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              BEGIN;\n\
              SET LOCAL ROLE {PLATFORM_PROBE_OUTSIDER};\n\
              DO $$ BEGIN\n\
-                 ASSERT (SELECT count(env_key) FROM wamn_run.runs) = 0, \
-                        'THE FLOOR LEAKS: a login in neither wamn_app nor \
+                 ASSERT (SELECT count(project_env_key) FROM wamn_run.runs) = 0, \
+                        'THE MINIMUM LEAKS: a login in neither wamn_app nor \
                          wamn_platform read wamn_run.runs';\n\
              END $$;\n\
              COMMIT;\n"
@@ -711,7 +711,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 #[test]
 fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     const ROLE: &str = "wamn_audit_retention";
-    const SYSTEM_DATABASE: &str = "wamn_floor_system";
+    const SYSTEM_DATABASE: &str = "wamn_minimum_system";
     let (_database, admin) = shared_server();
     let shape = |url: &str| {
         psql(
@@ -805,12 +805,12 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
 ///
 /// A superuser with any name installs `CATALOG_SCHEMA_SQL` and then
 /// `deploy/sql/app-schema.sql` through its own login, and both schemas belong to
-/// that superuser. `app-schema.sql` is the file the `wamn-0h0g.9` tenant schema
+/// that superuser. `app-schema.sql` is the file the `wamn-0h0g.9` project schema
 /// leg applies in production, so a hard-coded owner there refuses the whole
 /// install on a server whose superuser carries another name.
 #[test]
 fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
-    const PASSWORD: &str = "floor-installer-probe";
+    const PASSWORD: &str = "minimum-installer-probe";
     let (_database, admin) = shared_server();
 
     reset(&admin);
@@ -861,13 +861,13 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
 fn record_history_guest() -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: "t1",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
     )
-    .expect("App takes a tenant target")
+    .expect("App takes a project target")
 }
 
 /// Actors the record-history cases bind. No user row names A, B, or C, so a
@@ -1174,8 +1174,8 @@ const REPAIR_OPERATION: &str = "admin:repair-grades";
 
 /// Apply `record-history.sql` a second time, then create three logged
 /// relations the way apply-package does, as `wamn_db_owner`. `logged` has the
-/// stamp trigger and a column that an overlay migration adds. `tenanted` has a
-/// tenant history table. `keyless` has no primary key. The guest holds only
+/// stamp trigger and a column that an overlay migration adds. `projected` has a
+/// project history table. `keyless` has no primary key. The guest holds only
 /// INSERT on each history table.
 fn record_history_log_fixture(admin: &str) -> (String, String) {
     let (db_url, guest) = record_history_fixture(admin);
@@ -1196,19 +1196,19 @@ fn record_history_log_fixture(admin: &str) -> (String, String) {
          SELECT wamn_history.create_history_table('rh_probe', 'logged', false);\n\
          CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.logged\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
-         CREATE TABLE rh_probe.tenanted (\n\
-             tenant_id text NOT NULL, id integer NOT NULL, note text NOT NULL,\n\
-             PRIMARY KEY (tenant_id, id));\n\
-         SELECT wamn_history.create_history_table('rh_probe', 'tenanted', true);\n\
-         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.tenanted\n\
+         CREATE TABLE rh_probe.projected (\n\
+             project_id text NOT NULL, id integer NOT NULL, note text NOT NULL,\n\
+             PRIMARY KEY (project_id, id));\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'projected', true);\n\
+         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.projected\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
          CREATE TABLE rh_probe.keyless (id integer NOT NULL, note text NOT NULL);\n\
          SELECT wamn_history.create_history_table('rh_probe', 'keyless', false);\n\
          CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.keyless\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
          GRANT SELECT, INSERT, UPDATE, DELETE\n\
-             ON rh_probe.logged, rh_probe.tenanted, rh_probe.keyless TO wamn_app;\n\
-         GRANT INSERT ON rh_probe.logged_history, rh_probe.tenanted_history,\n\
+             ON rh_probe.logged, rh_probe.projected, rh_probe.keyless TO wamn_app;\n\
+         GRANT INSERT ON rh_probe.logged_history, rh_probe.projected_history,\n\
              rh_probe.keyless_history TO wamn_app;\n\
          COMMIT;\n",
     );
@@ -1326,12 +1326,12 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     assert_eq!(
         columns("logged_history"),
         format!("position:bigint:t:a, id:uuid:t:, {fixed}"),
-        "a history table without the tenant flag must have the fixed shape and no tenant_id"
+        "a history table without the project flag must have the fixed shape and no project_id"
     );
     assert_eq!(
-        columns("tenanted_history"),
-        format!("position:bigint:t:a, id:uuid:t:, tenant_id:text:t:, {fixed}"),
-        "the tenant flag must add tenant_id NOT NULL after the entry id"
+        columns("projected_history"),
+        format!("position:bigint:t:a, id:uuid:t:, project_id:text:t:, {fixed}"),
+        "the project flag must add project_id NOT NULL after the entry id"
     );
 
     let objects = psql(
@@ -1444,7 +1444,7 @@ fn history_grants(url: &str) -> String {
 /// role. The grant file refuses a database without `wamn_app`.
 #[test]
 fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
-    const SYSTEM_DATABASE: &str = "wamn_floor_history_system";
+    const SYSTEM_DATABASE: &str = "wamn_minimum_history_system";
     const OWNER_GRANTS: [&str; 7] = [
         "create_history_table wamn_db_owner EXECUTE",
         "log_row_change wamn_db_owner EXECUTE",
@@ -1582,7 +1582,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     );
 }
 
-/// Level-2 spec tests 2, 5, 8, and 16, the '{}' images, the tenant flag, and
+/// Level-2 spec tests 2, 5, 8, and 16, the '{}' images, the project flag, and
 /// the transaction id, over the production guest.
 #[test]
 fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
@@ -1590,13 +1590,13 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
     let (db_url, guest) = record_history_log_fixture(&admin);
 
     // An insert writes the full row in after and '{}' in before. The row image
-    // of the row matches the entry. A tenant history table copies tenant_id.
+    // of the row matches the entry. A project history table copies project_id.
     let insert = logged_guest_transaction(
         &guest,
         ACTOR_A,
         CREATE_OPERATION,
         "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);\n\
-         INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 1, 'first');\n\
+         INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 1, 'first');\n\
          SELECT set_config('rh.first_xact', pg_current_xact_id()::text, false);",
     );
     apply(
@@ -1614,11 +1614,11 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                         FROM rh_probe.logged_history h, rh_probe.logged l WHERE l.id = 1), \
                       'an insert entry must hold the key, the actor, the operation, the \
                        transaction time and id, an empty before, and the full row';\n\
-               ASSERT (SELECT h.tenant_id = 't1' AND h.type = 'insert' \
-                          AND h.row_key = '{{\"id\": 1, \"tenant_id\": \"t1\"}}' \
+               ASSERT (SELECT h.project_id = 't1' AND h.type = 'insert' \
+                          AND h.row_key = '{{\"id\": 1, \"project_id\": \"t1\"}}' \
                           AND h.before = '{{}}' AND h.after = to_jsonb(t) \
-                        FROM rh_probe.tenanted_history h, rh_probe.tenanted t), \
-                      'a tenant history entry must copy tenant_id from the row';\n\
+                        FROM rh_probe.projected_history h, rh_probe.projected t), \
+                      'a project history entry must copy project_id from the row';\n\
              END $$;\n"
         ),
     );
@@ -1682,7 +1682,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
          UPDATE rh_probe.logged SET note = 'fourth', overlay_grade = 'B' WHERE id = 1;\n\
          UPDATE rh_probe.logged SET id = 2 WHERE id = 1;\n\
          DELETE FROM rh_probe.logged WHERE id = 2;\n\
-         DELETE FROM rh_probe.tenanted WHERE id = 1;\n\
+         DELETE FROM rh_probe.projected WHERE id = 1;\n\
          SELECT set_config('rh.third_xact', pg_current_xact_id()::text, false);",
     );
     apply(
@@ -1726,11 +1726,11 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                         WHERE d.row_key = '{{\"id\": 2}}' AND d.type = 'delete' \
                           AND i.row_key = '{{\"id\": 2}}' AND i.type = 'insert'), \
                       'a delete must record the full row in before and an empty after';\n\
-               ASSERT (SELECT d.tenant_id = 't1' AND d.before = i.after AND d.after = '{{}}' \
+               ASSERT (SELECT d.project_id = 't1' AND d.before = i.after AND d.after = '{{}}' \
                           AND d.transaction_id = third \
-                        FROM rh_probe.tenanted_history d, rh_probe.tenanted_history i \
+                        FROM rh_probe.projected_history d, rh_probe.projected_history i \
                         WHERE d.type = 'delete' AND i.type = 'insert'), \
-                      'a tenant delete must copy tenant_id from the deleted row';\n\
+                      'a project delete must copy project_id from the deleted row';\n\
              END $$;\n"
         ),
     );
@@ -1751,7 +1751,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
             ACTOR_A,
             CREATE_OPERATION,
             "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);\n\
-             INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 1, 'first');",
+             INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 1, 'first');",
         ),
     );
 
@@ -1850,8 +1850,8 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     //     actor-required on a relation without the stamp trigger.
     let operation_required = [
         "UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1",
-        "INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 2, 'second')",
-        "DELETE FROM rh_probe.tenanted WHERE id = 1",
+        "INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 2, 'second')",
+        "DELETE FROM rh_probe.projected WHERE id = 1",
     ]
     .map(|statement| {
         refuses_log_write(
@@ -1862,8 +1862,8 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
     })
     .concat();
     let actor_required = [
-        "INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 2, 'second')",
-        "DELETE FROM rh_probe.tenanted WHERE id = 1",
+        "INSERT INTO rh_probe.projected (project_id, id, note) VALUES ('t1', 2, 'second')",
+        "DELETE FROM rh_probe.projected WHERE id = 1",
     ]
     .map(|statement| {
         refuses_log_write(
@@ -1918,7 +1918,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
                ASSERT (SELECT note = 'first' AND revision = {} FROM rh_probe.logged WHERE id = 1), \
                       'every refused write must leave the row unchanged';\n\
                ASSERT (SELECT count(*) FROM rh_probe.logged_history) = {} \
-                  AND (SELECT count(*) FROM rh_probe.tenanted_history) = 1 \
+                  AND (SELECT count(*) FROM rh_probe.projected_history) = 1 \
                   AND NOT EXISTS (SELECT FROM rh_probe.keyless) \
                   AND NOT EXISTS (SELECT FROM rh_probe.keyless_history), \
                       'every refused write must leave no entry';\n\
@@ -2119,8 +2119,8 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                ASSERT (SELECT count(*) = 7 AND count(DISTINCT position) = 7 \
                         FROM rh_probe.logged_history), \
                       'every committed change must write one entry, and no position may repeat';\n\
-               ASSERT (SELECT count(*) = 2 AND bool_and(r.kinds = ARRAY['insert', 'update']) \
-                        FROM (SELECT array_agg(type ORDER BY position) AS kinds \
+               ASSERT (SELECT count(*) = 2 AND bool_and(r.types = ARRAY['insert', 'update']) \
+                        FROM (SELECT array_agg(type ORDER BY position) AS types \
                                 FROM rh_probe.logged_history \
                                WHERE row_key IN ('{{\"id\": 2}}', '{{\"id\": 3}}') \
                                GROUP BY row_key) AS r), \
@@ -2738,14 +2738,14 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
         wamn_control_provision::audit_retention::AUDIT_RETENTION_TARGETS_SQL,
     );
     assert_eq!(
-        targets, "rh_probe|tenanted|tenanted_history|30",
+        targets, "rh_probe|projected|projected_history|30",
         "the retention targets must be the P30D fixture relation alone"
     );
     let reach = psql(
         &db_url,
         None,
         "SELECT concat_ws(' ', \
-           has_table_privilege('wamn_audit_retention', 'rh_probe.tenanted_history', 'DELETE'), \
+           has_table_privilege('wamn_audit_retention', 'rh_probe.projected_history', 'DELETE'), \
            has_schema_privilege('wamn_audit_retention', 'platform', 'USAGE'), \
            (SELECT count(*) FROM pg_namespace n \
              CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl \

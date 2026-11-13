@@ -1,6 +1,6 @@
 //! The route plugin refuses every route of an inactive environment
 //! (docs/architecture/execution.md#routing-and-availability, wamn-zua8.2). The
-//! host reads its row of `platform.environment` as a tenant's `wamn_app`
+//! host reads its row of `platform.environment` as a project's `wamn_app`
 //! generation, before the route's policy, so an anonymous route is refused too.
 //! The host keeps the answer only while it watches the auth bucket
 //! (wamn-stxy9.2, wamn-f2qud).
@@ -26,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 const PROJECT: &str = "project";
-const ENV_KEY: &str = "tenant-a";
+const PROJECT_ENV_KEY: &str = "org-a";
 const ROUTE: &str = "purchase-read-http";
 const READ: &str = "status-test:purchase/read@1.0.0";
 const PASSWORD: &str = "environment-status-test-only";
@@ -38,12 +38,12 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-/// One anonymous route of the tenant's release.
+/// One anonymous route of the project's release.
 fn release() -> anyhow::Result<Arc<LoadedRelease>> {
-    let definition = json!({"id": ROUTE, "kind": "http", "route": {
+    let definition = json!({"id": ROUTE, "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase/read", "method": "POST"
     }});
-    let wiring_route = json!({"id": "purchase-http", "kind": "http", "route": {
+    let wiring_route = json!({"id": "purchase-http", "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
     let attachment: Value = json!({"type": "http", "package-id": "status_test",
@@ -68,16 +68,17 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "environment status test",
-        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
-            [(
-                "purchasing".to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    connections: std::collections::BTreeMap::new(),
-                    packages: ["status_test".to_owned()].into(),
-                },
-            )]
-            .into(),
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
+            .with_applications(
+                [(
+                    "purchasing".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: ["status_test".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
     )?))
 }
 
@@ -102,8 +103,8 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,

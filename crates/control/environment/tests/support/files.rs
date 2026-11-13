@@ -68,8 +68,8 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         ),
         (
             WorkloadRoleFamily::App,
-            WorkloadRoleIdentity::EnvKey {
-                env_key: "files",
+            WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: "files",
                 database: name,
             },
         ),
@@ -326,8 +326,8 @@ pub async fn registry(
         if mapped {
             owner
                 .execute(
-                    "INSERT INTO wamn_authority.author_login_tenants \
-                 (login_identity,env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
+                    "INSERT INTO wamn_authority.author_login_projects \
+                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
                     &[
                         &role,
                         &format!("{org}--{target_project}--dev"),

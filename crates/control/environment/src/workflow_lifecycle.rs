@@ -7,7 +7,7 @@
 //! not queue, so no workflow becomes enabled between an apply's check and its
 //! Helm write.
 //!
-//! Enable runs in one project transaction. It reads the version, gates its
+//! Enable runs in one project transaction. It reads the version, evaluates its conditions for
 //! graph against the release the environment serves now, checks the enabler,
 //! then disables the enabled version of the same workflow and enables this
 //! one. `catalog.workflows_one_enabled` keeps one enabled version, and the
@@ -28,15 +28,17 @@ use wamn_catalog::WiringDocument;
 use wamn_control_registry::Triple;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 
-use crate::author_workflow::{AuthorWorkflowError, AuthorWorkflowErrorType, gate_against_release};
+use crate::author_workflow::{
+    AuthorWorkflowError, AuthorWorkflowErrorType, condition_against_release,
+};
 use crate::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
-const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5 \
    FOR UPDATE";
 
@@ -50,17 +52,17 @@ SELECT EXISTS (\
 /// Params `$1` to `$5`: the version that stays or becomes enabled.
 const DISABLE_OTHERS_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version <> $5 AND enabled";
 
 const ENABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = true, enable_sequence = $6 \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
 const DISABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
 /// The start of the refusal while another verb holds the lifecycle lock.
@@ -75,8 +77,8 @@ pub enum WorkflowLifecycleErrorType {
     /// Another verb holds the lifecycle lock. Retry.
     ApplyInProgress,
     NotFound,
-    /// The graph does not gate against the serving release.
-    Gate,
+    /// The graph fails its conditions against the serving release.
+    Condition,
     RoleNotHeldByEnabler,
     RoleNotHeldByWorkflowUser,
     Storage,
@@ -88,7 +90,7 @@ impl WorkflowLifecycleErrorType {
         match self {
             Self::ApplyInProgress => "apply-in-progress",
             Self::NotFound => "not-found",
-            Self::Gate => "gate",
+            Self::Condition => "condition",
             Self::RoleNotHeldByEnabler => "role-not-held-by-enabler",
             Self::RoleNotHeldByWorkflowUser => "role-not-held-by-workflow-user",
             Self::Storage => "storage",
@@ -129,14 +131,14 @@ impl WorkflowLifecycleError {
         }
     }
 
-    fn gate(error: AuthorWorkflowError) -> Self {
+    fn condition(error: AuthorWorkflowError) -> Self {
         let type_ = match error.error_type() {
             AuthorWorkflowErrorType::Storage => WorkflowLifecycleErrorType::Storage,
-            _ => WorkflowLifecycleErrorType::Gate,
+            _ => WorkflowLifecycleErrorType::Condition,
         };
         Self::with_source(
             type_,
-            "gate the workflow against the serving release",
+            "condition the workflow against the serving release",
             error,
         )
     }
@@ -171,7 +173,7 @@ pub use plan::WorkflowVersion;
 
 /// Enable `workflow` under the lifecycle lock of `triple`, checked against
 /// the release `manifest_digest` the environment serves and the authority of
-/// `enabler` (the text of its `platform."user"` id). The graph gates within
+/// `enabler` (the text of its `platform."user"` id). The graph conditions within
 /// the packages `declared` names for the workflow's application first.
 ///
 /// # Errors
@@ -193,13 +195,13 @@ pub async fn enable_workflow(
     events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     // Enable adds no declaration check: an application the environment does
-    // not declare gates with no package of its own.
+    // not declare conditions with no package of its own.
     let packages = declared
         .get(workflow.application)
         .map(|application| application.packages.clone())
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.env_key()).await?;
+        let transaction = begin(project, &workflow.project_env_key()).await?;
         enable_in(
             &transaction,
             workflow,
@@ -230,11 +232,11 @@ pub async fn disable_workflow(
     workflow: &WorkflowVersion<'_>,
 ) -> Result<(), WorkflowLifecycleError> {
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.env_key()).await?;
+        let transaction = begin(project, &workflow.project_env_key()).await?;
         let changed = transaction
             .execute(
                 DISABLE_SQL,
-                &key(workflow, &workflow.version()?, &workflow.env_key()),
+                &key(workflow, &workflow.version()?, &workflow.project_env_key()),
             )
             .await
             .map_err(|error| storage("disable the workflow version", error))?;
@@ -273,16 +275,16 @@ async fn under_lock(
 
 async fn begin<'a>(
     project: &'a mut Client,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<Transaction<'a>, WorkflowLifecycleError> {
     let transaction = project
         .transaction()
         .await
         .map_err(|error| storage("begin the workflow transaction", error))?;
     transaction
-        .query_one(ASSIGN_ENV_KEY_SQL, &[&env_key])
+        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .map_err(|error| storage("bind the workflow tenant identity", error))?;
+        .map_err(|error| storage("bind the workflow project identity", error))?;
     Ok(transaction)
 }
 
@@ -296,10 +298,10 @@ async fn commit(transaction: Transaction<'_>) -> Result<(), WorkflowLifecycleErr
 fn key<'a>(
     workflow: &'a WorkflowVersion<'_>,
     version: &'a i32,
-    env_key: &'a String,
+    project_env_key: &'a String,
 ) -> [&'a (dyn tokio_postgres::types::ToSql + Sync); 5] {
     [
-        env_key,
+        project_env_key,
         &workflow.environment,
         &workflow.application,
         &workflow.workflow_id,
@@ -322,8 +324,8 @@ async fn enable_in(
     events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
-    let env_key = workflow.env_key();
-    let key = key(workflow, &version, &env_key);
+    let project_env_key = workflow.project_env_key();
+    let key = key(workflow, &version, &project_env_key);
     let row = transaction
         .query_opt(SELECT_VERSION_SQL, &key)
         .await
@@ -337,18 +339,18 @@ async fn enable_in(
     let graph = serde_json::from_str(&graph_json)
         .map_err(WorkflowLifecycleError::stored)
         .and_then(|value| WiringDocument::parse(&value).map_err(WorkflowLifecycleError::stored))?;
-    let hash = gate_against_release(
+    let hash = condition_against_release(
         transaction,
-        &workflow.env_key(),
+        &workflow.project_env_key(),
         packages,
         manifest_digest,
         &graph,
     )
     .await
-    .map_err(WorkflowLifecycleError::gate)?;
+    .map_err(WorkflowLifecycleError::condition)?;
     if hash.as_str() != stored_hash {
         return Err(WorkflowLifecycleError::new(
-            WorkflowLifecycleErrorType::Gate,
+            WorkflowLifecycleErrorType::Condition,
             format!(
                 "workflow {:?} version {} stores hash {stored_hash}, and its graph hashes to {}",
                 workflow.workflow_id,
@@ -400,7 +402,7 @@ async fn enable_in(
             },
         )
         .await
-        .map_err(WorkflowLifecycleError::gate)?;
+        .map_err(WorkflowLifecycleError::condition)?;
         let events = events.ok_or_else(|| {
             WorkflowLifecycleError::new(
                 WorkflowLifecycleErrorType::Broker,

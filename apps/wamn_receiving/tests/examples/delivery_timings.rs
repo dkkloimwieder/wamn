@@ -153,10 +153,10 @@ fn cache_entries(modules: &Path) -> anyhow::Result<usize> {
         };
         for entry in entries {
             let entry = entry?;
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
+            let type_ = entry.file_type()?;
+            if type_.is_dir() {
                 directories.push(entry.path());
-            } else if kind.is_file()
+            } else if type_.is_file()
                 && entry
                     .path()
                     .extension()
@@ -272,7 +272,7 @@ async fn main() -> anyhow::Result<()> {
     let advisory = advisory_stream_config(&coordinate, 1);
     // The broker admits the materializer consumers of the packages that the
     // timing command gives `wamn dev up`, which provisions those consumers.
-    let env_key = wamn_dev_control::dev::environment::ENV_KEY;
+    let project_env_key = wamn_dev_control::dev::environment::PROJECT_ENV_KEY;
     let packages: &[&str] = if wms {
         &WMS_PACKAGES
     } else {
@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
     let broker = event_broker::prepare(
         &directory,
         &coordinate,
-        env_key,
+        project_env_key,
         &source,
         &advisory,
         &consumers,

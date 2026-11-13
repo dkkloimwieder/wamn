@@ -21,7 +21,7 @@ pub(super) struct SignedReadFixture {
     pub(super) scratch: ScratchRoot,
 }
 
-pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFixture> {
+pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<SignedReadFixture> {
     let scratch = ScratchRoot::create()?;
     let package = scratch.path().join("file_fixture");
     std::fs::create_dir_all(package.join("migrations"))?;
@@ -77,7 +77,7 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
             "../../control/environment/tests/support/file_package/publication/components/signed-read.json.in",
         ),
         &wamn_catalog::ComponentPackageCoordinate {
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             package_id: "file_fixture".into(),
             package_version: "0.1.0".into(),
         },
@@ -128,12 +128,14 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "signed read file fixture",
-        ReleaseTarget::new(env_key, "dev").with_applications(serde_json::from_value(json!({
-            "files": {"packages": ["file_fixture"], "connections": {
-                "files": super::files::STORE_NAME, "files-read": super::files::STORE_NAME,
-                "files-no-cdn": "files-no-cdn"
-            }}
-        }))?),
+        ReleaseTarget::new(project_env_key, "dev").with_applications(serde_json::from_value(
+            json!({
+                "files": {"packages": ["file_fixture"], "connections": {
+                    "files": super::files::STORE_NAME, "files-read": super::files::STORE_NAME,
+                    "files-no-cdn": "files-no-cdn"
+                }}
+            }),
+        )?),
     )?);
     Ok(SignedReadFixture {
         release,

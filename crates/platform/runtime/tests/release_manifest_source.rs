@@ -202,7 +202,7 @@ async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
 
 /// One required live-leg fact, or a failure naming the variable and its shape.
 ///
-/// `#[ignore]` gates *selection*; once a run has selected this leg, an absent
+/// `#[ignore]` conditions *selection*; once a run has selected this leg, an absent
 /// variable is a failed test. A `let Ok(value) = var(..) else { return }` skip
 /// would report success in every default run and show nothing.
 fn live_env(name: &str, expectation: &str) -> String {

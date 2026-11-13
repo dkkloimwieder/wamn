@@ -1,6 +1,6 @@
 //! The `prune-record-history` subcommand: the record history retention task.
 //!
-//! The verb removes expired log entries from the history tables of one tenant
+//! The verb removes expired log entries from the history tables of one project
 //! database. A relation keeps its entries for n whole days when its
 //! `wamn_record_history_log` trigger argument is `P<n>D`, and the verb reads that
 //! argument from `pg_trigger`. It skips an `unlimited` relation.
@@ -42,7 +42,7 @@ use wamn_control_provision::{
 /// Inputs of one record history retention run.
 #[derive(Debug)]
 pub struct PruneRecordHistoryRequest {
-    /// Postgres URL for this tenant's `wamn_audit_retention` credential
+    /// Postgres URL for this project's `wamn_audit_retention` credential
     /// generation. The verb refuses any other login.
     pub database_url: String,
 
@@ -53,7 +53,7 @@ pub struct PruneRecordHistoryRequest {
 
 impl PruneRecordHistoryRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -71,7 +71,7 @@ pub struct PrunedHistory {
     pub removed: u64,
 }
 
-/// Prune the expired record history of one tenant database and return what each
+/// Prune the expired record history of one project database and return what each
 /// history table lost, in the order the run visited the tables.
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
@@ -87,7 +87,7 @@ pub async fn prune_expired_record_history(
         .context("audit retention credential connect")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        verify_audit_retention_identity(&client, &request.env_key()).await?;
+        verify_audit_retention_identity(&client, &request.project_env_key()).await?;
         prune(&mut client).await
     }
     .await;
@@ -97,12 +97,15 @@ pub async fn prune_expired_record_history(
 }
 
 /// Refuse unless the connected role is one of the two audit retention
-/// generations of this exact `(tenant, database)` pair.
+/// generations of this exact `(project, database)` pair.
 ///
 /// The verb derives the expected names from the environment coordinate and the server's
 /// `current_database()`. The URL is operator input, so the verb does not read
 /// the database from it.
-async fn verify_audit_retention_identity(client: &Client, env_key: &str) -> anyhow::Result<()> {
+async fn verify_audit_retention_identity(
+    client: &Client,
+    project_env_key: &str,
+) -> anyhow::Result<()> {
     let row = client
         .query_one(
             "SELECT current_user::text AS role, current_database()::text AS database",
@@ -112,8 +115,8 @@ async fn verify_audit_retention_identity(client: &Client, env_key: &str) -> anyh
         .context("read connected audit retention identity")?;
     let role: String = row.get("role");
     let database: String = row.get("database");
-    let target = WorkloadRoleIdentity::EnvKey {
-        env_key,
+    let target = WorkloadRoleIdentity::ProjectEnvKey {
+        project_env_key,
         database: &database,
     };
     let mut expected = Vec::new();
@@ -128,7 +131,7 @@ async fn verify_audit_retention_identity(client: &Client, env_key: &str) -> anyh
     }
     bail!(
         "refusing to prune record history: connected as {role:?} in database {database:?}, which \
-         is not an audit-retention credential generation for env_key {env_key:?} (expected one of \
+         is not an audit-retention credential generation for project_env_key {project_env_key:?} (expected one of \
          {expected:?})"
     )
 }

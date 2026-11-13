@@ -7,23 +7,23 @@
 //! - The guest never holds a socket. Connections live in a deadpool pool
 //!   owned by the plugin; guests get resource handles.
 //! - Identity is derived from the executing component's identity
-//!   (`Ctx::component_id` → tenant, registered at workload bind time from
-//!   `localResources.config["wamn.env_key"]` or via [`WamnPostgres::set_env_key`])
+//!   (`Ctx::component_id` → project, registered at workload bind time from
+//!   `localResources.config["wamn.project_env_key"]` or via [`WamnPostgres::set_project_env_key`])
 //!   and injected by one fully-bound `set_config(…, is_local => true)` statement
 //!   — the `SET LOCAL` equivalent — inside the plugin-managed transaction; every
 //!   identity value travels as a bind parameter, so no interpolation path exists
 //!   (R2/R16). Guest SQL that tries to set or reset a session variable or
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
-//!   `SET app.env_key = 'other'` that would override the BEGIN-time identity) is
+//!   `SET app.project_env_key = 'other'` that would override the BEGIN-time identity) is
 //!   rejected on the raw query/execute/cursor surface (see
 //!   `reject_identity_mutation`, wamn-cjv.2), closing the reachable
 //!   transaction-API override. A verified statement (`statements.run`,
 //!   `run-stream`, `transaction.run`) passes the same guard, and admission
-//!   also refuses these and the other unsafe constructs on its parse tree. The TENANT axis no longer rests on that
-//!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest tenant authority
-//!   onto `current_user` plus per-tenant guest LOGIN generations — a
-//!   non-settable identity — so a session that rewrites `app.env_key` no longer
-//!   rewrites its tenant. The matcher is still only a blocklist: a `DO` block
+//!   also refuses these and the other unsafe constructs on its parse tree. The PROJECT axis no longer rests on that
+//!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest project authority
+//!   onto `current_user` plus per-project guest LOGIN generations — a
+//!   non-settable identity — so a session that rewrites `app.project_env_key` no longer
+//!   rewrites its project. The matcher is still only a blocklist: a `DO` block
 //!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
 //!   escape is dormant only while no reachable guest API bears an RLS policy
 //!   that reads `app.role` or `app.user_id`. Host-only authorization reads that
@@ -31,7 +31,7 @@
 //!   not cross that guard (`wamn-10yt.3.2`); it must close before any such
 //!   RLS-bearing guest API becomes reachable.
 //! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
-//!   their preconditions closed by SUBJECT-DELETION — the node-kind registry
+//!   their preconditions closed by SUBJECT-DELETION — the node-type registry
 //!   retired and no raw-SQL node surface exists to enable — so no live security
 //!   transition occurred. They re-enter only with a future raw-SQL or
 //!   custom-node surface, which would arrive through publish-time admission.
@@ -86,7 +86,7 @@ pub use workflow_resolution::{
 };
 
 pub use credential_exactness::{
-    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,
+    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
     CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
@@ -253,14 +253,14 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
     statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
-/// Per-workload config key carrying the tenant identity (plumbed end-to-end
+/// Per-workload config key carrying the project identity (plumbed end-to-end
 /// from the WorkloadDeployment CRD's `localResources.config`, i.e. set by the
 /// platform, not the guest).
-pub const ENV_KEY_CONFIG_KEY: &str = "wamn.env_key";
+pub const PROJECT_ENV_KEY_CONFIG_KEY: &str = "wamn.project_env_key";
 
 /// Per-workload config key carrying the `search_path` schema. Optional: absent
 /// leaves the server's default search_path in place. Set by the platform (not
-/// the guest), like the tenant identity.
+/// the guest), like the project identity.
 pub const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
 
 /// Per-workload config key naming the project whose database this component
@@ -271,7 +271,7 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// Per-workload config key carrying the runner's durable-queue LEASE OWNER
 /// identity (fqg.4). Optional: absent leaves `app.runner` unset (the S2..S6 and
 /// gateway paths never identity from the queue). When set, the host-only
-/// production composer injects it alongside the tenant identity as the stable,
+/// production composer injects it alongside the project identity as the stable,
 /// non-spoofable lease owner used for identity/reclaim and owner-guarded renewal.
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
@@ -341,18 +341,18 @@ impl WamnPostgres {
                 "wamn:postgres workload authority registered"
             );
         }
-        if let Some(env_key) = config.get(ENV_KEY_CONFIG_KEY) {
-            let env_key = env_key.clone();
-            self.set_env_key(scope, &env_key)?;
+        if let Some(project_env_key) = config.get(PROJECT_ENV_KEY_CONFIG_KEY) {
+            let project_env_key = project_env_key.clone();
+            self.set_project_env_key(scope, &project_env_key)?;
             tracing::debug!(
                 component = scope,
-                env_key,
-                "wamn:postgres tenant registered"
+                project_env_key,
+                "wamn:postgres project registered"
             );
         } else {
             tracing::warn!(
                 component = scope,
-                "component imports wamn:postgres but sets no {ENV_KEY_CONFIG_KEY}; calls will be refused"
+                "component imports wamn:postgres but sets no {PROJECT_ENV_KEY_CONFIG_KEY}; calls will be refused"
             );
         }
         if let Some(project) = config.get(PROJECT_CONFIG_KEY) {
@@ -561,7 +561,7 @@ impl HostPlugin for WamnPostgres {
     }
 
     /// R31: on workload teardown, reap the per-component identity registries
-    /// (`WamnPostgres::clear_component_identity`) so a stale tenant / project /
+    /// (`WamnPostgres::clear_component_identity`) so a stale project / project /
     /// schema / runner / workload authority / release-identity / causation
     /// identity cannot survive unbind
     /// or be inherited by

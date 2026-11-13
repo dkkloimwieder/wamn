@@ -24,7 +24,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_test_infrastructure::record_history::assert_stamp;
 
-const ENV_KEY: &str = "connection-binding-tenant--fixture--dev";
+const PROJECT_ENV_KEY: &str = "connection-binding-project--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PACKAGE: &str = "connection_binding_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
@@ -109,7 +109,7 @@ async fn admit_component(
 ) -> AdmittedComponent {
     let admitted = AdmittedComponent {
         target: ComponentPackageCoordinate {
-            env_key: ENV_KEY.to_owned(),
+            project_env_key: PROJECT_ENV_KEY.to_owned(),
             package_id: package_id.to_owned(),
             package_version: PACKAGE_VERSION.to_owned(),
         },
@@ -136,9 +136,9 @@ async fn admit_component(
     let requirement = ComponentConnectionRequirement::new(digest, store_alias, descriptor);
     project
         .execute(
-            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+            "INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &requirement.component_digest(),
                 &package_id,
                 &requirement.store_alias(),
@@ -218,14 +218,17 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
             ),
         },
         database_url: project_url.to_string(),
-        org: "connection-binding-tenant".into(),
+        org: "connection-binding-project".into(),
         project: "fixture".into(),
         environment: "dev".into(),
     })
     .await
     .expect("apply the connection-binding package fixture");
     project
-        .execute("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
+        .execute(
+            "SELECT set_config('app.project_env_key', $1, false)",
+            &[&PROJECT_ENV_KEY],
+        )
         .await
         .expect("target the project seed session");
     let blob_put = admit_component(
@@ -251,10 +254,10 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     .await;
     project
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &digest_of(RELEASE_BYTES),
                 &RELEASE_BYTES.as_bytes(),
             ],
@@ -286,9 +289,9 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ),
     ] {
         project.execute("INSERT INTO catalog.workflows
-            (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
+            (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
             VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)",
-            &[&ENV_KEY, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
+            &[&PROJECT_ENV_KEY, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
               &document.wiring_hash().as_str(), &wamn_identity_protocol::workflow_user_id().to_string()]
         ).await.expect("seed the workflow connection lookup");
     }
@@ -308,7 +311,7 @@ impl Authority {
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "connection-binding-tenant",
+                    "connection-binding-project",
                     DEFAULT_PROJECT,
                     "dev",
                 ),
@@ -339,7 +342,7 @@ impl Authority {
                 json!({"username":"fixture","password":"private"}),
             ),
         ] {
-            wamn_test_infrastructure::credentials::define(&tx,"connection-binding-tenant",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&tx,"connection-binding-project",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
         }
         tx.commit().await.unwrap();
         Self {
@@ -349,7 +352,7 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"connection-binding-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
         "applications": {PACKAGE:{"current": digest, "hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
     }
     async fn apply(
@@ -382,13 +385,20 @@ impl Authority {
         for repeat in [false, true] {
             let mut drops = ConnectionDrops::default();
             let tx = project.transaction().await.unwrap();
-            bindings::write(&tx, ENV_KEY, digest, document, &selected, &mut drops)
-                .await
-                .unwrap();
+            bindings::write(
+                &tx,
+                PROJECT_ENV_KEY,
+                digest,
+                document,
+                &selected,
+                &mut drops,
+            )
+            .await
+            .unwrap();
             tx.commit().await.unwrap();
             let mut expected = ConnectionDrops::default();
             if !repeat && !drops.is_empty() {
-                expected.release(ENV_KEY, digest);
+                expected.release(PROJECT_ENV_KEY, digest);
             }
             assert_eq!(drops, expected, "repeated write: {repeat}");
         }
@@ -413,11 +423,11 @@ impl Authority {
             .unwrap();
         self.system
             .execute(
-                wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
+                wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql(),
                 &[
                     &role,
-                    &ENV_KEY,
-                    &"connection-binding-tenant",
+                    &PROJECT_ENV_KEY,
+                    &"connection-binding-project",
                     &DEFAULT_PROJECT,
                     &ENVIRONMENT,
                 ],
@@ -429,7 +439,7 @@ impl Authority {
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         let (reader, _) = connect(url.as_str()).await;
-        ConnectionCredentials::from_database(Arc::new(reader), "connection-binding-tenant")
+        ConnectionCredentials::from_database(Arc::new(reader), "connection-binding-project")
     }
 }
 fn declarations(integration_type: &str, mode: &str) -> wamn_catalog::manifest::PackageManifest {
@@ -455,9 +465,9 @@ async fn assert_nested_effect_snapshot(
         project
             .execute(
                 "INSERT INTO catalog.packages \
-                   (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+                   (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
                  VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
-                &[&ENV_KEY, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
+                &[&PROJECT_ENV_KEY, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
             )
             .await
             .expect("seed a separate package coordinate for the snapshot test");
@@ -487,7 +497,13 @@ async fn assert_nested_effect_snapshot(
         ..direct
     };
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &nested, facts)
+        .connection_effect_snapshot(
+            COMPONENT_ID,
+            DEFAULT_PROJECT,
+            PROJECT_ENV_KEY,
+            &nested,
+            facts,
+        )
         .await
         .expect("load the nested snapshot")
         .expect("the released wiring exists");
@@ -497,7 +513,7 @@ async fn assert_nested_effect_snapshot(
     let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
     assert!(matches!(
         &resolved.provider,
-        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle.starts_with("org:connection-binding-tenant:labels-store@")
+        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle.starts_with("org:connection-binding-project:labels-store@")
     ));
 
     for (changed, refused) in [
@@ -577,7 +593,13 @@ async fn assert_nested_effect_snapshot(
         ),
     ] {
         let snapshot = postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused, facts)
+            .connection_effect_snapshot(
+                COMPONENT_ID,
+                DEFAULT_PROJECT,
+                PROJECT_ENV_KEY,
+                &refused,
+                facts,
+            )
             .await
             .expect("load the mismatched snapshot");
         assert!(
@@ -594,7 +616,7 @@ async fn rows(project: &Client) -> serde_json::Value {
 #[tokio::test]
 async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_platform_identity::test_database::tenant_platform();
+    let project_database = wamn_platform_identity::test_database::project_platform();
     let project_url = project_database.url().to_owned();
     let (mut project, project_task) = connect(&project_url).await;
     provision_project(&project, &project_url).await;
@@ -613,21 +635,21 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         .expect("construct the postgres plugin"),
     );
     postgres
-        .set_env_key(COMPONENT_ID, ENV_KEY)
-        .expect("register the component's tenant");
+        .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
+        .expect("register the component's project");
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         Arc::clone(&postgres),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         ENVIRONMENT,
     ));
     let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
         Arc::clone(&postgres),
         Arc::clone(&facts),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         None,
     );
@@ -658,7 +680,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         postgres
             // WamnPostgres::new registers its one pool under DEFAULT_PROJECT;
             // the host names the project it serves, a fixture has only this.
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
+            .connection_effect_snapshot(
+                COMPONENT_ID,
+                DEFAULT_PROJECT,
+                PROJECT_ENV_KEY,
+                &lookup,
+                &facts,
+            )
             .await
             .expect("the plugin loads a snapshot for a declared alias")
             .expect("the declared alias has a snapshot, bound or not")
@@ -702,7 +730,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("env_key='{ENV_KEY}'"),
+            &format!("project_env_key='{PROJECT_ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -740,7 +768,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
             .connection_effect_snapshot(
                 COMPONENT_ID,
                 DEFAULT_PROJECT,
-                ENV_KEY,
+                PROJECT_ENV_KEY,
                 &ConnectionEffectLookup {
                     candidate_binding: Some(&candidate),
                     ..lookup
@@ -763,7 +791,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         },
     ] {
         let snapshot = postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused, &facts)
+            .connection_effect_snapshot(
+                COMPONENT_ID,
+                DEFAULT_PROJECT,
+                PROJECT_ENV_KEY,
+                &refused,
+                &facts,
+            )
             .await
             .unwrap();
         assert!(snapshot.is_none_or(|snapshot| binding::resolve(&snapshot).is_err()));
@@ -801,7 +835,13 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         let facts = Arc::clone(&facts);
         async move {
             postgres
-                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
+                .connection_effect_snapshot(
+                    COMPONENT_ID,
+                    DEFAULT_PROJECT,
+                    PROJECT_ENV_KEY,
+                    &lookup,
+                    &facts,
+                )
                 .await
                 .expect("the plugin loads a route snapshot")
         }
@@ -889,7 +929,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         InvocationEntry, WiringPosition, transport::HttpTransport,
     };
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     let (mut project, task) = connect(database.url()).await;
     provision_project(&project, database.url()).await;
     let document = WiringDocument::new(
@@ -910,7 +950,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Vec::new(),
     )
     .unwrap();
-    project.execute("INSERT INTO catalog.workflows (env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_identity_protocol::workflow_user_id().to_string()]).await.unwrap();
+    project.execute("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&PROJECT_ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_identity_protocol::workflow_user_id().to_string()]).await.unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
@@ -923,7 +963,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     )
     .unwrap();
     let manifest_digest = manifest.digest().as_str().to_owned();
-    project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&ENV_KEY,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
+    project.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&PROJECT_ENV_KEY,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut authority = Authority::new(&format!("http://{}", listener.local_addr().unwrap())).await;
     let mut declaration = Authority::document(&manifest_digest);
@@ -952,20 +992,22 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         })
         .unwrap(),
     );
-    postgres.set_env_key(COMPONENT_ID, ENV_KEY).unwrap();
+    postgres
+        .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
+        .unwrap();
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         Arc::clone(&postgres),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         ENVIRONMENT,
     ));
     let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
         Arc::clone(&postgres),
         Arc::clone(&facts),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         None,
     );
@@ -973,7 +1015,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "read binding fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, ENVIRONMENT),
+            wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT),
         )
         .unwrap(),
     );
@@ -1004,7 +1046,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
         Arc::clone(&facts),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())
@@ -1049,7 +1091,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .connection_effect_snapshot(
             COMPONENT_ID,
             DEFAULT_PROJECT,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &ConnectionEffectLookup {
                 entry,
                 origin_package_id: PACKAGE,
@@ -1102,7 +1144,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         postgres,
         Arc::new(HttpTransport::new().unwrap()),
         Arc::clone(&facts),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())

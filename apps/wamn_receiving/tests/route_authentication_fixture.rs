@@ -17,7 +17,7 @@ use environment::{
 };
 use routes::copy_package;
 use wamn_dev_control::dev::environment::{
-    DevEnvironmentInputs, ENVIRONMENT, ORG, PROJECT, connect, install_journey_platform_floor,
+    DevEnvironmentInputs, ENVIRONMENT, ORG, PROJECT, connect, install_journey_platform_base_grants,
     write_dev_config,
 };
 use wamn_environment_control::provision_project_env::read_json;
@@ -36,7 +36,7 @@ const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
     LazyLock::new(|| package_version(OVERLAY_PACKAGE_ID).leak());
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
-/// Domain of the platform principal emails in every test tenant.
+/// Domain of the platform principal emails in every test project.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 
 /// The Receiving release from this checkout.

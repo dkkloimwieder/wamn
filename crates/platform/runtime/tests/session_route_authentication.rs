@@ -38,13 +38,13 @@ mod session_fixture;
 use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 
 const PROJECT: &str = "project";
-const ENV_KEY: &str = "tenant-a";
+const PROJECT_ENV_KEY: &str = "org-a";
 const ATTACHMENT: &str = "purchase-http";
 const READ_ROUTE: &str = "purchase-read-http";
 const WRITE_ROUTE: &str = "purchase-write-http";
 const READ: &str = "session-test:purchase/read@1.0.0";
 const WRITE: &str = "session-test:purchase/write@1.0.0";
-const OTHER_ENV_KEY: &str = "session-test:secret/read@1.0.0";
+const OTHER_PROJECT_ENV_KEY: &str = "session-test:secret/read@1.0.0";
 /// An operation the first release does not serve and a later one does.
 const APPROVE: &str = "session-test:purchase/approve@1.0.0";
 const SECOND_PRINCIPAL: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
@@ -166,7 +166,7 @@ fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
 
 /// One HTTP attachment that targets the route of `operation` directly.
 fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Value {
-    let definition = json!({"id": id, "kind": "http", "route": {
+    let definition = json!({"id": id, "type": "http", "route": {
         "host": "purchase.example.test", "path": path, "method": "POST"
     }});
     json!({"type": "http", "package-id": "session_test", "component": "purchase",
@@ -189,7 +189,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             )
         })
         .collect();
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
     let manifest = json!({
@@ -212,16 +212,17 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "session route test",
-        wamn_engine::release_manifest::ReleaseTarget::new(ENV_KEY, "dev").with_applications(
-            [(
-                "purchasing".to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    connections: std::collections::BTreeMap::new(),
-                    packages: ["session_test".to_owned()].into(),
-                },
-            )]
-            .into(),
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "dev")
+            .with_applications(
+                [(
+                    "purchasing".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: ["session_test".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
     )?))
 }
 
@@ -272,7 +273,7 @@ fn assert_permission_reads(
     if expected == 0 {
         assert!(
             changes.is_empty(),
-            "refused credentials must perform no tenant SQL: {changes:?}"
+            "refused credentials must perform no project SQL: {changes:?}"
         );
         return;
     }
@@ -320,7 +321,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
         .await?;
     seed(&other_admin).await?;
-    other_admin.execute("INSERT INTO platform.permission (role_name, permission) VALUES ('purchase-reader', regexp_replace($1, '@[^@]*$', ''))", &[&OTHER_ENV_KEY]).await?;
+    other_admin.execute("INSERT INTO platform.permission (role_name, permission) VALUES ('purchase-reader', regexp_replace($1, '@[^@]*$', ''))", &[&OTHER_PROJECT_ENV_KEY]).await?;
 
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
@@ -393,7 +394,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert_eq!(admitted.clone().credential_type(), CredentialType::Session);
     assert!(admitted.permits(READ) && admitted.permits(WRITE));
     assert!(
-        !admitted.permits(OTHER_ENV_KEY),
+        !admitted.permits(OTHER_PROJECT_ENV_KEY),
         "same role name cannot cross the environment database"
     );
     let other = accepted(&route, &second).await;
@@ -406,7 +407,9 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     let mut empty = first.clone();
     empty["roles"] = json!([]);
     let caller = accepted(&route, &empty).await;
-    assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_ENV_KEY));
+    assert!(
+        !caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_PROJECT_ENV_KEY)
+    );
     empty["roles"] = json!(["unknown-role"]);
     assert_eq!(
         route
@@ -425,7 +428,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     // on a host whose release serves it, with no write in between.
     let granted = wamn_platform_identity::application::mutate_grant(
         &admin,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
             role: "purchase-writer",

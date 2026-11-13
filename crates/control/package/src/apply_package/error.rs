@@ -121,8 +121,8 @@ impl fmt::Display for ApplyPackageError {
         if let Some(relation) = &self.relation {
             write!(formatter, "; relation={relation}")?;
         }
-        if let Some(kind) = self.definition_type {
-            write!(formatter, "; definition-kind={}", kind.as_str())?;
+        if let Some(type_) = self.definition_type {
+            write!(formatter, "; definition-type={}", type_.as_str())?;
         }
         if let Some(definition) = &self.definition {
             write!(formatter, "; definition={definition}")?;

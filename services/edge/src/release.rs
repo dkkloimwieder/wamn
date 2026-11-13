@@ -69,7 +69,7 @@ impl fmt::Debug for EdgeRelease {
 impl EdgeRelease {
     /// Load the bundle in `directory` whose `edge-release.json` has
     /// `bundle_digest`, and read every component body once. `target` is the
-    /// env_key and environment of the box, from its configuration.
+    /// project_env_key and environment of the box, from its configuration.
     pub async fn load(
         directory: &Path,
         bundle_digest: &str,
@@ -239,9 +239,9 @@ pub struct EdgeReleaseError {
 }
 
 impl EdgeReleaseError {
-    pub(crate) fn new(kind: EdgeReleaseErrorType, detail: impl Into<Box<str>>) -> Self {
+    pub(crate) fn new(type_: EdgeReleaseErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -287,7 +287,7 @@ pub(crate) mod test_util {
         };
         let fact = AdmittedComponent {
             target: ComponentPackageCoordinate {
-                env_key: "tenant-a".into(),
+                project_env_key: "org-a".into(),
                 package_id: "scale".into(),
                 package_version: "1.0.0".into(),
             },
@@ -355,7 +355,7 @@ pub(crate) mod test_util {
         }))
         .unwrap();
         std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
-        let target = ReleaseTarget::new("tenant-a", "edge").with_applications(BTreeMap::from([(
+        let target = ReleaseTarget::new("org-a", "edge").with_applications(BTreeMap::from([(
             "scale".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".into()]),

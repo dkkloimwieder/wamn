@@ -48,7 +48,7 @@ const NATS_TLS_KEY: &str = "nats_tls_key";
 const STREAM_REPLICAS: &str = "stream_replicas";
 const DUP_WINDOW_SECS: &str = "dup_window_secs";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
-const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
+const CONDITION_BEARER_TOKEN: &str = "condition_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const PLATFORM_DOMAIN: &str = "platform_domain";
 const LOCAL_ARTIFACTS: &str = "local_artifacts";
@@ -146,7 +146,7 @@ struct DevConfigDocument {
     stream_replicas: usize,
     dup_window_secs: u64,
     otel_exporter_otlp_endpoint: String,
-    gate_bearer_token: String,
+    condition_bearer_token: String,
     route_host: String,
     platform_domain: String,
     local_artifacts: LocalArtifacts,
@@ -204,9 +204,9 @@ pub struct DevConfigError {
 }
 
 impl DevConfigError {
-    fn new(kind: DevConfigErrorType, key: impl Into<Box<str>>, detail: &'static str) -> Self {
+    fn new(type_: DevConfigErrorType, key: impl Into<Box<str>>, detail: &'static str) -> Self {
         Self {
-            type_: kind,
+            type_,
             key: key.into(),
             endpoint: None,
             detail,
@@ -481,7 +481,7 @@ impl ResolvedBasePackage {
         &self.manifest
     }
 
-    /// Component digest the base build is compared with before Gate.
+    /// Component digest the base build is compared with before Condition.
     pub const fn component_digest(&self) -> &BaseComponentDigestExpectation {
         &self.component_digest
     }
@@ -585,7 +585,7 @@ pub struct DevConfig {
     dup_window_secs: u64,
     otel_exporter_otlp_endpoint: Box<str>,
     local_artifacts: LocalArtifacts,
-    gate_bearer_token: Box<str>,
+    condition_bearer_token: Box<str>,
     route_host: Box<str>,
     platform_domain: Box<str>,
     package_sources: Box<[PathBuf]>,
@@ -650,7 +650,7 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(OTEL_EXPORTER_OTLP_ENDPOINT),
             )
             .field(LOCAL_ARTIFACTS, &self.local_artifacts)
-            .field(GATE_BEARER_TOKEN, &"[REDACTED]")
+            .field(CONDITION_BEARER_TOKEN, &"[REDACTED]")
             .field(ROUTE_HOST, &self.route_host)
             .field(PLATFORM_DOMAIN, &self.platform_domain)
             .field(PACKAGE_SOURCES, &self.package_sources)
@@ -694,7 +694,7 @@ impl DevConfig {
     /// Pristine template database `wamn dev up` prepared for this target.
     ///
     /// It carries everything a drop destroys except the database-level ACL:
-    /// the platform floor, the run plane and the workload grants. A run clones
+    /// the platform base grants, the run plane and the workload grants. A run clones
     /// it, so a run starts from a database that is pristine by construction
     /// rather than by a replay this module got right.
     pub fn target_template_database(&self) -> &str {
@@ -806,9 +806,9 @@ impl DevConfig {
         &self.local_artifacts
     }
 
-    /// Bearer credential presented only to the Gate.
-    pub fn gate_bearer_token(&self) -> &str {
-        &self.gate_bearer_token
+    /// Bearer credential presented only to the Condition.
+    pub fn condition_bearer_token(&self) -> &str {
+        &self.condition_bearer_token
     }
 
     /// Deployment-owned route hostname supplied at publication.
@@ -1226,7 +1226,7 @@ pub(crate) mod tests {
             (STREAM_REPLICAS): 1,
             (DUP_WINDOW_SECS): 120,
             (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[8]),
-            (GATE_BEARER_TOKEN): "gate-super-secret",
+            (CONDITION_BEARER_TOKEN): "condition-super-secret",
             (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
             (LOCAL_ARTIFACTS): {"directory": "/tmp/wamn-local-candidate",
@@ -1385,7 +1385,7 @@ pub(crate) mod tests {
         )
         .expect("complete config parses");
         assert_eq!(
-            config.activation_identity().env_key(),
+            config.activation_identity().project_env_key(),
             "acme--fixture--fixture-dev"
         );
         assert_eq!(config.host_binary(), Path::new("/opt/wamn/bin/wamn-host"));
@@ -1674,7 +1674,7 @@ manifest.Package {
             "admitter-secret",
             "materializer-secret",
             "administration-secret",
-            "gate-super-secret",
+            "condition-super-secret",
         ] {
             assert!(!debug.contains(credential), "Debug leaked {credential}");
         }
@@ -1704,7 +1704,7 @@ manifest.Package {
         );
         let message = error.to_string();
         assert!(!message.contains("target-secret"));
-        assert!(!message.contains("gate-super-secret"));
+        assert!(!message.contains("condition-super-secret"));
     }
 
     #[test]
@@ -1851,7 +1851,7 @@ manifest.Package {
 
     #[test]
     fn malformed_json_refuses_without_inspecting_partial_credentials() {
-        let error = parse_config(br#"{"gate_bearer_token":"secret""#)
+        let error = parse_config(br#"{"condition_bearer_token":"secret""#)
             .expect_err("malformed JSON must refuse");
         assert_eq!(error.error_type(), DevConfigErrorType::MalformedDocument);
         assert_eq!(error.key(), DOCUMENT_KEY);

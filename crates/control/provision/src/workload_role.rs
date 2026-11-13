@@ -53,11 +53,11 @@ pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
 /// control host (docs/architecture/execution.md#host-run-routes).
 pub const CONTROL_ROLE: &str = "wamn_control";
 
-/// The shared NOLOGIN group role every non-guest tenant-floor arm targets
+/// The shared NOLOGIN group role every non-guest project-base-grants arm targets
 /// (`wamn-0h0g.22.17`).
 ///
-/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The tenant floor
-/// is the GUEST floor: narrowing it `TO wamn_app` does not EXEMPT a platform
+/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The project base grants
+/// are the GUEST base grants: narrowing it `TO wamn_app` does not EXEMPT a platform
 /// principal, because PostgreSQL DEFAULT-DENIES when RLS is enabled and no
 /// policy matches the connected role. Each governed relation therefore carries
 /// exactly one permissive arm `TO wamn_platform`, and the family's table grants
@@ -82,7 +82,7 @@ pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 /// `wamn-0h0g.13.63` is the fourth deliberate expansion, from ten to twelve,
 /// admitting the two CONTROL-identity-bound reader families the T1 system database's
 /// two purported read-only consumers need. Identity follows the RESOURCE PLANE,
-/// not the consumer's home, so both are [`WorkloadRoleIdentityKind::Control`] and
+/// not the consumer's home, so both are [`WorkloadRoleIdentityType::Control`] and
 /// neither may reuse the project-environment-identity-bound
 /// [`WorkloadRoleFamily::ServiceReader`]. TWO families, not one, because the
 /// two grant sets are disjoint and must stay so: `wamn-0h0g.12.116`'s consumer
@@ -93,7 +93,7 @@ pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 /// families land here; the grants, Secrets and consumers are those two beads.
 /// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
 /// it carries no runtime authority class and no operation-permission read.
-/// `wamn-emtx.13` adds the tenant-identity-bound audit retention family, which removes
+/// `wamn-emtx.13` adds the project-identity-bound audit retention family, which removes
 /// expired record history entries.
 /// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
 /// consumer.
@@ -180,30 +180,32 @@ impl WorkloadRoleFamily {
     }
 
     /// Exact identity class used to derive generation identities.
-    pub const fn identity_kind(self) -> WorkloadRoleIdentityKind {
+    pub const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleIdentityKind::EnvKey,
+            Self::App | Self::Retention | Self::AuditRetention => {
+                WorkloadRoleIdentityType::ProjectEnvKey
+            }
             Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
             | Self::EventMaterializer
-            | Self::Administration => WorkloadRoleIdentityKind::ProjectEnvironment,
+            | Self::Administration => WorkloadRoleIdentityType::ProjectEnvironment,
             // Identity follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
             Self::RegistryReader | Self::IdentityReader | Self::ConnectionReader => {
-                WorkloadRoleIdentityKind::Control
+                WorkloadRoleIdentityType::Control
             }
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
-            Self::Control => WorkloadRoleIdentityKind::Org,
+            Self::Control => WorkloadRoleIdentityType::Org,
         }
     }
 
     /// Whether `provision-project-env` mints this family. An org-identity-bound
     /// family belongs to `provision-org` instead.
     pub const fn is_project_env_provisioned(self) -> bool {
-        !matches!(self.identity_kind(), WorkloadRoleIdentityKind::Org)
+        !matches!(self.identity_type(), WorkloadRoleIdentityType::Org)
     }
 
     /// The families `provision-project-env` mints, in declaration order.
@@ -214,40 +216,40 @@ impl WorkloadRoleFamily {
     }
 
     /// Whether this family's generations are membered into
-    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive tenant-floor arm.
+    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive project-base-grants arm.
     ///
     /// DERIVED from the two facts that already decide it, never tabulated:
     ///
-    /// * [`Self::App`] is the GUEST. The floor exists to admit it, and a
-    ///   platform arm would hand it every tenant's rows — the exact
-    ///   cross-tenant read `wamn-0h0g.22.6` closed.
-    /// * A [`WorkloadRoleIdentityKind::Control`] or [`WorkloadRoleIdentityKind::Org`]
+    /// * [`Self::App`] is the GUEST. The minimum exists to admit it, and a
+    ///   platform arm would hand it every project's rows — the exact
+    ///   cross-project read `wamn-0h0g.22.6` closed.
+    /// * A [`WorkloadRoleIdentityType::Control`] or [`WorkloadRoleIdentityType::Org`]
     ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
-    ///   on any relation carrying the project-plane floor, so membership would
+    ///   on any relation carrying the project-plane minimum, so membership would
     ///   be authority without a reader.
     /// * [`Self::AuditRetention`] is not a member either (`wamn-emtx` ruling
     ///   61), and for the same reason: no reader needs the edge. Its grants
     ///   reach only package history tables, which carry no row security.
     ///
     /// Everything else — the eight families whose credentials reach a
-    /// project-environment or tenant database and are not the guest — is a
+    /// project-environment or project database and are not the guest — is a
     /// member. `EventMaterializer` exercises that edge
     /// through its two catalog reads. `ServiceReader` remains the empty-surface
     /// case: an RLS arm with no table grant behind it admits nothing, while the
     /// edge prevents a future first grant from silently reading zero rows.
     ///
-    /// `Retention` is `EnvKey`-identity-bound and is a member anyway. Its login names
-    /// carry a tenant DIGEST, but `current_tenant_key` recovers a key only from
+    /// `Retention` is `ProjectEnvKey`-identity-bound and is a member anyway. Its login names
+    /// carry a project DIGEST, but `current_project_key` recovers a key only from
     /// the guest generation pattern, and widening that regex is refused
     /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
-    /// cross-tenant on the relations it holds grants on; the tenant predicate it
+    /// cross-project on the relations it holds grants on; the project predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
         !matches!(self, Self::App | Self::AuditRetention)
             && !matches!(
-                self.identity_kind(),
-                WorkloadRoleIdentityKind::Control | WorkloadRoleIdentityKind::Org
+                self.identity_type(),
+                WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
             )
     }
 
@@ -297,14 +299,14 @@ impl WorkloadRoleFamily {
     /// A closed vocabulary of SHAPES, not a per-family list: an
     /// admitted family lands on the plain single-`url` Secret every consumer
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
-    pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
+    pub fn secret_body_type(self) -> WorkloadSecretBodyType {
         match self {
-            // The guest credential IS the tenant authority, so its Secret
-            // carries the tenant key that keys every governed predicate.
-            Self::App => WorkloadSecretBodyKind::EnvKeyUrl,
+            // The guest credential IS the project authority, so its Secret
+            // carries the project key that keys every governed predicate.
+            Self::App => WorkloadSecretBodyType::ProjectEnvKeyUrl,
             // The credential and trusted target coordinates publish atomically.
-            Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
-            _ => WorkloadSecretBodyKind::Url,
+            Self::SessionRoleReader => WorkloadSecretBodyType::SessionTarget,
+            _ => WorkloadSecretBodyType::Url,
         }
     }
 
@@ -364,29 +366,29 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
 
 /// The closed set of credential-Secret body shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadSecretBodyKind {
+pub enum WorkloadSecretBodyType {
     /// One `url` key.
     Url,
-    /// One `url` key, plus the tenant key label and env_key annotation.
-    EnvKeyUrl,
+    /// One `url` key, plus the project key label and project_env_key annotation.
+    ProjectEnvKeyUrl,
     /// One validated environment target and credential in `target.json`.
     SessionTarget,
 }
 
 /// The four admitted provisioning identity shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadRoleIdentityKind {
-    EnvKey,
+pub enum WorkloadRoleIdentityType {
+    ProjectEnvKey,
     ProjectEnvironment,
     Control,
     /// One org on the control database.
     Org,
 }
 
-impl WorkloadRoleIdentityKind {
+impl WorkloadRoleIdentityType {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::EnvKey => "env_key",
+            Self::ProjectEnvKey => "project_env_key",
             Self::ProjectEnvironment => "project-environment",
             Self::Control => "control",
             Self::Org => "org",
@@ -397,8 +399,8 @@ impl WorkloadRoleIdentityKind {
 /// Exact identity inputs for one workload generation pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleIdentity<'a> {
-    EnvKey {
-        env_key: &'a str,
+    ProjectEnvKey {
+        project_env_key: &'a str,
         database: &'a str,
     },
     ProjectEnvironment {
@@ -423,19 +425,19 @@ impl<'a> WorkloadRoleIdentity<'a> {
     /// Database receiving this generation's sole direct CONNECT grant.
     pub const fn database(self) -> &'a str {
         match self {
-            Self::EnvKey { database, .. }
+            Self::ProjectEnvKey { database, .. }
             | Self::ProjectEnvironment { database, .. }
             | Self::Control { database, .. }
             | Self::Org { database, .. } => database,
         }
     }
 
-    const fn identity_type(self) -> WorkloadRoleIdentityKind {
+    const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::EnvKey { .. } => WorkloadRoleIdentityKind::EnvKey,
-            Self::ProjectEnvironment { .. } => WorkloadRoleIdentityKind::ProjectEnvironment,
-            Self::Control { .. } => WorkloadRoleIdentityKind::Control,
-            Self::Org { .. } => WorkloadRoleIdentityKind::Org,
+            Self::ProjectEnvKey { .. } => WorkloadRoleIdentityType::ProjectEnvKey,
+            Self::ProjectEnvironment { .. } => WorkloadRoleIdentityType::ProjectEnvironment,
+            Self::Control { .. } => WorkloadRoleIdentityType::Control,
+            Self::Org { .. } => WorkloadRoleIdentityType::Org,
         }
     }
 }
@@ -444,8 +446,8 @@ impl<'a> WorkloadRoleIdentity<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkloadRoleIdentityError {
     family: WorkloadRoleFamily,
-    expected: WorkloadRoleIdentityKind,
-    actual: WorkloadRoleIdentityKind,
+    expected: WorkloadRoleIdentityType,
+    actual: WorkloadRoleIdentityType,
 }
 
 impl fmt::Display for WorkloadRoleIdentityError {
@@ -468,7 +470,7 @@ pub fn workload_role_identity_hash(
     identity: WorkloadRoleIdentity<'_>,
 ) -> Result<String, WorkloadRoleIdentityError> {
     let actual = identity.identity_type();
-    let expected = family.identity_kind();
+    let expected = family.identity_type();
     if actual != expected {
         return Err(WorkloadRoleIdentityError {
             family,
@@ -478,20 +480,27 @@ pub fn workload_role_identity_hash(
     }
     // The App family delegates to `wamn-run-state`, which is the leaf the
     // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime check that
-    // a resolved guest credential belongs to the tenant it is about to serve.
+    // a resolved guest credential belongs to the project it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
-        let WorkloadRoleIdentity::EnvKey { env_key, database } = identity else {
-            unreachable!("identity kind was checked above")
+        let WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
+            database,
+        } = identity
+        else {
+            unreachable!("identity type was checked above")
         };
-        return Ok(app_identity_hash(env_key, database));
+        return Ok(app_identity_hash(project_env_key, database));
     }
 
     let mut preimage = Vec::new();
     frame(&mut preimage, family.identity_domain());
     match identity {
-        WorkloadRoleIdentity::EnvKey { env_key, database } => {
-            push_field(&mut preimage, "env_key", env_key);
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
+            database,
+        } => {
+            push_field(&mut preimage, "project_env_key", project_env_key);
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleIdentity::ProjectEnvironment {
@@ -641,9 +650,9 @@ mod tests {
             },
             CredentialGeneration::A,
         )
-        .expect_err("a tenant family accepted a control identity");
-        assert_eq!(error.expected, WorkloadRoleIdentityKind::EnvKey);
-        assert_eq!(error.actual, WorkloadRoleIdentityKind::Control);
+        .expect_err("a project family accepted a control identity");
+        assert_eq!(error.expected, WorkloadRoleIdentityType::ProjectEnvKey);
+        assert_eq!(error.actual, WorkloadRoleIdentityType::Control);
     }
 
     #[test]
@@ -660,15 +669,15 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::App,
-                WorkloadRoleIdentity::EnvKey {
-                    env_key: "t",
+                WorkloadRoleIdentity::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
             (
                 WorkloadRoleFamily::Retention,
-                WorkloadRoleIdentity::EnvKey {
-                    env_key: "t",
+                WorkloadRoleIdentity::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
@@ -737,8 +746,8 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::AuditRetention,
-                WorkloadRoleIdentity::EnvKey {
-                    env_key: "t",
+                WorkloadRoleIdentity::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
@@ -772,22 +781,22 @@ mod tests {
     /// THE TRUNCATION HAZARD, CLOSED BY CONSTRUCTION rather than by a runtime
     /// refusal (`wamn-0h0g.22.6.4`).
     ///
-    /// `valid_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
+    /// `valid_project_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
     /// truncating with a NOTICE instead of refusing — so a name carrying the
-    /// tenant verbatim would collapse two long tenants onto ONE role, which is
-    /// a cross-tenant breach wearing a naming bug. The identity digest is
-    /// fixed-width, so the tenant contributes NOTHING to the length: asserted
-    /// here against the longest tenant the validator admits, so the property is
+    /// project verbatim would collapse two long projects onto ONE role, which is
+    /// a cross-project breach wearing a naming bug. The identity digest is
+    /// fixed-width, so the project contributes NOTHING to the length: asserted
+    /// here against the longest project the validator admits, so the property is
     /// measured rather than assumed.
     #[test]
-    fn the_longest_admitted_env_key_still_mints_a_bounded_role() {
+    fn the_longest_admitted_project_env_key_still_mints_a_bounded_role() {
         let longest = "t".repeat(64);
-        let short = WorkloadRoleIdentity::EnvKey {
-            env_key: "t",
+        let short = WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t",
             database: "wamn-db-acme--billing--dev",
         };
-        let long = WorkloadRoleIdentity::EnvKey {
-            env_key: &longest,
+        let long = WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: &longest,
             database: "wamn-db-acme--billing--dev",
         };
         for family in [
@@ -801,14 +810,14 @@ mod tests {
                 assert_eq!(
                     from_short.len(),
                     from_long.len(),
-                    "{family:?}: the tenant must not reach the role NAME's length"
+                    "{family:?}: the project must not reach the role NAME's length"
                 );
                 assert!(from_long.len() <= 63, "{from_long}");
                 assert!(
                     !from_long.contains(&longest),
-                    "{family:?}: the tenant id must never appear verbatim"
+                    "{family:?}: the project id must never appear verbatim"
                 );
-                assert_ne!(from_short, from_long, "{family:?}: two tenants, two roles");
+                assert_ne!(from_short, from_long, "{family:?}: two projects, two roles");
             }
         }
     }
@@ -865,16 +874,16 @@ mod tests {
             WorkloadRoleFamily::IdentityReader,
         ] {
             assert_eq!(
-                family.identity_kind(),
-                WorkloadRoleIdentityKind::Control,
+                family.identity_type(),
+                WorkloadRoleIdentityType::Control,
                 "{family:?}: identity follows the resource plane, and that plane is control"
             );
             workload_generation_role(family, FROZEN_IDENTITY, CredentialGeneration::A)
                 .expect("a control reader derives under control identity");
         }
         assert_eq!(
-            WorkloadRoleFamily::ServiceReader.identity_kind(),
-            WorkloadRoleIdentityKind::ProjectEnvironment,
+            WorkloadRoleFamily::ServiceReader.identity_type(),
+            WorkloadRoleIdentityType::ProjectEnvironment,
             "ServiceReader is the project-environment reader; that is why it is not reusable"
         );
         let error = workload_generation_role(
@@ -884,7 +893,7 @@ mod tests {
         )
         .expect_err("ServiceReader accepted a control identity");
         assert_eq!(error.family, WorkloadRoleFamily::ServiceReader);
-        assert_eq!(error.expected, WorkloadRoleIdentityKind::ProjectEnvironment);
-        assert_eq!(error.actual, WorkloadRoleIdentityKind::Control);
+        assert_eq!(error.expected, WorkloadRoleIdentityType::ProjectEnvironment);
+        assert_eq!(error.actual, WorkloadRoleIdentityType::Control);
     }
 }

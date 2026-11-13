@@ -50,7 +50,7 @@ impl Template {
     }
 
     /// The pre-contract tier (old T3): every env shares the pool cluster; the
-    /// RLS floor is load-bearing there. Policies still matter for identity,
+    /// RLS base grants are load-bearing there. Policies still matter for identity,
     /// promotion order, and a later move to a dedicated template.
     pub fn trials() -> Template {
         Template {

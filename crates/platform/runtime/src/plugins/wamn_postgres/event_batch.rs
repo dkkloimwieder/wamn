@@ -14,7 +14,7 @@ use super::{AuthorityClass, WamnPostgres};
 const ENABLED_EVENTS_SQL: &str = "SELECT application, workflow_id, source_package, entity, \
     array_to_json(ops)::text, condition, enable_sequence, version, graph_json::text, \
     wiring_hash, execution_role FROM catalog.workflows \
-    WHERE env_key = $1 AND environment = $2 AND application = ANY($3) \
+    WHERE project_env_key = $1 AND environment = $2 AND application = ANY($3) \
       AND enabled AND trigger = 'event' ORDER BY application, workflow_id";
 
 fn contract(operation: &'static str, detail: impl Into<String>) -> ProductionLeaseError {
@@ -55,10 +55,10 @@ impl WamnPostgres {
     pub(crate) fn require_event_materializer(
         &self,
         component: &str,
-        env_key: &str,
+        project_env_key: &str,
     ) -> Result<(), ProductionLeaseError> {
         if self.workload_authority_for(component) != AuthorityClass::EventMaterializer
-            || self.env_key_for(component).as_deref() != Some(env_key)
+            || self.project_env_key_for(component).as_deref() != Some(project_env_key)
         {
             return Err(ProductionLeaseError::new(
                 ProductionLeaseErrorType::Identity,
@@ -73,17 +73,17 @@ impl WamnPostgres {
     pub async fn event_triggers(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         environment: &str,
     ) -> Result<Vec<EventTrigger>, ProductionLeaseError> {
-        self.executor_read(project, env_key, async |connection| {
+        self.executor_read(project, project_env_key, async |connection| {
             connection
                 .query(
                     "SELECT application, workflow_id, source_package, entity, \
                      array_to_json(ops)::text, condition, enable_sequence \
-                     FROM catalog.workflows WHERE env_key = $1 AND environment = $2 \
+                     FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 \
                      AND enabled AND trigger = 'event' ORDER BY application, workflow_id",
-                    &[&env_key, &environment],
+                    &[&project_env_key, &environment],
                 )
                 .await?
                 .iter()
@@ -103,7 +103,7 @@ impl WamnPostgres {
         admission: &EventBatchAdmission<'_>,
     ) -> Result<(), ProductionLeaseError> {
         let target = release.target();
-        let env_key = &target.env_key;
+        let project_env_key = &target.project_env_key;
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
@@ -114,7 +114,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                env_key,
+                project_env_key,
                 Some("wamn_run"),
                 None,
                 None,
@@ -136,7 +136,7 @@ impl WamnPostgres {
             if admission.sequence == 0
                 || source
                     .identity(
-                        env_key,
+                        project_env_key,
                         project,
                         &target.environment,
                         &[admission.source_event_id],
@@ -160,14 +160,17 @@ impl WamnPostgres {
                 .flat_map(|application| application.packages.iter().cloned())
                 .collect();
             let rows = connection
-                .query(ENABLED_EVENTS_SQL, &[env_key, &target.environment, &names])
+                .query(
+                    ENABLED_EVENTS_SQL,
+                    &[project_env_key, &target.environment, &names],
+                )
                 .await
                 .map_err(|error| storage("read event workflows", error))?;
             let mut matches = Vec::new();
             for row in rows {
                 let event = trigger(&row)?;
                 if let Some(input) = event
-                    .matches(&source, admission.sequence, &packages, env_key)
+                    .matches(&source, admission.sequence, &packages, project_env_key)
                     .map_err(|error| invalid("filter event workflow", error))?
                 {
                     matches.push((row, event, input));
@@ -205,7 +208,7 @@ impl WamnPostgres {
                 // A delivery committed by an earlier host retains its manifest
                 // and node digests, even when this release cannot run its graph.
                 if connection
-                    .query_opt(select_event_run_sql(), &[env_key, &key, &input])
+                    .query_opt(select_event_run_sql(), &[project_env_key, &key, &input])
                     .await
                     .map_err(|error| storage("read existing event run", error))?
                     .is_some()
@@ -221,18 +224,21 @@ impl WamnPostgres {
                 let graph = super::workflow_resolution::parse_graph(&graph_json)
                     .map_err(|error| invalid("parse event workflow", error))?;
                 let packages = &target.applications[&event.application].packages;
-                let gated = wamn_catalog::gate_workflow_document(
-                    env_key,
+                let conditioned = wamn_catalog::condition_workflow_document(
+                    project_env_key,
                     packages,
                     release.manifest(),
                     &graph,
                 )
-                .map_err(|error| invalid("gate event workflow", error))?;
-                if gated.as_str() != hash {
-                    return Err(contract("gate event workflow", "workflow hash differs"));
+                .map_err(|error| invalid("condition event workflow", error))?;
+                if conditioned.as_str() != hash {
+                    return Err(contract(
+                        "condition event workflow",
+                        "workflow hash differs",
+                    ));
                 }
                 let components = wamn_catalog::resolve_workflow_components(
-                    env_key,
+                    project_env_key,
                     packages,
                     release.manifest(),
                     &graph,
@@ -252,7 +258,7 @@ impl WamnPostgres {
                     .query_opt(
                         &insert_event_run_sql(),
                         &[
-                            env_key,
+                            project_env_key,
                             &event.application,
                             &digest,
                             &target.environment,
@@ -276,11 +282,11 @@ impl WamnPostgres {
                 if let Some(row) = inserted {
                     let run_id: String = row.get(0);
                     connection
-                        .execute(insert_run_queue_sql(), &[env_key, &run_id])
+                        .execute(insert_run_queue_sql(), &[project_env_key, &run_id])
                         .await
                         .map_err(|error| storage("queue event run", error))?;
                 } else if connection
-                    .query_opt(select_event_run_sql(), &[env_key, &key, &input])
+                    .query_opt(select_event_run_sql(), &[project_env_key, &key, &input])
                     .await
                     .map_err(|error| storage("read existing event run", error))?
                     .is_none()
@@ -388,17 +394,19 @@ mod tests {
             HashMap::new(),
             None,
         )));
-        let env_key = "acme--apps--dev";
-        postgres.set_env_key("guest", env_key).unwrap();
+        let project_env_key = "acme--apps--dev";
+        postgres
+            .set_project_env_key("guest", project_env_key)
+            .unwrap();
         let error = postgres
-            .require_event_materializer("guest", env_key)
+            .require_event_materializer("guest", project_env_key)
             .unwrap_err();
         assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
         postgres
             .bind_workload_authority("guest", "event-materializer")
             .unwrap();
         postgres
-            .require_event_materializer("guest", env_key)
+            .require_event_materializer("guest", project_env_key)
             .unwrap();
         assert_eq!(
             postgres

@@ -1,8 +1,8 @@
-//! Live gate for the CDC event reader (wamn-l5i9.10, D19 v3 §4).
+//! Live acceptance test for the CDC event reader (wamn-l5i9.10, D19 v3 §4).
 //!
-//! The gate starts its own PostgreSQL 18 server with `wal_level=logical` and
+//! The condition starts its own PostgreSQL 18 server with `wal_level=logical` and
 //! connects as its superuser to the `postgres` database. Set
-//! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS; the gate is
+//! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS; the condition is
 //! ignored, and fails naming that variable when it is selected without it
 //! (recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting
 //! [EVT-READER]).
@@ -54,7 +54,7 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const CDC_PW: &str = "wamn_cdc_pw";
-/// Password for the gate's minted registry-reader generation.
+/// Password for the condition's minted registry-reader generation.
 const READER_PW: &str = "wamn_registry_reader_pw";
 
 /// Swap the database path segment of a libpq URL (the test controls the URL —
@@ -77,7 +77,7 @@ fn role_url(super_url: &str, role: &str, password: &str) -> String {
     format!("postgres://{role}:{password}@{host_port}/{DB}")
 }
 
-/// This gate's registry-reader generation-A login (`wamn-0h0g.12.116`).
+/// This condition's registry-reader generation-A login (`wamn-0h0g.12.116`).
 fn registry_reader_role() -> String {
     system_reader_generation_role(
         SystemReader::Registry,
@@ -160,7 +160,7 @@ fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReader
         // the registration read its own `wamn_registry_reader` generation, whose
         // whole authority is `SELECT` on `registry.event_readers`. The reader
         // refuses any other principal before it opens a socket, so passing the
-        // gate's admin URL here would fail closed rather than pass.
+        // condition's admin URL here would fail closed rather than pass.
         system_database_url: role_url(super_url, &registry_reader_role(), READER_PW),
         cdc_url: cdc_plain_url(super_url, cdc_name),
         nats_url,
@@ -380,7 +380,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
            NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$",
     )
     .await
-    .expect("wamn_app role (the floor + catalog schema's grant target)");
+    .expect("wamn_app role (the minimum + catalog schema's grant target)");
     sys.batch_execute(SYSTEM_SCHEMA)
         .await
         .expect("apply deploy/sql/system-schema.sql");
@@ -423,7 +423,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         &[
             &ORG,
             &ENV,
-            &r#"{"kind":"pool"}"#,
+            &r#"{"type":"pool"}"#,
             &0i32,
             &1i32,
             &"1Gi",
@@ -528,7 +528,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- refusal probes ------------------------------------------------------
     // Both are timeout-bounded: a refusal that HANGS (e.g. a blinded preflight
-    // sending the reader into its reopen loop forever) must fail the gate, not
+    // sending the reader into its reopen loop forever) must fail the condition, not
     // stall it — that is exactly the M4 mutant's shape.
     let err = tokio::time::timeout(
         Duration::from_secs(60),

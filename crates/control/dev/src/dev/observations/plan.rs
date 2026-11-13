@@ -57,8 +57,8 @@ impl TraceReader {
                         ));
                     }
                     let id = span.trace_id.to_ascii_lowercase();
-                    let targeted = attribute(&span.attributes, "wamn.env_key")
-                        == Some(self.identity.env_key().as_str())
+                    let targeted = attribute(&span.attributes, "wamn.project_env_key")
+                        == Some(self.identity.project_env_key().as_str())
                         && attribute(&span.attributes, "wamn.project")
                             == Some(self.identity.project.as_str())
                         && attribute(&span.attributes, "wamn.environment")

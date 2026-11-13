@@ -16,14 +16,17 @@ use crate::kv_memory::Deletion;
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AuthChange {
-    /// The user row or the user roles of `principal` in `env_key`.
-    Principal { env_key: String, principal: String },
-    /// A role or a permission of `env_key`, which every principal holding the
-    /// role reads, or the environment status of `env_key`.
-    EnvKey(String),
+    /// The user row or the user roles of `principal` in `project_env_key`.
+    Principal {
+        project_env_key: String,
+        principal: String,
+    },
+    /// A role or a permission of `project_env_key`, which every principal holding the
+    /// role reads, or the environment status of `project_env_key`.
+    ProjectEnvKey(String),
     /// A PAT, a login, a membership or the status of `principal`. These are
     /// facts of the organization, so they change the principal in every
-    /// tenant.
+    /// project.
     Identity(String),
 }
 
@@ -33,15 +36,16 @@ pub enum AuthChange {
 pub struct AuthDrops(BTreeSet<AuthChange>);
 
 impl AuthDrops {
-    pub fn principal(&mut self, env_key: &str, principal: &str) {
+    pub fn principal(&mut self, project_env_key: &str, principal: &str) {
         self.0.insert(AuthChange::Principal {
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             principal: principal.to_owned(),
         });
     }
 
-    pub fn env_key(&mut self, env_key: &str) {
-        self.0.insert(AuthChange::EnvKey(env_key.to_owned()));
+    pub fn project_env_key(&mut self, project_env_key: &str) {
+        self.0
+            .insert(AuthChange::ProjectEnvKey(project_env_key.to_owned()));
     }
 
     pub fn identity(&mut self, principal: &str) {
@@ -66,20 +70,20 @@ impl AuthDrops {
 /// The NATS KV bucket of the auth memory, on the scheduler NATS.
 pub const BUCKET: &str = "wamn-auth";
 
-/// The key of the grants of `principal` in the environment named `env_key`.
-/// This shared cache key stays targeted after the table tenant columns leave.
-pub fn principal_key(env_key: &str, principal: &str) -> String {
-    format!("{env_key}.{principal}")
+/// The key of the grants of `principal` in the environment named `project_env_key`.
+/// This shared cache key stays targeted after the table project columns leave.
+pub fn principal_key(project_env_key: &str, principal: &str) -> String {
+    format!("{project_env_key}.{principal}")
 }
 
-/// The key of the environment status of `env_key`. A principal id is a UUID,
+/// The key of the environment status of `project_env_key`. A principal id is a UUID,
 /// so it is never `environment`.
-pub fn env_key(env_key: &str) -> String {
-    format!("{env_key}.environment")
+pub fn project_env_key(project_env_key: &str) -> String {
+    format!("{project_env_key}.environment")
 }
 
-/// The first token of the key of an identity fact. A tenant name holds only
-/// `[A-Za-z0-9_-]`, so this token never meets a tenant key.
+/// The first token of the key of an identity fact. A project name holds only
+/// `[A-Za-z0-9_-]`, so this token never meets a project key.
 pub const IDENTITY_TOKEN: &str = "=identity";
 
 /// The key a change of an identity fact of `principal` deletes.
@@ -101,11 +105,12 @@ impl crate::Changes for AuthDrops {
             self.0
                 .into_iter()
                 .map(|change| match change {
-                    AuthChange::Principal { env_key, principal } => {
-                        Deletion::Key(principal_key(&env_key, &principal))
-                    }
+                    AuthChange::Principal {
+                        project_env_key,
+                        principal,
+                    } => Deletion::Key(principal_key(&project_env_key, &principal)),
                     AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
-                    AuthChange::EnvKey(env_key) => Deletion::Under(env_key),
+                    AuthChange::ProjectEnvKey(project_env_key) => Deletion::Under(project_env_key),
                 })
                 .collect(),
         )

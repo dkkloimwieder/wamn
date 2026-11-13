@@ -15,10 +15,10 @@ pub(super) fn apply_request<T: Serialize>(
     ))
 }
 
-pub(super) fn get_arguments(kind: &str, name: &str) -> [String; 5] {
+pub(super) fn get_arguments(type_: &str, name: &str) -> [String; 5] {
     [
         "get".into(),
-        format!("{kind}/{name}"),
+        format!("{type_}/{name}"),
         "-o".into(),
         "json".into(),
         "--ignore-not-found".into(),
@@ -36,14 +36,14 @@ pub(super) fn decode_object<T: DeserializeOwned>(output: &str) -> anyhow::Result
 }
 
 pub(super) fn wait_arguments(
-    kind: &str,
+    type_: &str,
     name: &str,
     condition: &str,
     duration: &str,
 ) -> [String; 4] {
     [
         "wait".into(),
-        format!("{kind}/{name}"),
+        format!("{type_}/{name}"),
         format!("--for={condition}"),
         format!("--timeout={duration}"),
     ]

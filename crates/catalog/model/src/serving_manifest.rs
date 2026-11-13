@@ -13,10 +13,10 @@
 //! conversion. Attachment authentication uses a closed modes list, without a
 //! scalar-mode fallback.
 //!
-//! The manifest names no tenant, environment, org, project, route host or
+//! The manifest names no project, environment, org, project, route host or
 //! integer id, so one release hashes identically in every environment
 //! (docs/architecture/overview.md#release-identity). A serving process takes
-//! its tenant and environment from its own configuration.
+//! its project and environment from its own configuration.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -297,9 +297,9 @@ fn own_statements(
     Ok(statements)
 }
 
-/// The contract kind of one application operation.
+/// The contract type of one application operation.
 ///
-/// The values are the `kind` literals of the generated contract
+/// The values are the `type` literals of the generated contract
 /// `operation.json`, which is the only source of this fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -315,19 +315,19 @@ pub enum OperationType {
 }
 
 impl OperationType {
-    /// The kinds that read without changing a record.
-    pub const READ_KINDS: [Self; 3] = [Self::Get, Self::Query, Self::Projection];
+    /// The types that read without changing a record.
+    pub const READ_TYPES: [Self; 3] = [Self::Get, Self::Query, Self::Projection];
 
-    /// Whether this kind reads without changing a record.
+    /// Whether this type reads without changing a record.
     #[must_use]
     pub fn is_read(self) -> bool {
-        Self::READ_KINDS.contains(&self)
+        Self::READ_TYPES.contains(&self)
     }
 
-    /// The HTTP method of a route that calls an operation of this kind.
+    /// The HTTP method of a route that calls an operation of this type.
     ///
-    /// A read is a GET and every other kind is a POST. The method follows from
-    /// the kind alone, so no author writes it (`docs/architecture/execution.md`).
+    /// A read is a GET and every other type is a POST. The method follows from
+    /// the type alone, so no author writes it (`docs/architecture/execution.md`).
     #[must_use]
     pub fn http_method(self) -> &'static str {
         if self.is_read() { "GET" } else { "POST" }
@@ -346,7 +346,7 @@ pub struct ServingRoute {
     /// The model relations that a read of this route reads, from the
     /// `relations` of its generated contract. A history table stands for its
     /// model relation, whose version changes in the same transaction. A route
-    /// of another kind reads none.
+    /// of another type reads none.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reads: BTreeSet<ServingRelation>,
     /// The result field that carries the record revision of a `get`, from
@@ -1270,7 +1270,7 @@ mod tests {
             definition_hash: definition_hash(DEFINITION),
             definition: serde_json::json!({
                 "id": "orders",
-                "kind": "http",
+                "type": "http",
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
             auth_policy: serde_json::json!({"modes": ["pat"]}),
@@ -1532,7 +1532,7 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             target: crate::ComponentPackageCoordinate {
-                env_key: "t1".into(),
+                project_env_key: "t1".into(),
                 package_id: package_id.into(),
                 package_version: package_version.into(),
             },

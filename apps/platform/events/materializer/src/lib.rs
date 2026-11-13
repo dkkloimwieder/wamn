@@ -8,7 +8,7 @@ pub mod sql;
 pub mod workflow;
 
 pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
-pub use context::{RowTenant, derived_event_context, event_context, row_tenant};
+pub use context::{RowProject, derived_event_context, event_context, row_project};
 pub use decide::{
     DecideError, RefuseReason, SkipReason, Verdict, VerifiedSourceEventId, decide, decide_derived,
     serviceable, verified_derived_source_event_id, verified_source_event_id,

@@ -31,7 +31,7 @@ const REMOVAL_SLACK: Duration = Duration::from_secs(15);
 /// The stranded-run query: runs pinned to a release with no live pod.
 const STRANDED_SQL: &str = "\
 SELECT run_id, manifest_digest FROM wamn_run.runs \
- WHERE env_key = $1 AND environment = $2 \
+ WHERE project_env_key = $1 AND environment = $2 \
    AND status NOT IN ('completed', 'failed', 'infrastructure-failure') \
    AND manifest_digest IS NOT NULL \
    AND ($4::text[] IS NULL OR package_id = ANY($4)) \
@@ -71,7 +71,7 @@ pub async fn drain(
         );
     }
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let membership = &document.applications[&analysis.application];
     let mut packages: Vec<_> = membership
@@ -85,7 +85,7 @@ pub async fn drain(
     packages.push(analysis.application.clone());
     let stranded = stranded(
         &project_url,
-        &env_key,
+        &project_env_key,
         &document.env,
         Some(&packages),
         &live,
@@ -136,7 +136,7 @@ pub async fn wait(
 /// When the project database cannot be read.
 pub async fn stranded(
     project_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
     applications: Option<&[String]>,
     live: &BTreeMap<String, usize>,
@@ -148,13 +148,16 @@ pub async fn stranded(
         .await
         .context("begin the stranded-run read")?;
     transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&project_env_key],
+        )
         .await
-        .context("bind the tenant identity")?;
+        .context("bind the project identity")?;
     let stranded = transaction
         .query(
             STRANDED_SQL,
-            &[&env_key, &environment, &live, &applications],
+            &[&project_env_key, &environment, &live, &applications],
         )
         .await
         .context("read the runs pinned to a release with no live pod")?

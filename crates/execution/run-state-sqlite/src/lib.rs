@@ -35,7 +35,7 @@ use wamn_run_state::operator_action::OperatorActionBasis;
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS intents (
     id INTEGER PRIMARY KEY,
-    tenant TEXT NOT NULL,
+    partition TEXT NOT NULL,
     release TEXT NOT NULL,
     package TEXT NOT NULL,
     operation TEXT NOT NULL,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS intents (
     outcome TEXT,
     resolved_basis TEXT,
     resolved_at INTEGER,
-    UNIQUE (tenant, idempotency_key),
+    UNIQUE (partition, idempotency_key),
     CHECK ((finished_at IS NULL) = (outcome IS NULL)),
     CHECK ((resolved_basis IS NULL) = (resolved_at IS NULL)),
     CHECK (finished_at IS NULL OR resolved_at IS NULL)
@@ -139,7 +139,7 @@ impl SqliteIntentStore {
             )
         })?;
         let row = OwnedIntent {
-            tenant: intent.tenant.to_owned(),
+            partition: intent.partition.to_owned(),
             release: intent.release.to_owned(),
             package: intent.package.to_owned(),
             operation: intent.operation.to_owned(),
@@ -241,7 +241,7 @@ impl IntentStore for SqliteIntentStore {
             let storage = storage("uncertain");
             let mut statement = connection
                 .prepare(
-                    "SELECT id, tenant, release, package, operation, idempotency_key \
+                    "SELECT id, partition, release, package, operation, idempotency_key \
                      FROM intents WHERE finished_at IS NULL AND resolved_at IS NULL \
                      ORDER BY id LIMIT ?1",
                 )
@@ -250,7 +250,7 @@ impl IntentStore for SqliteIntentStore {
                 .query_map([limit], |row| {
                     Ok(UncertainIntent {
                         id: IntentId(row.get::<_, i64>(0)?.to_string()),
-                        tenant: row.get(1)?,
+                        partition: row.get(1)?,
                         release: row.get(2)?,
                         package: row.get(3)?,
                         operation: row.get(4)?,
@@ -339,7 +339,7 @@ pub enum TextBegun {
 
 /// The owned fields of one [`Intent`], moved to the blocking pool.
 struct OwnedIntent {
-    tenant: String,
+    partition: String,
     release: String,
     package: String,
     operation: String,
@@ -359,8 +359,8 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<TextBegun,
     let existing = transaction
         .query_row(
             "SELECT id, input_hash, outcome, resolved_basis FROM intents \
-             WHERE tenant = ?1 AND idempotency_key = ?2",
-            params![intent.tenant, intent.idempotency_key],
+             WHERE partition = ?1 AND idempotency_key = ?2",
+            params![intent.partition, intent.idempotency_key],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -387,10 +387,10 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<TextBegun,
         None => {
             transaction
                 .execute(
-                    "INSERT INTO intents (tenant, release, package, operation, idempotency_key, \
+                    "INSERT INTO intents (partition, release, package, operation, idempotency_key, \
                      input_hash, deadline_ms, begun_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
-                        intent.tenant,
+                        intent.partition,
                         intent.release,
                         intent.package,
                         intent.operation,

@@ -54,7 +54,7 @@ impl FileRoutes {
     pub async fn collect_orphan_files(&self) -> anyhow::Result<u64> {
         let Some(reader) = self
             .postgres
-            .file_collection(&self.project, &self.release.target().env_key)
+            .file_collection(&self.project, &self.release.target().project_env_key)
             .await?
         else {
             return Ok(0);

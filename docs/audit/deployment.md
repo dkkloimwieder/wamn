@@ -22,7 +22,7 @@ Problem: WMS KCL declares `wamn_wms`, `rest_connector`, `rest_consumer_fixture`,
 
 Proposal: Compile each environment once. Derive build, publication, broker, qualification, and deployment inputs from its application declarations and package dependencies.
 
-Deletes: Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted.
+Deletes: Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `acceptance_tests_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `minimums = {}` block in both environment `.k` files is deleted.
 
 Risk: Legacy delivery and `tools/test-changes` consume the JSON format. Replace the test at `crates/control/lib/src/platform/build.rs:433`, which currently requires that format. Add a regression that derives all four WMS packages without JSON siblings, then exercise `platform_apply_kind`.
 
@@ -92,7 +92,7 @@ Risk: Pool and concurrency behavior can change. Extend `local_host_matches_the_d
 
 Owner review 2026-10-31 against origin/main 64dcf04: Group 1 Do. Question 1 is answered: one platform host default, no per-application concurrency value, WMS's limit of 1 goes.
 
-## Finding D1-6: Production CDC uses the gate image
+## Finding D1-6: Production CDC uses the acceptance test image
 
 Severity: medium  
 Effort: M  
@@ -100,11 +100,11 @@ Area: `crates/control/lib/src/platform/cdc.rs`, `Dockerfile`, CDC manifests
 
 Evidence: `crates/control/lib/src/platform/cdc.rs:21`, `crates/control/lib/src/platform/cdc.rs:93`, `Dockerfile:189`, `Dockerfile:203`, `Dockerfile:207`, `Dockerfile:212`, `deploy/platform/release/values.yaml:79`, `crates/control/lib/src/platform_build.rs:31`.
 
-Problem: Platform installation runs the CDC reader from the qualification gates image. That image also contains control executables and test fixtures. A dedicated CDC image stage already exists, but the platform build does not publish it. The two historical CDC manifests carry another independently pinned reader image.
+Problem: Platform installation runs the CDC reader from the qualification acceptance test image. That image also contains control executables and test fixtures. A dedicated CDC image stage already exists, but the platform build does not publish it. The two historical CDC manifests carry another independently pinned reader image.
 
-Proposal: A sixth published image per build is build cost. Put the reader executable in the host image and delete the separate `cdc-reader` Dockerfile stage. Use the gates image for CDC only until that lands. Keep one coordinate-derived CDC Deployment renderer.
+Proposal: A sixth published image per build is build cost. Put the reader executable in the host image and delete the separate `cdc-reader` Dockerfile stage. Use the acceptance test image for CDC only until that lands. Keep one coordinate-derived CDC Deployment renderer.
 
-Deletes: Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the gates image. Retain the reader executable in gates where tests require it.
+Deletes: Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the acceptance test image. Retain the reader executable in conditions where tests require it.
 
 Risk: Reader replacement must preserve one reader per replication slot and the environment’s credential names. Extend `readers_use_environment_secret_names_and_detect_live_drift`, then exercise CDC in `platform_apply_kind`.
 
@@ -220,7 +220,7 @@ The `wamn-system` namespace family is one prototype set: `P/postgres.yaml`, `P/w
 | Four audit/run retention examples | Module documentation and paired example references | Delete static examples after choosing the current scheduling owner. Keep pruning operations. |
 | Two `G/operator/*.yaml` Jobs | Manual runbook and legacy delivery | Delete under D1-8. |
 | `deploy/mvp/bootstrap.sh` and its shell test | Shell test and Rust contract test at `crates/control/lib/src/provision_project_env/pat_secrets/tests.rs:26` | Delete after credential lifecycle coverage moves to its Rust owner. |
-| Three gate workloads, event-stream JSON, gate Postgres Dockerfile | Computed Job paths at `tests/integration/src/rc/jobs.rs:98`; stream configuration at `tests/integration/src/rc/deployment.rs:17`; `tools/rc-gate-run:17` | Keep. Exact-path searches alone miss the Job consumers. |
+| Three acceptance test workloads, event-stream JSON, condition Postgres Dockerfile | Computed Job paths at `tests/integration/src/rc/jobs.rs:98`; stream configuration at `tests/integration/src/rc/deployment.rs:17`; `tools/rc-acceptance-test-run:17` | Keep. Exact-path searches alone miss the Job consumers. |
 | `deploy/sql/` declarations | Provisioning, catalog, run-state, and test composition: `crates/control/provision/src/lib.rs:148`, `:155`, `:174`, `crates/catalog/model/src/lib.rs:102` | Keep canonical schema inputs. SQL duplication needs its own ownership review. |
 | `deploy/sql/corrections/wamn-a04x-wms-0007.sql` | Explicit incident correction with database guard at `:18` | Keep as controlled historical recovery evidence until its owner retires it. |
 
@@ -228,10 +228,10 @@ The `wamn-system` namespace family is one prototype set: `P/postgres.yaml`, `P/w
 
 | Target | Consumer | Can it disappear? |
 | --- | --- | --- |
-| `host` | Current release host and base of `gates`; `Dockerfile:158` | No. |
+| `host` | Current release host and base of `conditions`; `Dockerfile:158` | No. |
 | `ctl` | Parent of `runner`; carries control and operations executables; `Dockerfile:168`, `:280` | Keep stage. Independent publication is unnecessary for the current platform build. |
 | `runner` | Platform Jobs and qualification cases; `Dockerfile:280`, `C/install.rs:448` | No. |
-| `gates` | Qualification and gate execution; also current CDC deployment; `Dockerfile:203` | Keep for tests. Remove production CDC use. |
+| `conditions` | Qualification and acceptance test execution; also current CDC deployment; `Dockerfile:203` | Keep for tests. Remove production CDC use. |
 | `identity` | Identity chart; `Dockerfile:196`, `C/identity.rs:236` | No. |
 | `edge-web` | Cluster Rust web service; `Dockerfile:109`, `C/edge.rs:194` | No. |
 | `roles` | Exported HTTP and materializer components; `Dockerfile:234` | No. |
@@ -258,9 +258,9 @@ Repetition inside a generated upstream bundle (cert-manager, cnpg, barman) is in
 | `us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:f98dbc816d281b815f4e5d57f1ac92548b478802c1e62198dac92607fb0b296c` | `G/materializer.yaml:42`; `G/wms-materializer.yaml:42` |
 | `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader@sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | `G/cdc-reader.yaml:45`; `G/cdc-reader-wms.yaml:27` |
 | `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.36@sha256:ef8956e916419aa7d169acedebecc078fde5d7ecdf8bcbe0f13dc21123d0187a` | `G/operator/invite.yaml:33`; `G/operator/mint-pat.yaml:36` |
-| `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4` | Both `G/environments/*.json:18` |
+| `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-acceptance-tests:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4` | Both `G/environments/*.json:18` |
 | `wamn-ctl:dev` | `P/audit-retention.example.yaml:52`; `P/run-retention.example.yaml:68` |
-| `wamn-gates:dev` | `deploy/gates/serve-echo.yaml:26`; `deploy/gates/socket-test-job.yaml:27`; `deploy/gates/trace-test-job.yaml:45` |
+| `wamn-acceptance-tests:dev` | `deploy/acceptance-tests/serve-echo.yaml:26`; `deploy/acceptance-tests/socket-test-job.yaml:27`; `deploy/acceptance-tests/trace-test-job.yaml:45` |
 | `curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | `C/check.rs:18`; `C/identity.rs:19` |
 | `debian:trixie-slim` | `Dockerfile:109,158,168,182,189,196` |
 
@@ -299,7 +299,7 @@ The following are explicit namespace declarations and namespace lists in manifes
 | `platform` | `G/auth-nats-clients.yaml:29`; `G/cnpg-cluster.yaml:25`; both environment JSON files `:6`; `G/evt-nats-check.yaml:10`; `G/nats-jetstream.yaml:11,41,61,77` |
 | `identity` | `G/auth-nats-clients.yaml:11`; `G/identity-certificate.yaml:9`; `G/identity-operator-ca.yaml:11,19,32,41`; `G/operator/invite.yaml:22`; `G/operator/mint-pat.yaml:25` |
 | `__ENVIRONMENT_NAMESPACE__` | `P/host-environment-certs.example.yaml:79,102`; `P/runtime-operator-events-rbac.example.yaml:19,29` |
-| `wamn-system` | `deploy/gates/serve-echo.yaml:15,39`; socket Job `:17`; trace Job `:26`; `I/cnpg-cluster.yaml:25`; `I/minio.yaml:22,39,85,102`; `I/nats-jetstream.yaml:32,74,97,113`; `I/otel-collector.yaml:8,46,95`; `I/prometheus.yaml:12,35,76`; `I/values-wamn.yaml:169,181`; `P/audit-retention-db.example.yaml:38`; audit CronJob `:29`; `P/event-reader-rbac.yaml:19`; host database example `:32`; HTTP example `:12,28`; identity database example `:13`; materializer example `:41`; `P/postgres.yaml:21,91,114`; registry credentials example `:39,50,60,70`; `P/registry.yaml:119,137,186,198,279`; run-retention database example `:54`; run-retention CronJob `:42`; operator event RBAC `:37`; scenario worker `:133,215`; host default values `:116`; Receiving PAT values `:33`; WMS PAT values `:36`; `P/wamn-sysdb.yaml:36` |
+| `wamn-system` | `deploy/acceptance-tests/serve-echo.yaml:15,39`; socket Job `:17`; trace Job `:26`; `I/cnpg-cluster.yaml:25`; `I/minio.yaml:22,39,85,102`; `I/nats-jetstream.yaml:32,74,97,113`; `I/otel-collector.yaml:8,46,95`; `I/prometheus.yaml:12,35,76`; `I/values-wamn.yaml:169,181`; `P/audit-retention-db.example.yaml:38`; audit CronJob `:29`; `P/event-reader-rbac.yaml:19`; host database example `:32`; HTTP example `:12,28`; identity database example `:13`; materializer example `:41`; `P/postgres.yaml:21,91,114`; registry credentials example `:39,50,60,70`; `P/registry.yaml:119,137,186,198,279`; run-retention database example `:54`; run-retention CronJob `:42`; operator event RBAC `:37`; scenario worker `:133,215`; host default values `:116`; Receiving PAT values `:33`; WMS PAT values `:36`; `P/wamn-sysdb.yaml:36` |
 
 Current Rust namespace reads and writes repeat:
 
@@ -413,9 +413,9 @@ The train ends at `tools/train-run:80`. The older upgrade stages appear at `crat
 
 The shared count is 71 `Command::new` occurrences in control and one in ctl, including embedded tests. These are constructor counts, not release execution counts. The ctl occurrence is a signal-test subprocess at `services/ctl/src/dev/command.rs:302`. Source: measurements.md section 2.
 
-A cold platform publication produces five container images: host, runner, gates, identity, and edge-web. It also produces two WebAssembly role artifacts, for seven platform registry artifacts. Local execution makes five image-build calls and one role-export call. Cached execution builds zero to five container images but still requests the role export. Stamp-only builds none. Evidence: `crates/control/lib/src/platform_build.rs:31`, `crates/control/lib/src/platform_build.rs:782`, and `crates/control/lib/src/platform_build.rs:799`.
+A cold platform publication produces five container images: host, runner, conditions, identity, and edge-web. It also produces two WebAssembly role artifacts, for seven platform registry artifacts. Local execution makes five image-build calls and one role-export call. Cached execution builds zero to five container images but still requests the role export. Stamp-only builds none. Evidence: `crates/control/lib/src/platform_build.rs:31`, `crates/control/lib/src/platform_build.rs:782`, and `crates/control/lib/src/platform_build.rs:799`.
 
-An application release can reuse all platform images and build zero new native images. Its package and component artifact counts depend on its manifest. The older upgrade path separately prepares three container images and two guests. RC separately builds host, gates, and PostgreSQL images. Evidence: `crates/control/lib/src/upgrade_environment.rs:32`, `crates/control/lib/src/upgrade_environment.rs:37`, and `tools/rc-gate-run:10`.
+An application release can reuse all platform images and build zero new native images. Its package and component artifact counts depend on its manifest. The older upgrade path separately prepares three container images and two guests. RC separately builds host, conditions, and PostgreSQL images. Evidence: `crates/control/lib/src/upgrade_environment.rs:32`, `crates/control/lib/src/upgrade_environment.rs:37`, and `tools/rc-acceptance-test-run:10`.
 
 No defensible build-time total exists in the supplied measurements. Measurements.md sections 1–11 contain no timed release build. Stage timers exist, but they do not establish cold, cached, or commit-to-running durations.
 
@@ -483,13 +483,13 @@ Proposal: Make installation consume published package, UI, and platform artifact
 Deletes: Merged with D3-1. The installer deletions are stated once under D3-1.  
 Risk: Installation loses its implicit local preparation behavior. A test with an unchanged platform and changed application must select the new package without rebuilding platform images.
 
-## Finding D2-7: Cluster gates retain separate artifact recipes and duplicated lifecycle code
+## Finding D2-7: Cluster conditions retain separate artifact recipes and duplicated lifecycle code
 
 Severity: medium  
 Effort: M  
-Area: tools/*gate-run; tools/*journey-run; tests/integration/src/rc/Dockerfile  
-Evidence: `tests/integration/src/rc/Dockerfile:17`, `Dockerfile:68`, `tools/rc-gate-run:12`, `tools/receiving-cluster-journey-run:17`, `tools/wms-cluster-journey-run:19`, `tools/identity-jwks-journey-run:183`, `tools/kind-gate-build:93`; measurements.md section 7 records 78 duplicated lines between the application runners.  
-Problem: RC builds debug host and gate images through a separate Dockerfile, while platform publication builds release images. The identity journey rebuilds another pair of images directly. Receiving and WMS correctly consume candidate images, but duplicate cluster, image-loading, broker, and cleanup mechanics. These paths maintain different recipes for proving the deployed system.  
+Area: tools/*acceptance-test-run; tools/*journey-run; tests/integration/src/rc/Dockerfile
+Evidence: `tests/integration/src/rc/Dockerfile:17`, `Dockerfile:68`, `tools/rc-acceptance-test-run:12`, `tools/receiving-cluster-journey-run:17`, `tools/wms-cluster-journey-run:19`, `tools/identity-jwks-journey-run:183`, `tools/kind-acceptance-test-build:93`; measurements.md section 7 records 78 duplicated lines between the application runners.
+Problem: RC builds debug host and acceptance test images through a separate Dockerfile, while platform publication builds release images. The identity journey rebuilds another pair of images directly. Receiving and WMS correctly consume candidate images, but duplicate cluster, image-loading, broker, and cleanup mechanics. These paths maintain different recipes for proving the deployed system.
 Proposal: Make release qualification consume only the canonical published artifacts. Keep debug builds for development. Put disposable infrastructure ownership in one shared test fixture, while applications retain their assertions.  
 Deletes: The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6.  
 Risk: Preserve negative-effect proofs, resource ownership, and teardown evidence. RC, Receiving, WMS, JWKS/session, and `tools/kind-cluster-delete-test` must retain their existing assertions.
@@ -546,7 +546,7 @@ Effort: L
 Area: `crates/control/lib/src/delivery/qualification_artifact.rs`  
 Evidence: `crates/control/lib/src/delivery/qualification_artifact.rs:57`, `crates/control/lib/src/delivery/qualification_artifact.rs:92`, `crates/control/lib/src/delivery/qualification.rs:174`, `crates/control/lib/src/platform/cdc.rs:21`.
 
-Problem: Qualification reuse depends on the release, host, HTTP component, and materializer component. It excludes chart templates, identity, edge, gates, and the runner. The gates image also supplies the deployed CDC reader, so its exclusion reaches production behavior. The current qualification proves a narrower unit than the proposed deployment path needs.
+Problem: Qualification reuse depends on the release, host, HTTP component, and materializer component. It excludes chart templates, identity, edge, conditions, and the runner. The acceptance test image also supplies the deployed CDC reader, so its exclusion reaches production behavior. The current qualification proves a narrower unit than the proposed deployment path needs.
 
 Proposal: The qualification key is the release digest plus the host image digest. Chart, identity, edge and runner changes are proved by `platform_apply_kind` on the branch that touched them, never by re-qualifying releases. The CDC exclusion is moot once the reader lives in the host image (D1-6). Keep `qualify-upgrade` as a database transition proof inside the qualification workflow.
 
@@ -574,7 +574,7 @@ Effort: M
 Area: `deploy/gcp/environments/`  
 Evidence: `deploy/gcp/environments/dkk--receiving--dev.k:8`, `deploy/gcp/environments/dkk--receiving--dev.json:3`, `deploy/gcp/environments/dkk--receiving--dev.json:17`, `crates/control/lib/src/platform/build.rs:125`, `crates/control/lib/src/platform/environments.rs:261`.
 
-Problem: Each environment combines KCL, an adjacent JSON file, and a project-specific host YAML file. The JSON file repeats the route host and supplies cluster, registry, package roots, and a gates image. The installer reads those independent files rather than deriving one complete set of inputs.
+Problem: Each environment combines KCL, an adjacent JSON file, and a project-specific host YAML file. The JSON file repeats the route host and supplies cluster, registry, package roots, and a acceptance test image. The installer reads those independent files rather than deriving one complete set of inputs.
 
 Proposal: Give each fact one owner:
 
@@ -614,7 +614,7 @@ Risk: Consolidation changes ownership and deletion behavior. Extend `release_cha
 Severity: medium  
 Effort: L  
 Area: `tools/`, `test-support/`, `deploy/mvp/`  
-Evidence: `tools/receiving-cluster-journey-run:69`, `tools/wms-cluster-journey-run:71`, `tools/rc-gate-run:10`, `test-support/infrastructure/delivery_cluster.rs:9`, `docs/operations/gcp.md:932`. Measurements.md section 7 records 78 duplicated lines between the two application journey scripts.
+Evidence: `tools/receiving-cluster-journey-run:69`, `tools/wms-cluster-journey-run:71`, `tools/rc-acceptance-test-run:10`, `test-support/infrastructure/delivery_cluster.rs:9`, `docs/operations/gcp.md:932`. Measurements.md section 7 records 78 duplicated lines between the two application journey scripts.
 
 Problem: The routes below overlap in resource creation, rendering, and lifecycle management. Application journeys put PostgreSQL and NATS in Docker containers, while platform installation uses Kubernetes infrastructure. Those journeys therefore cannot establish the complete deployment path used on GKE.
 
@@ -629,14 +629,14 @@ Proposal: Use `platform apply` and one shared fixture for all cluster-backed qua
 | Kept delivery cluster | Retain coexistence assertions. Remove its separate installer in `delivery_cluster.rs`. Clusters are disposable per the cluster-stage rule, and one agent holds a cluster at a time. |
 | Receiving cluster journey | Move its application assertions into the fixture, then delete its lifecycle script. |
 | WMS cluster journey | Move its application assertions into the fixture, then delete its lifecycle script. |
-| RC gate cluster | Retain relevant protocol assertions. Remove its alternate images and host installation. |
+| RC acceptance test cluster | Retain relevant protocol assertions. Remove its alternate images and host installation. |
 | MVP bootstrap | Delete after credential lifecycle coverage moves to the common path. |
 
 Kind values select local registry transport, storage, certificates, and object storage. GKE values select Artifact Registry, storage classes, Workload Identity, bucket references, and load-balancer integration. Both run the same CNPG, broker, identity, host, CDC, and edge installation stages.
 
 Keep the native `wamn dev` loop as an editing tool. Its process-based activation already declares that it owns no promotion operation at `crates/control/lib/src/dev/activation.rs:1`.
 
-Deletes: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-gate-run`, `tools/kind-gate-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them.
+Deletes: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-acceptance-test-run`, `tools/kind-acceptance-test-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them.
 
 Risk: Deleting fixtures can discard failure assertions. Move those assertions first, then require Receiving, WMS, coexistence, rollback, drain, credential recovery, and cleanup cases through the common fixture.
 

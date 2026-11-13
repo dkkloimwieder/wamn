@@ -1,4 +1,4 @@
-//! The live write-authority gate for `deploy/sql/app-schema.sql` (R11).
+//! The live write-authority condition for `deploy/sql/app-schema.sql` (R11).
 //!
 //! `tests/schema.rs` pins the GRANT lines as TEXT. This suite tests that PostgreSQL
 //! actually enforces them: every revoke lands with its positive assertion — this
@@ -9,7 +9,7 @@
 //!   chain reads as authorization INPUT, `environment` is the status the host
 //!   admits a request by, and the platform configuration tables are the rows
 //!   the platform writes for the application. An App generation may inherit
-//!   their stable `wamn_app` reads and nothing more, so a tenant or an
+//!   their stable `wamn_app` reads and nothing more, so a project or an
 //!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
 //! - `number_counter` is written only through `platform.bump_counter`,
@@ -23,7 +23,7 @@
 //!   generation.
 //!
 //! Each test runs as the superuser of a test database on the test PostgreSQL
-//! server (the harness prepares one tenant-targeted App generation) and holds the
+//! server (the harness prepares one project-targeted App generation) and holds the
 //! process lock, because it changes cluster-wide roles — the `tests/schema.rs`
 //! live-apply convention.
 
@@ -33,8 +33,8 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 
-/// The tenant every probe runs under, and the user its seeded rows belong to.
-const ENV_KEY: &str = "t1";
+/// The project every probe runs under, and the user its seeded rows belong to.
+const PROJECT_ENV_KEY: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
 /// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -46,13 +46,13 @@ const APPLICATION: &str = "receiving";
 const OTHER_SEQUENCE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 /// An id that is not a number sequence.
 const UNKNOWN_SEQUENCE: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-/// The pinned `wamn:provisioning` id, the row a tenant must not create.
+/// The pinned `wamn:provisioning` id, the row a project must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// `deploy/sql/record-history.sql`, `deploy/sql/record-history-app-grants.sql`,
-/// and `deploy/sql/app-schema.sql`, the order every tenant applier uses.
+/// and `deploy/sql/app-schema.sql`, the order every project applier uses.
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
@@ -80,9 +80,9 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-/// The superuser prelude: a production-prepared tenant-targeted App generation,
+/// The superuser prelude: a production-prepared project-targeted App generation,
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
-/// `platform` applied verbatim from the DDL of record, one tenant's role rows,
+/// `platform` applied verbatim from the DDL of record, one project's role rows,
 /// the user and configuration rows of the database, and a sequence of each of
 /// two applications.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
@@ -93,13 +93,13 @@ fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
     let app_generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App accepts tenant target");
+    .expect("App accepts project target");
     let mut script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &database,
@@ -166,9 +166,9 @@ fn run(url: &str, script: &str) {
 /// write `number_counter` would break gapless numbering. `api_key` is not even
 /// readable.
 ///
-/// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
+/// Each denied statement is RLS-LEGAL for the probe project — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
-/// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the tenant floor
+/// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the project base grants
 /// does admit such a row under the App generation is what the counter test shows.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
@@ -204,7 +204,7 @@ SET LOCAL ROLE {app_generation};
 
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
-    'the tenant authority is the prepared App generation';
+    'the project authority is the prepared App generation';
   ASSERT (SELECT count(*) FROM platform."user") = 1,
     'users is still readable';
   ASSERT (SELECT count(*) FROM platform.user_role) = 1,
@@ -543,7 +543,7 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   ASSERT current_user = '{app_generation}',
-    'the tenant authority is the prepared App generation';
+    'the project authority is the prepared App generation';
   FOREACH probe_sql IN ARRAY ARRAY[
     'SELECT count(*) FROM platform.user_history',
     'SELECT count(*) FROM platform.role_history',

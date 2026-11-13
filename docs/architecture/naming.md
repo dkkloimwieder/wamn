@@ -66,7 +66,7 @@ A platform component writes under the `platform."user"` row named `wamn:<compone
 The component is kebab-case and carries no action and no version.
 The row names the component, never the invocation.
 The closed component list is `provisioning`, `apply-package`, `materializer`, `executor`, and `audit-retention`.
-A tenant or application cannot create a `wamn:` name.
+A project or application cannot create a `wamn:` name.
 
 Every environment also holds one `service` user named `workflow`, which runs workflows.
 Its name is not in the `wamn:` namespace, and the platform grants it no role.
@@ -74,7 +74,7 @@ Admins grant it roles like any user.
 
 The id of a platform row is `uuid5(WAMN_NAMESPACE, "wamn:<component>")`.
 `WAMN_NAMESPACE` is `uuid5(NAMESPACE_DNS, "wamn.dev")`, which is `0df299cf-7085-537d-919b-1145b5ef00f8`.
-Every tenant and deployment derives the same id, so no configuration carries it.
+Every project and deployment derives the same id, so no configuration carries it.
 The id of the `workflow` user is `uuid5(WAMN_NAMESPACE, "workflow")`.
 [`wamn-identity-protocol`](../../crates/identity/protocol/src/platform.rs) defines the namespace, the component list, and the derivation.
 

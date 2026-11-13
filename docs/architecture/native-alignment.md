@@ -38,10 +38,10 @@ These choices make no general performance assertion.
 | Owner | Reason retained | Condition for replacement |
 | --- | --- | --- |
 | [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | Native availability alone does not authorize a second database path. |
-| [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the tenant contract when considering any native replacement. |
-| [Immutable wiring releases](overview.md#release-identity) | Tenant-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent tenant and per-link authorization. |
+| [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the project contract when considering any native replacement. |
+| [Immutable wiring releases](overview.md#release-identity) | Project-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent project and per-link authorization. |
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
-| [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed tenant capability set. | A replacement build must preserve that actual import boundary. |
+| [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed project capability set. | A replacement build must preserve that actual import boundary. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the targeted `create,patch` Role only when the pinned chart grants it. |
 | [Count mode](execution.md#native-dispatch) | Chart `2.11.0` defaults guest memory and raw-socket egress to enforce. The host keeps guest memory in count and defaults raw-socket egress to enforce. Guest memory count mode records growth that enforce would refuse and allows it. | Guest memory remains in count pending an owner ruling. Socket enforce mode blocks refused traffic; the existing socket flag still accepts count. |
@@ -74,7 +74,7 @@ A fault-time liveness delay remains. Supervised restarts do not remove it.
 
 The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path and its connection retirement limit.
 
-Tenant raw-socket admission is refused.
+Project raw-socket admission is refused.
 The [HTTP capability](capabilities.md#outbound-http) has a separate policy owner.
 A change to its external address-enforcement boundary requires its own security decision.
 

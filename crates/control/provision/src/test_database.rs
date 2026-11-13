@@ -13,7 +13,7 @@ const SYSTEM_ROLE_SQL: &str = "DO $system_role$ BEGIN \
        END IF; \
      END $system_role$;";
 
-/// Create a test database with the system floor: the control store that a
+/// Create a test database with the system base grants: the control store that a
 /// fresh control database has.
 ///
 /// The database is owned by `wamn_system`, and [`SYSTEM_SCHEMA_SQL`] and
@@ -39,7 +39,7 @@ pub fn system() -> wamn_test_postgres::Database {
             "RESET ROLE",
             &sql::grant_control_surface_sql(),
         ])
-        .expect("install the system control store floor");
+        .expect("install the system control store minimum");
     database
 }
 

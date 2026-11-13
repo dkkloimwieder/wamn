@@ -1,5 +1,5 @@
 //! The event context — the JSON value registration conditions evaluate over —
-//! and the tenant-scoping read.
+//! and the project-scoping read.
 //!
 //! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The context shape
 //! [`event_context`] emits — `{"op", "old", "new"}` — is the frozen surface a
@@ -13,12 +13,12 @@ use wamn_event_wire::{DerivedEvent, Envelope, Op};
 
 /// Row-level tenancy carried by one CDC image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RowTenant<'a> {
-    /// The image is present and has no `tenant_id`; database residency governs.
+pub enum RowProject<'a> {
+    /// The image is present and has no `project_id`; database residency governs.
     Absent,
-    /// The image carries a string tenant identity.
-    Tenant(&'a str),
-    /// The image is absent or carries a non-string tenant identity.
+    /// The image carries a string project identity.
+    Project(&'a str),
+    /// The image is absent or carries a non-string project identity.
     Unscopable,
 }
 
@@ -56,35 +56,35 @@ pub fn derived_event_context(event: &DerivedEvent) -> Value {
     })
 }
 
-/// The row-level tenant carried by an event image. [`RowTenant::Absent`] means
+/// The row-level project carried by an event image. [`RowProject::Absent`] means
 /// the package row relies on its separately verified database-residency target:
 ///
 /// - a DELETE under REPLICA IDENTITY DEFAULT — the old image carries the key
-///   column (`id`) ONLY, not `tenant_id` (the .17 design contract); or
-/// - a package application table with no `tenant_id` column.
+///   column (`id`) ONLY, not `project_id` (the .17 design contract); or
+/// - a package application table with no `project_id` column.
 ///
 /// The caller can accept `Absent` only after the catalog credential confirms
-/// that the package resides in the tenant database. A present string
+/// that the package resides in the project database. A present string
 /// remains an additional equality guard; any other carrier is unscopable.
-pub fn row_tenant(envelope: &Envelope) -> RowTenant<'_> {
+pub fn row_project(envelope: &Envelope) -> RowProject<'_> {
     let image: &Map<String, Value> = match envelope.op {
         Op::Insert | Op::Update => match envelope.new.as_ref() {
             Some(image) => image,
-            None => return RowTenant::Unscopable,
+            None => return RowProject::Unscopable,
         },
         // A DELETE's only image is the old key columns; under DEFAULT that is
-        // never tenant-bearing, but read it anyway — if the entity later runs
-        // REPLICA IDENTITY FULL (l5i9.31) the old image carries tenant_id and
+        // never project-bearing, but read it anyway — if the entity later runs
+        // REPLICA IDENTITY FULL (l5i9.31) the old image carries project_id and
         // deletes become scopable with zero change here.
         Op::Delete => match envelope.old.as_ref() {
             Some(image) => image,
-            None => return RowTenant::Unscopable,
+            None => return RowProject::Unscopable,
         },
     };
-    match image.get("tenant_id") {
-        None => RowTenant::Absent,
-        Some(Value::String(tenant)) => RowTenant::Tenant(tenant),
-        Some(_) => RowTenant::Unscopable,
+    match image.get("project_id") {
+        None => RowProject::Absent,
+        Some(Value::String(project)) => RowProject::Project(project),
+        Some(_) => RowProject::Unscopable,
     }
 }
 
@@ -146,39 +146,39 @@ mod tests {
     }
 
     #[test]
-    fn tenant_comes_from_the_new_image_for_insert_update() {
+    fn project_comes_from_the_new_image_for_insert_update() {
         let env = envelope(
             Op::Update,
             None,
-            Some(json!({"id": "7", "tenant_id": "t1"})),
+            Some(json!({"id": "7", "project_id": "t1"})),
         );
-        assert_eq!(row_tenant(&env), RowTenant::Tenant("t1"));
+        assert_eq!(row_project(&env), RowProject::Project("t1"));
     }
 
     #[test]
-    fn delete_under_default_identity_has_no_row_tenant() {
+    fn delete_under_default_identity_has_no_row_project() {
         // The old image of a DELETE carries the PK only (REPLICA IDENTITY
         // DEFAULT), so database residency must supply the target.
         let env = envelope(Op::Delete, Some(json!({"id": "7"})), None);
-        assert_eq!(row_tenant(&env), RowTenant::Absent);
+        assert_eq!(row_project(&env), RowProject::Absent);
     }
 
     #[test]
     fn delete_with_a_full_old_image_becomes_scopable() {
-        // Forward-compat with the l5i9.31 per-entity FULL knob: a tenant-bearing
+        // Forward-compat with the l5i9.31 per-entity FULL knob: a project-bearing
         // old image targets the delete with zero change here.
         let env = envelope(
             Op::Delete,
-            Some(json!({"id": "7", "tenant_id": "t1"})),
+            Some(json!({"id": "7", "project_id": "t1"})),
             None,
         );
-        assert_eq!(row_tenant(&env), RowTenant::Tenant("t1"));
+        assert_eq!(row_project(&env), RowProject::Project("t1"));
     }
 
     #[test]
-    fn a_package_row_may_omit_a_row_tenant() {
+    fn a_package_row_may_omit_a_row_project() {
         let env = envelope(Op::Insert, None, Some(json!({"id": "7"})));
-        assert_eq!(row_tenant(&env), RowTenant::Absent);
+        assert_eq!(row_project(&env), RowProject::Absent);
     }
 
     #[test]

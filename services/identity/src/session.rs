@@ -31,24 +31,24 @@ const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.\"user\" u
     ORDER BY r.role_name";
 
 #[derive(Debug)]
-pub(super) enum FailureKind {
+pub(super) enum FailureType {
     Unauthorized,
     Unavailable,
 }
 
 #[derive(Debug)]
 pub(super) struct ExchangeFailure {
-    pub(super) kind: FailureKind,
+    pub(super) type_: FailureType,
 }
 
 fn refused() -> ExchangeFailure {
     ExchangeFailure {
-        kind: FailureKind::Unauthorized,
+        type_: FailureType::Unauthorized,
     }
 }
 fn failed() -> ExchangeFailure {
     ExchangeFailure {
-        kind: FailureKind::Unavailable,
+        type_: FailureType::Unavailable,
     }
 }
 

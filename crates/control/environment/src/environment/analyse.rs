@@ -122,7 +122,7 @@ pub struct Notice {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Observation {
     PlatformSchema {
         report: wamn_package_control::schema_baseline::SchemaReport,
@@ -390,7 +390,10 @@ pub(crate) async fn read_row(
 
 /// Read installed SQL and release bindings as the project database owner.
 /// Only an absent database returns `None`; unreadable state returns its cause.
-pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<ProjectState>> {
+pub async fn read_project(
+    url: &str,
+    project_env_key: &str,
+) -> anyhow::Result<Option<ProjectState>> {
     let mut client = match connect_project(url).await {
         Ok(client) => client,
         Err(error)
@@ -408,15 +411,18 @@ pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<Pro
         .await
         .context("begin the project read")?;
     transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&project_env_key],
+        )
         .await
-        .context("bind the tenant identity")?;
+        .context("bind the project identity")?;
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in transaction
         .query(
             "SELECT package_id, package_version, physical_schema_fingerprint FROM catalog.packages \
-              WHERE env_key = $1",
-            &[&env_key],
+              WHERE project_env_key = $1",
+            &[&project_env_key],
         )
         .await
         .context("read the installed packages")?
@@ -432,8 +438,8 @@ pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<Pro
     let bindings = transaction
         .query(
             "SELECT manifest_digest, component_digest, name, connection_id::text \
-               FROM catalog.connection_binding WHERE env_key = $1",
-            &[&env_key],
+               FROM catalog.connection_binding WHERE project_env_key = $1",
+            &[&project_env_key],
         )
         .await
         .context("read the connection bindings")?

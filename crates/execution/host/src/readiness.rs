@@ -58,7 +58,7 @@ async fn prepare_synchronous_release(
         .postgres
         .release_component_bindings_ready(
             &operations.project,
-            &operations.release.target().env_key,
+            &operations.release.target().project_env_key,
             operations.release.release().manifest_digest.as_str(),
             &operations.release.target().environment,
             &digests,
@@ -87,14 +87,14 @@ pub fn synchronous_route_count(manifest: &ServingManifest) -> usize {
     manifest
         .attachments
         .values()
-        .filter(|attachment| synchronous_request_kind(attachment.type_))
+        .filter(|attachment| synchronous_request_type(attachment.type_))
         .count()
 }
 
-/// Whether an attachment of this kind serves a synchronous request.
-pub fn synchronous_request_kind(kind: AttachmentType) -> bool {
+/// Whether an attachment of this type serves a synchronous request.
+pub fn synchronous_request_type(type_: AttachmentType) -> bool {
     matches!(
-        kind,
+        type_,
         AttachmentType::Http | AttachmentType::Internal | AttachmentType::Studio
     )
 }
@@ -213,7 +213,7 @@ pub struct RouterReadinessProbe {
 }
 
 impl RouterReadinessProbe {
-    /// Gate readiness on the release components, and on the synchronous
+    /// Condition readiness on the release components, and on the synchronous
     /// wirings of the wiring layer, if any.
     pub fn new(operations: Arc<OperationHost>) -> Self {
         Self {

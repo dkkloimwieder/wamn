@@ -201,14 +201,14 @@ impl Pattern {
 /// Why a pattern does not parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatternError {
-    kind: PatternErrorKind,
+    type_: PatternErrorType,
     detail: Box<str>,
 }
 
 /// The class of a [`PatternError`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum PatternErrorKind {
+pub enum PatternErrorType {
     /// Unbalanced braces, an unknown token, or a name that is not an identifier.
     Syntax,
     /// A `date:` format outside the renderer's set.
@@ -221,13 +221,13 @@ pub enum PatternErrorKind {
 
 impl PatternError {
     /// The class of the refusal.
-    pub const fn kind(&self) -> PatternErrorKind {
-        self.kind
+    pub const fn type_(&self) -> PatternErrorType {
+        self.type_
     }
 
-    fn new(kind: PatternErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: PatternErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -286,7 +286,7 @@ pub fn parse(pattern: &str) -> Result<Pattern, PatternError> {
     for (index, name) in counters.iter().enumerate() {
         if counters[..index].contains(name) {
             return Err(PatternError::new(
-                PatternErrorKind::InvalidCounter,
+                PatternErrorType::InvalidCounter,
                 format!("pattern {pattern:?} names counter {name} twice"),
             ));
         }
@@ -320,10 +320,10 @@ pub fn parse(pattern: &str) -> Result<Pattern, PatternError> {
 /// Parse one token body: the part, and the key name its `reset=` or `per=`
 /// option names, unresolved, when the option names no date.
 fn token(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
-    let (kind, rest) = body
+    let (type_, rest) = body
         .split_once(':')
-        .ok_or_else(|| syntax(format!("token {{{body}}} has no kind")))?;
-    match kind {
+        .ok_or_else(|| syntax(format!("token {{{body}}} has no type")))?;
+    match type_ {
         "field" => Ok((Part::Field(identifier(rest, "field")?.into()), None)),
         "date" => Ok((Part::Date(date_format(rest)?), None)),
         "seq" => counter(rest),
@@ -344,7 +344,7 @@ fn counter(body: &str) -> Result<(Part, Option<Box<str>>), PatternError> {
     for option in options {
         let invalid = |detail: &str| {
             PatternError::new(
-                PatternErrorKind::InvalidOption,
+                PatternErrorType::InvalidOption,
                 format!("counter {name} option {option:?} {detail}"),
             )
         };
@@ -423,7 +423,7 @@ fn date_format(format: &str) -> Result<DateFormat, PatternError> {
         .find(|candidate| candidate.as_str() == format)
         .ok_or_else(|| {
             PatternError::new(
-                PatternErrorKind::UnknownDateFormat,
+                PatternErrorType::UnknownDateFormat,
                 format!("date format {format:?} is not YYYY, YY, MM, DD, WW or Q"),
             )
         })
@@ -462,7 +462,7 @@ fn refuse_counter_cycles(pattern: &Pattern, text: &str) -> Result<(), PatternErr
             match key_of(&current) {
                 Some(next) if next == counter.name => {
                     return Err(PatternError::new(
-                        PatternErrorKind::InvalidCounter,
+                        PatternErrorType::InvalidCounter,
                         format!("pattern {text:?} keys counter {} by itself", counter.name),
                     ));
                 }
@@ -475,7 +475,7 @@ fn refuse_counter_cycles(pattern: &Pattern, text: &str) -> Result<(), PatternErr
 }
 
 fn syntax(detail: String) -> PatternError {
-    PatternError::new(PatternErrorKind::Syntax, detail)
+    PatternError::new(PatternErrorType::Syntax, detail)
 }
 
 #[cfg(test)]
@@ -529,27 +529,31 @@ mod tests {
     }
 
     #[test]
-    fn refusals_carry_their_kind() {
-        for (pattern, kind) in [
-            ("{date:YYYYMM}", PatternErrorKind::UnknownDateFormat),
-            ("{seq:n,reset=date:HH}", PatternErrorKind::UnknownDateFormat),
-            ("{seq:n", PatternErrorKind::Syntax),
-            ("a}b", PatternErrorKind::Syntax),
-            ("{when:now}", PatternErrorKind::Syntax),
-            ("{seq:N}", PatternErrorKind::Syntax),
-            ("{seq:n,step=2}", PatternErrorKind::InvalidOption),
-            ("{seq:n,width=0}", PatternErrorKind::InvalidOption),
-            ("{seq:n,width=4,05}", PatternErrorKind::InvalidOption),
-            ("{seq:n,reset=a,per=b}", PatternErrorKind::InvalidOption),
-            ("{seq:n,pad=ab}", PatternErrorKind::InvalidOption),
-            ("{seq:n}{seq:n}", PatternErrorKind::InvalidCounter),
-            ("{seq:n,reset=n}", PatternErrorKind::InvalidCounter),
+    fn refusals_carry_their_type() {
+        for (pattern, type_) in [
+            ("{date:YYYYMM}", PatternErrorType::UnknownDateFormat),
+            ("{seq:n,reset=date:HH}", PatternErrorType::UnknownDateFormat),
+            ("{seq:n", PatternErrorType::Syntax),
+            ("a}b", PatternErrorType::Syntax),
+            ("{when:now}", PatternErrorType::Syntax),
+            ("{seq:N}", PatternErrorType::Syntax),
+            ("{seq:n,step=2}", PatternErrorType::InvalidOption),
+            ("{seq:n,width=0}", PatternErrorType::InvalidOption),
+            ("{seq:n,width=4,05}", PatternErrorType::InvalidOption),
+            ("{seq:n,reset=a,per=b}", PatternErrorType::InvalidOption),
+            ("{seq:n,pad=ab}", PatternErrorType::InvalidOption),
+            ("{seq:n}{seq:n}", PatternErrorType::InvalidCounter),
+            ("{seq:n,reset=n}", PatternErrorType::InvalidCounter),
             (
                 "{seq:a,reset=b}{seq:b,per=a}",
-                PatternErrorKind::InvalidCounter,
+                PatternErrorType::InvalidCounter,
             ),
         ] {
-            assert_eq!(parse(pattern).expect_err(pattern).kind(), kind, "{pattern}");
+            assert_eq!(
+                parse(pattern).expect_err(pattern).type_(),
+                type_,
+                "{pattern}"
+            );
         }
     }
 }

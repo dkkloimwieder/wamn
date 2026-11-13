@@ -4,7 +4,7 @@
 //! Each test owns a database of the test PostgreSQL server with the real
 //! catalog and application schema. An administration generation, minted by
 //! the production builder, writes the sequence, setting and users rows, and
-//! the plugin renders as a guest generation of the tenant, a member of
+//! the plugin renders as a guest generation of the project, a member of
 //! `wamn_app`. Each test holds the process lock, because both generations are
 //! cluster-wide roles.
 
@@ -23,7 +23,7 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 
-const ENV_KEY: &str = "numbering";
+const PROJECT_ENV_KEY: &str = "numbering";
 const APPLICATION: &str = "receiving";
 const OTHER_APPLICATION: &str = "shipping";
 const ADMINISTRATION_PASSWORD: &str = "numbering-administration";
@@ -70,7 +70,7 @@ async fn connect(url: &str) -> tokio_postgres::Client {
 impl Live {
     async fn new() -> Self {
         let lock = wamn_test_postgres::lock();
-        let database = wamn_platform_identity::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::project_platform();
         database
             .execute(&["CREATE SCHEMA wamn_run;"])
             .expect("create the run-plane schema that administration revokes in");
@@ -102,7 +102,7 @@ impl Live {
         let live = Self {
             plugin: WamnPostgres::new(WamnPostgresConfig {
                 credentials: Some(ClassCredentials::every_class(
-                    live_guest_url(database.url(), ENV_KEY).await,
+                    live_guest_url(database.url(), PROJECT_ENV_KEY).await,
                 )),
                 guest_pool_max_size: 8,
                 platform_pool_max_size: 1,
@@ -161,7 +161,7 @@ impl Live {
             .bind_session_identity(
                 &scope,
                 &SessionIdentity {
-                    env_key: ENV_KEY.to_owned(),
+                    project_env_key: PROJECT_ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
                     ..SessionIdentity::default()
@@ -441,7 +441,7 @@ async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
         .bind_session_identity(
             scope,
             &SessionIdentity {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
                 ..SessionIdentity::default()
@@ -500,7 +500,7 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
         .bind_session_identity(
             scope,
             &SessionIdentity {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 ..SessionIdentity::default()
             },
@@ -677,7 +677,7 @@ async fn live_an_invalid_timezone_setting_is_refused() {
             .bind_session_identity(
                 &scope,
                 &SessionIdentity {
-                    env_key: ENV_KEY.to_owned(),
+                    project_env_key: PROJECT_ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
                     ..SessionIdentity::default()
@@ -797,7 +797,7 @@ impl Live {
         self.plugin
             .set_number_counter(
                 crate::plugins::wamn_postgres::DEFAULT_PROJECT,
-                ENV_KEY,
+                PROJECT_ENV_KEY,
                 LIVE_PRINCIPAL,
                 SET_OPERATION,
                 request_id,
@@ -981,7 +981,7 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
         .bind_session_identity(
             scope,
             &SessionIdentity {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
                 ..SessionIdentity::default()

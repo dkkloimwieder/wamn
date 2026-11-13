@@ -435,11 +435,11 @@ async fn status(
         }
     }
     let conditions = job["status"]["conditions"].as_array();
-    let has = |kind| {
+    let has = |type_| {
         conditions.is_some_and(|conditions| {
             conditions
                 .iter()
-                .any(|condition| condition["type"] == kind && condition["status"] == "True")
+                .any(|condition| condition["type"] == type_ && condition["status"] == "True")
         })
     };
     let state = if has("Complete") {

@@ -88,7 +88,7 @@ pub(super) fn ready(pod: &Pod) -> bool {
     pod.status
         .conditions
         .iter()
-        .any(|condition| condition.kind == "Ready" && condition.status == "True")
+        .any(|condition| condition.type_ == "Ready" && condition.status == "True")
 }
 
 /// Whether a read fetches the logs of `container`: every read when `all`,
@@ -182,7 +182,7 @@ pub(super) struct PodStatus {
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct Condition {
     #[serde(rename = "type")]
-    pub(super) kind: String,
+    pub(super) type_: String,
     pub(super) status: String,
 }
 

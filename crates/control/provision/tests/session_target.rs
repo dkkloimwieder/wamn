@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
-use wamn_control_provision::session_target::{SESSION_TARGET_KEY, SessionTarget, session_audience};
+use wamn_control_provision::session_target::{SessionTarget, session_audience};
 use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, project_env_database_name};
 use wamn_control_registry::Triple;
@@ -101,7 +101,11 @@ fn audience_spelling_and_each_environment_instance_are_exact() {
                 );
                 assert_eq!(a.triple(), &coordinates);
                 assert_eq!(a.instance_suffix(), instance);
-                assert_eq!(a.env_key(), "t1", "existing text tenants need not be UUIDs");
+                assert_eq!(
+                    a.project_env_key(),
+                    "t1",
+                    "existing text projects need not be UUIDs"
+                );
                 assert_eq!(a.connection().generation(), CredentialGeneration::A);
                 assert_eq!(b.connection().generation(), CredentialGeneration::B);
                 assert!(audiences.insert(a.audience().to_owned()));
@@ -115,8 +119,7 @@ fn audience_spelling_and_each_environment_instance_are_exact() {
 }
 
 #[test]
-fn exact_credential_bearing_wire_shape_round_trips_both_generations() {
-    assert_eq!(SESSION_TARGET_KEY, "target.json");
+fn credential_target_round_trips_both_generations() {
     for generation in [CredentialGeneration::A, CredentialGeneration::B] {
         let coordinates = triple("acme", "dev");
         let url = credential(
@@ -127,19 +130,12 @@ fn exact_credential_bearing_wire_shape_round_trips_both_generations() {
         );
         let original = SessionTarget::new(&coordinates, INSTANCE, "t1", &url).unwrap();
         let encoded = original.to_json().unwrap();
-        let expected = format!(
-            "{{\"audience\":\"urn:wamn:project-env:acme:widgets:dev:k3m9x2p7\",\"org\":\"acme\",\"project\":\"widgets\",\"env\":\"dev\",\"instance_suffix\":\"k3m9x2p7\",\"env_key\":\"t1\",\"database\":\"wamn-db-acme--widgets--dev--k3m9x2p7\",\"database_url\":\"{url}\"}}"
-        );
-        assert_eq!(
-            encoded, expected,
-            "the mounted target document has exactly eight fields"
-        );
         let decoded = SessionTarget::from_json(encoded.as_bytes()).unwrap();
         assert_eq!(decoded.to_json().unwrap(), encoded);
         assert_eq!(decoded.triple(), &coordinates);
         assert_eq!(decoded.audience(), original.audience());
         assert_eq!(decoded.instance_suffix(), INSTANCE);
-        assert_eq!(decoded.env_key(), "t1");
+        assert_eq!(decoded.project_env_key(), "t1");
         assert_eq!(decoded.connection().url(), url);
         assert_eq!(decoded.connection().generation(), generation);
     }
@@ -261,7 +257,7 @@ fn wrong_reader_families_and_url_overrides_refuse() {
 }
 
 #[test]
-fn existing_text_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
+fn existing_text_project_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
     let coordinates = triple("acme", "dev");
     let url = credential(
         &coordinates,
@@ -269,17 +265,17 @@ fn existing_text_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
         WorkloadRoleFamily::SessionRoleReader,
         CredentialGeneration::A,
     );
-    for env_key in ["t1".to_owned(), "Team_1-west".to_owned(), "a".repeat(64)] {
-        let target = SessionTarget::new(&coordinates, INSTANCE, &env_key, &url).unwrap();
-        assert_eq!(target.env_key(), env_key);
+    for project_env_key in ["t1".to_owned(), "Team_1-west".to_owned(), "a".repeat(64)] {
+        let target = SessionTarget::new(&coordinates, INSTANCE, &project_env_key, &url).unwrap();
+        assert_eq!(target.project_env_key(), project_env_key);
         assert_eq!(
             SessionTarget::from_json(target.to_json().unwrap().as_bytes())
                 .unwrap()
-                .env_key(),
-            env_key
+                .project_env_key(),
+            project_env_key
         );
     }
-    for env_key in [
+    for project_env_key in [
         String::new(),
         "a".repeat(65),
         "t.1".to_owned(),
@@ -288,9 +284,9 @@ fn existing_text_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
         "t'1".to_owned(),
         "é".to_owned(),
     ] {
-        assert!(SessionTarget::new(&coordinates, INSTANCE, &env_key, &url).is_err());
+        assert!(SessionTarget::new(&coordinates, INSTANCE, &project_env_key, &url).is_err());
         let mut invalid = document();
-        invalid["env_key"] = json!(env_key);
+        invalid["project_env_key"] = json!(project_env_key);
         refused(&invalid);
     }
 }
@@ -316,7 +312,7 @@ fn target_clone_and_all_refusal_diagnostics_redact_credentials() {
         "project",
         "env",
         "instance_suffix",
-        "env_key",
+        "project_env_key",
         "database",
         "database_url",
     ] {

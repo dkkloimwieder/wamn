@@ -119,7 +119,7 @@
     "executor_platform_database_url": {
       "type": "string"
     },
-    "gate_bearer_token": {
+    "condition_bearer_token": {
       "type": "string"
     },
     "guest_database_url": {
@@ -225,7 +225,7 @@
     "environment",
     "event_materializer_database_url",
     "executor_platform_database_url",
-    "gate_bearer_token",
+    "condition_bearer_token",
     "guest_database_url",
     "host_binary",
     "host_config_file",

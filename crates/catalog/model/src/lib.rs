@@ -1,6 +1,6 @@
 //! Canonical immutable catalog identities and definition hashing.
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! This crate owns the pure definition plane, and — since wamn-0h0g.18.2 — the
 //! statement text of the wiring-activation verb over it. The pointer's write and
@@ -29,9 +29,9 @@ mod signed_file_read;
 pub mod sql_lex;
 mod wiring;
 mod wiring_compatibility;
-mod workflow_gate;
+mod workflow_condition;
 
-/// Test databases with the tenant catalog floor.
+/// Test databases with the project catalog minimum.
 #[cfg(feature = "test-util")]
 pub mod test_database;
 
@@ -95,7 +95,9 @@ pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,
     validate_wiring_compatibility,
 };
-pub use workflow_gate::{WorkflowGateError, gate_workflow_document, resolve_workflow_components};
+pub use workflow_condition::{
+    WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
+};
 
 use std::fmt;
 
@@ -381,10 +383,10 @@ fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdenti
     }
 }
 
-/// An attachment exposure kind.
+/// An attachment exposure type.
 ///
 /// `Deserialize` is derived so the frozen [`ServingAttachment`] wire shape can
-/// name this kind instead of re-declaring one; the enum is fieldless, so the
+/// name this type instead of re-declaring one; the enum is fieldless, so the
 /// derive adds no unvalidated construction path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

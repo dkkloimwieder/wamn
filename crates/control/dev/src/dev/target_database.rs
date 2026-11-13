@@ -59,7 +59,7 @@ pub async fn schema_changes(
     let identity = config.activation_identity();
     let disposable = recorded_disposable(config, document).await?;
     let mut state =
-        schema::database_state(config.target_database_url(), &identity.env_key()).await?;
+        schema::database_state(config.target_database_url(), &identity.project_env_key()).await?;
     state.disposable = disposable;
     let candidates = roots
         .iter()
@@ -157,7 +157,7 @@ pub async fn adopt_schema(
     let identity = config.activation_identity();
     let state = wamn_environment_control::environment::sql::schema::database_state(
         config.target_database_url(),
-        &identity.env_key(),
+        &identity.project_env_key(),
     )
     .await?;
     let lease = acquire(&config).await?;
@@ -192,7 +192,7 @@ pub async fn adopt_schema(
     );
     apply_package::adopt_package_schemas(
         config.target_database_url(),
-        &identity.env_key(),
+        &identity.project_env_key(),
         state
             .initialization_identity
             .as_deref()
@@ -227,7 +227,7 @@ pub async fn schema_operation(
     lease.instance(&config).await?;
     let initial_state = wamn_environment_control::environment::sql::schema::database_state(
         config.target_database_url(),
-        &config.activation_identity().env_key(),
+        &config.activation_identity().project_env_key(),
     )
     .await?;
     apply_package::resolution_package(
@@ -271,7 +271,7 @@ pub async fn schema_operation(
         let instance = lease.recreate(&config).await?;
         super::coordinator::assign_environment_instance(
             config.system_database_url(),
-            &config.activation_identity().env_key(),
+            &config.activation_identity().project_env_key(),
             &instance,
         )
         .await?;
@@ -325,7 +325,7 @@ pub async fn schema_operation(
     )?;
     let state = wamn_environment_control::environment::sql::schema::database_state(
         config.target_database_url(),
-        &identity.env_key(),
+        &identity.project_env_key(),
     )
     .await?;
     let resolution_id = apply_package::resolution_package(
@@ -368,7 +368,7 @@ pub async fn schema_operation(
         .collect::<Vec<_>>();
     let current = wamn_environment_control::environment::sql::schema::database_state(
         config.target_database_url(),
-        &identity.env_key(),
+        &identity.project_env_key(),
     )
     .await?;
     let mut grant_roots = roots
@@ -399,7 +399,7 @@ pub async fn schema_operation(
     wamn_environment_control::reconcile_package_data_access::reconcile_local(
         &grants,
         config.target_database_url(),
-        &identity.env_key(),
+        &identity.project_env_key(),
         &identity.environment,
         true,
     )
@@ -426,7 +426,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
     let instance = lease.recreate(&config).await?;
     super::coordinator::assign_environment_instance(
         config.system_database_url(),
-        &config.activation_identity().env_key(),
+        &config.activation_identity().project_env_key(),
         &instance,
     )
     .await?;
@@ -475,16 +475,16 @@ impl fmt::Debug for TargetDatabaseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TargetDatabaseError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("remedy", &self.remedy)
             .finish_non_exhaustive()
     }
 }
 
 impl TargetDatabaseError {
-    fn new(kind: TargetDatabaseErrorType, remedy: &'static str) -> Self {
+    fn new(type_: TargetDatabaseErrorType, remedy: &'static str) -> Self {
         Self {
-            type_: kind,
+            type_,
             remedy,
             source: None,
         }
@@ -728,7 +728,7 @@ impl TargetLease {
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             config.target_database_url(),
-            &identity.env_key(),
+            &identity.project_env_key(),
             &identity.environment,
         )
         .await?;
@@ -774,7 +774,7 @@ impl TargetLease {
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             config.target_database_url(),
-            &identity.env_key(),
+            &identity.project_env_key(),
             &identity.environment,
         )
         .await
@@ -898,7 +898,7 @@ impl TargetLease {
             replace_database(&self.client, &self.spec, template, fingerprint, acl).await?;
         let identity = config.activation_identity();
         let marker = wamn_runtime::local_application::local_target_marker(
-            &identity.env_key(),
+            &identity.project_env_key(),
             &identity.environment,
             instance
                 .parse()
@@ -1131,7 +1131,7 @@ mod tests {
         use wamn_test_infrastructure::{fixture_digest, scratch::ScratchRoot};
         let _lock = wamn_test_postgres::lock();
         let system = wamn_control_provision::test_database::system();
-        let target = wamn_catalog::test_database::tenant();
+        let target = wamn_catalog::test_database::project();
         let system_client = wamn_package_control::database::connect(system.url()).await?;
         system_client
             .batch_execute(&format!(
@@ -1171,7 +1171,7 @@ mod tests {
             .await?
             .get(0);
         let marker = wamn_runtime::local_application::local_target_marker(
-            &config.activation_identity().env_key(),
+            &config.activation_identity().project_env_key(),
             "fixture-dev",
             instance,
         );
@@ -1349,21 +1349,21 @@ mod tests {
         let first_initialization =
             wamn_environment_control::environment::sql::schema::database_state(
                 target_database.url(),
-                &config.activation_identity().env_key(),
+                &config.activation_identity().project_env_key(),
             )
             .await?
             .initialization_identity;
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             target_database.url(),
-            &identity.env_key(),
+            &identity.project_env_key(),
             &identity.environment,
         )
         .await?;
         assert!(
             wamn_runtime::local_application::require_local_target(
                 target_database.url(),
-                "another-tenant",
+                "another-project",
                 &identity.environment
             )
             .await
@@ -1436,9 +1436,9 @@ INSERT INTO platform.integration (id, integration_type, external_system_id, name
 INSERT INTO platform.connection (id, integration_id, integration_type, status) VALUES \
     ('30000000-0000-4000-8000-000000000001', \
      '20000000-0000-4000-8000-000000000001', 's3', 'active') ON CONFLICT DO NOTHING; \
-INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES \
+INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES \
     ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}') ON CONFLICT DO NOTHING; \
-INSERT INTO catalog.release_connection (env_key, manifest_digest, connection_id, version) VALUES \
+INSERT INTO catalog.release_connection (project_env_key, manifest_digest, connection_id, version) VALUES \
     ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), \
      '30000000-0000-4000-8000-000000000001', 1) ON CONFLICT DO NOTHING;";
         let read_projection = "\
@@ -1493,7 +1493,7 @@ JOIN platform.external_system AS external ON external.id = integration.external_
         let second_initialization =
             wamn_environment_control::environment::sql::schema::database_state(
                 target_database.url(),
-                &config.activation_identity().env_key(),
+                &config.activation_identity().project_env_key(),
             )
             .await?
             .initialization_identity;

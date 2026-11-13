@@ -4,10 +4,10 @@
 //! Postgres stays the owner of every fact here. The memory is the local
 //! replica of the NATS KV bucket [`BUCKET`] on the NATS of the auth memory,
 //! under the rules of [`crate::kv_memory`]. The key
-//! `<env_key>.connection.<connection id>` holds the active generation, the
+//! `<project_env_key>.connection.<connection id>` holds the active generation, the
 //! effective status, credential id, service principal id and lease coordinates of a connection. The key
-//! `<env_key>.release.<manifest digest hex>` holds the connection map of a
-//! release. The key `<env_key>.connections` holds the map from integration
+//! `<project_env_key>.release.<manifest digest hex>` holds the connection map of a
+//! release. The key `<project_env_key>.connections` holds the map from integration
 //! name to connection id of the environment. Every writer of a fact deletes its key after the commit
 //! ([`wamn_broker::connection_changes`]).
 //!
@@ -154,8 +154,8 @@ impl ConnectionMemory {
         self
     }
 
-    pub(crate) fn connection_ticket(&self, env_key: &str, id: &uuid::Uuid) -> Ticket {
-        self.memory.ticket(&connection_key(env_key, id))
+    pub(crate) fn connection_ticket(&self, project_env_key: &str, id: &uuid::Uuid) -> Ticket {
+        self.memory.ticket(&connection_key(project_env_key, id))
     }
 
     /// Whether the host watches the bucket, and so keeps facts.
@@ -164,8 +164,12 @@ impl ConnectionMemory {
     }
 
     /// The fact of connection `id`, or the ticket of a read of it.
-    pub fn connection(&self, env_key: &str, id: &uuid::Uuid) -> Result<ConnectionFact, Ticket> {
-        let key = connection_key(env_key, id);
+    pub fn connection(
+        &self,
+        project_env_key: &str,
+        id: &uuid::Uuid,
+    ) -> Result<ConnectionFact, Ticket> {
+        let key = connection_key(project_env_key, id);
         match self.memory.answer(&key) {
             Ok(Answer::Connection(fact)) => Ok(fact),
             Ok(_) => Err(self.memory.ticket(&key)),
@@ -175,14 +179,14 @@ impl ConnectionMemory {
 
     pub async fn keep_connection(
         &self,
-        env_key: &str,
+        project_env_key: &str,
         id: &uuid::Uuid,
         ticket: Ticket,
         fact: ConnectionFact,
     ) {
         self.memory
             .put(
-                connection_key(env_key, id),
+                connection_key(project_env_key, id),
                 ticket,
                 Answer::Connection(fact),
             )
@@ -191,8 +195,12 @@ impl ConnectionMemory {
 
     /// The connection map of the release `manifest_digest`, or the ticket of
     /// a read of it.
-    pub fn release(&self, env_key: &str, manifest_digest: &str) -> Result<ReleaseFact, Ticket> {
-        let key = release_key(env_key, manifest_digest);
+    pub fn release(
+        &self,
+        project_env_key: &str,
+        manifest_digest: &str,
+    ) -> Result<ReleaseFact, Ticket> {
+        let key = release_key(project_env_key, manifest_digest);
         match self.memory.answer(&key) {
             Ok(Answer::Release(fact)) => Ok(fact),
             Ok(_) => Err(self.memory.ticket(&key)),
@@ -202,14 +210,14 @@ impl ConnectionMemory {
 
     pub async fn keep_release(
         &self,
-        env_key: &str,
+        project_env_key: &str,
         manifest_digest: &str,
         ticket: Ticket,
         fact: ReleaseFact,
     ) {
         self.memory
             .put(
-                release_key(env_key, manifest_digest),
+                release_key(project_env_key, manifest_digest),
                 ticket,
                 Answer::Release(fact),
             )
@@ -218,9 +226,9 @@ impl ConnectionMemory {
 }
 
 impl ConnectionMemory {
-    /// The connection map of `env_key`, or the ticket of a read of it.
-    pub fn connections(&self, env_key: &str) -> Result<EnvConnections, Ticket> {
-        let key = connections_key(env_key);
+    /// The connection map of `project_env_key`, or the ticket of a read of it.
+    pub fn connections(&self, project_env_key: &str) -> Result<EnvConnections, Ticket> {
+        let key = connections_key(project_env_key);
         match self.memory.answer(&key) {
             Ok(Answer::Connections(map)) => Ok(map),
             Ok(_) => Err(self.memory.ticket(&key)),
@@ -228,9 +236,18 @@ impl ConnectionMemory {
         }
     }
 
-    pub async fn keep_connections(&self, env_key: &str, ticket: Ticket, map: EnvConnections) {
+    pub async fn keep_connections(
+        &self,
+        project_env_key: &str,
+        ticket: Ticket,
+        map: EnvConnections,
+    ) {
         self.memory
-            .put(connections_key(env_key), ticket, Answer::Connections(map))
+            .put(
+                connections_key(project_env_key),
+                ticket,
+                Answer::Connections(map),
+            )
             .await;
     }
 }
@@ -278,16 +295,16 @@ impl AsRef<ConnectionMemory> for ConnectionMemory {
 }
 
 /// Watch the bucket into the memory that `holder` holds, and return the
-/// writer of the host's own changes. A host with `env_key` watches the keys
-/// of that `env_key`. The control host serves every tenant, so it watches
+/// writer of the host's own changes. A host with `project_env_key` watches the keys
+/// of that `project_env_key`. The control host serves every project, so it watches
 /// every key.
 pub fn replicate<H: AsRef<ConnectionMemory> + Send + Sync + 'static>(
     client: &async_nats::Client,
-    env_key: Option<&str>,
+    project_env_key: Option<&str>,
     holder: Arc<H>,
 ) -> Publisher {
-    let filters = match env_key {
-        Some(env_key) => vec![format!("{env_key}.>")],
+    let filters = match project_env_key {
+        Some(project_env_key) => vec![format!("{project_env_key}.>")],
         None => vec![">".to_owned()],
     };
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
@@ -317,10 +334,10 @@ mod tests {
 
     async fn watched(
         client: &async_nats::Client,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> (Arc<ConnectionMemory>, Publisher) {
         let memory = Arc::new(ConnectionMemory::default());
-        let writer = replicate(client, env_key, Arc::clone(&memory));
+        let writer = replicate(client, project_env_key, Arc::clone(&memory));
         until("the watch runs", || memory.watched()).await;
         (memory, writer)
     }
@@ -379,7 +396,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn facts_reach_the_hosts_of_their_env_key_and_every_delete_reaches_them() {
+    async fn facts_reach_the_hosts_of_their_project_env_key_and_every_delete_reaches_them() {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let (a, writer) = watched(&client, Some("t")).await;
@@ -455,7 +472,7 @@ mod tests {
         })
         .await;
         let mut drops = ConnectionDrops::default();
-        drops.env_key("t");
+        drops.project_env_key("t");
         writer.publish(drops).await;
         until("host b drops the environment", || {
             b.connection("t", &id).is_err() && b.release("t", &digest).is_err()

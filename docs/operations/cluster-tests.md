@@ -17,11 +17,11 @@ The kill is a SIGKILL of the `wamn-host` process of the WMS pod, sent from a nod
 ```sql
 SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
   FROM wamn_run.runs AS r
-  LEFT JOIN wamn_run.run_queue AS q USING (env_key, run_id)
+  LEFT JOIN wamn_run.run_queue AS q USING (project_env_key, run_id)
  WHERE r.run_id = '<run id>';
 ```
 
 The container restarts in the same pod. The run waits for its old lease to expire. The lease lasts 30 seconds (`DEFAULT_QUEUE_LEASE_TTL_MS`).
 The restarted host then leases the run again with the next lease generation, and the run completes. Its queue row is gone.
 The bucket holds one label object for the run, because the killed attempt wrote no label.
-The run is `completed` with no failure kind, and it needs no operator action.
+The run is `completed` with no failure type, and it needs no operator action.

@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = []
 ops = []
-# The system test database floor (`test_database`). It starts a private
+# The system test database minimum (`test_database`). It starts a private
 # PostgreSQL server for the test process, so no production build enables it.
 test-util = ["dep:wamn-test-postgres"]
 
@@ -34,7 +34,7 @@ wamn-catalog = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the platform model.
 wamn-identity-protocol = { workspace = true }
-wamn-run-state = { workspace = true, features = ["tenant-key"] }
+wamn-run-state = { workspace = true, features = ["project-key"] }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }
 
@@ -46,7 +46,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 
 # No database or Kubernetes effects. The builders return text, JSON, and native
 # broker configuration values. The `provision-project-env` driver (wamn-ctl) holds
-# the tokio_postgres connection; the optional live-apply gate (tests/provision.rs)
+# the tokio_postgres connection; the optional live-apply acceptance test (tests/provision.rs)
 # shells out to `psql` — so there is no database dependency even in dev, the same
 # pattern as wamn-run-state. PostgreSQL quoting comes from the guest-safe
 # postgres-protocol quoting functions.

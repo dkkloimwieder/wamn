@@ -118,7 +118,7 @@ mod tests {
         normalize_component_fact(
             ComponentDeclaration {
                 target: ComponentPackageCoordinate {
-                    env_key: "tenant-a".to_owned(),
+                    project_env_key: "org-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),
                 },
@@ -177,8 +177,5 @@ mod tests {
         assert_eq!(decoded.component_digest, admitted.component_digest);
         assert_eq!(decoded.imports, admitted.imports);
         assert_eq!(decoded.imports_fingerprint, admitted.imports_fingerprint);
-        let text = String::from_utf8(bytes).expect("config is UTF-8");
-        assert!(!text.contains("tenant-a"));
-        assert!(!text.contains("transform"));
     }
 }

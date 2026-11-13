@@ -25,7 +25,7 @@
 //! FORCE RLS an "it failed" assertion cannot tell REFUSED from MATCHED-NOTHING,
 //! which is why the post-state is read back in both directions.
 //!
-//! Each gate takes its own test database on the test PostgreSQL server and holds
+//! Each condition takes its own test database on the test PostgreSQL server and holds
 //! the process lock, because it rebuilds cluster-wide roles.
 
 use std::fmt::Write as _;
@@ -152,7 +152,7 @@ fn role_url(admin_url: &str, role: &str, password: &str) -> String {
 }
 
 /// Rebuild the two schemas and every cluster-global role they and the families
-/// name, so nothing this gate measures survives from a previous run.
+/// name, so nothing this acceptance test measures survives from a previous run.
 ///
 /// `DROP OWNED BY` before `DROP ROLE`, inside an existence check: a leftover
 /// HEALTHY role satisfies `ensure_workload_acl_role_sql`'s `IF NOT EXISTS` and
@@ -261,7 +261,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &admin,
         "seed materializer registration inputs",
         "INSERT INTO catalog.packages \
-           (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) VALUES \
+           (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) VALUES \
            ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
            ('sha256:' || repeat('c', 64), 't2', 'foreign', '1.0.0', \
@@ -271,10 +271,10 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     assert_eq!(
         query(
             &as_materializer,
-            "SET app.env_key = 't1'; \
+            "SET app.project_env_key = 't1'; \
              SELECT string_agg(package_id || '@' || package_version, ',' ORDER BY package_id) \
                FROM catalog.packages \
-              WHERE env_key = current_setting('app.env_key', true)"
+              WHERE project_env_key = current_setting('app.project_env_key', true)"
         ),
         "widgets@1.0.0"
     );
@@ -389,7 +389,7 @@ fn expected_executor_grants() -> Vec<String> {
         "registration_id",
         "service_principal_id",
         "status",
-        "env_key",
+        "project_env_key",
         "trigger_source",
         "wiring_hash",
         "wiring_id",
@@ -397,7 +397,7 @@ fn expected_executor_grants() -> Vec<String> {
     ] {
         rows.push(format!("column|wamn_run|runs.{column}|INSERT"));
     }
-    for column in ["run_id", "env_key"] {
+    for column in ["run_id", "project_env_key"] {
         rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
     }
     rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
@@ -415,7 +415,7 @@ fn expected_executor_grants() -> Vec<String> {
     rows.push("relation|wamn_run|run_queue|DELETE".to_owned());
     rows.push("relation|wamn_run|run_queue|SELECT".to_owned());
     rows.push("relation|wamn_run|runs|SELECT".to_owned());
-    rows.push("routine|wamn_authority|tenant_key|EXECUTE".to_owned());
+    rows.push("routine|wamn_authority|project_key|EXECUTE".to_owned());
     rows.push("schema|catalog|catalog|USAGE".to_owned());
     rows.push("schema|wamn_run|wamn_run|USAGE".to_owned());
     rows.push("schema|platform|platform|USAGE".to_owned());
@@ -455,7 +455,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     );
     run_admin(
         &admin,
-        "member the family into the platform floor arm",
+        "member the family into the platform base grants arm",
         &sql::platform_group_membership_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
 
@@ -507,7 +507,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
            ASSERT has_schema_privilege(r, 'wamn_run', 'USAGE'), 'no run-plane USAGE'; \
            ASSERT NOT has_schema_privilege(r, 'wamn_authority', 'USAGE'), \
              'an index expression is a resolved node tree: schema USAGE is not needed'; \
-           ASSERT has_function_privilege(r, 'wamn_authority.tenant_key(text)', 'EXECUTE'), \
+           ASSERT has_function_privilege(r, 'wamn_authority.project_key(text)', 'EXECUTE'), \
              'the runs_tkey expression index makes this EXECUTE load bearing for UPDATE'; \n"
     );
     for relation in sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS {
@@ -552,7 +552,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'SELECT'), 'no queue read'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'DELETE'), 'no dequeue'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.run_queue', 'INSERT'), \
-           'an event admission enqueues by tenant and run id only'; \n",
+           'an event admission enqueues by project and run id only'; \n",
     );
     for column in sql::EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS {
         writeln!(
@@ -598,7 +598,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         "package_id",
         "manifest_digest",
         "environment",
-        "env_key",
+        "project_env_key",
         "run_id",
         "capture_mode",
         "idempotency_key",
@@ -644,13 +644,13 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
         "seed one run the executor may lease",
         &format!(
             "INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+               (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
-               (env_key, expected_environment) \
+               (project_env_key, expected_environment) \
              VALUES ('t1', 'dev');\n\
              INSERT INTO wamn_run.runs \
-               (env_key, run_id, package_id, environment, status, \
+               (project_env_key, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
                 binding_world_json, input_json) \
              VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'internal', \
@@ -663,7 +663,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     assert_eq!(
         sqlstate(
             &as_login,
-            "BEGIN; SET LOCAL app.env_key = 't1'; \
+            "BEGIN; SET LOCAL app.project_env_key = 't1'; \
              UPDATE wamn_run.runs SET status = 'running' WHERE run_id = 'r1'; COMMIT;\n",
         ),
         None,
@@ -681,14 +681,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     assert_eq!(
         sqlstate(
             &as_login,
-            "BEGIN; SET LOCAL app.env_key = 't1'; \
+            "BEGIN; SET LOCAL app.project_env_key = 't1'; \
              UPDATE wamn_run.runs SET input_json = '{\"b\":2}' WHERE run_id = 'r1'; COMMIT;\n",
         )
         .as_deref(),
         Some("42501"),
         "the executor rewrote the authoritative input: column-grain UPDATE is the \
-         only bound available, because the permissive platform floor arm is \
-         USING (true) and reaches every tenant"
+         only bound available, because the permissive platform base grants arm is \
+         USING (true) and reaches every project"
     );
     assert_eq!(
         query(
@@ -790,7 +790,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              'the callable-HTTP admitter reads adjacent role state'; \
            ASSERT NOT has_schema_privilege(r, 'wamn_run', 'USAGE'), \
              'the admitter authorizes an effect; it never touches the run plane'; \
-           ASSERT NOT has_function_privilege(r, 'wamn_authority.tenant_key(text)', 'EXECUTE'), \
+           ASSERT NOT has_function_privilege(r, 'wamn_authority.project_key(text)', 'EXECUTE'), \
              'a pure reader forms no index entry, so the tkey derivation is not its'; \n"
     );
     for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
@@ -853,7 +853,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     // Every probe above is a privilege-catalog question, and the catalog is
     // BLIND TO RLS: `has_table_privilege` answers TRUE for a role whose every
     // SELECT returns zero rows because no policy matched it. All eight relations
-    // carry FORCE RLS with a restrictive tenant floor keyed on the GUEST login
+    // carry FORCE RLS with a restrictive project base grants keyed on the GUEST login
     // pattern, so a non-guest family reads through the permissive
     // `TO wamn_platform` arm or it reads nothing at all — and reading nothing
     // RAISES NOTHING. This arm is therefore the only thing here that separates
@@ -873,24 +873,24 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), 'tenant-a','orders','1.0.0','{digest}');\n\
-             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
-             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
+             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 'org-a','orders','1.0.0','{digest}');\n\
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
+             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
              INSERT INTO platform.integration (id,integration_type,name,status) \
              VALUES ('00000000-0000-4000-8000-000000000011','http','upstream','active');\n\
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active');\n\
-             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
-             VALUES ('tenant-a','{digest}','orders','upstream','wamn:connection/http@0.1.0','write');\n\
-             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) \
-             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
-             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \
-             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012');\n\
+             INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
+             VALUES ('org-a','{digest}','orders','upstream','wamn:connection/http@0.1.0','write');\n\
+             INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version) \
+             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
+             INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
+             VALUES ('org-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012');\n\
              INSERT INTO catalog.workflows \
-               (env_key, environment, application, workflow_id, version, graph_json, \
+               (project_env_key, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \
-             VALUES ('tenant-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
+             VALUES ('org-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
                      'manual', 'role', 'widget-reader', \
                      '00000000-0000-4000-8000-000000000001');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
@@ -926,7 +926,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             "1",
             "the callable-HTTP generation read the WRONG NUMBER of rows from \
              catalog.{relation}. Zero is the failure this arm exists to catch: the \
-             row is seeded and the SELECT is granted, so zero means the tenant floor \
+             row is seeded and the SELECT is granted, so zero means the project base grants \
              admitted nothing and the credential is isolated into blindness rather \
              than into authority"
         );
@@ -935,12 +935,12 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT count(graph_json) FROM catalog.workflows \
-              WHERE env_key = 'tenant-a' AND environment = 'prod' \
+              WHERE project_env_key = 'org-a' AND environment = 'prod' \
                 AND application = 'orders' AND workflow_id = 'send' AND version = 1"
         ),
         "1",
         "the callable-HTTP generation cannot read the workflow graph through its \
-         column grant, or the tenant floor admitted nothing"
+         column grant, or the project base grants admitted nothing"
     );
     assert_eq!(
         query(

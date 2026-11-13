@@ -54,10 +54,10 @@ pub struct CallIntents {
     /// The two-step store of an operation without SQL. An operation with SQL
     /// claims in its request element transaction instead.
     store: WriteLogStore,
-    env_key: String,
+    project_env_key: String,
     release: String,
     package: String,
-    kind: wamn_catalog::OperationType,
+    type_: wamn_catalog::OperationType,
     key_field: Option<String>,
 }
 
@@ -66,10 +66,10 @@ impl CallIntents {
     pub fn context(&self) -> wamn_engine::operation::IntentContext<'_> {
         wamn_engine::operation::IntentContext {
             store: &self.store,
-            tenant: &self.env_key,
+            partition: &self.project_env_key,
             release: &self.release,
             package: &self.package,
-            kind: self.kind,
+            type_: self.type_,
             key_field: self.key_field.as_deref(),
         }
     }
@@ -336,9 +336,13 @@ impl OperationHost {
     }
 
     /// The session identity of one call, before activation binds its principal.
-    pub fn identity(&self, env_key: &str, release: Option<ReleaseIdentity>) -> SessionIdentity {
+    pub fn identity(
+        &self,
+        project_env_key: &str,
+        release: Option<ReleaseIdentity>,
+    ) -> SessionIdentity {
         SessionIdentity {
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             project: Some(self.project.clone()),
             schema: self.schema.clone(),
             runner: Some(self.owner_prefix.clone()),
@@ -376,17 +380,17 @@ impl OperationHost {
         ) else {
             return Ok(None);
         };
-        let env_key = self.release.target().env_key.clone();
+        let project_env_key = self.release.target().project_env_key.clone();
         Ok(Some(CallIntents {
             store: WriteLogStore::new(
                 Arc::clone(&self.postgres),
                 self.project.clone(),
-                env_key.clone(),
+                project_env_key.clone(),
             ),
-            env_key,
+            project_env_key,
             release: self.release.release().manifest_digest.to_string(),
             package: route.package_id.clone(),
-            kind: route.type_,
+            type_: route.type_,
             key_field: route.idempotency.clone(),
         }))
     }
@@ -399,7 +403,7 @@ impl OperationHost {
                     .postgres
                     .resolve_release_components(
                         &self.project,
-                        &self.release.target().env_key,
+                        &self.release.target().project_env_key,
                         &self.release.target().environment,
                         self.release.release().manifest_digest.as_str(),
                     )
@@ -540,7 +544,7 @@ impl OperationHost {
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.facts),
-                    self.release.target().env_key.as_str(),
+                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
                     Some(Arc::clone(&self.release)),
@@ -548,7 +552,7 @@ impl OperationHost {
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.facts),
-                    self.release.target().env_key.as_str(),
+                    self.release.target().project_env_key.as_str(),
                     self.project.as_str(),
                     Some(Arc::clone(&self.release)),
                 )),

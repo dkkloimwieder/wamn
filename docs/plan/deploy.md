@@ -620,8 +620,8 @@ Credential values remain outside this document.
 | `wamn-8h4h6.11` and `wamn-8h4h6.13` | `21566fc6d` retains GKE logs on failure and reduces acceptance to current product behavior. |
 | `wamn-8h4h6.12` | `c1e646133` configures CDC after successful explicit schema apply. Code deployment stays independent of SQL. |
 
-`c8093b985` deletes qualify-release, runner and gates image values, qualification files, and the all-application schema diff and apply loop.
-The Dockerfile gates target remains for the gate suite.
+`c8093b985` deletes qualify-release, runner and acceptance test image values, qualification files, and the all-application schema diff and apply loop.
+The Dockerfile conditions target remains for the condition suite.
 Later fixes retry one Cloud Build image push after an authentication deadline (`1d0861f5c`, `wamn-33qe5`).
 Environment delete refuses stranded runs before uninstalling resources (`d273a8e78`, `wamn-e70ys`).
 The wash-runtime fork is removed at `45e2227f2`.

@@ -89,7 +89,7 @@ pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
 ///
 /// The host's `--socket-egress` selects the mode. The owner ruling of
 /// 2026-11-11 makes Enforce the default: it blocks refused traffic. WAMN
-/// admission still rejects tenant components importing `wasi:sockets`.
+/// admission still rejects project components importing `wasi:sockets`.
 ///
 /// The address policy keeps private and special ranges outside the allowed
 /// set. Count records these refusals without blocking connections. Enforce
@@ -352,7 +352,7 @@ pub(crate) mod tests {
             .sum()
     }
 
-    /// Every range the address floor denies, with the reason it is on the list.
+    /// Every range the address minimum denies, with the reason it is on the list.
     ///
     /// Dropping a range from [`host_socket_policy`] turns the matching row from
     /// a `BlockedRange` refusal into an `Allow`, which is what makes this table
@@ -362,8 +362,8 @@ pub(crate) mod tests {
     /// `serviceSubnet` 10.96.0.0/16 and `podSubnet` 10.244.0.0/16. ASSUMPTION:
     /// `deploy/infra/kind-config.yaml` declares no `networking` block, so kind
     /// supplies both; no manifest in `deploy/` names a subnet of its own. Each
-    /// sits inside 10/8, so the RFC1918 half of the floor is what covers them.
-    const FLOOR_DENIED: &[(&str, &str)] = &[
+    /// sits inside 10/8, so the RFC1918 half of the minimum is what covers them.
+    const MINIMUM_DENIED: &[(&str, &str)] = &[
         ("IPv4 link-local", "169.254.1.1:443"),
         ("IPv4 cloud metadata", "169.254.169.254:80"),
         ("IPv6 link-local", "[fe80::1]:443"),
@@ -375,8 +375,8 @@ pub(crate) mod tests {
         ("RFC1918 192.168/16", "192.168.1.1:443"),
         ("carrier-grade NAT 100.64/10", "100.64.0.1:443"),
         ("IPv6 unique-local fc00::/7", "[fd00::1]:443"),
-        // The mapped spellings. A floor an attacker steps over by writing the
-        // same address as `::ffff:…` is not a floor.
+        // The mapped spellings. A minimum an attacker steps over by writing the
+        // same address as `::ffff:…` is not a minimum.
         ("IPv4-mapped cloud metadata", "[::ffff:169.254.169.254]:80"),
         ("IPv4-mapped service network", "[::ffff:10.96.0.1]:443"),
         ("IPv4-mapped RFC1918", "[::ffff:192.168.1.1]:443"),
@@ -399,17 +399,17 @@ pub(crate) mod tests {
         }
     }
 
-    /// wamn-d0w4: the address layer is a default-deny FLOOR, not a permissive
+    /// wamn-d0w4: the address layer is a default-deny MINIMUM, not a permissive
     /// pass-through.
     ///
     /// Driven through a `*` allowlist, so layer 1 permits every address here
-    /// and every refusal that remains is the floor's alone. Without that the
+    /// and every refusal that remains is the minimum's alone. Without that the
     /// empty production allowlist would refuse all of these as `NotPermitted`
-    /// and the test would pass with no floor at all.
+    /// and the test would pass with no minimum at all.
     #[test]
-    fn the_address_floor_denies_link_local_metadata_cluster_and_private_ranges() {
+    fn the_address_minimum_denies_link_local_metadata_cluster_and_private_ranges() {
         let policy = opted_in(&["*"]);
-        for (label, text) in FLOOR_DENIED {
+        for (label, text) in MINIMUM_DENIED {
             let addr = socket_addr(text);
             match policy.decide_for_store(
                 SocketAddrUse::TcpConnect,
@@ -418,21 +418,21 @@ pub(crate) mod tests {
             ) {
                 AddrDecision::Deny(DenyReason::BlockedRange) => {}
                 AddrDecision::Deny(other) => panic!(
-                    "{label} ({text}) must be refused by the address floor, not as {other:?}"
+                    "{label} ({text}) must be refused by the address minimum, not as {other:?}"
                 ),
                 AddrDecision::Allow(_) => panic!(
-                    "{label} ({text}) is reachable: the address floor does not cover it, and a \
+                    "{label} ({text}) is reachable: the address minimum does not cover it, and a \
                      guest's allowed_hosts is again the sole confinement"
                 ),
             }
         }
     }
 
-    /// wamn-d0w4, the other half: the floor is a floor, not a replacement. A
+    /// wamn-d0w4, the other half: the minimum is a minimum, not a replacement. A
     /// declared `allowed_hosts` still decides what a guest reaches among the
-    /// addresses the floor permits, in both directions.
+    /// addresses the minimum permits, in both directions.
     #[test]
-    fn a_declared_allowlist_still_gates_what_the_address_floor_permits() {
+    fn a_declared_allowlist_still_conditions_what_the_address_minimum_permits() {
         let policy = opted_in(&["93.184.216.34:443"]);
 
         match policy.decide_for_store(
@@ -456,7 +456,7 @@ pub(crate) mod tests {
                 "an undeclared routable address is refused by the allowlist layer, not {other:?}"
             ),
             AddrDecision::Allow(_) => {
-                panic!("the address floor must not widen what the allowlist granted")
+                panic!("the address minimum must not widen what the allowlist granted")
             }
         }
     }
@@ -794,7 +794,7 @@ interface tcp-create-socket {
 
     /// The other half of the sizing: slots bound CONCURRENCY, so a one-slot
     /// engine admits one live instance and refuses the second. Without this the
-    /// slot count could be dropped on the floor and only the cap would notice.
+    /// slot count could be dropped on the minimum and only the cap would notice.
     #[test]
     fn configured_slots_bound_concurrent_live_instances() {
         let budgets = host_memory_budgets(1 << 20, 1).expect("one-slot native budgets");

@@ -9,8 +9,8 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wamn_control_provision::operation_grants::{
-    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_FLOOR_MISSING,
-    operation_grant_floor_check_sql,
+    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_BASE_GRANTS_MISSING,
+    operation_base_grants_check_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
@@ -60,12 +60,12 @@ fn query(url: &str, statement: &str) -> String {
 }
 
 /// The transaction binds `wamn:apply-package`, as apply-package does, and
-/// runs the admin statement for tenant `t1`.
+/// runs the admin statement for project `t1`.
 fn transaction() -> String {
-    let floor_check = operation_grant_floor_check_sql();
+    let base_grants_check = operation_base_grants_check_sql();
     let actor = bind_platform_principal_sql(PlatformComponent::ApplyPackage);
     format!(
-        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_check} \
+        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {base_grants_check} \
          PREPARE ensure_admin AS {ENSURE_ADMIN_ROLE_SQL}; \
          EXECUTE ensure_admin; COMMIT;"
     )
@@ -99,7 +99,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     );
     run(
         &url,
-        "reset application authority floor",
+        "reset application authority minimum",
         "DROP SCHEMA IF EXISTS catalog CASCADE; \
          DROP SCHEMA IF EXISTS platform CASCADE; \
          DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
@@ -115,11 +115,11 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     let (ok, _, missing_stderr) = psql(&url, &transaction());
     assert!(
         !ok,
-        "the admin write installed its own missing platform floor"
+        "the admin write installed its own missing platform base grants"
     );
     assert!(
-        missing_stderr.contains("55000") && missing_stderr.contains(PLATFORM_FLOOR_MISSING),
-        "missing-floor refusal lost its SQLSTATE or literal:\n{missing_stderr}"
+        missing_stderr.contains("55000") && missing_stderr.contains(PLATFORM_BASE_GRANTS_MISSING),
+        "missing-minimum refusal lost its SQLSTATE or literal:\n{missing_stderr}"
     );
 
     run(
@@ -127,7 +127,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
         "install the catalog and connection projections",
         wamn_catalog::CATALOG_SCHEMA_SQL,
     );
-    run(&url, "install application authority floor", APP_SCHEMA);
+    run(&url, "install application authority minimum", APP_SCHEMA);
     run(
         &url,
         "seed an authored role with two permissions",
@@ -200,7 +200,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
 
     run(
         &url,
-        "remove application authority floor",
+        "remove application authority minimum",
         "DROP SCHEMA catalog CASCADE; DROP SCHEMA platform CASCADE; \
          DROP SCHEMA wamn_authority CASCADE;",
     );

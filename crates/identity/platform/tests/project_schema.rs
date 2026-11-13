@@ -32,7 +32,7 @@ fn record_history_sql() -> String {
         .expect("read deploy/sql/record-history.sql")
 }
 
-/// The `wamn_app` record history grants that every tenant applier installs
+/// The `wamn_app` record history grants that every project applier installs
 /// after `deploy/sql/record-history.sql`.
 fn record_history_app_grants_sql() -> String {
     std::fs::read_to_string(deploy_dir().join("sql/record-history-app-grants.sql"))
@@ -58,17 +58,20 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-fn app_generation(database: &str, env_key: &str) -> String {
+fn app_generation(database: &str, project_env_key: &str) -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::EnvKey { env_key, database },
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
+            database,
+        },
         CredentialGeneration::A,
     )
-    .expect("App accepts tenant target")
+    .expect("App accepts project target")
 }
 
 /// Apply `deploy/sql/app-schema.sql` to a test database and assert the live,
-/// DB-enforced behavior, as the superuser (the harness prepares tenant-targeted
+/// DB-enforced behavior, as the superuser (the harness prepares project-targeted
 /// App generations).
 #[test]
 fn app_schema_applies_and_enforces_isolation_on_postgres() {
@@ -76,40 +79,40 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
     const U4: &str = "44444444-4444-4444-4444-444444444444";
-    const ENV_KEY_1: &str = "t1";
-    const ENV_KEY_2: &str = "t2";
+    const PROJECT_ENV_KEY_1: &str = "t1";
+    const PROJECT_ENV_KEY_2: &str = "t2";
 
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
 
     let database = current_database(&url);
-    let env_key_1_app = app_generation(&database, ENV_KEY_1);
+    let project_env_key_1_app = app_generation(&database, PROJECT_ENV_KEY_1);
     let other = wamn_test_postgres::database();
     let other_database = current_database(other.url());
-    let env_key_2_app = app_generation(&other_database, ENV_KEY_2);
+    let project_env_key_2_app = app_generation(&other_database, PROJECT_ENV_KEY_2);
     let mut other_script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &other_database,
-        &env_key_2_app,
+        &project_env_key_2_app,
         APP_GENERATION_PASSWORD,
         APP_GENERATION_VALID_UNTIL,
     );
-    other_script.push_str(sql::revoke_public_connect_floor_sql());
+    other_script.push_str(sql::revoke_public_connect_base_grants_sql());
     other_script.push_str(&record_history_sql());
     other_script.push_str(&record_history_app_grants_sql());
     other_script.push_str(&app_schema_sql());
-    writeln!(other_script, "SET ROLE {env_key_2_app}; DO $$ BEGIN
+    writeln!(other_script, "SET ROLE {project_env_key_2_app}; DO $$ BEGIN
         ASSERT (SELECT count(*) FROM platform.role)=0, 'another environment sees none of the first environment roles';
         END $$; RESET ROLE;").unwrap();
     run(other.url(), &other_script);
 
     // Production preparation hardens the stable ACL carrier to passwordless
-    // NOLOGIN/NOINHERIT and makes each tenant generation the only LOGIN.
+    // NOLOGIN/NOINHERIT and makes each project generation the only LOGIN.
     let mut script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &database,
-        &env_key_1_app,
+        &project_env_key_1_app,
         APP_GENERATION_PASSWORD,
         APP_GENERATION_VALID_UNTIL,
     );
@@ -144,9 +147,9 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "BEGIN;\n\
-         SET LOCAL ROLE {env_key_1_app};\n\
+         SET LOCAL ROLE {project_env_key_1_app};\n\
          DO $$ BEGIN\n\
-           ASSERT current_user='{env_key_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
+           ASSERT current_user='{project_env_key_1_app}', 'project authority is the prepared project-1 generation';\n\
            ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't1 sees every user of the database';\n\
            ASSERT (SELECT count(*) FROM platform.role)=2, 't1 sees its roles';\n\
            ASSERT (SELECT count(*) FROM platform.user_role)=1, 't1 sees its grant';\n\
@@ -159,7 +162,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "DO $$ BEGIN
-        ASSERT NOT has_database_privilege('{env_key_2_app}', current_database(), 'CONNECT'),
+        ASSERT NOT has_database_privilege('{project_env_key_2_app}', current_database(), 'CONNECT'),
         'another environment credential cannot connect to this database'; END $$;"
     )
     .unwrap();
@@ -167,13 +170,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "         BEGIN;\n\
-         SET LOCAL ROLE {env_key_1_app};\n\
-         SET LOCAL app.env_key = '{ENV_KEY_2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant identity cannot spoof tenant 2'; END $$;\n\
+         SET LOCAL ROLE {project_env_key_1_app};\n\
+         SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_2}';\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable project identity cannot spoof project 2'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.env_key = '{ENV_KEY_1}';\n\
+         SET LOCAL app.project_env_key = '{PROJECT_ENV_KEY_1}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'the ACL carrier reads the database roles'; END $$;\n\
          COMMIT;"
     )
@@ -210,24 +213,24 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         WHERE n.nspname='platform' AND c.relkind IN ('r','p') AND (
             c.relrowsecurity OR c.relforcerowsecurity
             OR EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid)
-            OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='env_key' AND NOT a.attisdropped)
+            OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='project_env_key' AND NOT a.attisdropped)
         )), 'application tables must use the database boundary'; END $$;\n");
-    // The retired tenant column is refused instead of accepted as input.
+    // The retired project column is refused instead of accepted as input.
     for (table, insert) in [
-        ("role", "(env_key, name) VALUES ('', 'empty')".to_owned()),
+        ("role", "(project_env_key, name) VALUES ('', 'empty')".to_owned()),
         (
             "user_role",
-            format!("(env_key, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
+            format!("(project_env_key, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
         ),
         (
             "permission",
-            "(env_key, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
+            "(project_env_key, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
                 .to_owned(),
         ),
         (
             "api_key",
             format!(
-                "(env_key, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
+                "(project_env_key, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
             ),
         ),
     ] {
@@ -235,7 +238,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
             script,
             "DO $$ BEGIN BEGIN\n\
                INSERT INTO platform.{table} {insert};\n\
-               ASSERT false, 'a ''''-tenant {table} row must be rejected (a45)';\n\
+               ASSERT false, 'a ''''-project {table} row must be rejected (a45)';\n\
              EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"
         )
         .expect("writing to a String cannot fail");
@@ -300,7 +303,7 @@ fn run(url: &str, script: &str) -> String {
     String::from_utf8(out.stdout).expect("psql output is utf-8")
 }
 
-/// A fresh tenant database holds the platform rows that the provisioning
+/// A fresh project database holds the platform rows that the provisioning
 /// function renders, with the ids that `PlatformComponent::principal_id`
 /// derives. The users CHECKs refuse every other shape: a missing or unknown
 /// type, a platform row with a name or id outside the pinned pairs, and a

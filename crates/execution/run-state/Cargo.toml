@@ -8,8 +8,8 @@ license.workspace = true
 [features]
 # The framed target digest alone.
 # The shipped runtime needs exactly this much to check that a resolved guest
-# credential belongs to the tenant it is about to serve (wamn-0h0g.22.6.7).
-tenant-key = [
+# credential belongs to the project it is about to serve (wamn-0h0g.22.6.7).
+project-key = [
     "dep:hex",
     "dep:sha2",
 ]

@@ -220,7 +220,7 @@ impl SystemReaderConnection {
 
 /// Refuse an absent or out-of-target `WAMN_SYSTEM_URL`, purely.
 ///
-/// The fail-closed gate a reading consumer runs **before any network, database,
+/// The fail-closed condition a reading consumer runs **before any network, database,
 /// or filesystem I/O**, with the same strict URL checks:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn the_shape_predicates_refuse_before_the_role_predicate_is_reached() {
         let good = role(SystemReader::Registry, CredentialGeneration::A);
-        for (input, kind) in [
+        for (input, type_) in [
             (String::new(), SystemReaderUrlErrorType::Absent),
             ("not a url".to_owned(), SystemReaderUrlErrorType::Malformed),
             (
@@ -454,7 +454,7 @@ mod tests {
         ] {
             let error = parse(SystemReader::Registry, &input)
                 .expect_err("an out-of-shape connection input was accepted");
-            assert_eq!(error.error_type(), kind, "{input:?}");
+            assert_eq!(error.error_type(), type_, "{input:?}");
         }
     }
 

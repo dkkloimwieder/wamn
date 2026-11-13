@@ -61,8 +61,9 @@ pub async fn load_local_application(
     target: ReleaseTarget,
     database_url: &str,
 ) -> anyhow::Result<LocalApplication> {
-    let instance = read_local_target(database_url, &target.env_key, &target.environment).await?;
-    let facts = load_local_facts(directory, manifest, &target.env_key)?;
+    let instance =
+        read_local_target(database_url, &target.project_env_key, &target.environment).await?;
+    let facts = load_local_facts(directory, manifest, &target.project_env_key)?;
     Ok(LocalApplication {
         manifest: manifest.clone(),
         target,
@@ -101,7 +102,7 @@ impl LocalApplication {
         reader: &'a LocalConnectionReader,
     ) -> LocalBindingTarget<'a> {
         LocalBindingTarget {
-            env_key: &self.target.env_key,
+            project_env_key: &self.target.project_env_key,
             environment: &self.target.environment,
             manifest_digest: self.facts.manifest_digest.as_str(),
             package_id: package,
@@ -161,12 +162,12 @@ impl LocalApplication {
     pub(crate) async fn effect_snapshot(
         &self,
         client: &tokio_postgres::Client,
-        env_key: &str,
+        project_env_key: &str,
         lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
         self.require_instance(client).await?;
         anyhow::ensure!(
-            env_key == self.target.env_key
+            project_env_key == self.target.project_env_key
                 && lookup.environment == self.target.environment
                 && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
             "local connection release target mismatch"
@@ -270,8 +271,8 @@ async fn entry_facts(
         }
         Some(position) => {
             let Some(row) = client.query_opt(
-                "SELECT graph_json::text FROM catalog.workflows WHERE env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
-                &[&target.env_key, &target.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
+                "SELECT graph_json::text FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
+                &[&target.project_env_key, &target.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
             ).await? else { return Ok(None); };
             let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
             let document = WiringDocument::parse(&value)?;
@@ -279,7 +280,7 @@ async fn entry_facts(
                 return Ok(None);
             };
             let components = wamn_catalog::resolve_workflow_components(
-                &target.env_key,
+                &target.project_env_key,
                 &application.packages,
                 manifest,
                 &document,
@@ -341,7 +342,7 @@ pub fn selection(
 /// The exact release and package that own a local binding.
 #[derive(Debug)]
 pub struct LocalBindingTarget<'a> {
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
     pub environment: &'a str,
     pub manifest_digest: &'a str,
     pub package_id: &'a str,
@@ -369,8 +370,8 @@ async fn read_binding(
     credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
     let row=client.query_opt(
-        "SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'",
-        &[&target.env_key,&target.package_id,&requirement.component_digest(),&requirement.store_alias(),&target.manifest_digest,&connection],
+        "SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(project_env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.project_env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'",
+        &[&target.project_env_key,&target.package_id,&requirement.component_digest(),&requirement.store_alias(),&target.manifest_digest,&connection],
     ).await?.context("local connection binding unavailable")?;
     let integration_type: String = row.get(0);
     let descriptor = wamn_catalog::RequirementType::for_integration(&integration_type)
@@ -461,23 +462,23 @@ pub fn read_local_release(directory: &Path) -> anyhow::Result<LocalRelease> {
 pub fn load_local_facts(
     directory: &Path,
     manifest: &ServingManifest,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<LocalApplicationFacts> {
     let bytes =
         std::fs::read(directory.join(LOCAL_FACTS_FILE)).context("read local admission facts")?;
     let facts: LocalApplicationFacts =
         serde_json::from_slice(&bytes).context("parse local admission facts")?;
-    validate_local_facts(&facts, manifest, env_key)?;
+    validate_local_facts(&facts, manifest, project_env_key)?;
     Ok(facts)
 }
 
 /// Refuse missing, additional, or mismatched facts before a native host starts.
 ///
-/// `env_key` is the tenant of the host target: the manifest names none.
+/// `project_env_key` is the project of the host target: the manifest names none.
 pub fn validate_local_facts(
     facts: &LocalApplicationFacts,
     manifest: &ServingManifest,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         facts.manifest_digest == manifest.digest(),
@@ -498,7 +499,7 @@ pub fn validate_local_facts(
             "local component is repeated"
         );
         anyhow::ensure!(
-            fact.target.env_key == env_key
+            fact.target.project_env_key == project_env_key
                 && manifest
                     .release
                     .packages
@@ -599,10 +600,10 @@ pub fn validate_local_facts(
     Ok(())
 }
 
-/// Mark one physical database creation as belonging to a local tenant session.
-pub fn local_target_marker(env_key: &str, environment: &str, instance: u32) -> String {
+/// Mark one physical database creation as belonging to a local project session.
+pub fn local_target_marker(project_env_key: &str, environment: &str, instance: u32) -> String {
     let digest = wamn_digest::canonical_json_sha256(&serde_json::json!({
-        "env_key": env_key, "environment": environment, "database-instance": instance,
+        "project_env_key": project_env_key, "environment": environment, "database-instance": instance,
     }));
     format!("wamn-local-target:{digest}")
 }
@@ -655,10 +656,10 @@ pub fn parse_local_target_comment(comment: &str) -> anyhow::Result<LocalTargetCo
 /// The normal runtime credential and capability checks remain mandatory.
 pub async fn require_local_target(
     database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<()> {
-    read_local_target(database_url, env_key, environment)
+    read_local_target(database_url, project_env_key, environment)
         .await
         .map(|_| ())
 }
@@ -666,17 +667,17 @@ pub async fn require_local_target(
 /// Read the comment of the connected local target after checking its marker.
 pub async fn read_local_target_comment(
     client: &impl tokio_postgres::GenericClient,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<LocalTargetComment> {
-    read_target_comment(client, env_key, environment)
+    read_target_comment(client, project_env_key, environment)
         .await
         .map(|(_, comment)| comment)
 }
 
 async fn read_local_target(
     database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<u32> {
     let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
@@ -685,7 +686,7 @@ async fn read_local_target(
     let connection = tokio::spawn(async move {
         let _ = connection.await;
     });
-    let result = read_target_comment(&client, env_key, environment)
+    let result = read_target_comment(&client, project_env_key, environment)
         .await
         .map(|(instance, _)| instance);
     drop(client);
@@ -695,7 +696,7 @@ async fn read_local_target(
 
 async fn read_target_comment(
     client: &impl tokio_postgres::GenericClient,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<(u32, LocalTargetComment)> {
     let row = client
@@ -711,7 +712,9 @@ async fn read_target_comment(
     let comment = comment
         .as_deref()
         .and_then(|comment| parse_local_target_comment(comment).ok())
-        .filter(|comment| comment.marker == local_target_marker(env_key, environment, instance));
+        .filter(|comment| {
+            comment.marker == local_target_marker(project_env_key, environment, instance)
+        });
     let Some(comment) = comment else {
         anyhow::bail!("local application requires an owned disposable target created by wamn dev");
     };
@@ -726,7 +729,7 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
-            "target": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
+            "target": {"project_env_key": "org-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
         })).unwrap(), format!("sha256:{}", "7".repeat(64)), Vec::new(), Vec::new()).unwrap().component;
         let manifest = ServingManifest::new(
             ServingRelease {
@@ -750,12 +753,12 @@ mod tests {
     async fn a_route_entry_needs_only_its_origin_export_and_a_release_package() {
         use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_catalog::test_database::tenant();
+        let database = wamn_catalog::test_database::project();
         let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
             .await
             .unwrap();
         let task = tokio::spawn(connection);
-        let target = wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "dev");
+        let target = wamn_engine::release_manifest::ReleaseTarget::new("org-a", "dev");
         let (facts, manifest) = fixture();
         let digest = facts.components[0].component_digest.clone();
         let route = ConnectionEffectLookup {
@@ -813,16 +816,16 @@ mod tests {
         let (facts, manifest) = fixture();
         let bytes = serde_json::to_vec(&facts).unwrap();
         let round_trip = serde_json::from_slice(&bytes).unwrap();
-        super::validate_local_facts(&round_trip, &manifest, "tenant-a").unwrap();
+        super::validate_local_facts(&round_trip, &manifest, "org-a").unwrap();
         let mut missing = facts.clone();
         missing.components.clear();
-        assert!(super::validate_local_facts(&missing, &manifest, "tenant-a").is_err());
+        assert!(super::validate_local_facts(&missing, &manifest, "org-a").is_err());
         let mut duplicate = facts.clone();
         duplicate.components.push(facts.components[0].clone());
-        assert!(super::validate_local_facts(&duplicate, &manifest, "tenant-a").is_err());
+        assert!(super::validate_local_facts(&duplicate, &manifest, "org-a").is_err());
         let mut removed = facts;
         removed.components[0].operations.clear();
-        assert!(super::validate_local_facts(&removed, &manifest, "tenant-a").is_err());
+        assert!(super::validate_local_facts(&removed, &manifest, "org-a").is_err());
     }
 
     #[test]
@@ -836,7 +839,7 @@ mod tests {
                 wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
             ));
         assert!(
-            super::validate_local_facts(&facts, &manifest, "tenant-a")
+            super::validate_local_facts(&facts, &manifest, "org-a")
                 .unwrap_err()
                 .to_string()
                 .contains("selection is missing")
@@ -870,10 +873,10 @@ mod tests {
             },
         });
         facts.requirements.push(requirement);
-        super::validate_local_facts(&facts, &manifest, "tenant-a")
+        super::validate_local_facts(&facts, &manifest, "org-a")
             .expect("local admission accepts the HTTP requirement and its binding");
         facts.bindings[0].package_id.clear();
-        assert!(super::validate_local_facts(&facts, &manifest, "tenant-a").is_err());
+        assert!(super::validate_local_facts(&facts, &manifest, "org-a").is_err());
     }
 
     #[tokio::test]
@@ -885,7 +888,7 @@ mod tests {
         let row=authority.admin.query_one("SELECT c.id::text,i.id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a' AND i.name='erp'",&[]).await.unwrap();
         let connection: String = row.get(0);
         let integration: String = row.get(1);
-        let database = wamn_platform_identity::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::project_platform();
         let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
             .await
             .unwrap();
@@ -900,16 +903,16 @@ mod tests {
         client.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-local-binding',true)").await.unwrap();
         client.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1::text::uuid,'http','erp','active');",&[&integration]).await.unwrap();
         client.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1::text::uuid,$2::text::uuid,'http','active')",&[&connection,&integration]).await.unwrap();
-        client.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('tenant-a',$1,$2)",&[&facts.manifest_digest.as_str(),&manifest.canonical_bytes()]).await.unwrap();
-        client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES('tenant-a',$1,'orders','erp','wamn:connection/http@0.1.0','read')",&[&component.component_digest]).await.unwrap();
-        client.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('tenant-a',$1,$2::text::uuid,1)",&[&facts.manifest_digest.as_str(),&connection]).await.unwrap();
-        client.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('tenant-a',$1,$2,'orders','erp',$3::text::uuid)",&[&facts.manifest_digest.as_str(),&component.component_digest,&connection]).await.unwrap();
+        client.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('org-a',$1,$2)",&[&facts.manifest_digest.as_str(),&manifest.canonical_bytes()]).await.unwrap();
+        client.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES('org-a',$1,'orders','erp','wamn:connection/http@0.1.0','read')",&[&component.component_digest]).await.unwrap();
+        client.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('org-a',$1,$2::text::uuid,1)",&[&facts.manifest_digest.as_str(),&connection]).await.unwrap();
+        client.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('org-a',$1,$2,'orders','erp',$3::text::uuid)",&[&facts.manifest_digest.as_str(),&component.component_digest,&connection]).await.unwrap();
         client.batch_execute("COMMIT").await.unwrap();
         let credentials = std::sync::Arc::new(authority.reader("project-a").await);
         let selection = super::read_local_binding(
             &client,
             &super::LocalBindingTarget {
-                env_key: "tenant-a",
+                project_env_key: "org-a",
                 environment: "dev",
                 manifest_digest: facts.manifest_digest.as_str(),
                 package_id: "orders",
@@ -928,7 +931,7 @@ mod tests {
             requirement,
             selection: selection.clone(),
         });
-        let target = wamn_engine::release_manifest::ReleaseTarget::new("tenant-a", "dev")
+        let target = wamn_engine::release_manifest::ReleaseTarget::new("org-a", "dev")
             .with_applications(
                 serde_json::from_value(serde_json::json!({"app":{"packages":["orders"]}})).unwrap(),
             );
@@ -974,7 +977,7 @@ mod tests {
             candidate_binding: Some(&forged),
         };
         let snapshot = local
-            .effect_snapshot(&client, "tenant-a", &lookup)
+            .effect_snapshot(&client, "org-a", &lookup)
             .await
             .unwrap()
             .unwrap();
@@ -1029,9 +1032,9 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join(super::LOCAL_FACTS_FILE);
         std::fs::write(&path, serde_json::to_vec(&facts).unwrap()).unwrap();
-        super::load_local_facts(&directory, &manifest, "tenant-a").unwrap();
+        super::load_local_facts(&directory, &manifest, "org-a").unwrap();
         std::fs::remove_file(path).unwrap();
-        assert!(super::load_local_facts(&directory, &manifest, "tenant-a").is_err());
+        assert!(super::load_local_facts(&directory, &manifest, "org-a").is_err());
         std::fs::remove_dir(directory).unwrap();
     }
 
@@ -1043,20 +1046,20 @@ mod tests {
         assert!(serde_json::from_value::<super::LocalApplicationFacts>(value.clone()).is_err());
         value["manifest-digest"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
         let foreign = serde_json::from_value(value).unwrap();
-        assert!(super::validate_local_facts(&foreign, &manifest, "tenant-a").is_err());
+        assert!(super::validate_local_facts(&foreign, &manifest, "org-a").is_err());
     }
 
     #[test]
-    fn local_ownership_is_bound_to_env_key_environment_and_database_creation() {
-        let marker = local_target_marker("tenant-a", "dev", 17);
-        assert_ne!(marker, local_target_marker("tenant-b", "dev", 17));
-        assert_ne!(marker, local_target_marker("tenant-a", "other", 17));
-        assert_ne!(marker, local_target_marker("tenant-a", "dev", 18));
+    fn local_ownership_is_bound_to_project_env_key_environment_and_database_creation() {
+        let marker = local_target_marker("org-a", "dev", 17);
+        assert_ne!(marker, local_target_marker("org-b", "dev", 17));
+        assert_ne!(marker, local_target_marker("org-a", "other", 17));
+        assert_ne!(marker, local_target_marker("org-a", "dev", 18));
     }
 
     #[test]
     fn a_local_target_comment_reads_only_its_written_spelling() {
-        let marker = local_target_marker("tenant-a", "dev", 17);
+        let marker = local_target_marker("org-a", "dev", 17);
         let bare = super::parse_local_target_comment(&marker).unwrap();
         assert_eq!(bare.marker, marker);
         assert!(bare.manifests.is_empty());

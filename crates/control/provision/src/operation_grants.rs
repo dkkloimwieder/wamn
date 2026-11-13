@@ -5,7 +5,7 @@
 //! `apply-package` only creates the `admin` row when it is absent. Every other
 //! role is authored, and its permission rows are reconciled against the
 //! candidate serving release before activation, not by `apply-package`. The
-//! existing `platform` floor is a precondition; this module never installs or
+//! existing `platform` base grants are a precondition; this module never installs or
 //! redesigns that authority schema.
 
 use std::collections::BTreeSet;
@@ -23,8 +23,8 @@ use wamn_catalog::manifest::{
 pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.operation-grants:' || $1, 0))";
 
-/// Stable refusal when the project database has not installed its auth floor.
-pub const PLATFORM_FLOOR_MISSING: &str = "wamn-operation-grants-platform-floor-missing";
+/// Stable refusal when the project database has not installed its base authorization grants.
+pub const PLATFORM_BASE_GRANTS_MISSING: &str = "wamn-operation-grants-platform-base-grants-missing";
 
 /// Required statement inside the administrator-owned transaction.
 ///
@@ -32,20 +32,20 @@ pub const PLATFORM_FLOOR_MISSING: &str = "wamn-operation-grants-platform-floor-m
 /// write instead of observing a silently filtered role grant set.
 pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_security = off";
 
-/// Refuse unless the existing application-authorization floor is installed.
+/// Refuse unless the existing application-authorization base grants are installed.
 ///
 /// The effect owner executes this after acquiring [`OPERATION_GRANT_LOCK_SQL`]
 /// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before
 /// [`ENSURE_ADMIN_ROLE_SQL`], all in one transaction.
-pub fn operation_grant_floor_check_sql() -> String {
+pub fn operation_base_grants_check_sql() -> String {
     format!(
-        "DO $operation_grant_floor$ BEGIN \
+        "DO $operation_base_grants$ BEGIN \
            IF pg_catalog.to_regclass('platform.role') IS NULL \
               OR pg_catalog.to_regclass('platform.permission') IS NULL THEN \
              RAISE EXCEPTION USING ERRCODE = '55000', \
-               MESSAGE = '{PLATFORM_FLOOR_MISSING}'; \
+               MESSAGE = '{PLATFORM_BASE_GRANTS_MISSING}'; \
            END IF; \
-         END $operation_grant_floor$;"
+         END $operation_base_grants$;"
     )
 }
 
@@ -150,7 +150,7 @@ pub fn operation_grant_tokens(
 /// The caller owns the surrounding transaction: it acquires
 /// [`OPERATION_GRANT_LOCK_SQL`], applies
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
-/// [`operation_grant_floor_check_sql`], then executes this statement. It
+/// [`operation_base_grants_check_sql`], then executes this statement. It
 /// changes one row or none.
 pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (name) \
      VALUES ('admin') ON CONFLICT (name) DO NOTHING";

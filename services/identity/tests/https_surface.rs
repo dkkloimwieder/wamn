@@ -14,7 +14,7 @@ use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
 };
-use wamn_control_provision::sql::revoke_public_connect_floor_sql;
+use wamn_control_provision::sql::revoke_public_connect_base_grants_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
@@ -122,13 +122,13 @@ async fn identity_https_has_only_public_jwks_and_health() {
         .await
         .expect("restore fixture admin");
     admin
-        .batch_execute(revoke_public_connect_floor_sql())
+        .batch_execute(revoke_public_connect_base_grants_sql())
         .await
-        .expect("production CONNECT floor");
+        .expect("production CONNECT minimum");
     admin
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
         .await
-        .expect("production TEMPORARY floor");
+        .expect("production TEMPORARY minimum");
     admin
         .batch_execute(
             &prepare_identity_issuer_generation_sql(

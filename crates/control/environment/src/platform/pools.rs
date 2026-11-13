@@ -35,7 +35,7 @@ const POSTGRES_LABEL: &str = "role=postgres";
 ///
 /// # Errors
 ///
-/// Returns an error for a kind document, a project that names another
+/// Returns an error for a type document, a project that names another
 /// cluster, or a failed gcloud, kubectl, or progress write.
 pub async fn resize(
     document: &ClusterDocument,

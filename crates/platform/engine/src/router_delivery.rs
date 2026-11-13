@@ -167,7 +167,7 @@ pub enum SourceRef<'a> {
 }
 
 impl<'a> SourceRef<'a> {
-    /// The bridge's two ingress kinds, as the label a metric attribute and a
+    /// The bridge's two ingress types, as the label a metric attribute and a
     /// delivery preview both carry.
     pub fn source_type(self) -> &'static str {
         match self {
@@ -282,7 +282,7 @@ pub fn resolve_authorized_host_route(
     )
 }
 
-/// Exercise the exact production attachment resolver and authorization gate.
+/// Exercise the exact production attachment resolver and authorization condition.
 #[cfg(feature = "test-util")]
 pub fn authorize_attachment_for_test(
     release: &crate::release_manifest::LoadedRelease,

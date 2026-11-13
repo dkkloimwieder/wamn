@@ -12,7 +12,7 @@ use anyhow::Context as _;
 pub(super) fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
     format!(
         "SELECT expected_environment, source_policy_org, source_policy_hash \
-           FROM {}.environment_policies WHERE env_key = $1",
+           FROM {}.environment_policies WHERE project_env_key = $1",
         run_schema.quoted()
     )
 }
@@ -146,8 +146,8 @@ pub(super) fn environment_policy_absent(
     PublishManifestError::new(
         PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
-            "tenant {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
-            target.env_key,
+            "project {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
+            target.project_env_key,
             run_schema.as_str()
         ),
     )
@@ -361,7 +361,7 @@ pub(super) fn pin_runtime_schemas(
 }
 
 /// The admitted components of the opened package artifacts, each from its
-/// descriptor layer, in the target of `env_key`.
+/// descriptor layer, in the target of `project_env_key`.
 pub(super) fn project_components(
     components: &ReleaseComponents,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
@@ -380,7 +380,7 @@ pub(super) fn project_components(
 
 /// Project operation contracts for released components and route attachments.
 ///
-/// The kind comes from the generated contract of the operation, or from the
+/// The type comes from the generated contract of the operation, or from the
 /// published manifest a promotion copies.
 pub(super) fn project_routes(
     request: &PublishReleaseManifest<'_>,
@@ -423,7 +423,7 @@ pub(super) fn project_routes(
                 PublishManifestError::new(
                     PublishManifestErrorType::PackageManifest,
                     format!(
-                        "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
+                        "route operation {operation:?} of package {:?} has no generated contract type; regenerate the package evidence",
                         attachment.package_id
                     ),
                 )
@@ -445,7 +445,7 @@ pub(super) fn project_routes(
             package_id: attachment.package_id.clone(),
             component: component.clone(),
             operation: operation.clone(),
-            type_: contract.kind,
+            type_: contract.type_,
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
@@ -461,14 +461,14 @@ pub(super) fn project_routes(
             else {
                 continue;
             };
-            if contract.kind == wamn_catalog::OperationType::EventHandler {
+            if contract.type_ == wamn_catalog::OperationType::EventHandler {
                 continue;
             }
             routes.insert(ServingRoute {
                 package_id: component.package_id.clone(),
                 component: component.descriptor.component.clone(),
                 operation: operation.clone(),
-                type_: contract.kind,
+                type_: contract.type_,
                 reads: contract.reads.clone(),
                 revision: contract.revision.clone(),
                 idempotency: contract.idempotency.clone(),

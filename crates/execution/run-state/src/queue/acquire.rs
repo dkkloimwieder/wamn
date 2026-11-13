@@ -95,7 +95,7 @@ pub fn is_leasable(entry: &QueueEntry, now: Millis) -> bool {
 /// the production lease grant writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Leased {
-    pub env_key: String,
+    pub project_env_key: String,
     pub run_id: String,
     /// The shared retry count after the lease. Recovering an expired lease
     /// increments it. A credential release already counted its failure, so
@@ -135,7 +135,7 @@ pub fn plan_lease(
         .into_iter()
         .take(limit)
         .map(|e| Leased {
-            env_key: e.env_key.clone(),
+            project_env_key: e.project_env_key.clone(),
             run_id: e.run_id.clone(),
             // Crash evidence only: a leasable row's lease is NULL or expired, so a
             // present lease IS an expired one — the prior owner died holding the run.

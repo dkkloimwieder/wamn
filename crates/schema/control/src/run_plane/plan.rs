@@ -14,12 +14,12 @@ use super::schema::{
 
 use super::{
     BareSchemaName, RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, rewrite_schema,
+    RunPlaneAction, RunPlaneActionType, RunPlaneObservation, RunPlanePlan, rewrite_schema,
 };
 
 use super::declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, CheckOrigin,
-    ENVIRONMENT_POLICY_ENV_KEY_QUAL, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
+    ENVIRONMENT_POLICY_PROJECT_ENV_KEY_QUAL, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
 };
 
 pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservation {
@@ -28,12 +28,12 @@ pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservat
         forced: true,
         policies: BTreeMap::from([
             (
-                "environment_policies_env_key".to_string(),
+                "environment_policies_project_env_key".to_string(),
                 RowPolicyObservation {
                     command: "select".to_string(),
                     permissive: true,
                     roles: BTreeSet::from(["wamn_app".to_string()]),
-                    using_expression: Some(ENVIRONMENT_POLICY_ENV_KEY_QUAL.to_string()),
+                    using_expression: Some(ENVIRONMENT_POLICY_PROJECT_ENV_KEY_QUAL.to_string()),
                     check_expression: None,
                 },
             ),
@@ -64,8 +64,8 @@ pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservat
 /// one are separate ACL entries and revoking either alone leaves the other
 /// standing. The re-grant is column-targeted to exactly the three columns the
 /// prune statement's `WHERE` clause reads: retention is a `wamn_platform`
-/// member, that group's floor arm is `USING (true)`, and a table-level `SELECT`
-/// would therefore expose every tenant's run payload columns.
+/// member, that group's base policy arm is `USING (true)`, and a table-level `SELECT`
+/// would therefore expose every project's run payload columns.
 fn repair_run_capture_privilege_sql(
     schema: &BareSchemaName,
     available_columns: impl IntoIterator<Item = String>,
@@ -92,7 +92,7 @@ fn repair_run_capture_privilege_sql(
              EXECUTE 'REVOKE ALL PRIVILEGES ({all_columns}) ON TABLE {qualified} \
                         FROM wamn_run_retention'; \
              EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM wamn_run_retention'; \
-             EXECUTE 'GRANT SELECT (\"env_key\", \"status\", \"created_at\"), DELETE \
+             EXECUTE 'GRANT SELECT (\"project_env_key\", \"status\", \"created_at\"), DELETE \
                         ON TABLE {qualified} TO wamn_run_retention'; \
            END IF; \
          END $run_retention_acl$; \
@@ -181,7 +181,7 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
         || !obs.app_run_capture_privileges.2
 }
 
-/// The generation-role floor the PROVISIONER mints, restated as a refusal.
+/// The generation-role minimum the PROVISIONER mints, restated as a refusal.
 ///
 /// The membership edge term is `SET FALSE`, not `SET TRUE`: `INHERIT TRUE, SET
 /// FALSE` gives the login generation the stable ACL role's privileges while
@@ -213,7 +213,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             .iter()
             .cloned();
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairRunCapturePrivilege,
+            type_: RunPlaneActionType::RepairRunCapturePrivilege,
             target: "runs.capture_mode".to_string(),
             sql: repair_run_capture_privilege_sql(schema, available_columns),
         });
@@ -230,7 +230,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             any_missing = true;
             creates.push(RunPlaneAction {
-                kind: RunPlaneActionKind::CreateTable,
+                type_: RunPlaneActionType::CreateTable,
                 target: table.clone(),
                 sql: rewrite_schema(&table_section(file, "wamn_run", &table), schema),
             });
@@ -238,7 +238,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
     if any_missing {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureSchema,
+            type_: RunPlaneActionType::EnsureSchema,
             target: schema.to_string(),
             sql: rewrite_schema(&schema_header_section(RUN_STATE_SQL, "wamn_run"), schema),
         });
@@ -255,7 +255,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             })
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairHelperFunction,
+                type_: RunPlaneActionType::RepairHelperFunction,
                 target: spec.name.to_string(),
                 sql: rewrite_schema(&spec.sql, schema),
             });
@@ -268,7 +268,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
             if !obs.catalog_tables.contains(&table) {
                 plan.actions.push(RunPlaneAction {
-                    kind: RunPlaneActionKind::CreateCatalogTable,
+                    type_: RunPlaneActionType::CreateCatalogTable,
                     target: table.clone(),
                     sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
                 });
@@ -276,7 +276,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     } else {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureCatalogSchema,
+            type_: RunPlaneActionType::EnsureCatalogSchema,
             target: "catalog".to_string(),
             sql: CATALOG_SCHEMA_SQL.to_string(),
         });
@@ -305,7 +305,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             )
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RemoveAppRunQueueAuthority,
+            type_: RunPlaneActionType::RemoveAppRunQueueAuthority,
             target: format!("{}.run_queue.app-authority", schema.as_str()),
             sql: format!(
                 "REVOKE ALL PRIVILEGES ON TABLE {}.run_queue FROM PUBLIC, wamn_app{column_revoke}",
@@ -463,7 +463,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         )
         .expect("writing to a String cannot fail");
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
+            type_: RunPlaneActionType::RepairAuthoringPrivilege,
             target: format!("{schema_name}.{}", spec.table),
             sql,
         });
@@ -486,7 +486,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                         quote_ident(&table),
                     );
                     plan.actions.push(RunPlaneAction {
-                        kind: RunPlaneActionKind::AddColumn,
+                        type_: RunPlaneActionType::AddColumn,
                         target: format!("{table}.{col}"),
                         sql: add_column_sql,
                     });
@@ -503,13 +503,13 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
 
     // A missing table's record section carries its complete RLS apparatus.
     // Existing tables are compared at the PostgreSQL catalog grain: both
-    // relation flags and the sole tenant SELECT policy must match exactly.
+    // relation flags and the sole project SELECT policy must match exactly.
     if obs.tables.contains_key("environment_policies")
         && obs.environment_policy_row_security.as_ref()
             != Some(&environment_policy_row_security_at_record())
     {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairRowSecurity,
+            type_: RunPlaneActionType::RepairRowSecurity,
             target: "environment_policies.row-security".to_string(),
             sql: repair_environment_policy_row_security_sql(schema),
         });
@@ -549,7 +549,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             String::new()
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairConstraint,
+            type_: RunPlaneActionType::RepairConstraint,
             target: format!("{}.{}", spec.table, spec.name),
             sql: format!(
                 "ALTER TABLE {}.{} {drop}ADD CONSTRAINT {} {}",
@@ -567,7 +567,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::DropExtraConstraint,
+                type_: RunPlaneActionType::DropExtraConstraint,
                 target: format!("{table}.{name}"),
                 sql: format!(
                     "ALTER TABLE {}.{} DROP CONSTRAINT {}",
@@ -612,7 +612,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             String::new()
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairTrigger,
+            type_: RunPlaneActionType::RepairTrigger,
             target: format!("{}.{}", spec.table, spec.name),
             sql: format!("{drop}{}", rewrite_schema(&spec.sql, schema)),
         });
@@ -622,7 +622,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::DropExtraTrigger,
+                type_: RunPlaneActionType::DropExtraTrigger,
                 target: format!("{table}.{name}"),
                 sql: format!(
                     "DROP TRIGGER {} ON {}.{}",
@@ -644,13 +644,13 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             match obs.indexes.get(&name) {
                 None => plan.actions.push(RunPlaneAction {
-                    kind: RunPlaneActionKind::CreateIndex,
+                    type_: RunPlaneActionType::CreateIndex,
                     target: name.clone(),
                     sql: rewrite_schema(&stmt, schema),
                 }),
                 Some(live_def) if index_definition_stale(file, &table, &stmt, live_def) => {
                     plan.actions.push(RunPlaneAction {
-                        kind: RunPlaneActionKind::RecreateIndex,
+                        type_: RunPlaneActionType::RecreateIndex,
                         target: name.clone(),
                         sql: format!(
                             "DROP INDEX {}.{}; {}",
@@ -702,9 +702,9 @@ fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String
                'DROP POLICY %I ON {qualified}', policy_name); \
            END LOOP; \
          END $environment_policy_rows$; \
-         CREATE POLICY environment_policies_env_key ON {qualified} \
-           FOR SELECT TO wamn_app USING (wamn_authority.tenant_key(env_key) \
-             = wamn_authority.current_tenant_key()); \
+         CREATE POLICY environment_policies_project_env_key ON {qualified} \
+           FOR SELECT TO wamn_app USING (wamn_authority.project_key(project_env_key) \
+             = wamn_authority.current_project_key()); \
          CREATE POLICY environment_policies_platform ON {qualified} \
            AS PERMISSIVE FOR SELECT TO wamn_platform USING (true)"
     )

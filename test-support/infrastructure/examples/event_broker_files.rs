@@ -5,7 +5,7 @@
 //! from its files.
 //!
 //! cargo run -p wamn-test-infrastructure --example event_broker_files -- \
-//!   <work> <org> <project> <env> <env_key> <replicas> [<wamn.json>...]
+//!   <work> <org> <project> <env> <project_env_key> <replicas> [<wamn.json>...]
 
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     ensure!(
         arguments.len() >= 6,
-        "usage: <work> <org> <project> <env> <env_key> <replicas> [<wamn.json>...]"
+        "usage: <work> <org> <project> <env> <project_env_key> <replicas> [<wamn.json>...]"
     );
     let work = PathBuf::from(&arguments[0]);
     let target = Triple::new(
@@ -33,12 +33,19 @@ fn main() -> anyhow::Result<()> {
         arguments[2].as_str(),
         arguments[3].as_str(),
     );
-    let env_key = &arguments[4];
+    let project_env_key = &arguments[4];
     let replicas: usize = arguments[5].parse().context("parse the stream replicas")?;
     let source = source_stream_config(&target, replicas, Duration::from_secs(120));
     let advisory = advisory_stream_config(&target, replicas);
     let consumers = declared_consumers(&target, &arguments[6..])?;
-    let broker = event_broker::prepare(&work, &target, env_key, &source, &advisory, &consumers)?;
+    let broker = event_broker::prepare(
+        &work,
+        &target,
+        project_env_key,
+        &source,
+        &advisory,
+        &consumers,
+    )?;
     // One --consumer-config argument of enable-cdc-project-env per line.
     fs::write(
         work.join("consumers.jsonl"),

@@ -63,7 +63,7 @@ The platform owns grants and row policies separately from application DDL.
 Applications cannot replace or weaken them.
 PostgreSQL uses the authenticated database role for application row isolation.
 [Connection authority](capabilities.md#invocation-and-connection-authority) states how the host selects the database and the credential of each authority class.
-Control-store projections retain their separate tenant-targeted policies.
+Control-store projections retain their separate project-targeted policies.
 `wamn-run-state` supplies the host queue worker's actual `CURRENT_USER` membership query.
 The native runtime refuses absent membership at the existing guest error boundary.
 
@@ -95,7 +95,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `audit_log.columns`, `.retention` | Application history policy. Retain. |
 | `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
 | Create `values` | Application value policy for a new record: the subset of an `enum_fields` list that a create accepts. The generated input contract states it, and states the model list for every other enum field, so a client and the generated route schema offer only those values. Retain. |
-| CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation kind and applicable database constraints. Remove from authored input. |
+| CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation type and applicable database constraints. Remove from authored input. |
 | `authored_sql.default`, `.variants[].field`, `.direction`, `.path` | Application selection of exact SQL for each supported ordering of a query that generation cannot write: one that joins, aggregates with `GROUP BY`, or windows with `OVER`. SQL files own statement bytes. Generation writes every variant of a query that its model's table alone answers from the declared filters, search and sort, and refuses `authored_sql` whose every variant reads only that table. Retain mappings for the others. |
 | `filters[].field`, `sort.fields`, `.directions`, `pagination.default_sort`, `.tie_breaker`, `limit.default`, `.minimum`, `.maximum` | Application query bounds and selection. Retain within supported generator rules. |
 | `filters[].match` | Application match mode of one filter. `exact` is the default and the contract leaves it unstated. `contains` and `prefix` match a part or the start of a text field with no `enum_fields` list. `range` takes one object with an optional inclusive `min` and `max`, on an int32, float64, numeric or timestamptz field. `is_null` takes one boolean on a nullable field: true keeps the empty rows. Generation refuses a mode on any other field. The generated query SQL implements the mode, and authored query SQL must implement the mode that its filter declares. Retain. |
@@ -311,7 +311,7 @@ Serialization and deadlock errors reach the caller without an automatic transact
 
 `platform.write_log` holds the idempotency record of every create, update, delete and command in one project database.
 `deploy/sql/app-schema.sql` installs it, so no application migration names it.
-It has no tenant column and no row policy, because the database is the tenant, and no record history: the rows the work writes carry the actor.
+It has no project column and no row policy, because the database is the project, and no record history: the rows the work writes carry the actor.
 `wamn_app` holds `INSERT`, `SELECT`, `UPDATE (result)` and `DELETE` on it.
 Its key is the claim operation without its `@version`, for example `wamn-wms:location/create`, and the idempotency key.
 The key is the input field that the route's `idempotency` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
@@ -449,8 +449,8 @@ The host truncates nothing, and the refused item returns `internal_error`.
 No limit bounds the bytes of a result.
 Each guest linear memory is capped at 256 MiB, and the statement timeout bounds the duration of a statement.
 Unbounded JSON materialization is not a streaming or export interface.
-Arbitrary tenant SQL remains subject to runtime authority and execution limits.
-Compile-time checking for arbitrary tenant components remains demand-gated.
+Arbitrary project SQL remains subject to runtime authority and execution limits.
+Compile-time checking for arbitrary project components remains enabled on demand.
 
 1. A member's instance binds to the union of its own operations' declared statements. This is wider than today's per-entry binding (`operation.rs:661`): Receiving's record\_receipt code could name void\_receipt's statement, and a Receiving read could too. Accepted: a package trusts its own code, as a crate does; a read that writes is its author's bug, and the profile screen shows it. Composition never widens a set to another package.
 2. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations within a member's own admitted statements is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
@@ -464,7 +464,7 @@ wamn has one way to compose packages inside an application: the caller sequences
 
 Idempotency (ruled 2026-10-12): a key identifies one request to one operation. Acme's `record_receipt` has SQL of its own (the inspection statement), so it claims under its own operation, `acme.record_receipt`, as an ordinary `idempotent_by = claim` command with `transaction = explicit_per_input`. It no longer inherits Receiving's claim: `idempotent_by = {inherited = …}` (wamn.k:55,104) existed for the participant-era SQL-free orchestrator, and dies with it (Cleanup). Consequences, all accepted: (1) a key recorded through `receiving.record_receipt` and resubmitted through `acme.record_receipt` is a second request to a second operation — it runs, Acme's rules apply, and Receiving's row rules decide whether a second receipt exists; the base write entry in a client application is therefore not a routed target (authoring rule; ACL after C). (2) Participant-era keys stored under `receiving.record_receipt` are not replayed by Acme's entry at all; a retry through Acme runs again. Receiving and Acme are portfolio applications on wamn-dev with no production data. The request hash drops the participation term (intent.rs:139-147) and is the canonical item alone. `write_log` stays keyed (operation, idempotency\_key), operation versionless (app-schema.sql:630-632), so a retry across a release of the same operation answers the stored result. Cached replay across two entry points with different business rules is exactly what own-operation claims rule out.
 
-The database is the tenant, so the log carries no `tenant_id` and no row policy. `wamn_app` gets `INSERT`, `SELECT` and `UPDATE (result)`, nothing else. No `user_id`: record history stamps the rows the work writes.
+The database is the project, so the log carries no `project_id` and no row policy. `wamn_app` gets `INSERT`, `SELECT` and `UPDATE (result)`, nothing else. No `user_id`: record history stamps the rows the work writes.
 
 A second caller waits at step 2 for the whole of the first caller's work. A lock or statement timeout there ends the second caller's transaction; its item outcome is the platform's timeout refusal, and the client retries.
 
@@ -702,16 +702,16 @@ Every other trigger refuses.
 Each relation whose retention is not `"none"` keeps a log in its own history table.
 The history table is `<relation>_history` in the schema of the relation.
 `wamn_history.create_history_table` in `record-history.sql` is the one definition of the table shape.
-A package relation gets no `tenant_id` column.
+A package relation gets no `project_id` column.
 `wamn_history.log_row_change` is the `AFTER INSERT OR UPDATE OR DELETE` row trigger function that writes one entry for each row change.
 It writes the entry in the same transaction as the change.
-It writes with the authority of the writer, so the `current_user` tenant floor also governs the entry.
+It writes with the authority of the writer, so the `current_user` project base grants also governs the entry.
 
 An entry has these columns:
 
 - `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
 - `id`: the id of the entry, a random `uuid` that PostgreSQL generates. A read that shows entries in a table keys its rows on it.
-- `tenant_id`: the tenant of the row, only in a legacy history table under a tenant floor.
+- `project_id`: the project of the row, only in a legacy history table under a project base grants.
 - `row_key`: a JSONB object of the primary key columns.
 - `type`: `insert`, `update`, or `delete`.
 - `operation`: the source of the write, from `app.operation`.
@@ -763,7 +763,7 @@ The log function calls `row_image` with the authority of the writer.
 Package provisioning grants the same history privileges and schema `CREATE` to each package owner, which owns its generated functions.
 [`deploy/sql/record-history-app-grants.sql`](../../deploy/sql/record-history-app-grants.sql) grants the same three privileges to `wamn_app`.
 `CATALOG_SCHEMA_SQL` composes it after `record-history.sql`.
-Every other tenant or package applier applies it after `record-history.sql`.
+Every other project or package applier applies it after `record-history.sql`.
 The file names `wamn_app`, so an applier without that role fails.
 The system database never applies it, so the system database has no `wamn_app` grant.
 
@@ -817,8 +817,8 @@ It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 
 The [`prune-record-history`](../../crates/control/environment/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
-It connects as a targeted generation of the tenant-targeted audit retention family, whose stable role is `wamn_audit_retention`.
-It refuses any login that is not an audit retention generation for the derived environment tenant in the connected database.
+It connects as a targeted generation of the project-targeted audit retention family, whose stable role is `wamn_audit_retention`.
+It refuses any login that is not an audit retention generation for the derived environment project in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
 `catalog-schema-prefix.sql` creates the stable role under the role bootstrap lock, beside `wamn_platform`.
 The system database schema creates no audit retention role.
@@ -856,7 +856,7 @@ Only the consumer schema requires CDC capture.
 ### Actors
 
 The actor is the `platform."user"` id of the executing principal, never the credential.
-The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each kind of delivery.
+The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each type of delivery.
 A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
@@ -872,7 +872,7 @@ A `platform` row carries its `wamn:<component>` name in `display_name` and its d
 Its email is `<component>@<platform-domain>`.
 The `user_platform_principal_check` constraint pins each name and id pair, and it refuses a `wamn:` name on another type.
 `wamn_app` has only `SELECT` on `platform."user"`.
-The database is the org boundary, so `platform."user"` has no `tenant_id`, no row policy, and no tenant key index. Its key is `id`, and `email` is unique in the database.
+The database is the org boundary, so `platform."user"` has no `project_id`, no row policy, and no project key index. Its key is `id`, and `email` is unique in the database.
 
 The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
@@ -892,21 +892,21 @@ A connection holds that integration's configuration for one environment.
 An external system identifies the external account that records come from.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 `number_counter` has no history table, because one entry per counter advance doubles the writes of every create.
-The database separates environments. The platform account and configuration tables and their history tables have no `tenant_id`, row policy, or tenant key index.
+The database separates environments. The platform account and configuration tables and their history tables have no `project_id`, row policy, or project key index.
 `role` keys on `name`. `user_role` keys on `(user_id, role_name)`, and `permission` keys on `(role_name, permission)`.
 Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.
 `environment` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
 No status row means active. The application login reads that row from its selected environment database.
-History keys contain no `tenant_id`. Environment history uses the key `{"id": true}`.
-The shared control, catalog, and run tables store the composed `org--project--env` key in `env_key`.
+History keys contain no `project_id`. Environment history uses the key `{"id": true}`.
+The shared control, catalog, and run tables store the composed `org--project--env` key in `project_env_key`.
 The separate `environment` field stores the short name, such as `dev`.
-Target JSON, catalog identities, run keys, and manifest targets use `env_key`.
-Event fields and workload identity use `env_key`. Credential hashes frame that name.
-The management variable is `WAMN_MANAGEMENT_ENV_KEY`, and `flow-http.json` carries `wamn.env_key`.
+Target JSON, catalog identities, run keys, and manifest targets use `project_env_key`.
+Event fields and workload identity use `project_env_key`. Credential hashes frame that name.
+The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`, and `flow-http.json` carries `wamn.project_env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
-`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/package/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_identity_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/package/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_identity_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `environment`.
@@ -914,10 +914,10 @@ It holds the same grants on `external_system`, `integration`, `connection`, `fil
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
 It holds `INSERT` on the entry columns of their eight history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`.
 The `external_system`, `integration`, and `connection` projections have no history tables.
-No entry column names a tenant, and administration holds no tenant derivation grant.
+No entry column names a project, and administration holds no project derivation grant.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 The CLI role writer checks the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
-It refuses an `env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
+It refuses an `project_env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
 The session role reader holds `SELECT` only on `user.id`, `user.status`, `user_role.user_id`, and `user_role.role_name`.
 Its connection selects the environment database. Its query filters by principal ID and active status.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
@@ -944,7 +944,7 @@ These tables keep stamps only, with no history table.
 `connection_requirement` stores each package's declared names, interfaces, and modes without stamps.
 The system database owns immutable `connection_generation` rows with parameters and credential references.
 Package application binds `wamn:apply-package`, including migrations, definition ownership, accepted qualifications, and stage progress.
-Environment staging, connection administration, local development bindings, and floor recording bind `wamn:provisioning`, as the platform configuration projection does.
+Environment staging, connection administration, local development bindings, and minimum recording bind `wamn:provisioning`, as the platform configuration projection does.
 The `platform.connection` projection and `workflows` keep their existing metadata and carry no record history trigger.
 Fresh databases create neither `wirings` nor `event_registrations`.
 
@@ -1035,7 +1035,7 @@ These relations are `identity.principals`, `identity.org_memberships`, `identity
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
-The full control schema stamps the control store relations `catalog.tenant_environments` and `wamn_authority.author_login_tenants`.
+The full control schema stamps the control store relations `catalog.project_environments` and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
@@ -1048,12 +1048,12 @@ The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provi
 `identity.principals.type` is `user`, `service`, or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
-It also refuses a `wamn:` display name on another kind, and the subject pattern of another kind refuses a colon.
+It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
 Only `wamn:provisioning` writes in the system database, so the schema creates only its row.
 The schema binds `wamn:provisioning` for the transaction that creates the row, so the row stamps itself.
 A platform principal cannot authenticate.
-The `identity.pats` foreign key carries the principal kind, and a CHECK refuses a token for a platform principal.
-Every path that turns a stored principal into a caller also refuses the platform kind.
+The `identity.pats` foreign key carries the principal type, and a CHECK refuses a token for a platform principal.
+Every path that turns a stored principal into a caller also refuses the platform type.
 
 The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
 wamn-identity issues each token in its own transaction.
@@ -1123,7 +1123,7 @@ On those paths, the triggers exist and every writer binds its executing principa
 `env apply` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
 The release stage also creates one service principal for each application with a scheduled workflow, targeted to that environment.
-The stage writes its tenant service row without assigning a role or permission.
+The stage writes its project service row without assigning a role or permission.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
@@ -1135,8 +1135,8 @@ A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
 The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
-A member that `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because invite holds no tenant connection.
-A principal with no user row cannot write in the tenant.
+A member that `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because invite holds no project connection.
+A principal with no user row cannot write in the project.
 The invocation bind refuses it.
 `WamnPostgres::bind_session_identity` refuses a principal that owns no `platform."user"` row in the project database.
 The caller sees `permission-denied`.
@@ -1205,11 +1205,11 @@ Cursor numerics preserve their PostgreSQL scale.
 Constraint and ordinary-index names follow this pattern unless an explicit shorter name is required:
 
 ```text
-<table>_<column_1>[_<column_n>]_<kind>
+<table>_<column_1>[_<column_n>]_<type>
 ```
 
 Columns appear in table-definition order.
-Kinds are `pkey`, `key`, `fkey`, `check`, and `idx` for primary, unique, foreign, check, and ordinary-index objects.
+Types are `pkey`, `key`, `fkey`, `check`, and `idx` for primary, unique, foreign, check, and ordinary-index objects.
 Names must contain fewer than 64 bytes.
 The author supplies an explicit shorter name when needed. Tools do not silently abbreviate or accept PostgreSQL truncation.
 

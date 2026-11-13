@@ -92,7 +92,7 @@ mod tests {
     use super::*;
 
     const ISSUER: &str = "https://identity.example.test";
-    const AUDIENCE: &str = "tenant-a/edge";
+    const AUDIENCE: &str = "org-a/edge";
 
     struct Fixture {
         authenticator: EdgeAuthenticator,
@@ -233,7 +233,7 @@ mod tests {
         );
         for claims in [
             SessionClaims {
-                aud: "tenant-b/edge".into(),
+                aud: "org-b/edge".into(),
                 ..claims.clone()
             },
             SessionClaims {

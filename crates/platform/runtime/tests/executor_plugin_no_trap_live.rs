@@ -3,9 +3,9 @@
 //!
 //! # Why this exists
 //!
-//! Gate B (`wamn-0h0g.15.6`) established the no-trap discipline by READING Rust
+//! Acceptance test B (`wamn-0h0g.15.6`) established the no-trap discipline by READING Rust
 //! signatures against WIT contracts. A `cargo check` cannot establish runtime
-//! behaviour, and the gate said so. These tests drive a real wasm component
+//! behaviour, and the acceptance test said so. These tests drive a real wasm component
 //! through a real store into each plugin's host error path and assert the error
 //! comes back as DATA — a mapped WIT error, or a survivable no-op where the WIT
 //! declares no error channel — rather than as a wasm trap. This COMPLEMENTS the
@@ -14,7 +14,7 @@
 //! # The three
 //!
 //! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
-//! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three tested here.
+//! and `CONNECTION_HTTP_ID` — condition B's retained set, and the three tested here.
 //! `wamn_jetstream`, `flow_http_routing` and `connection_credentials` are deliberately
 //! outside this test: the first two are not on the executor store, and the third
 //! implements no `HostPlugin` and has no WIT surface at all.
@@ -28,7 +28,7 @@
 //! build of a separate workspace, and a test that silently skips when that
 //! artifact is missing is exactly the vacuous pass this bead exists to prevent.
 //! So each guest is authored as component-model WAT and encoded in-process,
-//! following the one hermetic precedent in the tree (`deadline_gate` in
+//! following the one hermetic precedent in the tree (`deadline_acceptance_test` in
 //! `crates/execution/host/src/lib.rs`). No cluster, no daemon, no network, no
 //! prebuilt artifact.
 //!
@@ -80,7 +80,7 @@ const MARK_RESUMED: u32 = 255;
 
 /// The `component_id` every store is built with. Plugins key their per-component
 /// state on it (`ActiveCtx::component_id`), so the test's own registration —
-/// the postgres tenant identity — must use the same string.
+/// the postgres project identity — must use the same string.
 const GUEST_ID: &str = "no-trap-guest";
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ const RET_ERR_ALIGN4: u32 = RET_OK_ERR + 4;
 /// linked by hand with the plugin module's own `add_to_linker`. That is exactly
 /// what `crates/execution/host/src/lib.rs` does for all four: `with_plugins`
 /// makes `ActiveCtx::try_get_plugin` resolve, and the hand link installs the
-/// host functions. `HostPlugin::world` gates only `on_workload_item_bind`, which
+/// host functions. `HostPlugin::world` conditions only `on_workload_item_bind`, which
 /// the executor never relies on for these four, so this test must not either.
 async fn drive_guest(
     guest_wat: &str,
@@ -362,8 +362,8 @@ fn offline_postgres() -> WamnPostgres {
 /// transaction resources add none either, since the failure is upstream of any
 /// of them.
 ///
-/// The test registers a tenant first, deliberately: without one the call would
-/// stop at the identity gate (`query-error`) and never exercise the resource
+/// The test registers a project first, deliberately: without one the call would
+/// stop at the identity condition (`query-error`) and never exercise the resource
 /// path. With one, the call runs the whole way to credential resolution, which
 /// has nothing to resolve, and comes back `connection-unavailable`.
 ///
@@ -465,8 +465,8 @@ fn postgres_guest() -> String {
 async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
     postgres
-        .set_env_key(GUEST_ID, "tenant-a")
-        .expect("tenant identity registers");
+        .set_project_env_key(GUEST_ID, "org-a")
+        .expect("project identity registers");
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         WAMN_POSTGRES_ID,
@@ -615,11 +615,11 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            "tenant-a",
+            "org-a",
             "fixture",
             "test",
         )),
-        "tenant-a",
+        "org-a",
         "fixture",
         allowed_hosts,
         None,

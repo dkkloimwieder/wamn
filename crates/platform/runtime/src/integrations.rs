@@ -250,7 +250,12 @@ impl Integrations {
             let digest = &component.descriptor.component_digest;
             let package = &component.package_id;
             let declared = postgres
-                .declared_connection_interfaces(project, &release.target().env_key, package, digest)
+                .declared_connection_interfaces(
+                    project,
+                    &release.target().project_env_key,
+                    package,
+                    digest,
+                )
                 .await?;
             let declared: Vec<_> = declared
                 .into_iter()

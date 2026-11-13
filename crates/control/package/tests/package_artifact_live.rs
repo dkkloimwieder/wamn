@@ -159,7 +159,7 @@ impl Fixture {
         .expect("decode the descriptor");
         let (package_id, version) = tag.rsplit_once('-').expect("a tag names a version");
         let facts = descriptor.clone().into_admitted(
-            ComponentPackageCoordinate::new("tenant-a", package_id, version).expect("a target"),
+            ComponentPackageCoordinate::new("org-a", package_id, version).expect("a target"),
         );
         let credentials =
             read_registry_credentials(&self.registry.registry_auth_file, &self.local.address)

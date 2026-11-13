@@ -19,7 +19,7 @@ fn file_fixture_declares_each_binding_mode() {
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/support/file_package/publication/components/blob-put.json.in"),
         &wamn_catalog::ComponentPackageCoordinate {
-            env_key: "file-fixture".into(),
+            project_env_key: "file-fixture".into(),
             package_id: "file_fixture".into(),
             package_version: "0.1.0".into(),
         },

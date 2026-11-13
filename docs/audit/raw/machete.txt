@@ -8,7 +8,7 @@ wamn-ctl -- ./services/ctl/Cargo.toml:
 	wamn-authoring-model
 	wit-component
 	wit-parser
-wamn-gate-harness -- ./test-support/harness/Cargo.toml:
+wamn-acceptance-test-harness -- ./test-support/harness/Cargo.toml:
 	async-nats
 	wamn-event-wire
 	wamn-schema-control
@@ -29,7 +29,7 @@ wamn-integration-tests -- ./tests/integration/Cargo.toml:
 	wasm-encoder
 	wasmparser
 	wat
-wamn-gates -- ./tests/orchestrator/Cargo.toml:
+wamn-acceptance-tests -- ./tests/orchestrator/Cargo.toml:
 	wamn-runtime
 wamn-conformance-tests -- ./tests/conformance/Cargo.toml:
 	bytes

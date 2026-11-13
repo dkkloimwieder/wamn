@@ -4,7 +4,7 @@
 //! The database and its owner role `wamn_system` exist before this runs. On
 //! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
-//! `wamn_system`, closes the PUBLIC floors, creates the login
+//! `wamn_system`, closes the PUBLIC minimums, creates the login
 //! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. A complete installation needs no replay.
 //! Partial initialization requires explicit repair. Interrupted migrations resume
@@ -260,16 +260,16 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
             .await
             .context("release the control owner before cluster ACL convergence")?;
         admin
-            .batch_execute(sql::revoke_public_connect_floor_sql())
+            .batch_execute(sql::revoke_public_connect_base_grants_sql())
             .await
-            .context("converge the cluster PUBLIC CONNECT floor")?;
+            .context("converge the cluster PUBLIC CONNECT base grants")?;
         admin
             .batch_execute(
                 "DO $$ BEGIN EXECUTE format(\
                    'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
             )
             .await
-            .context("converge the system database PUBLIC TEMPORARY floor")?;
+            .context("converge the system database PUBLIC TEMPORARY base grants")?;
         admin
             .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
             .await

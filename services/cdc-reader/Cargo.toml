@@ -32,7 +32,7 @@ wamn-control-registry = { workspace = true }
 # The targeted registry-reader credential contract (wamn-0h0g.12.116): the pure,
 # pre-I/O refusal of a WAMN_SYSTEM_URL that is not this project-env's own
 # read-only generation. A pure text/hashing edge — no DB, K8s, clock or tokio.
-# The `event_reader_live` gate also provisions its fixture env (publication and
+# The `event_reader_live` condition also provisions its fixture env (publication and
 # slot) through the same crate's builders.
 wamn-control-provision = { workspace = true }
 

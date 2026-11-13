@@ -167,7 +167,7 @@ pub(super) fn content_type(name: &str) -> anyhow::Result<&'static str> {
 /// The object store that a bucket value names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheme {
-    /// `s3://`, an S3 API endpoint, as kind uses.
+    /// `s3://`, an S3 API endpoint, as type uses.
     S3,
     /// `gs://`, Google Cloud Storage with Application Default Credentials.
     Gcs,

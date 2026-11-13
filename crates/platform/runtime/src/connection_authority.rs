@@ -151,9 +151,9 @@ pub struct AuthorityError {
 }
 
 impl AuthorityError {
-    fn new(kind: AuthorityErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: AuthorityErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -526,19 +526,19 @@ fn validate_relative_target(value: &str) -> Result<(), AuthorityError> {
     reject_ambiguous_target(value, AuthorityErrorType::InvalidRequestTarget)
 }
 
-fn reject_ambiguous_target(value: &str, kind: AuthorityErrorType) -> Result<(), AuthorityError> {
+fn reject_ambiguous_target(value: &str, type_: AuthorityErrorType) -> Result<(), AuthorityError> {
     if value.contains('\\') || value.contains('#') {
-        return Err(AuthorityError::new(kind, "ambiguous HTTP target encoding"));
+        return Err(AuthorityError::new(type_, "ambiguous HTTP target encoding"));
     }
     let path = value.split_once('?').map_or(value, |(path, _)| path);
-    validate_path(path, kind)
+    validate_path(path, type_)
 }
 
-fn validate_path(path: &str, kind: AuthorityErrorType) -> Result<(), AuthorityError> {
+fn validate_path(path: &str, type_: AuthorityErrorType) -> Result<(), AuthorityError> {
     for segment in path.split('/') {
         if segment == "." || segment == ".." {
             return Err(AuthorityError::new(
-                kind,
+                type_,
                 "HTTP target contains a dot segment",
             ));
         }
@@ -554,12 +554,15 @@ fn validate_path(path: &str, kind: AuthorityErrorType) -> Result<(), AuthorityEr
             || !bytes[index + 1].is_ascii_hexdigit()
             || !bytes[index + 2].is_ascii_hexdigit()
         {
-            return Err(AuthorityError::new(kind, "malformed HTTP percent encoding"));
+            return Err(AuthorityError::new(
+                type_,
+                "malformed HTTP percent encoding",
+            ));
         }
         let decoded = (hex_value(bytes[index + 1]) << 4) | hex_value(bytes[index + 2]);
         if matches!(decoded, b'/' | b'\\' | b'.' | 0) {
             return Err(AuthorityError::new(
-                kind,
+                type_,
                 "ambiguous encoded HTTP path separator",
             ));
         }

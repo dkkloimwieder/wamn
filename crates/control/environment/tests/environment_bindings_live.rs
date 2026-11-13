@@ -268,7 +268,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     let mut system = connect(system_database.url()).await;
     seed(&mut system).await;
     system.batch_execute("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
-    let environment_database = wamn_platform_identity::test_database::tenant_platform();
+    let environment_database = wamn_platform_identity::test_database::project_platform();
     let mut environment = connect(environment_database.url()).await;
     environment
         .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
@@ -299,8 +299,8 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         .get(0);
     // The sha256 of the canonical bytes `{}`, which catalog.releases checks.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    environment.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('acme--one--dev',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
-    environment.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('acme--one--dev',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
+    environment.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--one--dev',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
+    environment.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--one--dev',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
     environment.batch_execute("COMMIT").await.unwrap();
     let request = json!({"project":"one","env":"dev","name":"erp","parameters":{"primary-authority":"https://erp.example/","tls-verification":"disabled"}}).to_string();
     let source = system.transaction().await.unwrap();
@@ -682,7 +682,7 @@ async fn publish_refuses_write_interfaces_outside_the_exports() {
 #[tokio::test]
 async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     let client = connect(database.url()).await;
     client
         .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
@@ -699,7 +699,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         ))
         .await
         .unwrap();
-    client.execute("INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--one--dev', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
+    client.execute("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--one--dev', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
     client.batch_execute("COMMIT").await.unwrap();
     let observed = analyse::read_project(database.url(), "acme--one--dev")
         .await

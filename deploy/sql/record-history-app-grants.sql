@@ -1,8 +1,8 @@
--- Record history grants for wamn_app, the stable guest role of a tenant or
+-- Record history grants for wamn_app, the stable guest role of a project or
 -- package database.
 --
 -- This file carries no transaction of its own. CATALOG_SCHEMA_SQL composes it
--- after record-history.sql. Other tenant and package appliers apply it after
+-- after record-history.sql. Other project and package appliers apply it after
 -- record-history.sql in their own transaction. The system database never
 -- applies it. The file names wamn_app, so an applier without that role fails.
 --

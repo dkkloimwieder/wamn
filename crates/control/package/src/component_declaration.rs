@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__ENV_KEY__";
+const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__PROJECT_ENV_KEY__";
 /// File name of the package manifest at a package root.
 pub const PACKAGE_MANIFEST: &str = "wamn.json";
 
@@ -160,11 +160,11 @@ pub fn authored_base_digests(
 
 /// Renders one authored component declaration into the document admission reads.
 ///
-/// One placeholder, REQUIRED: `target.env_key`, which the deployment fills.
+/// One placeholder, REQUIRED: `target.project_env_key`, which the deployment fills.
 /// An unfilled or hand-written value is a refusal naming the file.
 pub fn render_declaration_document(
     template: &Path,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
@@ -181,7 +181,7 @@ pub fn render_declaration_document(
     // authored once, in the wamn.json of the package that holds the template.
     let (_, owners) = wamn_schema_generator::operation_reference::package_owners_of(template)
         .map_err(|error| invalid(error.context().to_owned()))?;
-    plan::render_declaration_document(template, &mut document, env_key, &owners)?;
+    plan::render_declaration_document(template, &mut document, project_env_key, &owners)?;
     // An input port can name its package's generated route schema instead of
     // copying it (wamn-4omo). The template sits at
     // `publication/components/<component>.json.in` under its package root,
@@ -271,7 +271,7 @@ mod tests {
     fn a_palette_declaration_renders_its_target_alias_and_imports() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
         let target = wamn_catalog::ComponentPackageCoordinate {
-            env_key: "tenant-a".to_owned(),
+            project_env_key: "org-a".to_owned(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };

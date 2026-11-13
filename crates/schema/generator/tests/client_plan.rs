@@ -224,10 +224,10 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
 }
 
 #[test]
-fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
+fn each_platform_operation_takes_its_role_from_type_and_result_class() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
-    for (name, kind, result, role) in [
+    for (name, type_, result, role) in [
         ("query", "query", Some("page"), Role::Table),
         ("get", "get", Some("one"), Role::Detail),
         ("create", "create", Some("one"), Role::Form),
@@ -236,7 +236,7 @@ fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
         ("delete", "delete", Some("one"), Role::Delete),
     ] {
         let screen = screen(&plan, name);
-        assert_eq!(screen.contract.type_, kind, "{name}");
+        assert_eq!(screen.contract.type_, type_, "{name}");
         assert_eq!(screen.result_class, result, "{name}");
         assert_eq!(screen.role, role, "{name}");
         assert!(screen.role.is_supported(), "{name}");
@@ -293,21 +293,13 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
     assert_eq!(
         plan.unsupported(),
         [
-            ("platform-fixture:widget/archive@2.1.1", NoRole::UnknownKind),
+            ("platform-fixture:widget/archive@2.1.1", NoRole::UnknownType),
             (
                 "platform-fixture:widget/get@2.1.1",
                 NoRole::UnsupportedResult
             ),
         ],
         "a report names the canonical operation and why no role fits"
-    );
-    assert_eq!(
-        NoRole::UnknownKind.reason(),
-        "the operation kind has no screen role"
-    );
-    assert_eq!(
-        NoRole::UnsupportedResult.to_string(),
-        "the result class does not fit the operation kind"
     );
     assert_eq!(
         plan.screens()
@@ -589,7 +581,7 @@ fn row_links_open_the_record_read_and_the_revision_command() {
 }
 
 #[test]
-fn reads_and_confirmed_deletes_follow_from_kind_and_role() {
+fn reads_and_confirmed_deletes_follow_from_type_and_role() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
     for name in ["get", "query"] {
@@ -604,7 +596,7 @@ fn reads_and_confirmed_deletes_follow_from_kind_and_role() {
     }
 }
 
-/// EXIT GATE for `wamn-c2y5.3`: the plan hands an emitter the authored text
+/// EXIT CONDITION for `wamn-c2y5.3`: the plan hands an emitter the authored text
 /// with no rule of its own, so no emitter reads `wamn.json`.
 ///
 /// Columns and inputs are field references, so the text is already there. The
@@ -651,7 +643,7 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
     );
 }
 
-/// EXIT GATE for `wamn-rm14.2`: the plan states which list offers each input
+/// EXIT CONDITION for `wamn-rm14.2`: the plan states which list offers each input
 /// that names a record, and it states nothing where no list can.
 ///
 /// An emitter reads this and calls one binding. It never matches a name, and
@@ -729,7 +721,7 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
     );
 }
 
-/// EXIT GATE for `wamn-sxb5.1`: the plan names every selector that cannot
+/// EXIT CONDITION for `wamn-sxb5.1`: the plan names every selector that cannot
 /// search, so a generator reports the gap and an author closes it.
 ///
 /// The report states the screen, the input it fills and the list it reads.
@@ -792,7 +784,7 @@ fn added_list(ir: &ClientContractIr, model: &str, name: &str) -> OperationIr {
     list
 }
 
-/// EXIT GATE for `wamn-7ymzs`: a list is chosen by fit, so a new read of a
+/// EXIT CONDITION for `wamn-7ymzs`: a list is chosen by fit, so a new read of a
 /// model leaves every existing selector on its list.
 #[test]
 fn a_second_list_of_the_same_model_changes_no_selector() {
@@ -812,7 +804,7 @@ fn a_second_list_of_the_same_model_changes_no_selector() {
     assert_eq!(selectors(&plan), before);
 }
 
-/// EXIT GATE for `wamn-7ymzs`: a narrowed selector reads only a list that
+/// EXIT CONDITION for `wamn-7ymzs`: a narrowed selector reads only a list that
 /// takes the narrowing, whatever lists sort before it.
 #[test]
 fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
@@ -837,7 +829,7 @@ fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
     assert!(plan.unsatisfied_narrowings().is_empty());
 }
 
-/// EXIT GATE for `wamn-7ymzs`: a narrowing that no served list takes is
+/// EXIT CONDITION for `wamn-7ymzs`: a narrowing that no served list takes is
 /// refused, naming the screen, the input and the narrowing.
 #[test]
 fn a_narrowing_no_list_takes_is_refused() {
@@ -929,7 +921,7 @@ fn adding_nullable_text_preserves_explicit_display_or_record_key_fallback() {
     }
 }
 
-/// EXIT GATE for `wamn-rm14.3`: a table states the form its row opens and the
+/// EXIT CONDITION for `wamn-rm14.3`: a table states the form its row opens and the
 /// values it hands over, by declared facts alone.
 ///
 /// The pair is the key field of the rows and the input that names that model.
@@ -996,13 +988,13 @@ fn a_table_states_the_form_its_row_opens_and_the_pairs_it_carries() {
     );
 }
 
-/// EXIT GATE for the uniformity rule, owner instruction of 2026-09-22: a
+/// EXIT CONDITION for the uniformity rule, owner instruction of 2026-09-22: a
 /// generated read and an authored read state the same member, and the plan
 /// applies one rule to both.
 ///
 /// A reader that branched on the origin would give two screens of the same
 /// shape two behaviors, which is the defect this states cannot happen.
-/// EXIT GATE for `wamn-zrrg`: a table column that names a record states the
+/// EXIT CONDITION for `wamn-zrrg`: a table column that names a record states the
 /// read that shows the record's text, and the plan reports a column that no
 /// served read can show.
 ///

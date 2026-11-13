@@ -1440,7 +1440,7 @@ fn crud_is_keyed(action: CrudAction) -> bool {
     !matches!(action, CrudAction::Get | CrudAction::Query)
 }
 
-/// Whether the request elements of a custom operation carry a `request_id`: every kind
+/// Whether the request elements of a custom operation carry a `request_id`: every type
 /// but a projection, which is a read.
 fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
     operation.type_ != wamn_catalog::manifest::CustomOperationType::Projection

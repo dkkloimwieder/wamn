@@ -832,9 +832,9 @@ mod tests {
         let head = history.last().map_or(0, |(position, _, _)| *position);
         let rows = history
             .iter()
-            .map(|(position, kind, before)| HistoryRow {
+            .map(|(position, type_, before)| HistoryRow {
                 position: *position,
-                type_: kind,
+                type_,
                 before,
                 current: &current,
                 head_position: head,
@@ -906,9 +906,9 @@ mod tests {
         let base_head = filtered.last().map_or(0, |(position, ..)| *position);
         let base_rows = filtered
             .iter()
-            .map(|(position, kind, before, current)| HistoryRow {
+            .map(|(position, type_, before, current)| HistoryRow {
                 position: *position,
-                type_: kind,
+                type_,
                 before,
                 current,
                 head_position: base_head,
@@ -1349,7 +1349,7 @@ mod tests {
                  SET transaction_timeout = '30s'",
             )
             .await
-            .context("bound Receiving gate timeouts")?;
+            .context("bound Receiving condition timeouts")?;
         bind_actor(&client, FIXTURE_PRINCIPAL).await?;
         Ok(client)
     }
@@ -2150,7 +2150,7 @@ mod tests {
             .context("server_version_num is not numeric")?;
         ensure!(
             (180_000..190_000).contains(&version),
-            "Receiving live gate requires PostgreSQL 18, found {version}"
+            "Receiving live acceptance test requires PostgreSQL 18, found {version}"
         );
         Ok(())
     }

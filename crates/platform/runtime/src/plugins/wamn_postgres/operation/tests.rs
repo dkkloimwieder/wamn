@@ -35,7 +35,7 @@ use crate::plugins::wamn_postgres::{
 };
 
 const WORKLOAD: &str = "entry-fixture";
-const ENV_KEY: &str = "entryfixture";
+const PROJECT_ENV_KEY: &str = "entryfixture";
 const OPERATION: &str = "base:widget/update@1.0.0";
 const READ_OPERATION: &str = "base:widget/get@1.0.0";
 const RESULT: &str = "{ \"value\" : 7 }";
@@ -108,7 +108,7 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "entry fixture",
-            ReleaseTarget::new(ENV_KEY, "test").with_applications(
+            ReleaseTarget::new(PROJECT_ENV_KEY, "test").with_applications(
                 serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
             ),
         )
@@ -246,7 +246,7 @@ async fn fixture() -> (
     Arc<LoadedRelease>,
 ) {
     let database = wamn_test_postgres::database();
-    let url = live_guest_url(database.url(), ENV_KEY).await;
+    let url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
     ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
@@ -288,7 +288,7 @@ async fn fixture() -> (
             &entry_start(&release),
             "entry",
             SessionIdentity {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
@@ -422,7 +422,7 @@ fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
             &entry_start(&release),
             "entry",
             SessionIdentity {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionIdentity::default()
             },
@@ -438,7 +438,7 @@ async fn unavailable_principal_database_returns_connection_unavailable() {
         .bind_session_identity(
             "unavailable-principal",
             &SessionIdentity {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 ..SessionIdentity::default()
             },
@@ -447,8 +447,8 @@ async fn unavailable_principal_database_returns_connection_unavailable() {
         .unwrap_err();
     let error = error.downcast_ref::<super::SessionIdentityError>().unwrap();
     assert!(matches!(
-        error.kind,
-        super::SessionIdentityErrorKind::Infrastructure
+        error.type_,
+        super::SessionIdentityErrorType::Infrastructure
     ));
     assert!(matches!(
         error.source.downcast_ref::<super::super::PgError>(),
@@ -766,7 +766,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
     })
     .unwrap();
     let identity = SessionIdentity {
-        env_key: ENV_KEY.into(),
+        project_env_key: PROJECT_ENV_KEY.into(),
         release: Some(ReleaseIdentity::from_loaded(&release)),
         ..SessionIdentity::default()
     };

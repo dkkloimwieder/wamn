@@ -1,4 +1,4 @@
-//! Pure semantic gate for a wiring against admitted component facts.
+//! Pure semantic condition for a wiring against admitted component facts.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -12,7 +12,7 @@ use crate::{
 
 const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
 
-/// Stable classification for a refused wiring/component compatibility gate.
+/// Stable classification for a refused wiring/component compatibility condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringCompatibilityErrorType {
     FactTargetMismatch,
@@ -30,7 +30,7 @@ pub enum WiringCompatibilityErrorType {
     SchemaMismatch,
 }
 
-/// Contextual refusal from the gate-time wiring compatibility boundary.
+/// Contextual refusal from the condition-time wiring compatibility boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringCompatibilityError {
     type_: WiringCompatibilityErrorType,
@@ -43,9 +43,9 @@ impl WiringCompatibilityError {
         self.type_
     }
 
-    fn new(kind: WiringCompatibilityErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: WiringCompatibilityErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -61,7 +61,7 @@ impl std::error::Error for WiringCompatibilityError {}
 
 /// Validate one wiring exclusively against facts from its exact package target.
 ///
-/// This is a publish/gate function, not a delivery-time fallback. Every normal
+/// This is a publish/condition function, not a delivery-time fallback. Every normal
 /// edge resolves the exact authored source and target ports and requires equal
 /// JSON Schemas. Parameters are both declared and validated
 /// against their admitted schemas. No structural subtyping, coercion, default,
@@ -78,12 +78,12 @@ pub fn validate_wiring_compatibility(
         return Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorType::FactTargetMismatch,
             format!(
-                "component {:?} fact target ({:?}, {:?}, {:?}) differs from wiring gate target ({:?}, {:?}, {:?})",
+                "component {:?} fact target ({:?}, {:?}, {:?}) differs from wiring condition target ({:?}, {:?}, {:?})",
                 component.component,
-                component.target.env_key,
+                component.target.project_env_key,
                 component.target.package_id,
                 component.target.package_version,
-                target.env_key,
+                target.project_env_key,
                 target.package_id,
                 target.package_version,
             ),
@@ -106,7 +106,7 @@ pub fn validate_wiring_compatibility(
 /// different exact package targets. The release publisher owns resolving each
 /// authored dependency alias before calling it; this function verifies that
 /// the supplied target still matches the node tuple and then applies the same
-/// parameter, port, and schema rules as the package-local gate.
+/// parameter, port, and schema rules as the package-local condition.
 pub fn validate_resolved_wiring_compatibility(
     wiring: &WiringDocument,
     components: &BTreeMap<String, AdmittedComponent>,
@@ -462,7 +462,7 @@ mod tests {
 
     fn target() -> ComponentPackageCoordinate {
         ComponentPackageCoordinate {
-            env_key: "t1".to_string(),
+            project_env_key: "t1".to_string(),
             package_id: "app".to_string(),
             package_version: "1.0.0".to_string(),
         }

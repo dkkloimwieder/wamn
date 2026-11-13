@@ -31,11 +31,11 @@ fn documents(path: &str) -> Vec<Value> {
         .collect()
 }
 
-fn find<'a>(documents: &'a [Value], kind: &str, name: &str) -> &'a Value {
+fn find<'a>(documents: &'a [Value], type_: &str, name: &str) -> &'a Value {
     documents
         .iter()
-        .find(|document| document["kind"] == kind && document["metadata"]["name"] == name)
-        .unwrap_or_else(|| panic!("no {kind} {name}"))
+        .find(|document| document["kind"] == type_ && document["metadata"]["name"] == name)
+        .unwrap_or_else(|| panic!("no {type_} {name}"))
 }
 
 #[test]

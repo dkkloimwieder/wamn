@@ -76,9 +76,9 @@ impl ClientTsErrorType {
 }
 
 impl ClientTsError {
-    pub(crate) fn new(kind: ClientTsErrorType, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(type_: ClientTsErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -232,8 +232,8 @@ const RESERVED_WORDS: [&str; 39] = [
 /// The type alias names that the shared module exports.
 const ALIASES: [&str; 5] = ["Int64", "JsonValue", "Numeric", "Timestamptz", "Uuid"];
 
-/// The operation kind that no browser calls.
-const PRIVATE_KIND: &str = "event_handler";
+/// The operation type that no browser calls.
+const PRIVATE_TYPE: &str = "event_handler";
 
 /// Emit one TypeScript module per model, plus the shared module and an index.
 ///
@@ -383,7 +383,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut operations: Vec<_> = model
         .operations
         .iter()
-        .filter(|operation| operation.type_ != PRIVATE_KIND)
+        .filter(|operation| operation.type_ != PRIVATE_TYPE)
         .collect();
     operations.sort_by(|left, right| left.name.cmp(&right.name));
 

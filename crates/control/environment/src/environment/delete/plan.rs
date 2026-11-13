@@ -1,6 +1,6 @@
 use super::{
     CredentialGeneration, Triple, WorkloadRoleFamily, WorkloadRoleIdentity,
-    WorkloadRoleIdentityKind, cdc_object_name, project_env_database_name, workload_generation_role,
+    WorkloadRoleIdentityType, cdc_object_name, project_env_database_name, workload_generation_role,
 };
 use anyhow::Context as _;
 
@@ -10,8 +10,8 @@ use anyhow::Context as _;
 pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
     WorkloadRoleFamily::ALL.into_iter().filter(|family| {
         matches!(
-            family.identity_kind(),
-            WorkloadRoleIdentityKind::EnvKey | WorkloadRoleIdentityKind::ProjectEnvironment
+            family.identity_type(),
+            WorkloadRoleIdentityType::ProjectEnvKey | WorkloadRoleIdentityType::ProjectEnvironment
         )
     })
 }
@@ -25,7 +25,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
 pub fn instance_roles(
     triple: &Triple,
     instance: &str,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -35,9 +35,9 @@ pub fn instance_roles(
     let database = project_env_database_name(org, project, env, instance);
     let mut roles = vec![cdc_object_name(org, project, env, instance)];
     for family in instance_families() {
-        let target = match family.identity_kind() {
-            WorkloadRoleIdentityKind::EnvKey => WorkloadRoleIdentity::EnvKey {
-                env_key,
+        let target = match family.identity_type() {
+            WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key,
                 database: &database,
             },
             _ => WorkloadRoleIdentity::ProjectEnvironment {

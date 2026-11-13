@@ -1,4 +1,4 @@
-//! A route answers every platform fixture operation kind the same way as the
+//! A route answers every platform fixture operation type the same way as the
 //! one-node wiring it replaces.
 //!
 //! Every fixture attachment is a route. One local application serves each one
@@ -83,8 +83,8 @@ impl Paths {
     /// require the same status and the same answer. A wiring is a POST. A
     /// route to a read is a GET, and every other route is a POST.
     async fn alike(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let wiring = self.by_kind(path, body).await?;
-        let route = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let wiring = self.by_type(path, body).await?;
+        let route = self.by_type(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(
             wiring == route,
             "{path} answered differently\n wiring: {wiring:?}\n  route: {route:?}"
@@ -119,7 +119,7 @@ impl Paths {
 
     /// Send one body through the route only.
     async fn route(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let (status, value) = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let (status, value) = self.by_type(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(status == 200, "route {path} answered {status}: {value}");
         Ok(value)
     }
@@ -128,7 +128,7 @@ impl Paths {
 impl Paths {
     /// A route to a read carries no request identity, so a request element without
     /// one is a read.
-    async fn by_kind(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
+    async fn by_type(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
         if body[0].get("request_id").is_none() {
             self.get(path, body).await
         } else {
@@ -212,7 +212,7 @@ async fn start(
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: "route-interface",
+        project_env_key: "route-interface",
         org: "acme",
         project: "fixture",
         environment: "dev",
@@ -263,7 +263,7 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> anyhow::Result<()> {
+async fn a_route_answers_every_operation_type_consistently_across_aliases() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
     );
@@ -1651,7 +1651,7 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: "numbered-overlay",
+        project_env_key: "numbered-overlay",
         org: "acme",
         project: "platform",
         environment: "dev",

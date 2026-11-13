@@ -236,7 +236,7 @@ async fn reconcile_target_identity_guard_live() {
     ];
 
     for dry_run in [true, false] {
-        for &(label, project, environment, target_url, kind, expected, actual) in &cases {
+        for &(label, project, environment, target_url, type_, expected, actual) in &cases {
             let error = reconcile_run_plane::reconcile_run_plane(target_guard_args(
                 &system_url,
                 target_url,
@@ -251,15 +251,15 @@ async fn reconcile_target_identity_guard_live() {
                 .unwrap_or_else(|| {
                     panic!("{label} returned an untyped refusal with dry_run={dry_run}: {error}")
                 });
-            assert_eq!(refusal.error_type(), kind, "{label}, dry_run={dry_run}");
+            assert_eq!(refusal.error_type(), type_, "{label}, dry_run={dry_run}");
             assert_eq!(
                 refusal.is_registry_target(),
-                kind == ReconcileTargetErrorType::RegistryTarget,
+                type_ == ReconcileTargetErrorType::RegistryTarget,
                 "{label}, dry_run={dry_run}"
             );
             assert_eq!(
                 refusal.is_database_target(),
-                kind == ReconcileTargetErrorType::DatabaseTarget,
+                type_ == ReconcileTargetErrorType::DatabaseTarget,
                 "{label}, dry_run={dry_run}"
             );
             assert_eq!(
@@ -281,7 +281,7 @@ async fn reconcile_target_identity_guard_live() {
                 !message.contains(&*system_url) && !message.contains(target_url),
                 "{label} leaked a database URL: {message}"
             );
-            if kind == ReconcileTargetErrorType::RegistryTarget {
+            if type_ == ReconcileTargetErrorType::RegistryTarget {
                 assert!(
                     std::error::Error::source(refusal).is_some(),
                     "{label} discarded the registry lookup source"
@@ -366,7 +366,7 @@ async fn reconcile_target_identity_guard_live() {
             &format!(
                 "SELECT expected_environment, \
                         source_policy_org,source_policy_hash \
-                   FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
+                   FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--billing--dev'"
             ),
             &[],
         )
@@ -416,7 +416,7 @@ async fn reconcile_target_identity_guard_live() {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.environment_policies \
-                    SET source_policy_hash=$1 WHERE env_key='acme--billing--dev'"
+                    SET source_policy_hash=$1 WHERE project_env_key='acme--billing--dev'"
             ),
             &[&format!("sha256:{}", "0".repeat(64))],
         )

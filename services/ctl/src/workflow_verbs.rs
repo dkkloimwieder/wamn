@@ -4,7 +4,7 @@
 //! the host route `workflow.start`, and park, release and list workflow runs
 //! through the workflow contract of `wamn-workflow`.
 //!
-//! `author` and `enable` gate the graph against the release the environment
+//! `author` and `enable` condition the graph against the release the environment
 //! serves, derived as `env show` derives it. `enable` and `disable` take the
 //! lifecycle lock of the coordinate, as `env apply` does. These three read the
 //! platform inputs of `env` ([`Platform::from_env`]).
@@ -23,12 +23,12 @@ use wamn_workflow::{PostgresWorkflows, Workflows as _};
 
 use crate::env_verbs::parse_coordinate;
 
-/// Params: `$1` `env_key`, `$2` environment.
+/// Params: `$1` `project_env_key`, `$2` environment.
 const LIST_WORKFLOWS_SQL: &str = "\
 SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
        execution_role, enabled, created_by::text, created_at::text, schedule, source_package, entity, ops, condition, enable_sequence \
   FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 \
+ WHERE project_env_key = $1 AND environment = $2 \
  ORDER BY application, workflow_id, version";
 
 /// One workflow verb.
@@ -78,7 +78,7 @@ pub struct WorkflowTarget {
 }
 
 impl WorkflowTarget {
-    fn env_key(&self) -> String {
+    fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.target.environment)
     }
 }
@@ -99,7 +99,7 @@ pub struct AuthorArgs {
     pub dev_root: Option<PathBuf>,
     #[command(flatten)]
     pub target: WorkflowDatabase,
-    /// The coordinate, `org/project/env`, whose serving release gates the graph.
+    /// The coordinate, `org/project/env`, whose serving release evaluates the graph conditions.
     #[arg(long)]
     pub coordinate: String,
     /// The application of the workflow, as the environment declares it.
@@ -223,7 +223,7 @@ async fn workflows(target: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows>
     Ok(PostgresWorkflows::new(
         client,
         &target.target.schema,
-        target.env_key(),
+        target.project_env_key(),
         &target.target.environment,
     ))
 }
@@ -355,14 +355,20 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         }
         WorkflowCommand::List(target) => {
             let mut client = project(&target.target).await?;
-            let env_key = target.env_key();
+            let project_env_key = target.project_env_key();
             let transaction = client.transaction().await?;
             transaction
-                .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+                .query_one(
+                    "SELECT set_config('app.project_env_key', $1, true)",
+                    &[&project_env_key],
+                )
                 .await
-                .context("bind the workflow tenant identity")?;
+                .context("bind the workflow project identity")?;
             for row in transaction
-                .query(LIST_WORKFLOWS_SQL, &[&env_key, &target.target.environment])
+                .query(
+                    LIST_WORKFLOWS_SQL,
+                    &[&project_env_key, &target.target.environment],
+                )
                 .await
                 .context("read the workflow versions")?
             {

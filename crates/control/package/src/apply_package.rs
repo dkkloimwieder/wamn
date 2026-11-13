@@ -42,7 +42,7 @@ pub use package_version::{
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
 
-const ASSIGN_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
 /// Inputs of one exact package application.
 #[derive(Debug)]
@@ -68,7 +68,7 @@ pub struct ApplyPackageRequest {
 
 impl ApplyPackageRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -226,7 +226,7 @@ async fn require_local_package(
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_runtime::local_application::require_local_target(
         &request.database_url,
-        &request.env_key(),
+        &request.project_env_key(),
         environment,
     )
     .await?;
@@ -255,7 +255,7 @@ async fn apply_request(
     let connection_task = tokio::spawn(connection);
     let result = apply(
         &mut client,
-        &request.env_key(),
+        &request.project_env_key(),
         &package,
         local_environment,
         advance_schema,
@@ -279,7 +279,7 @@ async fn apply_request(
 
 async fn apply(
     client: &mut tokio_postgres::Client,
-    env_key: &str,
+    project_env_key: &str,
     package: &PreparedPackage,
     local_environment: Option<&str>,
     advance_schema: bool,
@@ -292,10 +292,10 @@ async fn apply(
     crate::migrations::lock_session(
         client,
         LOCK_PACKAGE_SQL,
-        &[&env_key, &presented.coordinate.package_id()],
+        &[&project_env_key, &presented.coordinate.package_id()],
     )
     .await?;
-    let tx = migration::begin(client, env_key).await?;
+    let tx = migration::begin(client, project_env_key).await?;
     let package_root = &package.root;
     let directory = &package.directory;
     let manifest = &package.manifest;
@@ -309,8 +309,12 @@ async fn apply(
     let coordinate_text = coordinate_label.as_str();
     let local_comment = match local_environment {
         Some(environment) => Some(
-            wamn_runtime::local_application::read_local_target_comment(&tx, env_key, environment)
-                .await?,
+            wamn_runtime::local_application::read_local_target_comment(
+                &tx,
+                project_env_key,
+                environment,
+            )
+            .await?,
         ),
         None => None,
     };
@@ -327,7 +331,7 @@ async fn apply(
                 .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
         )
     };
-    let applied = load_applied_package(&tx, env_key, &package_id).await?;
+    let applied = load_applied_package(&tx, project_env_key, &package_id).await?;
     // Executable selection, reapply, and rollback never advance SQL, even if
     // the selected artifact carries older or edited migration inputs.
     if !advance_schema && let Some(installed) = &applied {
@@ -344,7 +348,7 @@ async fn apply(
             drops: wamn_broker::auth_changes::AuthDrops::default(),
         });
     }
-    let recorded = read_package_migrations(&tx, env_key, &package_id).await?;
+    let recorded = read_package_migrations(&tx, project_env_key, &package_id).await?;
     let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
     crate::migrations::validate_resolution(
         crate::migrations::ResolutionTarget::Package(&package_id),
@@ -365,7 +369,7 @@ async fn apply(
             .collect::<Vec<_>>();
         validate_definition_ownership_before_apply(
             &tx,
-            env_key,
+            project_env_key,
             coordinate_text,
             &package_id,
             manifest,
@@ -384,8 +388,10 @@ async fn apply(
     tx.rollback()
         .await
         .context("finish package migration planning")?;
-    let keys: [(&str, &(dyn tokio_postgres::types::ToSql + Sync)); 2] =
-        [("env_key", &env_key), ("package_id", &package_id)];
+    let keys: [(&str, &(dyn tokio_postgres::types::ToSql + Sync)); 2] = [
+        ("project_env_key", &project_env_key),
+        ("package_id", &package_id),
+    ];
     let table = crate::migrations::MigrationTable {
         name: "catalog.package_migrations",
         keys: &keys,
@@ -393,7 +399,7 @@ async fn apply(
         target: crate::migrations::ResolutionTarget::Package(&package_id),
     };
     let mut hooks = migration::PackageMigrationHooks {
-        env_key,
+        project_env_key,
         package,
         plan: &plan,
         coordinate: coordinate_text,

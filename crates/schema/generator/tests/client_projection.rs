@@ -115,7 +115,7 @@ fn change(contracts: &mut Contracts, path: &str, pointer: &str, value: Value) {
 }
 
 #[test]
-fn declared_kind_and_record_mappings_bind_operations_with_unrelated_names() {
+fn declared_type_and_record_mappings_bind_operations_with_unrelated_names() {
     let (contracts, routes) = records();
     let ir = project(&contracts, &routes);
     assert_eq!(operation(&ir, "read_projection").type_, "get");
@@ -676,7 +676,7 @@ fn leaf<'a>(
         .unwrap_or_else(|| panic!("the contract declares {path}"))
 }
 
-/// EXIT GATE for `wamn-c2y5.3`: the authored text reaches every field a client
+/// EXIT CONDITION for `wamn-c2y5.3`: the authored text reaches every field a client
 /// reads, on each of the three paths a field can travel.
 ///
 /// The three differ, and a label that arrives on one path alone is a screen
@@ -759,7 +759,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
     );
 }
 
-/// EXIT GATE for `wamn-c2y5.3`: a response whose published schema states its
+/// EXIT CONDITION for `wamn-c2y5.3`: a response whose published schema states its
 /// own class still carries the text of the terminal that answers it.
 ///
 /// This is the detail screen's path. A published schema carries no authored
@@ -818,7 +818,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
     assert_eq!(leaf(&response.fields, "id").label.as_deref(), Some("id"));
 }
 
-/// EXIT GATE for `wamn-rm14.1`: a client reads what an input references and
+/// EXIT CONDITION for `wamn-rm14.1`: a client reads what an input references and
 /// what a list serves, from two sources that meet in one IR member.
 ///
 /// An authored operation declares the reference, because it has no column. A

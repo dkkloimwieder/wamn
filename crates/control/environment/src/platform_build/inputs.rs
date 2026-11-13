@@ -133,11 +133,11 @@ pub(super) fn parse_metadata(metadata: &Value) -> anyhow::Result<Graph> {
         let mut reads = Vec::new();
         for target in package["targets"].as_array().context("package targets")? {
             let source = PathBuf::from(text(&target["src_path"]).context("a target source")?);
-            let kinds = target["kind"].as_array().into_iter().flatten();
-            for kind in kinds {
-                if kind == "proc-macro" {
+            let types = target["kind"].as_array().into_iter().flatten();
+            for type_ in types {
+                if type_ == "proc-macro" {
                     opaque = true;
-                } else if kind == "custom-build" {
+                } else if type_ == "custom-build" {
                     let script = std::fs::read_to_string(&source)
                         .with_context(|| format!("read {}", source.display()))?;
                     match declared_reads(&script) {
@@ -179,12 +179,12 @@ fn references(repository: &Path, directory: &Path) -> anyhow::Result<BTreeSet<Pa
         {
             let entry = entry?;
             let path = folder.join(entry.file_name());
-            let kind = entry.file_type()?;
-            if kind.is_dir() && entry.file_name() != "target" {
+            let type_ = entry.file_type()?;
+            if type_.is_dir() && entry.file_name() != "target" {
                 pending.push(path);
                 continue;
             }
-            if !kind.is_file() || path.extension().is_none_or(|extension| extension != "rs") {
+            if !type_.is_file() || path.extension().is_none_or(|extension| extension != "rs") {
                 continue;
             }
             let text =
@@ -363,7 +363,7 @@ pub(super) mod tests {
     use super::*;
 
     /// One fake package: name, directory, `src/lib.rs`, and its local
-    /// dependencies with their kind.
+    /// dependencies with their type.
     type Fake = (
         &'static str,
         &'static str,
@@ -436,7 +436,7 @@ pub(super) mod tests {
             }));
             let deps: Vec<_> = dependencies
                 .iter()
-                .map(|(pkg, kind)| json!({"pkg": pkg, "dep_kinds": [{"kind": kind}]}))
+                .map(|(pkg, type_)| json!({"pkg": pkg, "dep_kinds": [{"kind": type_}]}))
                 .collect();
             nodes.push(json!({"id": name, "deps": deps}));
         }

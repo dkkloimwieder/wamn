@@ -34,7 +34,7 @@ impl Provider {
                 let output = run(Command::new("kind").args(kind_list_arguments())).await?;
                 let clusters =
                     std::str::from_utf8(&output.stdout).context("decode kind get clusters")?;
-                let configuration = path.with_extension("kind.yaml");
+                let configuration = path.with_extension("type.yaml");
                 if !cluster_exists(clusters, &document.cluster_name) {
                     let registry = path.with_extension("registry");
                     let (host, _) = registry_endpoint(&document.registry)?;
@@ -77,7 +77,7 @@ pub struct LocalRegistry {
     pub port: u16,
 }
 
-/// Start or reuse the registry at the kind document's loopback endpoint.
+/// Start or reuse the registry at the type document's loopback endpoint.
 ///
 /// # Errors
 ///
@@ -85,7 +85,7 @@ pub struct LocalRegistry {
 pub async fn ensure_registry(document: &ClusterDocument) -> anyhow::Result<LocalRegistry> {
     ensure!(
         document.provider == Provider::Kind,
-        "local registries require kind"
+        "local registries require type"
     );
     let (_, endpoint) = registry_endpoint(&document.registry)?;
     let output = run(Command::new("docker").args(["ps", "--all", "--quiet"])).await?;
@@ -572,7 +572,7 @@ mod tests {
                     "install-test",
                     Path::new("/var/tmp/install kubeconfig"),
                     clusters,
-                    Path::new("/var/tmp/install.kind.yaml"),
+                    Path::new("/var/tmp/install.type.yaml"),
                 ),
                 [
                     "create",
@@ -582,7 +582,7 @@ mod tests {
                     "--kubeconfig",
                     "/var/tmp/install kubeconfig",
                     "--config",
-                    "/var/tmp/install.kind.yaml",
+                    "/var/tmp/install.type.yaml",
                     "--retain",
                 ]
                 .map(OsString::from)
@@ -598,7 +598,7 @@ mod tests {
                 &document.cluster_name,
                 Path::new("/var/tmp/install kubeconfig"),
                 "other\ninstall-test\n",
-                Path::new("/var/tmp/install.kind.yaml"),
+                Path::new("/var/tmp/install.type.yaml"),
             ),
             [
                 "export",

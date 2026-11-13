@@ -15,7 +15,7 @@ use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{
-    valid_env_key, valid_project, valid_runner, valid_schema,
+    valid_project, valid_project_env_key, valid_runner, valid_schema,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
@@ -48,7 +48,7 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
     ON p.role_name = r.role_name \
     WHERE u.id = $1::text::uuid";
 
-/// One row of the bound principal, read under the env_key's own guest login.
+/// One row of the bound principal, read under the project_env_key's own guest login.
 ///
 /// Row existence is the whole question, so the projection is a constant. The
 /// database is the org boundary, so the table has no org column.
@@ -140,12 +140,12 @@ fn principal_grants_from_rows(
 /// A session presents authority that its principal does not currently hold.
 #[derive(Debug)]
 pub(crate) struct SessionGrantRefusal {
-    kind: &'static str,
+    type_: &'static str,
 }
 
 impl std::fmt::Display for SessionGrantRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.kind)
+        f.write_str(self.type_)
     }
 }
 
@@ -153,13 +153,13 @@ impl std::error::Error for SessionGrantRefusal {}
 
 #[derive(Debug)]
 pub(super) struct SessionIdentityError {
-    pub(super) kind: SessionIdentityErrorKind,
+    pub(super) type_: SessionIdentityErrorType,
     pub(super) context: &'static str,
     pub(super) source: anyhow::Error,
 }
 
 #[derive(Debug)]
-pub(super) enum SessionIdentityErrorKind {
+pub(super) enum SessionIdentityErrorType {
     Authorization,
     Infrastructure,
 }
@@ -181,10 +181,10 @@ fn principal_read_error(
     source: tokio_postgres::Error,
 ) -> SessionIdentityError {
     SessionIdentityError {
-        kind: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
-            SessionIdentityErrorKind::Authorization
+        type_: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
+            SessionIdentityErrorType::Authorization
         } else {
-            SessionIdentityErrorKind::Infrastructure
+            SessionIdentityErrorType::Infrastructure
         },
         context,
         source: source.into(),
@@ -199,7 +199,7 @@ fn session_grants(
 ) -> anyhow::Result<HeldOperationGrants> {
     if !grants.active || grants.user != Some(true) {
         return Err(SessionGrantRefusal {
-            kind: "session principal is not an active user",
+            type_: "session principal is not an active user",
         }
         .into());
     }
@@ -208,7 +208,7 @@ fn session_grants(
         .all(|role| grants.roles.contains_key(role.as_str()))
     {
         return Err(SessionGrantRefusal {
-            kind: "session principal does not hold a signed role",
+            type_: "session principal does not hold a signed role",
         }
         .into());
     }
@@ -262,13 +262,13 @@ pub struct WamnPostgres {
     /// Host-owned identity, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// component id → env_key identity.
-    env_keys: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → project_env_key identity.
+    project_env_keys: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
     projects: std::sync::RwLock<HashMap<String, String>>,
     /// component id → `search_path` schema. Empty (the default) leaves the
     /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
-    /// set, the plugin injects `SET LOCAL search_path` alongside the env_key
+    /// set, the plugin injects `SET LOCAL search_path` alongside the project_env_key
     /// identity, so unqualified table names resolve to a host-chosen schema (S6:
     /// prod = the shared fixture schema, test = a per-run ephemeral schema).
     schemas: std::sync::RwLock<HashMap<String, String>>,
@@ -284,9 +284,9 @@ pub struct WamnPostgres {
     /// select or mutate this discriminator.
     workload_authorities: std::sync::RwLock<HashMap<String, AuthorityClass>>,
     /// component id → the caller's `app.role` identity (a `roles.name`). Absent
-    /// (the default) binds the empty role, which is the deny floor every
-    /// compiled role gate coalesces to. When set, a per-role RLS policy using
-    /// the identity contract documented by `deploy/sql/app-schema.sql` gates on
+    /// (the default) binds the empty role, which is the base denial policy every
+    /// compiled role condition coalesces to. When set, a per-role RLS policy using
+    /// the identity contract documented by `deploy/sql/app-schema.sql` conditions on
     /// the caller's role instead of denying.
     roles: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the executing principal's `app.user_id` identity (a
@@ -346,7 +346,7 @@ pub struct WamnPostgres {
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
     pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
-    /// Connections destroyed instead of repooled (chaos-gate observability).
+    /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
     pub(super) destroyed: Arc<AtomicU64>,
     /// How many times each half of the un-fused workload bind has run.
     pub(super) bind_counters: super::BindCounters,
@@ -400,16 +400,16 @@ impl ReleaseIdentity {
 /// the whole of what [`WamnPostgres::bind_session_identity`] writes and
 /// [`WamnPostgres::revoke_session_identity`] clears. Adding a registry without
 /// adding a field here leaves an identity that no acquisition rebinds — which is
-/// exactly the cross-env_key leak `wamn-0h0g.17.7` closes.
+/// exactly the cross-project_env_key leak `wamn-0h0g.17.7` closes.
 ///
-/// `None` means *no identity*, not *keep the previous one*: the deny floors
+/// `None` means *no identity*, not *keep the previous one*: the base denial policys
 /// (`app.role` = `''`, `app.user_id` = NULL, no `search_path` override) are what
 /// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIdentity {
-    /// `app.env_key` — the RLS identity. Required: a session with no env_key is
-    /// refused by [`WamnPostgres::require_env_key`] rather than run without an identity.
-    pub env_key: String,
+    /// `app.project_env_key` — the RLS identity. Required: a session with no project_env_key is
+    /// refused by [`WamnPostgres::require_project_env_key`] rather than run without an identity.
+    pub project_env_key: String,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.
     pub project: Option<String>,
@@ -433,7 +433,7 @@ pub struct SessionIdentity {
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The bound principal has no `platform."user"` row in the env_key it identity
+/// The bound principal has no `platform."user"` row in the project_env_key it identity
 /// (`wamn-0h0g.9.19`).
 ///
 /// A credential for such a principal is a provisioning defect: every write it
@@ -443,20 +443,20 @@ pub struct SessionIdentity {
 /// router does that translation in
 /// `crates/execution/host/src/operation/native_policy.rs`.
 ///
-/// It carries the env_key, the project database read, and the principal id, so
+/// It carries the project_env_key, the project database read, and the principal id, so
 /// an operator can find the missing row. It carries no connection material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnprovisionedPrincipal {
-    env_key: String,
+    project_env_key: String,
     project: String,
     principal_id: String,
 }
 
 impl UnprovisionedPrincipal {
-    /// The env_key whose `platform."user"` table was read.
+    /// The project_env_key whose `platform."user"` table was read.
     #[must_use]
-    pub fn env_key(&self) -> &str {
-        &self.env_key
+    pub fn project_env_key(&self) -> &str {
+        &self.project_env_key
     }
 
     /// The project database the read used.
@@ -476,8 +476,8 @@ impl std::fmt::Display for UnprovisionedPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "principal {} has no platform.\"user\" row in env_key {} of project {}",
-            self.principal_id, self.env_key, self.project
+            "principal {} has no platform.\"user\" row in project_env_key {} of project {}",
+            self.principal_id, self.project_env_key, self.project
         )
     }
 }
@@ -671,20 +671,20 @@ pub struct ConnectionEffectSnapshot {
 /// come from the connection memory.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
-    SELECT release.env_key, \
+    SELECT release.project_env_key, \
            convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     WHERE release.env_key = $1 \
+     WHERE release.project_env_key = $1 \
        AND release.manifest_digest = $3 \
 ), release_member AS MATERIALIZED ( \
-    SELECT release_manifest.env_key, \
+    SELECT release_manifest.project_env_key, \
            package.value ->> 'package-id' AS package_id, \
            package.value ->> 'package-version' AS package_version \
       FROM release_manifest \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest #> '{release,packages}') \
            AS package(value) \
 ), release_component AS MATERIALIZED ( \
-    SELECT release_manifest.env_key, \
+    SELECT release_manifest.project_env_key, \
            member.value ->> 'package-id' AS package_id, \
            member.value -> 'descriptor' ->> 'component' AS component, \
            member.value -> 'descriptor' ->> 'interface-version' AS interface_version, \
@@ -694,12 +694,12 @@ WITH release_manifest AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
            AS member(value) \
 ), member AS MATERIALIZED ( \
-    SELECT env_key, $10::text AS package_id FROM release_manifest \
+    SELECT project_env_key, $10::text AS package_id FROM release_manifest \
      WHERE $5::text IS NOT NULL OR EXISTS (SELECT 1 FROM release_member WHERE package_id = $10) \
 ), selected_wiring AS MATERIALIZED ( \
     SELECT workflow.graph_json \
       FROM catalog.workflows AS workflow \
-     WHERE workflow.env_key = $1 AND workflow.environment = $4 \
+     WHERE workflow.project_env_key = $1 AND workflow.environment = $4 \
        AND workflow.application = $10 AND workflow.workflow_id = $5 AND workflow.version = $6 \
 ) \
 SELECT wiring.graph_json::text, component.component, component.interface_version, \
@@ -723,26 +723,26 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN release_member AS origin_member \
-    ON origin_member.env_key = member.env_key \
+    ON origin_member.project_env_key = member.project_env_key \
    AND origin_member.package_id = $11 \
   LEFT JOIN release_component AS origin_component \
-    ON origin_component.env_key = origin_member.env_key \
+    ON origin_component.project_env_key = origin_member.project_env_key \
    AND origin_component.package_id = origin_member.package_id \
    AND origin_component.component_digest = $12 \
    AND origin_component.component = $13 \
    AND origin_component.interface_version = $14 \
   LEFT JOIN release_member AS executing_member \
-    ON executing_member.env_key = member.env_key \
+    ON executing_member.project_env_key = member.project_env_key \
    AND executing_member.package_id = $2 \
   LEFT JOIN release_component AS component \
-    ON component.env_key = executing_member.env_key \
+    ON component.project_env_key = executing_member.project_env_key \
    AND component.package_id = executing_member.package_id \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
   LEFT JOIN catalog.connection_requirement AS requirement \
-    ON requirement.env_key = $1 AND requirement.component_digest = $8 \
+    ON requirement.project_env_key = $1 AND requirement.component_digest = $8 \
    AND requirement.package_id=$2 AND requirement.name = $9 \
  WHERE $5::text IS NULL OR wiring.graph_json IS NOT NULL";
 
@@ -751,7 +751,7 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
 /// host map only by eviction.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EffectKey {
-    env_key: String,
+    project_env_key: String,
     environment: String,
     manifest_digest: String,
     entry_package_id: String,
@@ -764,9 +764,9 @@ pub(crate) struct EffectKey {
 }
 
 impl EffectKey {
-    fn new(env_key: &str, lookup: &ConnectionEffectLookup<'_>) -> Self {
+    fn new(project_env_key: &str, lookup: &ConnectionEffectLookup<'_>) -> Self {
         Self {
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             environment: lookup.environment.to_owned(),
             manifest_digest: lookup.manifest_digest.to_owned(),
             entry_package_id: lookup.entry.package_id.to_owned(),
@@ -826,14 +826,14 @@ enum EffectRead {
 /// declared SQL and refuses these constructs on the parse tree; this guard
 /// still covers a release admitted before that check, or a forged descriptor.
 ///
-/// # The env_key axis is structurally closed, and this is no longer what holds it
+/// # The project_env_key axis is structurally closed, and this is no longer what holds it
 ///
-/// The `wamn-0h0g.22.6` lineage re-keyed guest env_key authority onto a
-/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated env_key floor onto
-/// `current_user`, `.22.6.4` minted per-env_key guest LOGIN generations, and
-/// `.22.6.7` cut the guest SQL path onto per-env_key connections.
-/// `wamn_authority.current_tenant_key()` reads the CONNECTED ROLE, which no
-/// session can rewrite, so a guest that succeeds in setting `app.env_key`
+/// The `wamn-0h0g.22.6` lineage re-keyed guest project_env_key authority onto a
+/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated project_env_key minimum onto
+/// `current_user`, `.22.6.4` minted per-project_env_key guest LOGIN generations, and
+/// `.22.6.7` cut the guest SQL path onto per-project_env_key connections.
+/// `wamn_authority.current_project_key()` reads the CONNECTED ROLE, which no
+/// session can rewrite, so a guest that succeeds in setting `app.project_env_key`
 /// changes nothing. Measured on PostgreSQL 18 as a guest generation login
 /// asserted NOT (`rolsuper` OR `rolbypassrls`): plain `SET`, `set_config`, `SET
 /// LOCAL` and `DO` + `EXECUTE` all SUCCEEDED and all left the visible row set
@@ -1031,7 +1031,7 @@ fn statement_forges_causation(sql: &str) -> bool {
 /// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
 /// into DDL elsewhere).
 fn validate_session_identity(
-    env_key: &str,
+    project_env_key: &str,
     schema: Option<&str>,
     runner: Option<&str>,
     role: Option<&str>,
@@ -1039,10 +1039,10 @@ fn validate_session_identity(
     operation: Option<&str>,
     application: Option<&str>,
 ) -> Result<(), PgError> {
-    if !valid_env_key(env_key) {
+    if !valid_project_env_key(project_env_key) {
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
-            "invalid env_key identity".to_string(),
+            "invalid project_env_key identity".to_string(),
         )));
     }
     if let Some(schema) = schema
@@ -1208,7 +1208,7 @@ impl WamnPostgres {
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
-            env_keys: std::sync::RwLock::new(HashMap::new()),
+            project_env_keys: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
@@ -1298,24 +1298,28 @@ impl WamnPostgres {
         )))
     }
 
-    /// Register the env_key identity for a component id. The bench harness calls
+    /// Register the project_env_key identity for a component id. The bench harness calls
     /// this directly; the host path feeds it from workload bind.
-    pub fn set_env_key(&self, component_id: &str, env_key: &str) -> anyhow::Result<()> {
+    pub fn set_project_env_key(
+        &self,
+        component_id: &str,
+        project_env_key: &str,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            valid_env_key(env_key),
-            "invalid env_key {env_key:?}: 1-64 chars of [A-Za-z0-9_-] required"
+            valid_project_env_key(project_env_key),
+            "invalid project_env_key {project_env_key:?}: 1-64 chars of [A-Za-z0-9_-] required"
         );
-        self.env_keys
+        self.project_env_keys
             .write()
-            .expect("env_keys lock poisoned")
-            .insert(component_id.to_string(), env_key.to_string());
+            .expect("project_env_keys lock poisoned")
+            .insert(component_id.to_string(), project_env_key.to_string());
         Ok(())
     }
 
-    pub(super) fn env_key_for(&self, component_id: &str) -> Option<String> {
-        self.env_keys
+    pub(super) fn project_env_key_for(&self, component_id: &str) -> Option<String> {
+        self.project_env_keys
             .read()
-            .expect("env_keys lock poisoned")
+            .expect("project_env_keys lock poisoned")
             .get(component_id)
             .cloned()
     }
@@ -1428,9 +1432,9 @@ impl WamnPostgres {
 
     /// Register the caller's `app.role` identity for a component id (4.2). When
     /// set, every transaction the plugin opens for that component binds
-    /// `app.role`, so a compiled per-role RLS policy gates on the caller's role
-    /// instead of the `''` floor that denies it. Host-injected identity like the
-    /// env_key: the guest has no path to it, and [`reject_identity_mutation`] refuses
+    /// `app.role`, so a compiled per-role RLS policy conditions on the caller's role
+    /// instead of the `''` minimum that denies it. Host-injected identity like the
+    /// project_env_key: the guest has no path to it, and [`reject_identity_mutation`] refuses
     /// an in-band override.
     pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -1456,7 +1460,7 @@ impl WamnPostgres {
     /// Register the executing principal's `app.user_id` identity for a component
     /// id. When set, every transaction the plugin opens for that component
     /// binds `app.user_id`, so the record-history triggers stamp that
-    /// `users.id`. Host-injected identity like the env_key.
+    /// `users.id`. Host-injected identity like the project_env_key.
     pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_user_id(user_id),
@@ -1480,7 +1484,7 @@ impl WamnPostgres {
     /// Register the `app.operation` identity for a component id. When set, every
     /// transaction the plugin opens for that component binds `app.operation`,
     /// so the record-history log records the source of each write.
-    /// Host-injected identity like the env_key.
+    /// Host-injected identity like the project_env_key.
     pub fn set_operation(&self, component_id: &str, operation: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_operation(operation),
@@ -1504,7 +1508,7 @@ impl WamnPostgres {
     /// Register the `app.application` identity for a component id. When set,
     /// every transaction the plugin opens for that component binds
     /// `app.application`, the declared application that runs the operation.
-    /// Host-injected identity like the env_key.
+    /// Host-injected identity like the project_env_key.
     pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_application(application),
@@ -1565,7 +1569,7 @@ impl WamnPostgres {
     /// component is driving (l5i9.12.2). While set, each write transaction the plugin
     /// opens for the component carries a `wamn.causation` message. Host-injected
     /// like the other identity registries — callers set it directly, exactly like
-    /// [`set_env_key`](Self::set_env_key) / [`set_runner`](Self::set_runner).
+    /// [`set_project_env_key`](Self::set_project_env_key) / [`set_runner`](Self::set_runner).
     pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
         let mut w = self.current_run.write().expect("current_run lock poisoned");
         match ctx {
@@ -1648,7 +1652,7 @@ impl WamnPostgres {
     /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
     ///
     /// The registries are process-resident and keyed by component id, so a
-    /// component id is a *invocation scope*, not a fact about which env_key a store
+    /// component id is a *invocation scope*, not a fact about which project_env_key a store
     /// was built for. This is the write half of that scope: a pooled instance is
     /// fungible compute, and the identity it serves arrives here at acquisition
     /// rather than at construction. Every registry
@@ -1667,7 +1671,7 @@ impl WamnPostgres {
     /// # The executing principal must own a user row (`wamn-0h0g.9.19`)
     ///
     /// A bind that names an `app.user_id` refuses when the principal owns no
-    /// `platform."user"` row in the env_key's project database. The credential
+    /// `platform."user"` row in the project_env_key's project database. The credential
     /// of such a principal is a provisioning defect, and every write it makes
     /// records an actor that names no row. The host's
     /// [auth memory](crate::auth_cache) answers first: the route authenticator
@@ -1700,7 +1704,7 @@ impl WamnPostgres {
         // actor-required.
         if let Some(user_id) = identity.user_id.as_deref() {
             let project = identity.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-            self.require_provisioned_principal(&identity.env_key, project, user_id)
+            self.require_provisioned_principal(&identity.project_env_key, project, user_id)
                 .await?;
         }
         Ok(())
@@ -1729,7 +1733,7 @@ impl WamnPostgres {
         // An acquisition starts with no statement authority. The router
         // activates the selected operation only after identity bind.
         self.revoke_statement_operation(component_id);
-        self.set_env_key(component_id, &identity.env_key)?;
+        self.set_project_env_key(component_id, &identity.project_env_key)?;
         match identity.project.as_deref() {
             Some(project) => self.set_project(component_id, project)?,
             None => drop(
@@ -1816,7 +1820,7 @@ impl WamnPostgres {
     /// Read one `platform."user"` row and refuse the principal that owns none
     /// (`wamn-0h0g.9.19`).
     ///
-    /// The read uses the env_key's own guest login, for two reasons. It is the
+    /// The read uses the project_env_key's own guest login, for two reasons. It is the
     /// only authority class every composition root names, because the platform
     /// classes are unnamed when their generation is absent. And it is the
     /// credential that already holds `SELECT` on this table, so the check
@@ -1828,21 +1832,21 @@ impl WamnPostgres {
     /// fail closed either way.
     async fn require_provisioned_principal(
         &self,
-        env_key: &str,
+        project_env_key: &str,
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
-        let Err(ticket) = self.auth.provisioned(env_key, principal_id) else {
+        let Err(ticket) = self.auth.provisioned(project_env_key, principal_id) else {
             return Ok(());
         };
-        let (connection, _policy) =
-            self.checkout_guest(project, env_key)
-                .await
-                .map_err(|source| SessionIdentityError {
-                    kind: SessionIdentityErrorKind::Infrastructure,
-                    context: "check out the env_key connection that reads platform.\"user\"",
-                    source: source.into(),
-                })?;
+        let (connection, _policy) = self
+            .checkout_guest(project, project_env_key)
+            .await
+            .map_err(|source| SessionIdentityError {
+                type_: SessionIdentityErrorType::Infrastructure,
+                context: "check out the project_env_key connection that reads platform.\"user\"",
+                source: source.into(),
+            })?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
@@ -1864,28 +1868,28 @@ impl WamnPostgres {
             })?;
         if rows.is_empty() {
             tracing::warn!(
-                env_key,
+                project_env_key,
                 project,
                 principal_id,
                 "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
             );
             return Err(UnprovisionedPrincipal {
-                env_key: env_key.to_owned(),
+                project_env_key: project_env_key.to_owned(),
                 project: project.to_owned(),
                 principal_id: principal_id.to_owned(),
             }
             .into());
         }
         self.auth
-            .keep_provisioned(env_key, principal_id, ticket)
+            .keep_provisioned(project_env_key, principal_id, ticket)
             .await;
         Ok(())
     }
 
     /// Read back the identity set one component id currently resolves to.
     ///
-    /// `None` is the deny floor: no env_key is bound, so
-    /// [`require_env_key`](Self::require_env_key) refuses every call made under
+    /// `None` is the base denial policy: no project_env_key is bound, so
+    /// [`require_project_env_key`](Self::require_project_env_key) refuses every call made under
     /// this id. That is what an idle, never-acquired execution instance must
     /// report, and it is the read half of the checkout-identity seam — the pair
     /// this and [`bind_session_identity`](Self::bind_session_identity) form is what
@@ -1893,7 +1897,7 @@ impl WamnPostgres {
     /// identity.
     pub fn session_identity(&self, component_id: &str) -> Option<SessionIdentity> {
         Some(SessionIdentity {
-            env_key: self.env_key_for(component_id)?,
+            project_env_key: self.project_env_key_for(component_id)?,
             project: self
                 .projects
                 .read()
@@ -1914,15 +1918,15 @@ impl WamnPostgres {
     /// installed under one component id.
     ///
     /// Called when a checkout ends, on every path — repooled, retired, or
-    /// dropped. An idle instance that still resolved an env_key would be a warm
+    /// dropped. An idle instance that still resolved an project_env_key would be a warm
     /// store carrying identity, which is the whole defect this seam closes; and
-    /// a `require_env_key` failure is how an unbound instance fails closed
+    /// a `require_project_env_key` failure is how an unbound instance fails closed
     /// instead of serving someone else's rows.
     pub fn revoke_session_identity(&self, component_id: &str) {
         self.revoke_statement_operation(component_id);
-        self.env_keys
+        self.project_env_keys
             .write()
-            .expect("env_keys lock poisoned")
+            .expect("project_env_keys lock poisoned")
             .remove(component_id);
         self.projects
             .write()
@@ -1964,7 +1968,7 @@ impl WamnPostgres {
 
     /// Reap EVERY per-component-id identity, workload-authority, and verified
     /// statement registry this plugin keeps for a workload
-    /// on teardown (R31): env_key, project, search_path schema, runner lease-owner,
+    /// on teardown (R31): project_env_key, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the executing operation and application, the carried
     /// release identity, the causation run context, and the bound invocation —
     /// all set at workload bind (or via the runner or driver channel) and keyed
@@ -1979,9 +1983,9 @@ impl WamnPostgres {
     /// an unknown workload id is a no-op.
     pub(super) fn clear_component_identity(&self, workload_id: &str) {
         let retain = |c: &String| !c.starts_with(workload_id);
-        self.env_keys
+        self.project_env_keys
             .write()
-            .expect("env_keys lock poisoned")
+            .expect("project_env_keys lock poisoned")
             .retain(|c, _| retain(c));
         self.projects
             .write()
@@ -2045,56 +2049,56 @@ impl WamnPostgres {
     }
 
     /// Load every host-derived HTTP authorization input in one read-only
-    /// transaction under the component's injected env_key.
+    /// transaction under the component's injected project_env_key.
     ///
-    /// # Why the caller's env_key is checked against the registry (wamn-0h0g.17.7)
+    /// # Why the caller's project_env_key is checked against the registry (wamn-0h0g.17.7)
     ///
-    /// `env_key` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
+    /// `project_env_key` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
     /// when its store was constructed
     /// (`crates/platform/runtime/src/plugins/connection_http.rs:77`). That value
     /// is NOT rebound at checkout — the store's `Ctx.plugins` map is private to
     /// wash-runtime, so nothing outside it can swap the plugin — while every other
     /// identity on this path IS
     /// ([`bind_session_identity`](Self::bind_session_identity)). A pooled instance
-    /// serving env_key B would therefore carry env_key A's frozen value here and
+    /// serving project_env_key B would therefore carry project_env_key A's frozen value here and
     /// read A's rows under B's run.
     ///
-    /// This plugin's registry is the authority on a component id's env_key, so a
-    /// caller-supplied env_key that DISAGREES with it is refused rather than
+    /// This plugin's registry is the authority on a component id's project_env_key, so a
+    /// caller-supplied project_env_key that DISAGREES with it is refused rather than
     /// honored. The check is a denial, not a correction: silently substituting
-    /// the registered env_key would hide the divergence it exists to catch.
+    /// the registered project_env_key would hide the divergence it exists to catch.
     ///
     /// An UNBOUND component id is refused outright (wamn-0h0g.17.11), not
-    /// allowed to fall through to the caller's env_key. Agreement with the
+    /// allowed to fall through to the caller's project_env_key. Agreement with the
     /// registry is only meaningful when the registry HAS an entry, so a guard
     /// that skipped the absent case would be a guard whose strength depended on
-    /// the caller having been bound. It is the same deny floor
-    /// [`require_env_key`](Self::require_env_key) applies to every other read:
+    /// the caller having been bound. It is the same base denial policy
+    /// [`require_project_env_key`](Self::require_project_env_key) applies to every other read:
     /// nothing resolves under an unbound invocation scope.
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         lookup: &ConnectionEffectLookup<'_>,
         facts: &crate::connection_facts::ConnectionFacts,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
-        let registered = self.env_key_for(component_id).ok_or_else(|| {
+        let registered = self.project_env_key_for(component_id).ok_or_else(|| {
             anyhow::anyhow!(
-                "HTTP effect authorization for component {component_id:?} has no bound env_key \
+                "HTTP effect authorization for component {component_id:?} has no bound project_env_key \
                  identity; refusing to resolve under an unbound identity"
             )
         })?;
         anyhow::ensure!(
-            registered == env_key,
-            "HTTP effect authorization env_key {env_key:?} disagrees with the env_key bound \
+            registered == project_env_key,
+            "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the project_env_key bound \
              to component {component_id:?}; refusing to resolve under a stale identity"
         );
-        let key = EffectKey::new(env_key, lookup);
+        let key = EffectKey::new(project_env_key, lookup);
         let fixed = match self.effect_fixed.get(&key) {
             Some(fixed) => fixed,
             None => match self
-                .read_effect_snapshot(component_id, project, env_key, lookup)
+                .read_effect_snapshot(component_id, project, project_env_key, lookup)
                 .await?
             {
                 EffectRead::Local(snapshot) => return Ok(*snapshot),
@@ -2111,8 +2115,8 @@ impl WamnPostgres {
             },
         };
         anyhow::ensure!(
-            facts.env_key() == env_key,
-            "HTTP effect authorization env_key {env_key:?} disagrees with the connection facts"
+            facts.project_env_key() == project_env_key,
+            "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the connection facts"
         );
         let release = facts.release(lookup.manifest_digest).await?;
         let binding = release
@@ -2227,7 +2231,7 @@ impl WamnPostgres {
         &self,
         component_id: &str,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<EffectRead> {
         let schema = self.schema_for(component_id);
@@ -2242,7 +2246,7 @@ impl WamnPostgres {
                 &conn,
                 AuthorityClass::CallableHttp,
                 false,
-                env_key,
+                project_env_key,
                 schema.as_deref(),
                 None,
                 None,
@@ -2260,14 +2264,16 @@ impl WamnPostgres {
         let result: anyhow::Result<EffectRead> = async {
             if let Some(local) = &self.local_application {
                 return Ok(EffectRead::Local(Box::new(
-                    local.effect_snapshot(&conn, env_key, lookup).await?,
+                    local
+                        .effect_snapshot(&conn, project_env_key, lookup)
+                        .await?,
                 )));
             }
             let wiring_id = lookup.entry.wiring.map(|wiring| wiring.wiring_id);
             let wiring_version = lookup.entry.wiring.map(|wiring| wiring.wiring_version);
             let node_id = lookup.entry.wiring.map(|wiring| wiring.node_id);
             let params: [&(dyn ToSql + Sync); 16] = [
-                &env_key,
+                &project_env_key,
                 &lookup.package_id,
                 &lookup.manifest_digest,
                 &lookup.environment,
@@ -2341,11 +2347,13 @@ impl WamnPostgres {
     pub async fn session_operation_permissions(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         roles: &[wamn_identity_protocol::RoleName],
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
-        let grants = self.principal_grants(project, env_key, principal).await?;
+        let grants = self
+            .principal_grants(project, project_env_key, principal)
+            .await?;
         session_grants(&grants, roles)
     }
 
@@ -2371,17 +2379,17 @@ impl WamnPostgres {
     }
 
     /// The grants every role of an active org-issued user gives it in this
-    /// env_key, from [`principal_grants`](Self::principal_grants).
+    /// project_env_key, from [`principal_grants`](Self::principal_grants).
     ///
     /// Route authentication first requires membership in the release environment.
     pub async fn user_operation_permissions(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal_id: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         let grants = self
-            .principal_grants(project, env_key, principal_id)
+            .principal_grants(project, project_env_key, principal_id)
             .await?;
         Ok(held_grants(&grants, None))
     }
@@ -2393,7 +2401,7 @@ impl WamnPostgres {
     pub async fn principal_grants(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
@@ -2401,10 +2409,13 @@ impl WamnPostgres {
             "invalid operation-permission project"
         );
         anyhow::ensure!(
-            valid_env_key(env_key),
-            "invalid operation-permission env_key"
+            valid_project_env_key(project_env_key),
+            "invalid operation-permission project_env_key"
         );
-        let ticket = match self.auth.grants(env_key, principal.to_string().as_str()) {
+        let ticket = match self
+            .auth
+            .grants(project_env_key, principal.to_string().as_str())
+        {
             Ok(grants) => return Ok(grants),
             Err(ticket) => ticket,
         };
@@ -2427,7 +2438,7 @@ impl WamnPostgres {
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
             .keep_grants(
-                env_key,
+                project_env_key,
                 principal.to_string().as_str(),
                 ticket,
                 grants.clone(),
@@ -2442,20 +2453,26 @@ impl WamnPostgres {
     pub async fn held_operation_grants(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
         let rows = self
-            .administration_transaction(project, env_key, principal_id, operation, async |client| {
-                client
-                    .query(
-                        USER_OPERATION_PERMISSIONS_SQL,
-                        &[&principal_id.to_string().as_str()],
-                    )
-                    .await
-                    .context("read held operation grants")
-            })
+            .administration_transaction(
+                project,
+                project_env_key,
+                principal_id,
+                operation,
+                async |client| {
+                    client
+                        .query(
+                            USER_OPERATION_PERMISSIONS_SQL,
+                            &[&principal_id.to_string().as_str()],
+                        )
+                        .await
+                        .context("read held operation grants")
+                },
+            )
             .await??;
         HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
     }
@@ -2467,20 +2484,27 @@ impl WamnPostgres {
     /// `app.operation`, so every row it writes is stamped with them. It commits
     /// when `work` returns `Ok` and rolls back when `work` returns `Err`, whose
     /// value is the inner result. The outer error is a failure of the
-    /// transaction itself. Whether the environment of `env_key` is inactive,
+    /// transaction itself. Whether the environment of `project_env_key` is inactive,
     /// from its row of `platform.environment`, read as `wamn_app`
     /// (docs/architecture/execution.md#routing-and-availability). No row means
     /// active. The host keeps the answer in its [auth
     /// memory](crate::auth_cache).
-    pub async fn environment_inactive(&self, project: &str, env_key: &str) -> anyhow::Result<bool> {
+    pub async fn environment_inactive(
+        &self,
+        project: &str,
+        project_env_key: &str,
+    ) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid environment-status env_key");
-        let ticket = match self.auth.environment_inactive(env_key) {
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid environment-status project_env_key"
+        );
+        let ticket = match self.auth.environment_inactive(project_env_key) {
             Ok(inactive) => return Ok(inactive),
             Err(ticket) => ticket,
         };
         let (connection, _pool) = self
-            .checkout_guest(project, env_key)
+            .checkout_guest(project, project_env_key)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let statement = connection
@@ -2496,7 +2520,7 @@ impl WamnPostgres {
         };
         let inactive = row.is_some_and(|row| row.get(0));
         self.auth
-            .keep_environment_inactive(env_key, ticket, inactive)
+            .keep_environment_inactive(project_env_key, ticket, inactive)
             .await;
         Ok(inactive)
     }
@@ -2504,13 +2528,16 @@ impl WamnPostgres {
     pub async fn administration_transaction<T, E>(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
         work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid host-route env_key");
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid host-route project_env_key"
+        );
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::Administration)
             .await
@@ -2520,7 +2547,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::Administration,
                 false,
-                env_key,
+                project_env_key,
                 None,
                 None,
                 None,
@@ -2550,12 +2577,15 @@ impl WamnPostgres {
     pub async fn queued_run_caller(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal_id: &str,
         role: Option<&str>,
     ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
         anyhow::ensure!(valid_project(project), "invalid queued-run project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid queued-run env_key");
+        anyhow::ensure!(
+            valid_project_env_key(project_env_key),
+            "invalid queued-run project_env_key"
+        );
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await?;
@@ -2571,14 +2601,16 @@ impl WamnPostgres {
     pub async fn workflow_node_caller(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         principal_id: &str,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
         let principal: wamn_identity_protocol::PrincipalId = principal_id
             .parse()
             .context("the run's principal is not a principal id")?;
-        let grants = self.principal_grants(project, env_key, &principal).await?;
+        let grants = self
+            .principal_grants(project, project_env_key, &principal)
+            .await?;
         Ok(grants
             .active
             .then(|| {
@@ -2591,15 +2623,15 @@ impl WamnPostgres {
             .flatten())
     }
 
-    pub(super) fn require_env_key(&self, component_id: &str) -> Result<String, PgError> {
-        self.env_key_for(component_id).ok_or_else(|| {
+    pub(super) fn require_project_env_key(&self, component_id: &str) -> Result<String, PgError> {
+        self.project_env_key_for(component_id).ok_or_else(|| {
             tracing::warn!(
                 component_id,
-                "wamn:postgres call from component with no env_key identity"
+                "wamn:postgres call from component with no project_env_key identity"
             );
             PgError::QueryError((
                 "WAMN0".to_string(),
-                "no env_key identity configured for this component".to_string(),
+                "no project_env_key identity configured for this component".to_string(),
             ))
         })
     }

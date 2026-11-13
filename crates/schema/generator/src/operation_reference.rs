@@ -70,7 +70,7 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
     Ok((root.to_owned(), OperationOwners::from_slice(&bytes)?))
 }
 
-/// The kind of one authored publication file.
+/// The type of one authored publication file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthoredDocument {
     /// `publication/attachments.json`.
@@ -119,8 +119,11 @@ pub fn read_attachments_document(path: &Path) -> Result<Map<String, Value>, Gene
 ///
 /// [`GenerateError`] when the file is unreadable or not JSON, when it is
 /// outside a package, or when a reference refuses.
-pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Value, GenerateError> {
-    let mut document: Value = if kind == AuthoredDocument::Attachments {
+pub fn read_authored_document(
+    path: &Path,
+    type_: AuthoredDocument,
+) -> Result<Value, GenerateError> {
+    let mut document: Value = if type_ == AuthoredDocument::Attachments {
         let entries = read_attachments_document(path)?;
         // No entry names a reference, so the package owners are not read.
         if entries.is_empty() {
@@ -144,7 +147,7 @@ pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Val
         })?
     };
     let (_, owners) = package_owners_of(path)?;
-    resolve_authored_document(&mut document, kind, &owners).map_err(|error| {
+    resolve_authored_document(&mut document, type_, &owners).map_err(|error| {
         GenerateError::new(
             error.error_type(),
             format!("{}: {}", path.display(), error.context()),
@@ -160,10 +163,10 @@ pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Val
 /// [`GenerateError`] naming the member whose reference refuses.
 pub fn resolve_authored_document(
     document: &mut Value,
-    kind: AuthoredDocument,
+    type_: AuthoredDocument,
     owners: &OperationOwners,
 ) -> Result<(), GenerateError> {
-    match kind {
+    match type_ {
         AuthoredDocument::Attachments => resolve_attachments_document(document, owners),
         AuthoredDocument::Declaration => resolve_declaration_document(document, owners),
         AuthoredDocument::Wiring => resolve_wiring_document(document, owners),
@@ -324,9 +327,9 @@ mod tests {
         .expect("owners")
     }
 
-    /// Each kind resolves its references, and a platform interface stays.
+    /// Each type resolves its references, and a platform interface stays.
     #[test]
-    fn every_authored_kind_resolves_its_references() {
+    fn every_authored_type_resolves_its_references() {
         let mut attachments = json!({"a": {
             "operation": "acme:order/get", "registered-operation": "acme:order/get"
         }});
@@ -338,7 +341,7 @@ mod tests {
         );
 
         let mut declaration = json!({
-            "target": {"env_key": "t", "package-id": "acme"},
+            "target": {"project_env_key": "t", "package-id": "acme"},
             "operations": {"acme:order/record": {
                 "registered-operation": "acme:order/record"
             }}

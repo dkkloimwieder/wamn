@@ -1,11 +1,11 @@
-//! Pure import admission for platform and tenant components.
+//! Pure import admission for platform and project components.
 //!
 //! MVP outcome: egress confinement (import allowlist, tested with mutations).
 //!
 //! Application admission rejects every P2 or P3 `wasi:sockets` interface before
 //! publication. WAMN installs the runtime's `SocketPolicy` with
 //! `EgressMode::Enforce`, which blocks traffic refused by policy.
-//! Tenant artifacts never reach that path because admission rejects the
+//! Project artifacts never reach that path because admission rejects the
 //! package outright. The integration profile admits pinned sockets and refuses
 //! every other effect. Integration stores enforce their bound authority.
 //! `AllowedIPNameLookups`, `allowed_hosts`, and
@@ -168,7 +168,7 @@ pub struct CapabilityRow {
     pub posture: Posture,
 }
 
-/// The closed capability registry: the complete set of packages a tenant
+/// The closed capability registry: the complete set of packages a project
 /// component may import, each with its declared posture.
 ///
 /// This replaces two implicit classifiers — a `wamn:`-prefix shape check and a
@@ -188,7 +188,7 @@ pub struct CapabilityRow {
 ///   a stored row. A database row would let an operator reclassify an effect
 ///   as ambient.
 ///
-/// The registry governs the TENANT path ([`analyze_tenant`]) only. `wash push`
+/// The registry governs the PROJECT path ([`analyze_project`]) only. `wash push`
 /// workloads are platform-authored and admitted by us, so their imports are the
 /// platform's own responsibility; that path re-converges at the first
 /// non-platform-authored pushed workload.
@@ -310,8 +310,8 @@ pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
 /// Whether this import's PACKAGE is a registered capability, at any version.
 ///
 /// Distinct from [`import_posture`], which matches package AND version. Some
-/// callers need to know what KIND of thing an import is — a platform
-/// capability versus a cross-package application call — and that kind does not
+/// callers need to know what TYPE of thing an import is — a platform
+/// capability versus a cross-package application call — and that type does not
 /// change with the version. A `wasi:clocks` import at an unregistered version
 /// is still a platform capability; it is admission's job to refuse the
 /// version, not this classifier's job to reclassify it as an application call.
@@ -338,24 +338,24 @@ pub fn import_version(import_name: &str) -> Option<&str> {
         .filter(|version| !version.is_empty())
 }
 
-/// Stable classification for a refused tenant import list.
+/// Stable classification for a refused project import list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TenantImportErrorType {
+pub enum ProjectImportErrorType {
     InvalidPlatformCapability,
     UnadmittedImport,
 }
 
-/// Refusal from the closed tenant import policy.
+/// Refusal from the closed project import policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TenantImportError {
-    type_: TenantImportErrorType,
+pub struct ProjectImportError {
+    type_: ProjectImportErrorType,
     component: Box<str>,
     imports: Box<[String]>,
 }
 
-impl TenantImportError {
+impl ProjectImportError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn error_type(&self) -> TenantImportErrorType {
+    pub fn error_type(&self) -> ProjectImportErrorType {
         self.type_
     }
 
@@ -365,15 +365,15 @@ impl TenantImportError {
     }
 }
 
-impl std::fmt::Display for TenantImportError {
+impl std::fmt::Display for ProjectImportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.type_ {
-            TenantImportErrorType::InvalidPlatformCapability => write!(
+            ProjectImportErrorType::InvalidPlatformCapability => write!(
                 formatter,
                 "component {:?} was given invalid platform capability package(s) {:?}",
                 self.component, self.imports
             ),
-            TenantImportErrorType::UnadmittedImport => write!(
+            ProjectImportErrorType::UnadmittedImport => write!(
                 formatter,
                 "component {:?} imports unadmitted package interface(s) {:?}",
                 self.component, self.imports
@@ -382,9 +382,9 @@ impl std::fmt::Display for TenantImportError {
     }
 }
 
-impl std::error::Error for TenantImportError {}
+impl std::error::Error for ProjectImportError {}
 
-/// Enforce the closed tenant import policy.
+/// Enforce the closed project import policy.
 ///
 /// `admitted_platform_packages` is the caller's per-component grant: exact
 /// unversioned package names, each of which must appear in
@@ -392,11 +392,11 @@ impl std::error::Error for TenantImportError {}
 /// row on package AND version, and — if that row is [`Posture::Effect`] — when
 /// its package is also in the grant. Ambient rows need no grant. An interface
 /// in [`APPLICATION_DENIED_INTERFACES`] is refused even with its grant.
-pub fn analyze_tenant(
+pub fn analyze_project(
     imports: &ComponentImports,
     admitted_platform_packages: &BTreeSet<String>,
     label: &str,
-) -> Result<PolicyReport, TenantImportError> {
+) -> Result<PolicyReport, ProjectImportError> {
     // A grant may only name a registered package. This replaces the old
     // `wamn:`-prefix shape check: the registry, not a namespace rule, decides
     // what a grant is allowed to say.
@@ -410,8 +410,8 @@ pub fn analyze_tenant(
         .cloned()
         .collect();
     if !invalid_registry.is_empty() {
-        return Err(TenantImportError {
-            type_: TenantImportErrorType::InvalidPlatformCapability,
+        return Err(ProjectImportError {
+            type_: ProjectImportErrorType::InvalidPlatformCapability,
             component: label.into(),
             imports: invalid_registry.into_boxed_slice(),
         });
@@ -434,8 +434,8 @@ pub fn analyze_tenant(
     if denied.is_empty() {
         Ok(PolicyReport)
     } else {
-        Err(TenantImportError {
-            type_: TenantImportErrorType::UnadmittedImport,
+        Err(ProjectImportError {
+            type_: ProjectImportErrorType::UnadmittedImport,
             component: label.into(),
             imports: denied.into_boxed_slice(),
         })
@@ -444,7 +444,7 @@ pub fn analyze_tenant(
 
 /// The denied WIT `namespace:package`. A component importing ANY interface of
 /// this package can open a raw TCP/UDP socket and reach Postgres directly,
-/// bypassing the `wamn:postgres` plugin's tenant-identity / RLS path. This is the
+/// bypassing the `wamn:postgres` plugin's project-identity / RLS path. This is the
 /// single load-bearing literal — pinned by a drift guard in the tests.
 pub const DENIED_EGRESS_PKG: &str = "wasi:sockets";
 
@@ -476,7 +476,7 @@ impl std::fmt::Display for EgressGuardError {
                 formatter,
                 "component {component:?} imports raw-socket interface(s) {imports:?} \
                  (package {DENIED_EGRESS_PKG:?}) — this opens arbitrary outbound TCP with DNS, \
-                 bypassing the wamn:postgres tenant-identity / RLS path; the platform refuses to \
+                 bypassing the wamn:postgres project-identity / RLS path; the platform refuses to \
                  publish it"
             ),
         }
@@ -496,7 +496,7 @@ pub fn import_pkg(import_name: &str) -> &str {
 
 /// The subset of `import_names` that import the denied egress package, in the
 /// order given. This is the one structural rule; [`screen_imports`] and the
-/// gate both go through it. Empty result == the component clears the guard.
+/// condition both go through it. Empty result == the component clears the guard.
 pub fn denied_imports<'a>(import_names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     import_names
         .into_iter()
@@ -534,7 +534,7 @@ mod tests {
             .map(str::to_owned),
         );
         analyze(&imports, PolicyProfile::Integration, "integration").expect("bound sockets");
-        analyze_tenant(
+        analyze_project(
             &imports,
             &BTreeSet::from(["wamn:integration".to_owned()]),
             "application",
@@ -613,7 +613,7 @@ mod tests {
         );
     }
 
-    /// A standard workload — the DB plugin, the `allowed_hosts`-gated http
+    /// A standard workload — the DB plugin, the `allowed_hosts`-conditioned http
     /// chokepoint, clocks/io — imports nothing denied.
     #[test]
     fn denied_imports_passes_standard_workload() {
@@ -649,7 +649,7 @@ mod tests {
     /// These versions are load-bearing, not decoration: an authored version
     /// one off is refused. See the provenance note on [`CAPABILITY_REGISTRY`].
     #[test]
-    fn tenant_policy_is_exact_and_has_no_namespace_wildcard() {
+    fn project_policy_is_exact_and_has_no_namespace_wildcard() {
         let admitted = BTreeSet::from(["wamn:postgres".to_string()]);
         let imports = ComponentImports::new([
             "wasi:io/streams@0.2.12".to_string(),
@@ -660,17 +660,17 @@ mod tests {
             "wamn:node/types@0.1.0".to_string(),
         ]);
 
-        assert!(analyze_tenant(&imports, &admitted, "tenant-node").is_ok());
+        assert!(analyze_project(&imports, &admitted, "project-node").is_ok());
 
         // Same import list, one authored version off: refused.
         let drifted = ComponentImports::new(["wamn:node/types@0.1.1".to_string()]);
-        let error = analyze_tenant(&drifted, &admitted, "tenant-node")
+        let error = analyze_project(&drifted, &admitted, "project-node")
             .expect_err("a drifted authored version must refuse");
-        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
     }
 
     #[test]
-    fn tenant_policy_refuses_every_unlisted_authority_surface() {
+    fn project_policy_refuses_every_unlisted_authority_surface() {
         let imports = ComponentImports::new([
             "wasi:filesystem/types@0.2.3".to_string(),
             "wasi:sockets/tcp@0.2.3".to_string(),
@@ -680,9 +680,9 @@ mod tests {
             "other:host/process@1.0.0".to_string(),
         ]);
 
-        let error = analyze_tenant(&imports, &BTreeSet::new(), "tenant-node")
+        let error = analyze_project(&imports, &BTreeSet::new(), "project-node")
             .expect_err("unlisted packages must refuse");
-        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
         assert_eq!(error.imports().len(), 6);
     }
 
@@ -818,30 +818,33 @@ mod tests {
     #[test]
     fn an_effect_without_a_grant_is_refused_but_an_ambient_is_not() {
         let effect = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
-        let error = analyze_tenant(&effect, &BTreeSet::new(), "tenant-node")
+        let error = analyze_project(&effect, &BTreeSet::new(), "project-node")
             .expect_err("an ungranted effect must refuse");
-        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
 
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
-        assert!(analyze_tenant(&effect, &granted, "tenant-node").is_ok());
+        assert!(analyze_project(&effect, &granted, "project-node").is_ok());
 
         let ambient = ComponentImports::new(["wamn:node/types@0.1.0".to_string()]);
         assert!(
-            analyze_tenant(&ambient, &BTreeSet::new(), "tenant-node").is_ok(),
+            analyze_project(&ambient, &BTreeSet::new(), "project-node").is_ok(),
             "an ambient row needs no grant"
         );
     }
 
     #[test]
-    fn tenant_platform_registry_rejects_wildcards_and_interface_names() {
+    fn project_platform_registry_rejects_wildcards_and_interface_names() {
         for entry in ["wamn:*", "wamn:postgres/client", "wamn:postgres@0.1.0"] {
             let admitted = BTreeSet::from([entry.to_string()]);
-            let error =
-                analyze_tenant(&ComponentImports::new(Vec::new()), &admitted, "tenant-node")
-                    .expect_err("the platform registry must contain exact package names");
+            let error = analyze_project(
+                &ComponentImports::new(Vec::new()),
+                &admitted,
+                "project-node",
+            )
+            .expect_err("the platform registry must contain exact package names");
             assert_eq!(
                 error.error_type(),
-                TenantImportErrorType::InvalidPlatformCapability
+                ProjectImportErrorType::InvalidPlatformCapability
             );
         }
     }
@@ -854,13 +857,13 @@ mod tests {
             [("sql-0", Some(STATEMENTS)), ("sql-1", Some(STATEMENTS))]
                 .map(|(name, implements)| instance_type(name, implements).to_string()),
         );
-        assert!(analyze_tenant(&labelled, &granted, "tenant-node").is_ok());
-        let error = analyze_tenant(&labelled, &BTreeSet::new(), "tenant-node")
+        assert!(analyze_project(&labelled, &granted, "project-node").is_ok());
+        let error = analyze_project(&labelled, &BTreeSet::new(), "project-node")
             .expect_err("a labelled effect still needs its package grant");
         assert_eq!(error.imports(), [STATEMENTS, STATEMENTS]);
 
         let unlabelled = ComponentImports::new([instance_type("sql-0", None).to_string()]);
-        let error = analyze_tenant(&unlabelled, &granted, "tenant-node")
+        let error = analyze_project(&unlabelled, &granted, "project-node")
             .expect_err("a label with no interface names no capability");
         assert_eq!(error.imports(), ["sql-0"]);
     }
@@ -879,13 +882,13 @@ mod tests {
         ] {
             let imports =
                 ComponentImports::new([STATEMENTS_INTERFACE.to_string(), client.to_string()]);
-            let error = analyze_tenant(&imports, &granted, "application")
+            let error = analyze_project(&imports, &granted, "application")
                 .expect_err("an application component must not import client");
-            assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
+            assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
             assert_eq!(error.imports(), [client]);
         }
         let statements = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
-        assert!(analyze_tenant(&statements, &granted, "application").is_ok());
+        assert!(analyze_project(&statements, &granted, "application").is_ok());
 
         // The imports of the private sqlx-command driver and
         // apps/platform/execution/materializer.
