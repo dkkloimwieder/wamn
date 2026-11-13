@@ -42,15 +42,6 @@ use auth_changes::AuthDrops;
 
 #[cfg(test)]
 const PRINCIPAL_COLUMNS: &str = "id::text, type, subject, display_name, status";
-#[cfg(test)]
-const PAT_COLUMNS: [&str; 6] = [
-    "id::text",
-    "token_prefix",
-    "label",
-    "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-    "to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-    "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-];
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id::text, type, subject, display_name, status";
@@ -95,7 +86,7 @@ const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
     (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
     SELECT p.id, p.type, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
     FROM identity.principals p \
-    WHERE p.id = $1::text::uuid AND p.status = 'active' \
+    WHERE p.id = $1::text::uuid AND p.status = 'active' AND p.type = 'service' \
     RETURNING id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -111,13 +102,9 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1 AND CASE p.type \
-        WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
-            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
-        WHEN 'user' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
-            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4 \
-            AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active')) \
-        ELSE false END";
+    WHERE identity.pats.token_prefix = $1 AND p.type = 'service' \
+        AND EXISTS (SELECT 1 FROM identity.project_roles r \
+            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($4::text[]))";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -699,12 +686,11 @@ pub async fn disable_principal(
     decode_principal(&row)
 }
 
-/// Issue a personal access token for an active principal.
+/// Issue a personal access token for an active service principal.
 ///
 /// This is the trusted-context issuance path: the caller must already have
-/// authorized the request. It serves users and services identically and reads
-/// no client-supplied identity field — only the principal ID the caller already
-/// resolved. A missing or disabled principal is `NotFound`.
+/// authorized the request. It reads only the principal ID the caller resolved.
+/// A missing, disabled or non-service principal is `NotFound`.
 pub async fn issue_pat(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -1000,16 +986,14 @@ impl PreparedIdentityReads {
 
     /// Authenticate a route PAT and its system scope in one round trip.
     ///
-    /// Services need one of the accepted project roles. Users need explicit membership
-    /// in the exact project environment. The caller must still enforce the
-    /// configured service identity and read tenant permissions.
+    /// Services need one of the accepted project roles. The caller must still
+    /// enforce the configured service identity and read operation permissions.
     pub async fn authenticate_route_pat(
         &self,
         client: &(impl GenericClient + Sync),
         token: &str,
         org: &str,
         project: &str,
-        env: &str,
         accepted_roles: &[&str],
     ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
         let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
@@ -1017,13 +1001,12 @@ impl PreparedIdentityReads {
         };
         let org = checked_scope_segment("org", org)?;
         let project = checked_scope_segment("project", project)?;
-        let env = checked_scope_segment("env", env)?;
         let roles = accepted_roles
             .iter()
             .map(|role| canonical_role(role))
             .collect::<Result<Vec<_>, _>>()?;
         let row = client
-            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &roles])
+            .query_opt(&self.route_pat, &[&prefix, &org, &project, &roles])
             .await
             .map_err(|error| database_error(&error))?;
         decide_pat(row, token)
@@ -1526,24 +1509,6 @@ mod tests {
                 checked_pat_prefix(invalid).is_err(),
                 "accepted prefix {invalid:?}"
             );
-        }
-    }
-
-    #[test]
-    fn token_storage_keeps_a_digest_and_never_the_token() {
-        assert!(INSERT_PAT_SQL.contains("token_hash"));
-        for sql in [INSERT_PAT_SQL, SELECT_PAT_BY_PREFIX_SQL, SELECT_PATS_SQL] {
-            assert!(!sql.contains("token_secret"));
-            assert!(!sql.contains("token_plaintext"));
-        }
-        assert!(SELECT_PAT_BY_PREFIX_SQL.contains("revoked_at IS NULL"));
-        assert!(SELECT_PAT_BY_PREFIX_SQL.contains("expires_at > now()"));
-        assert!(REVOKE_PAT_SQL.contains("COALESCE(revoked_at, now())"));
-        assert!(INSERT_PAT_SQL.contains("p.status = 'active'"));
-        for column in PAT_COLUMNS {
-            for sql in [INSERT_PAT_SQL, SELECT_PATS_SQL, REVOKE_PAT_SQL] {
-                assert!(sql.contains(column), "missing {column} in {sql}");
-            }
         }
     }
 

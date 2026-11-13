@@ -336,7 +336,6 @@ pub async fn publish_local(
         target.control_database_url,
         &args.org,
         &args.environment,
-        false,
     )
     .await?;
     let projected =
@@ -1924,7 +1923,6 @@ mod tests {
             package_id: overlay.package.id.clone(),
             runtime_schema: None,
             descriptor,
-            operations: BTreeMap::new(),
             statement_instances: BTreeMap::new(),
         }]);
         let manifests = BTreeMap::from([("base".into(), base), ("consumer".into(), consumer)]);
@@ -2011,8 +2009,10 @@ mod tests {
         let projected =
             project_serving_component(&overlay, Vec::new()).expect("the composed overlay projects");
         assert_eq!(
-            projected.operations[overlay_operation].permissions,
-            BTreeSet::from([overlay_operation.to_owned()]),
+            projected.descriptor.operations[overlay_operation]
+                .registered_operation
+                .as_deref(),
+            Some(overlay_operation),
             "the overlay entry requires its own permission alone"
         );
 
@@ -2120,7 +2120,7 @@ mod tests {
             .expect("an admitted component projects to serving facts");
 
         assert_eq!(
-            serving.operations[operation].statement(&path),
+            serving.descriptor.operations[operation].statement(&path),
             admitted.operations[operation].statement(&path)
         );
     }
@@ -2568,7 +2568,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(

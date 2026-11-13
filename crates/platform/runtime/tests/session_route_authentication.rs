@@ -185,7 +185,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
         .map(|operation| {
             (
                 (*operation).to_owned(),
-                json!({"registered-operation": operation, "permissions": [operation]}),
+                json!({"registered-operation": operation, "input-ports": [], "output-ports": [], "parameters": []}),
             )
         })
         .collect();
@@ -195,8 +195,8 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
-        "components": [{"package-id": "session_test", "operations": operations,
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
+        "components": [{"package-id": "session_test",
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": operations, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}

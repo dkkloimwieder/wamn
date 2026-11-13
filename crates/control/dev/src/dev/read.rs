@@ -13,8 +13,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use wamn_authoring_model::{GateRefusal, GateResult};
 use wamn_catalog::{
-    AttachmentType, PackageCoordinate, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest,
+    AdmittedComponentOperation, AttachmentType, PackageCoordinate, ServingAttachment,
+    ServingComponent, ServingManifest,
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
@@ -436,18 +436,25 @@ mod tests {
 
     fn manifest() -> ServingManifest {
         let package = PackageCoordinate::new("platform_fixture", "1.0.0").expect("valid package");
-        let operation = ServingComponentOperation {
+        let operation = AdmittedComponentOperation {
+            host_transaction: false,
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
             committed_result_schema: None,
             registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
-            permissions: BTreeSet::from(["platform_fixture@1.0.0::widget/get".to_owned()]),
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".to_owned(),
-            operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
-            descriptor: wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST),
+            descriptor: {
+                let mut descriptor =
+                    wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST);
+                descriptor.operations = BTreeMap::from([("widget/get".to_owned(), operation)]);
+                descriptor
+            },
         };
         let attachment = ServingAttachment {
             type_: AttachmentType::Http,

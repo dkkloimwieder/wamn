@@ -633,8 +633,8 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.releases
     (env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class)
-    VALUES (t, 'dev', 'standard');
+  INSERT INTO wamn_run.environment_policies (env_key, expected_environment)
+    VALUES (t, 'dev');
   INSERT INTO wamn_run.runs
     (env_key, run_id, package_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)

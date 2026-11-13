@@ -300,9 +300,11 @@ async fn project_environment_membership_round_trip(
     let reads = PreparedIdentityReads::prepare(client)
         .await
         .expect("prepare the identity query");
-    let user_token = issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
-        .await
-        .expect("issue the user route PAT");
+    assert!(
+        issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
+            .await
+            .is_err()
+    );
     let service_token = issue_pat(
         client,
         service.id(),
@@ -311,14 +313,19 @@ async fn project_environment_membership_round_trip(
     )
     .await
     .expect("issue the service route PAT");
-    for token in [user_token.token(), service_token.token()] {
-        assert!(
-            route_principal_id(&reads, client, token, "demo", "widgets", "dev")
-                .await
-                .is_none(),
-            "a valid PAT without its kind's authority passed"
-        );
-    }
+    assert!(
+        route_principal_id(
+            &reads,
+            client,
+            service_token.token(),
+            "demo",
+            "widgets",
+            "dev"
+        )
+        .await
+        .is_none(),
+        "a PAT without project authority passed"
+    );
     let other_user = create_user(
         client,
         "other@example.com",
@@ -372,11 +379,6 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("unprepared query observes new grant")
     );
-    assert_eq!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev").await,
-        Some(user.id().as_str().to_owned()),
-        "user membership must not require a project management role"
-    );
     assign_project_role(
         client,
         service.id(),
@@ -406,9 +408,9 @@ async fn project_environment_membership_round_trip(
         ("demo", "widgets", "prod"),
     ] {
         assert!(
-            route_principal_id(&reads, client, user_token.token(), org, project, env)
+            !has_project_env_membership(client, user.id(), org, project, env)
                 .await
-                .is_none(),
+                .unwrap(),
             "the prepared PAT query accepted another environment"
         );
     }
@@ -471,9 +473,9 @@ async fn project_environment_membership_round_trip(
         .expect("revoke membership")
     );
     assert!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev")
+        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
-            .is_none(),
+            .unwrap(),
         "the prepared PAT query must observe membership revocation"
     );
     assert!(
@@ -510,9 +512,9 @@ async fn project_environment_membership_round_trip(
         .await
         .expect("replace the provisioned environment");
     assert!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev")
+        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
-            .is_none(),
+            .unwrap(),
         "replacement environment must not inherit the deleted grant"
     );
 
@@ -685,7 +687,7 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
         format!(
             "INSERT INTO identity.pats \
                (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-             VALUES ('{PRINCIPAL}', 'user', '{}', '{}', 'unbound', now() + interval '1 hour')",
+             VALUES ('{PRINCIPAL}', 'service', '{}', '{}', 'unbound', now() + interval '1 hour')",
             "0".repeat(16),
             "0".repeat(64),
         ),
@@ -785,10 +787,10 @@ async fn route_principal_id(
     token: &str,
     org: &str,
     project: &str,
-    env: &str,
+    _env: &str,
 ) -> Option<String> {
     reads
-        .authenticate_route_pat(client, token, org, project, env, &["operator", "admin"])
+        .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
         .await
         .expect("read route PAT and scope in one statement")
         .map(|authenticated| authenticated.principal().id().as_str().to_owned())

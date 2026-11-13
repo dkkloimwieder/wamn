@@ -49,7 +49,7 @@ const CLI_PROJECT: &str = "billing";
 const CLI_ENV: &str = "dev";
 const CLI_INSTANCE: &str = "k3m9x2p7";
 
-async fn seed_system_env_policy(su: &Client, durability_class: &str) {
+async fn seed_system_env_policy(su: &Client) {
     su.batch_execute(
         "DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
@@ -61,7 +61,7 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
            promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
            cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
-           hibernation text NOT NULL, durability_class text NOT NULL, \
+           hibernation text NOT NULL, \
            PRIMARY KEY (org, name)); \
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
@@ -75,9 +75,9 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     su.execute(
         "INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
-            backup_cadence,wal_retention,hibernation,durability_class) \
-         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off',$1)",
-        &[&durability_class],
+            backup_cadence,wal_retention,hibernation) \
+         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off')",
+        &[],
     )
     .await
     .expect("seed system env policy");
@@ -424,20 +424,14 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     client
 }
 
-async fn seed_run_admission_facts(
-    su: &Client,
-    env_key: &str,
-    package_id: &str,
-    environment: &str,
-    durability_class: &str,
-) {
+async fn seed_run_admission_facts(su: &Client, env_key: &str, package_id: &str, environment: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.environment_policies \
-               (env_key,expected_environment,durability_class) \
-             VALUES ($1,$2,$3)"
+               (env_key,expected_environment) \
+             VALUES ($1,$2)"
         ),
-        &[&env_key, &environment, &durability_class],
+        &[&env_key, &environment],
     )
     .await
     .expect("seed the project-local environment policy");
@@ -563,7 +557,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
     install_current_run_plane(su).await;
-    seed_run_admission_facts(su, "hidden", "owner", "dev", "standard").await;
+    seed_run_admission_facts(su, "hidden", "owner", "dev").await;
     su.batch_execute(&format!(
         "DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rp_owner_no_bypass') THEN \
@@ -575,8 +569,8 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
            'GRANT TEMPORARY ON DATABASE %I TO rp_owner_no_bypass', current_database()); \
          END $temporary$; \
          INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,environment,status) VALUES \
-           ('hidden','owner','f',1,'owner','dev','running'); \
+           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment,status) VALUES \
+           ('hidden','owner','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'owner','dev','running'); \
          ALTER TABLE {SCHEMA}.runs OWNER TO rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
          CREATE TEMP TABLE pg_roles \
@@ -706,7 +700,7 @@ async fn environment_identity_leg(
     target_url: &str,
 ) {
     reset(su).await;
-    seed_system_env_policy(system_su, "standard").await;
+    seed_system_env_policy(system_su).await;
     let schema = schema();
 
     su.batch_execute("SET ROLE wamn_db_owner").await.unwrap();
@@ -728,27 +722,6 @@ async fn environment_identity_leg(
     .expect("reconcile-run-plane applies");
 
     env_key_identity_leg(su).await;
-
-    let projected: String = su
-        .query_one(
-            &format!(
-                "SELECT durability_class FROM {SCHEMA}.environment_policies \
-                 WHERE env_key='acme--billing--dev'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read projected standard policy")
-        .get(0);
-    assert_eq!(projected, "standard");
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id, \
-            environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-before','f',1,'cat','dev','standard')"
-    ))
-    .await
-    .expect("seed a run before reconciliation");
 
     su.batch_execute(&format!(
         "DELETE FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
@@ -797,36 +770,6 @@ async fn environment_identity_leg(
     // A second apply writes no second copy of any identity row.
     env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id, \
-            environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-after','f',1,'cat','dev','standard')"
-    ))
-    .await
-    .expect("seed a run after reconciliation");
-    let classes: Vec<(String, String)> = su
-        .query(
-            &format!(
-                "SELECT run_id,durability_class FROM {SCHEMA}.runs \
-                 WHERE run_id IN ('r-policy-before','r-policy-after') ORDER BY run_id DESC"
-            ),
-            &[],
-        )
-        .await
-        .expect("read frozen run classes")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect();
-    assert_eq!(
-        classes,
-        [
-            ("r-policy-before".to_string(), "standard".to_string()),
-            ("r-policy-after".to_string(), "standard".to_string()),
-        ],
-        "policy reconciliation must not rewrite stored run classes"
-    );
-
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -975,14 +918,14 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // and read 0 where it demanded 1. The login name is DERIVED by the
     // production builder, never spelled, so the digest under test is the digest
     // `provision-project-env` would mint.
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
-    seed_run_admission_facts(su, "t2", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev").await;
+    seed_run_admission_facts(su, "t2", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,flow_id,flow_version,package_id, \
+             (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
-             VALUES ('acme--billing--dev','r1','f',1,'cat','dev'), \
-                    ('t2','r2','f',1,'cat','dev'); \
+             VALUES ('acme--billing--dev','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
+                    ('t2','r2','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
     ))
     .await
@@ -998,8 +941,8 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,environment) \
-             VALUES ('acme--billing--dev','r3','f',1,'cat','dev')"
+               (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) \
+             VALUES ('acme--billing--dev','r3','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev')"
         ),
         format!(
             "INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev','r3')"
@@ -1090,8 +1033,8 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     let schema = schema();
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
-           (env_key, expected_environment, durability_class) \
-         VALUES ('acme--billing--dev', 'dev', 'standard')"
+           (env_key, expected_environment) \
+         VALUES ('acme--billing--dev', 'dev')"
     ))
     .await
     .expect("seed projected environment policy");

@@ -642,12 +642,13 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              SELECT 'sha256:' || repeat('c', 64), t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.environment_policies \
-               (env_key, expected_environment, durability_class) \
-             SELECT t, 'dev', 'standard' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
+               (env_key, expected_environment) \
+             SELECT t, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.runs \
                (env_key, run_id, package_id, environment, \
-                flow_id, flow_version) \
-             SELECT t, 'r', 'platform_fixture', 'dev', 'f', 1 \
+                wiring_id, wiring_version, wiring_hash, binding_world_json) \
+             SELECT t, 'r', 'platform_fixture', 'dev', 'fixture', 1, \
+                    'sha256:' || repeat('d', 64), '[]'::jsonb \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ),

@@ -78,9 +78,9 @@ pub use serving_manifest::{
     RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RouteAttachment,
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
     SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingComposedEntry, ServingEntryMember, ServingManifest,
-    ServingRelation, ServingRelease, ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
-    parse_attachment_auth_policy, parse_workflow_schedule, release_manifest_configmap_name,
+    ServingComposedEntry, ServingEntryMember, ServingManifest, ServingRelation, ServingRelease,
+    ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, parse_attachment_auth_policy,
+    parse_workflow_schedule, release_manifest_configmap_name,
 };
 pub use signed_file_read::{
     MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
@@ -98,12 +98,10 @@ pub use wiring_compatibility::{
 };
 pub use workflow_gate::{WorkflowGateError, gate_workflow_document, resolve_workflow_components};
 
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+#[cfg(test)]
 use sha2::{Digest as _, Sha256};
 
 /// Complete catalog bootstrap for a fresh project database, including its transaction.
@@ -117,11 +115,14 @@ pub const CATALOG_SCHEMA_SQL: &str = concat!(
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
-const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";
 
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatalogIdentityError {
+    DuplicateMember {
+        field: &'static str,
+        id: String,
+    },
     EmptyIdentity {
         field: &'static str,
     },
@@ -138,30 +139,6 @@ pub enum CatalogIdentityError {
         message: String,
     },
     NonCanonicalJson,
-    MutableIdentityInput {
-        field: String,
-    },
-    GraphHashMismatch,
-    ArtifactIdMismatch,
-    ArtifactHashMismatch,
-    FlowInvalid {
-        codes: Vec<&'static str>,
-    },
-    DuplicateMember {
-        field: &'static str,
-        id: String,
-    },
-    NonCanonicalMemberOrder {
-        field: &'static str,
-        id: String,
-    },
-    ArtifactMismatch,
-    UnresolvedSource {
-        source_id: String,
-    },
-    SourceMismatch {
-        source_id: String,
-    },
     UnsupportedServingManifestVersion {
         requested: String,
     },
@@ -196,6 +173,9 @@ pub enum CatalogIdentityError {
 impl fmt::Display for CatalogIdentityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DuplicateMember { field, id } => {
+                write!(formatter, "{field} member {id:?} is duplicated")
+            }
             Self::EmptyIdentity { field } => write!(formatter, "{field} is empty"),
             Self::NonCanonicalIdentity { field } => {
                 write!(formatter, "{field} is not in canonical form")
@@ -209,39 +189,6 @@ impl fmt::Display for CatalogIdentityError {
             }
             Self::InvalidDefinition { message } => write!(formatter, "{message}"),
             Self::NonCanonicalJson => write!(formatter, "JSON input is not RFC 8785 canonical"),
-            Self::MutableIdentityInput { field } => {
-                write!(
-                    formatter,
-                    "mutable field {field:?} cannot enter definition identity"
-                )
-            }
-            Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
-            Self::ArtifactIdMismatch => {
-                write!(
-                    formatter,
-                    "flow graph does not match the pinned artifact id"
-                )
-            }
-            Self::ArtifactHashMismatch => write!(formatter, "flow artifact hash does not match"),
-            Self::FlowInvalid { codes } => {
-                write!(formatter, "flow validation failed: {}", codes.join(", "))
-            }
-            Self::DuplicateMember { field, id } => {
-                write!(formatter, "{field} member {id:?} is duplicated")
-            }
-            Self::NonCanonicalMemberOrder { field, id } => {
-                write!(formatter, "{field} member {id:?} is not in canonical order")
-            }
-            Self::ArtifactMismatch => write!(formatter, "attachment artifact does not match"),
-            Self::UnresolvedSource { source_id } => {
-                write!(formatter, "source {source_id:?} is unresolved")
-            }
-            Self::SourceMismatch { source_id } => {
-                write!(
-                    formatter,
-                    "source {source_id:?} differs from its resolved definition"
-                )
-            }
             Self::UnsupportedServingManifestVersion { requested } => {
                 write!(
                     formatter,
@@ -437,6 +384,7 @@ fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdenti
     }
 }
 
+#[cfg(test)]
 fn digest(input: &[u8]) -> String {
     let digest = Sha256::digest(input);
     let mut output = String::with_capacity(HASH_PREFIX.len() + HASH_HEX_LEN);
@@ -446,245 +394,6 @@ fn digest(input: &[u8]) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
     }
     output
-}
-
-/// The tenant-scoped immutable identity of a flow artifact.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ArtifactId {
-    env_key: String,
-    flow_id: String,
-    flow_version: u32,
-}
-
-impl Serialize for ArtifactId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct as _;
-        let mut id = serializer.serialize_struct("ArtifactId", 3)?;
-        id.serialize_field("env_key", &self.env_key)?;
-        id.serialize_field("flow-id", &self.flow_id)?;
-        id.serialize_field("flow-version", &self.flow_version)?;
-        id.end()
-    }
-}
-
-impl ArtifactId {
-    pub fn new(
-        env_key: impl Into<String>,
-        flow_id: impl Into<String>,
-        flow_version: u32,
-    ) -> Result<Self, CatalogIdentityError> {
-        let env_key = env_key.into();
-        let flow_id = flow_id.into();
-        validate_text(&env_key, "env_key")?;
-        validate_text(&flow_id, "flow-id")?;
-        if flow_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "flow-version",
-            });
-        }
-        Ok(Self {
-            env_key,
-            flow_id,
-            flow_version,
-        })
-    }
-
-    pub fn env_key(&self) -> &str {
-        &self.env_key
-    }
-
-    pub fn flow_id(&self) -> &str {
-        &self.flow_id
-    }
-
-    pub fn flow_version(&self) -> u32 {
-        self.flow_version
-    }
-}
-
-macro_rules! string_id {
-    ($name:ident, $field:literal) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-        #[serde(transparent)]
-        pub struct $name(String);
-
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
-                let value = value.into();
-                validate_text(&value, $field)?;
-                Ok(Self(value))
-            }
-
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str(&self.0)
-            }
-        }
-    };
-}
-
-string_id!(SourceId, "source-id");
-string_id!(AttachmentId, "attachment-id");
-
-/// Canonical JSON used by immutable source and attachment definitions.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CanonicalJson {
-    value: Value,
-    bytes: Box<[u8]>,
-}
-
-impl CanonicalJson {
-    /// Canonicalize a JSON object, refusing operationally mutable top-level fields.
-    pub fn new(value: Value) -> Result<Self, CatalogIdentityError> {
-        let object = value
-            .as_object()
-            .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
-                message: "a source or attachment definition must be a JSON object".to_string(),
-            })?;
-        for field in [
-            "active",
-            "applied-version",
-            "changed-at",
-            "confirmed-definition-hash",
-            "created-at",
-            "enabled",
-            "updated-at",
-        ] {
-            if object.contains_key(field) {
-                return Err(CatalogIdentityError::MutableIdentityInput {
-                    field: field.to_string(),
-                });
-            }
-        }
-        let bytes = wamn_execution_contract::canonical_json_bytes(&value).into_boxed_slice();
-        Ok(Self { value, bytes })
-    }
-
-    /// Parse bytes that must already be in RFC 8785 canonical form.
-    pub fn parse(input: &str) -> Result<Self, CatalogIdentityError> {
-        let value: Value = serde_json::from_str(input).map_err(|error| {
-            CatalogIdentityError::InvalidDefinition {
-                message: format!("definition JSON is invalid: {error}"),
-            }
-        })?;
-        let canonical = Self::new(value)?;
-        if canonical.bytes.as_ref() != input.as_bytes() {
-            return Err(CatalogIdentityError::NonCanonicalJson);
-        }
-        Ok(canonical)
-    }
-
-    pub fn as_value(&self) -> &Value {
-        &self.value
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-}
-
-/// The complete immutable artifact identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct ArtifactIdentity {
-    id: ArtifactId,
-    artifact_hash: ArtifactHash,
-}
-
-impl ArtifactIdentity {
-    /// Pair a parsed artifact id with the artifact-content digest recorded
-    /// beside it.
-    ///
-    /// Both halves are already-validated newtypes, so this only joins them. It
-    /// replaced `Artifact::new`, which derived the same pair by hashing a
-    /// parsed flow graph — the flow language retired in wamn-0h0g.26.5 and the
-    /// artifact bytes it hashed are no longer produced here.
-    pub fn new(id: ArtifactId, artifact_hash: ArtifactHash) -> Self {
-        Self { id, artifact_hash }
-    }
-
-    pub fn id(&self) -> &ArtifactId {
-        &self.id
-    }
-
-    pub fn artifact_hash(&self) -> &ArtifactHash {
-        &self.artifact_hash
-    }
-
-    fn canonical_bytes(&self) -> Vec<u8> {
-        frames(
-            "artifact-identity",
-            [
-                ("env_key", self.id.env_key.as_bytes()),
-                ("flow-id", self.id.flow_id.as_bytes()),
-                ("flow-version", &self.id.flow_version.to_be_bytes()),
-                ("artifact-hash", self.artifact_hash.as_str().as_bytes()),
-            ],
-        )
-    }
-}
-
-/// A source definition kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SourceKind {
-    Auth,
-    CallerPolicy,
-    Schedule,
-}
-
-/// A canonical immutable source definition.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Source {
-    id: SourceId,
-    kind: SourceKind,
-    definition: CanonicalJson,
-    canonical_bytes: Box<[u8]>,
-}
-
-impl Source {
-    pub fn new(id: SourceId, kind: SourceKind, definition: CanonicalJson) -> Self {
-        let kind_bytes = serde_json::to_vec(&kind).expect("source kind serializes");
-        let canonical_bytes = frames(
-            "source",
-            [
-                ("source-id", id.as_str().as_bytes()),
-                ("type", kind_bytes.as_slice()),
-                ("definition", definition.as_bytes()),
-            ],
-        )
-        .into_boxed_slice();
-        Self {
-            id,
-            kind,
-            definition,
-            canonical_bytes,
-        }
-    }
-
-    pub fn id(&self) -> &SourceId {
-        &self.id
-    }
-
-    pub fn source_type(&self) -> SourceKind {
-        self.kind
-    }
-
-    pub fn definition(&self) -> &CanonicalJson {
-        &self.definition
-    }
-
-    pub fn canonical_bytes(&self) -> &[u8] {
-        &self.canonical_bytes
-    }
 }
 
 /// An attachment exposure kind.
@@ -700,171 +409,9 @@ pub enum AttachmentType {
     Studio,
 }
 
-/// Unresolved attachment input. Resolution is mandatory before hashing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AttachmentDraft {
-    pub id: AttachmentId,
-    pub kind: AttachmentType,
-    pub artifact_id: ArtifactId,
-    pub source_ids: Vec<SourceId>,
-    pub definition: CanonicalJson,
-}
-
-/// A canonical attachment definition with resolved sources.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Attachment {
-    id: AttachmentId,
-    kind: AttachmentType,
-    artifact: ArtifactIdentity,
-    source_ids: Vec<SourceId>,
-    resolved_sources: Vec<Source>,
-    definition: CanonicalJson,
-    definition_hash: DefinitionHash,
-    canonical_bytes: Box<[u8]>,
-}
-
-impl Attachment {
-    /// Resolve every source and compute the complete effective-contract hash.
-    pub fn resolve(
-        draft: AttachmentDraft,
-        artifact: &ArtifactIdentity,
-        sources: &[Source],
-    ) -> Result<Self, CatalogIdentityError> {
-        if draft.artifact_id != *artifact.id() {
-            return Err(CatalogIdentityError::ArtifactMismatch);
-        }
-        validate_sorted_unique(&draft.source_ids, "source-ids", |id| {
-            id.as_str().to_string()
-        })?;
-        let available: BTreeMap<_, _> = sources
-            .iter()
-            .map(|source| (source.id().clone(), source))
-            .collect();
-        let resolved: Vec<_> = draft
-            .source_ids
-            .iter()
-            .map(|id| {
-                available
-                    .get(id)
-                    .copied()
-                    .ok_or_else(|| CatalogIdentityError::UnresolvedSource {
-                        source_id: id.as_str().to_string(),
-                    })
-            })
-            .collect::<Result<_, _>>()?;
-
-        let kind_bytes = serde_json::to_vec(&draft.kind).expect("attachment kind serializes");
-        let mut owned = vec![
-            ("attachment-id", draft.id.as_str().as_bytes().to_vec()),
-            ("type", kind_bytes),
-            ("artifact", artifact.canonical_bytes()),
-            ("definition", draft.definition.as_bytes().to_vec()),
-        ];
-        for source in &resolved {
-            owned.push(("resolved-source", source.canonical_bytes().to_vec()));
-        }
-        let borrowed: Vec<_> = owned
-            .iter()
-            .map(|(tag, bytes)| (*tag, bytes.as_slice()))
-            .collect();
-        let canonical_bytes = frames("attachment-definition", borrowed).into_boxed_slice();
-        let definition_hash = DefinitionHash(digest(&canonical_bytes));
-        Ok(Self {
-            id: draft.id,
-            kind: draft.kind,
-            artifact: artifact.clone(),
-            source_ids: draft.source_ids,
-            resolved_sources: resolved.into_iter().cloned().collect(),
-            definition: draft.definition,
-            definition_hash,
-            canonical_bytes,
-        })
-    }
-
-    pub fn id(&self) -> &AttachmentId {
-        &self.id
-    }
-
-    pub fn attachment_type(&self) -> AttachmentType {
-        self.kind
-    }
-
-    pub fn artifact(&self) -> &ArtifactIdentity {
-        &self.artifact
-    }
-
-    pub fn source_ids(&self) -> &[SourceId] {
-        &self.source_ids
-    }
-
-    pub fn definition(&self) -> &CanonicalJson {
-        &self.definition
-    }
-
-    pub fn definition_hash(&self) -> &DefinitionHash {
-        &self.definition_hash
-    }
-
-    pub fn canonical_bytes(&self) -> &[u8] {
-        &self.canonical_bytes
-    }
-}
-
-fn validate_sorted_unique<T>(
-    values: &[T],
-    field: &'static str,
-    key: impl Fn(&T) -> String,
-) -> Result<(), CatalogIdentityError> {
-    let mut previous: Option<String> = None;
-    for value in values {
-        let current = key(value);
-        if let Some(previous) = &previous {
-            match previous.cmp(&current) {
-                Ordering::Equal => {
-                    return Err(CatalogIdentityError::DuplicateMember { field, id: current });
-                }
-                Ordering::Greater => {
-                    return Err(CatalogIdentityError::NonCanonicalMemberOrder {
-                        field,
-                        id: current,
-                    });
-                }
-                Ordering::Less => {}
-            }
-        }
-        previous = Some(current);
-    }
-    Ok(())
-}
-
-fn frames<'a>(domain: &str, values: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Vec<u8> {
-    frames_with_format(IDENTITY_FORMAT, domain, values)
-}
-
-fn frames_with_format<'a>(
-    format: &[u8],
-    domain: &str,
-    values: impl IntoIterator<Item = (&'a str, &'a [u8])>,
-) -> Vec<u8> {
-    let mut output = Vec::new();
-    write_frame(&mut output, format);
-    write_frame(&mut output, domain.as_bytes());
-    for (tag, value) in values {
-        write_frame(&mut output, tag.as_bytes());
-        write_frame(&mut output, value);
-    }
-    output
-}
-
-fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
-    let length = u64::try_from(value.len()).expect("identity field length fits u64");
-    output.extend_from_slice(&length.to_be_bytes());
-    output.extend_from_slice(value);
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ManifestDigest, digest, frames};
+    use super::ManifestDigest;
 
     /// The invariant that retired `valid_manifest_digest` in the claim path: the
     /// newtype admits exactly the `sha256:<64 lowercase hex>` shape the run
@@ -888,61 +435,6 @@ mod tests {
                 ManifestDigest::parse(rejected.clone()).is_err(),
                 "accepted {rejected:?}"
             );
-        }
-    }
-
-    #[test]
-    fn named_removal_and_reordering_mutants_change_every_hash_frame() {
-        for (domain, fields) in [
-            (
-                "artifact",
-                vec![
-                    ("artifact-id", b"id".as_slice()),
-                    ("schema-version", b"schema".as_slice()),
-                    ("graph", b"graph".as_slice()),
-                    ("interface", b"interface".as_slice()),
-                    ("supplied-component", b"component".as_slice()),
-                ],
-            ),
-            (
-                "attachment-definition",
-                vec![
-                    ("attachment-id", b"id".as_slice()),
-                    ("type", b"kind".as_slice()),
-                    ("artifact", b"artifact".as_slice()),
-                    ("definition", b"definition".as_slice()),
-                    ("resolved-source", b"source".as_slice()),
-                ],
-            ),
-        ] {
-            let baseline = digest(&frames(domain, fields.iter().copied()));
-            for (index, (tag, _)) in fields.iter().enumerate() {
-                let removal: Vec<_> = fields
-                    .iter()
-                    .enumerate()
-                    .filter(|(candidate, _)| *candidate != index)
-                    .map(|(_, field)| *field)
-                    .collect();
-                assert_ne!(
-                    baseline,
-                    digest(&frames(domain, removal)),
-                    "named removal mutant {domain}.{tag} survived"
-                );
-
-                let mut reordering = fields.clone();
-                let field = reordering.remove(index);
-                let destination = if index + 1 == fields.len() {
-                    0
-                } else {
-                    index + 1
-                };
-                reordering.insert(destination, field);
-                assert_ne!(
-                    baseline,
-                    digest(&frames(domain, reordering)),
-                    "named reordering mutant {domain}.{tag} survived"
-                );
-            }
         }
     }
 }

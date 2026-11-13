@@ -268,13 +268,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \
              SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment,durability_class) \
-             VALUES ('{ENV_KEY}','{ENVIRONMENT}','standard'); \
+               (env_key,expected_environment) \
+             VALUES ('{ENV_KEY}','{ENVIRONMENT}'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
-                wiring_id,wiring_version,status,input_json) \
-             SELECT '{ENV_KEY}','run-1','f',1,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
-                    '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}' FROM catalog.releases; \
+               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+                wiring_id,wiring_version,status,input_json,trigger_source) \
+             SELECT '{ENV_KEY}','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
+                    '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}','test-case' FROM catalog.releases; \
              INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('{ENV_KEY}','run-1');",
         ))
         .await

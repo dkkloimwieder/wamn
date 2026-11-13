@@ -121,7 +121,7 @@ async fn recover(
         client
             .execute(
                 "INSERT INTO wamn_run.environment_policies \
-                   (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')",
+                   (env_key, expected_environment) VALUES ($1, $2)",
                 &[&env_key, &identity.environment.as_str()],
             )
             .await

@@ -1,7 +1,7 @@
 use super::{
-    Arc, AttachmentType, DEV_STAGE_ORDER, DevStage, DevStageFailure, Duration, GateRefusal,
-    GateResult, PackageCoordinate, ReleaseCarrier, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest,
+    AdmittedComponentOperation, Arc, AttachmentType, DEV_STAGE_ORDER, DevStage, DevStageFailure,
+    Duration, GateRefusal, GateResult, PackageCoordinate, ReleaseCarrier, ServingAttachment,
+    ServingComponent, ServingManifest,
 };
 
 /// Number of stages in one development-loop run.
@@ -241,12 +241,13 @@ impl DevSnapshot {
     /// Exact operation facts derived from the serving manifest.
     pub fn operations(
         &self,
-    ) -> impl Iterator<Item = (&ServingComponent, &str, &ServingComponentOperation)> {
+    ) -> impl Iterator<Item = (&ServingComponent, &str, &AdmittedComponentOperation)> {
         self.release
             .iter()
             .flat_map(|release| release.manifest.components.iter())
             .flat_map(|component| {
                 component
+                    .descriptor
                     .operations
                     .iter()
                     .map(move |(token, facts)| (component, token.as_str(), facts))

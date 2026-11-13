@@ -27,7 +27,7 @@
 --
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one tenant-global FIFO ordered by
--- `(available_at, stream_seq, run_id)`; `priority` remains reserved (default 0).
+-- `(available_at, run_id)`. Runs have no event ordering guarantee.
 -- (Row events are the D19 v3 event plane's — CDC reader → JetStream →
 -- materializer; the outbox table + poller were torn down at l5i9.19.)
 
@@ -53,16 +53,7 @@ CREATE TABLE wamn_run.run_queue (
     updated_by uuid NOT NULL,
     env_key          text NOT NULL CHECK (env_key <> ''),
     run_id           text NOT NULL,
-    priority         int  NOT NULL DEFAULT 0,
     available_at     timestamptz NOT NULL DEFAULT now(),
-    -- D19 §5 / E4: the per-flow monotone stream position that CDC event runs are
-    -- keyed by (run_id = <flow>:evt:<stream_seq>). Carried AHEAD of run_id in the
-    -- claim ordering key so evt runs dispatch by NUMERIC stream position, never
-    -- lexical run-id order (f1:evt:10 must not precede f1:evt:9 — the R6/D20
-    -- corruption class, arriving through a string comparison). 0 for every non-CDC
-    -- enqueue; the materializer carries the real CDC stream position. A uniform 0
-    -- makes this tiebreak inert for other admission paths.
-    stream_seq       bigint NOT NULL DEFAULT 0,
     lease_owner      text,
     lease_expires_at timestamptz,
     -- Queue-owned executor authority (§9.5). Every claim/reclaim increments the
@@ -80,11 +71,11 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
         'created_at', 'created_by', 'updated_at', 'updated_by');
 -- The claim scan: visible rows in dispatch order, filtered on lease liveness.
--- `stream_seq` and `run_id` complete the ordering prefix, so the exact
--- `ORDER BY available_at, stream_seq, run_id` is index-supported;
+-- `run_id` completes the ordering prefix, so the exact
+-- `ORDER BY available_at, run_id` is index-supported;
 -- `lease_expires_at` remains the trailing in-index filter column.
 CREATE INDEX run_queue_claimable ON wamn_run.run_queue
-    (env_key, available_at, stream_seq, run_id, lease_expires_at);
+    (env_key, available_at, run_id, lease_expires_at);
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
 CREATE POLICY run_queue_env_key ON wamn_run.run_queue

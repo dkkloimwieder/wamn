@@ -46,10 +46,6 @@ fn success(url: &str, script: &str) -> String {
     String::from_utf8(output.stdout).expect("psql stdout is utf-8")
 }
 
-fn app_preamble(app_login: &str) -> String {
-    format!("BEGIN; SET LOCAL ROLE {app_login}; SET LOCAL search_path TO wamn_run;")
-}
-
 /// The generation login the fenced transitions actually run as.
 ///
 /// The runtime checks executor membership before these statements run.
@@ -291,12 +287,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.environment_policies \
-           (env_key,expected_environment,durability_class) \
-         VALUES ('t1','prod','standard'); \
+           (env_key,expected_environment) \
+         VALUES ('t1','prod'); \
          INSERT INTO wamn_run.runs \
-           (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+           (env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment, \
             wiring_id, wiring_version, attachment_id, status) \
-         VALUES ('t1', 'release-1', 'f', 1, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
+         VALUES ('t1', 'release-1', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
            'fixture-wiring', 1, 'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
            (env_key, run_id, lease_owner, lease_expires_at, lease_generation) \
@@ -363,20 +359,20 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
-           ('t1','terminal-cron','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+           ('t1','terminal-cron','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'cron-a','running','cron'), \
-           ('t1','terminal-event','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+           ('t1','terminal-event','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'event-a','running','event'), \
-           ('t1','terminal-http-open','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+           ('t1','terminal-http-open','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source, \
             caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
-           ('t1','terminal-http-released','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+           ('t1','terminal-http-released','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
@@ -451,9 +447,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','race-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+         VALUES ('t1','race-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
            (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
@@ -497,9 +493,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','fault-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+         VALUES ('t1','fault-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
            (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
@@ -579,17 +575,17 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
-            wiring_id,wiring_version,status,durability_class) VALUES \
-           ('t1','record-claim','f',1,'cat', \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+            wiring_id,wiring_version,status) VALUES \
+           ('t1','record-claim','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'dispatched','standard'), \
-           ('t1','record-foreign','f',1,'cat', \
+            'fixture-wiring',1,'dispatched'), \
+           ('t1','record-foreign','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'dispatched','standard'), \
-           ('t1','record-standard-effect','f',1,'cat', \
+            'fixture-wiring',1,'dispatched'), \
+           ('t1','record-standard-effect','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-            'fixture-wiring',1,'running','standard'); \
+            'fixture-wiring',1,'running'); \
          INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES \
            ('t1','record-claim'),('t1','record-foreign');",
     );
@@ -650,71 +646,6 @@ fn run_state_live() {
          END $$;",
     );
 
-    // The class is defended TWICE, and the two guards are independent.
-    //
-    // First, by the column grant: `wamn_app` holds neither INSERT nor UPDATE on
-    // `durability_class`, so the guest role cannot write the class.
-    // The grant refuses the write before any trigger runs.
-    let class_grant_script = format!(
-        "{} \
-         DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE runs SET durability_class = 'standard' \
-              WHERE run_id = 'record-standard-effect'; \
-             ASSERT false, 'the app role holds write authority over the class'; \
-           EXCEPTION WHEN insufficient_privilege THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'permission denied for table runs', refusal; \
-           END; \
-         END $$; COMMIT;",
-        app_preamble(&app_login)
-    );
-    success(&url, &class_grant_script);
-
-    // Second, by the column-scoped trigger, which is what defends the class
-    // against a role the grant does not stop. RIDER 1 of wamn-0h0g.20.1: a
-    // column the trigger does not NAME never fires its transition arm, so this
-    // leg is the only thing that can tell a named column from an unnamed one.
-    success(
-        &url,
-        "DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE wamn_run.runs SET durability_class = NULL \
-              WHERE run_id = 'record-standard-effect'; \
-             ASSERT false, 'an admitted run changed its durability class'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-admission-pin-immutable', refusal; \
-           END; \
-           ASSERT (SELECT durability_class FROM wamn_run.runs \
-                    WHERE run_id='record-standard-effect') = 'standard', \
-                  'the refused class change leaked through'; \
-         END $$;",
-    );
-
-    // The ruled literal set against the INSTALLED DDL: the converged standard
-    // policy selected standard, and no other class is storable.
-    // The pin trigger normally overwrites every supplied class; the
-    // superuser-only replica session disables it for this one transaction so
-    // this remains a narrow test of the independent stored-row CHECK.
-    success(
-        &url,
-        "BEGIN; SET LOCAL session_replication_role = replica; DO $$ BEGIN \
-           ASSERT (SELECT durability_class FROM wamn_run.runs \
-                    WHERE run_id='record-claim') = 'standard', \
-                  'the policy did not select standard'; \
-           BEGIN \
-             INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
-                environment,wiring_id,wiring_version,status,durability_class) \
-             VALUES ('t1','record-unruled-class','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
-               'fixture-wiring',1,'running','premium'); \
-             ASSERT false, 'the class CHECK admitted an unruled literal'; \
-           EXCEPTION WHEN check_violation THEN NULL; \
-           END; \
-         END $$; ROLLBACK;",
-    );
-
     // ---- RECLAIM AND REAP, DRIVEN UNDER THE CREDENTIAL (wamn-0h0g.22.42) ----
     //
     // `wamn-0h0g.22.31` closed with `renew_production_lease_sql`, the reclaim
@@ -750,16 +681,16 @@ fn run_state_live() {
          INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
          VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
          INSERT INTO wamn_run.environment_policies \
-           (env_key,expected_environment,durability_class) \
-         VALUES ('t2','prod','standard'); \
+           (env_key,expected_environment) \
+         VALUES ('t2','prod'); \
          INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
-           ('t1','renew-live','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
+           ('t1','renew-live','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
             'running','{}'), \
-           ('t1','renew-expired','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-dead', \
+           ('t1','renew-expired','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-dead', \
             'running','{}'), \
-           ('t2','renew-other-tenant','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
+           ('t2','renew-other-tenant','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
             'running','{}'); \
          INSERT INTO wamn_run.run_queue \
            (env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
@@ -834,15 +765,15 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
             manifest_digest) VALUES \
-           ('t1','reclaim-dead','f',1,'cat','prod','fixture-wiring',1,'http-reclaim', \
+           ('t1','reclaim-dead','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-reclaim', \
             'running','{\"input\":7}','{\"cursor\":9}', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-           ('t1','reclaim-fresh','f',1,'cat','prod','fixture-wiring',1,'http-reclaim-new', \
+           ('t1','reclaim-fresh','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1,'http-reclaim-new', \
             'dispatched','{}',NULL,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-           ('t2','reclaim-other-tenant','f',1,'cat','prod','fixture-wiring',1, \
+           ('t2','reclaim-other-tenant','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','prod','fixture-wiring',1, \
             'http-reclaim-t2','running','{}','{\"cursor\":9}', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
          INSERT INTO wamn_run.run_queue \
@@ -949,14 +880,14 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
-           ('t1','reap-exhausted','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
+           ('t1','reap-exhausted','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
             'running','http','{}'); \
          INSERT INTO wamn_run.run_queue \
-           (env_key,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+           (env_key,run_id,available_at,lease_owner,lease_expires_at, \
             lease_generation,attempts,max_attempts) \
-         VALUES ('t1','reap-exhausted','2000-01-01',900,'dead-worker','2000-01-01',5,3,3);",
+         VALUES ('t1','reap-exhausted','2000-01-01','dead-worker','2000-01-01',5,3,3);",
     );
     let select_exhausted = select_exhausted_production_sql();
     let terminalize_exhausted = terminalize_exhausted_production_sql();
@@ -1049,9 +980,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','clock-skew','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+         VALUES ('t1','clock-skew','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-skew','running');",
     );
     let clock_skew_script = format!(
@@ -1087,9 +1018,9 @@ fn run_state_live() {
         "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
+               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest, \
                 environment,wiring_id,wiring_version,status) \
-             VALUES ('t1','record-invalid-digest','f',1,'cat','sha256:not-a-digest', \
+             VALUES ('t1','record-invalid-digest','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:not-a-digest', \
                'prod','fixture-wiring',1,'running'); \
              ASSERT false, 'runs_release_record_check admitted a malformed digest'; \
            EXCEPTION WHEN check_violation THEN \

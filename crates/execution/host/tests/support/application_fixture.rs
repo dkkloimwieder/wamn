@@ -215,11 +215,11 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test",
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
             "operations": {
-                READ: {"registered-operation": READ, "permissions": [READ]},
-                WRITE: {"registered-operation": WRITE, "permissions": [WRITE, READ]}
-            }}],
+                READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []},
+                WRITE: {"registered-operation": WRITE, "input-ports": [], "output-ports": [], "parameters": []}
+            }}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}

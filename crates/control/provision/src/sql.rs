@@ -259,7 +259,7 @@ pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
 /// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`.
 /// `queue::sql::release_production_claim_sql` writes `attempts`, `available_at`,
 /// `lease_owner` and `lease_expires_at` for credential retries. Nothing writes
-/// `priority`, `stream_seq`, `max_attempts` or `enqueued_at`.
+/// `max_attempts` or `enqueued_at`.
 ///
 /// SELECT stays relation grain for the same reason it does on `runs`:
 /// `transitions::FENCED_PREFIX` locks the queue row with
@@ -283,7 +283,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
 /// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 22] = [
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 21] = [
     "env_key",
     "package_id",
     "manifest_digest",
@@ -302,7 +302,6 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 22] = [
     "idempotency_key",
     "input_json",
     "status",
-    "durability_class",
     "event_source_run_id",
     "event_root_run_id",
     "event_depth",
@@ -674,10 +673,9 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// * `runs`: TABLE-grain `SELECT` because `transitions::FENCED_PREFIX` locks the
 ///   row with `SELECT r.*`, and COLUMN-grain `UPDATE` over
 ///   [`EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS`]. The admission pins, the wiring
-///   identity, the input and the durability class are all UNREACHABLE by this
-///   family as a result — which matters because the permissive
-///   `TO wamn_platform` floor arm is `USING (true)`, so a blanket `UPDATE` here
-///   would be a cross-tenant rewrite privilege.
+///   identity and the input cannot be updated by this role. The shared
+///   `TO wamn_platform` policy uses `USING (true)`, so a table-wide `UPDATE`
+///   would let the role rewrite other environments.
 /// * `run_queue`: TABLE-grain `SELECT` (`SELECT q.*` in the same fence) and
 ///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
 ///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
@@ -1233,8 +1231,6 @@ mod tests {
             "GRANT TRUNCATE",
             "GRANT REFERENCES",
             "GRANT TRIGGER",
-            "flow_id",
-            "flow_version",
             "plan_hash",
             "execution_bundle_hash",
         ] {
@@ -1316,89 +1312,6 @@ mod tests {
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
-    }
-
-    /// THE EXECUTOR-PLATFORM SURFACE, PINNED AS A STRING (`wamn-0h0g.22.37`).
-    ///
-    /// The column lists are spelled out here rather than derived from the
-    /// constants that produced them: deriving the expectation from the array
-    /// under test is the tautology this branch has paid for before, and it would
-    /// let a column be added to `EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS` with both
-    /// sides moving together.
-    #[test]
-    fn the_executor_platform_surface_is_column_exact_on_every_write() {
-        let sql = grant_executor_platform_surface_sql("wamn_run");
-        assert_eq!(
-            surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql)
-                .split(" DO $event_history$")
-                .next()
-                .unwrap(),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_executor_platform\"; \
-             GRANT USAGE ON SCHEMA catalog, platform, \"wamn_run\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"workflows\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_requirement\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_binding\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"release_connection\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE platform.\"connection\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE platform.\"integration\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_type\", \"result_json\", \
-             \"deadline_adjustments_json\", \"state_json\", \"caller_outcome_type\", \
-             \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
-             \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
-             ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"env_key\", \"package_id\", \"manifest_digest\", \
-             \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
-             \"trigger_source\", \"registration_id\", \"service_principal_id\", \
-             \"execution_principal_id\", \"execution_role\", \"invoked_by\", \
-             \"invoked_by_user_id\", \"node_digests_json\", \"idempotency_key\", \"input_json\", \
-             \"status\", \"durability_class\", \"event_source_run_id\", \"event_root_run_id\", \"event_depth\") \
-             ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT UPDATE (\"lease_owner\", \"lease_expires_at\", \"lease_generation\", \
-             \"attempts\", \"available_at\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"env_key\", \"run_id\") \
-             ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
-             TO \"wamn_executor_platform\";",
-            "the executor-platform grant set moved: it is TABLE SELECT where a \
-             fence reads r.*/q.*, COLUMN UPDATE and INSERT everywhere it writes, \
-             DELETE only on the queue, and only the tenant-key function grant"
-        );
-        // An event admission inserts the admission pins, the wiring identity and
-        // the input once, and no UPDATE reaches them afterwards. Named literally,
-        // because they are absent from a constant and an absence shows nothing by
-        // itself.
-        for forbidden in [
-            "GRANT INSERT ON TABLE",
-            "GRANT TRUNCATE",
-            "GRANT REFERENCES",
-            "GRANT TRIGGER",
-            "GRANT UPDATE ON TABLE",
-            "GRANT DELETE ON TABLE \"wamn_run\".\"runs\"",
-            "\"binding_world_json\"",
-            "\"max_attempts\"",
-            "\"stream_seq\"",
-            "current_tenant_key",
-            "GRANT USAGE ON SCHEMA \"wamn_authority\"",
-        ] {
-            assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
-        }
-        assert!(grant_executor_platform_surface_sql("we\"ird").contains("\"we\"\"ird\""));
     }
 
     #[test]

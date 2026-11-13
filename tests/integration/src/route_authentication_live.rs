@@ -21,7 +21,7 @@ use wamn_platform_identity::{
 };
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication,
+    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
@@ -33,6 +33,8 @@ use wamn_dev_control::dev::environment::{
     reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
+
+use crate::session_fixture;
 
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
@@ -271,19 +273,19 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
         },
         "components": [{
             "package-id": FIXTURE_PACKAGE_ID,
-            "descriptor": {"component": FIXTURE_COMPONENT, "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": {"component": FIXTURE_COMPONENT, "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
             "operations": {
-                (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]},
+                (OPERATION): {"registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []},
                 (EXTRA_OPERATION): {
                     "registered-operation": EXTRA_OPERATION,
-                    "permissions": [EXTRA_OPERATION]
+                    "input-ports": [], "output-ports": [], "parameters": []
                 }
-            }
+            }}
         }],
         "routes": [{"package-id":FIXTURE_PACKAGE_ID,"component":FIXTURE_COMPONENT,"operation":OPERATION,"type":"get"}],
         "attachments": {(ATTACHMENT_ID): {
             "type":"http","package-id":FIXTURE_PACKAGE_ID,"component":FIXTURE_COMPONENT,"operation":OPERATION,
-            "definition-hash":definition_hash,"definition":definition,"auth-policy":{"modes":["pat"]},
+            "definition-hash":definition_hash,"definition":definition,"auth-policy":{"modes":["pat","session"]},
             "registered-operation":OPERATION
         }}
 
@@ -419,13 +421,68 @@ fn flip_last_hex_digit(token: &str) -> String {
     format!("{head}{replacement}")
 }
 
+async fn password_session(
+    admin_url: &str,
+    principal: &wamn_platform_identity::PrincipalId,
+    email: &str,
+    audience: &str,
+    roles: &[&str],
+) -> anyhow::Result<String> {
+    use wamn_platform_identity::{password, password_login};
+    let (mut client, connection) =
+        tokio_postgres::connect(admin_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    let actor = wamn_project_state::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string()
+        .parse()?;
+    let invitation = password::issue_invitation(&mut client, &actor, principal).await?;
+    let work = password::password_work();
+    let secret = || password::Password::new("a private membership test password".into());
+    password::enroll_password(
+        &mut client,
+        &work,
+        principal,
+        invitation.secret(),
+        secret()?,
+    )
+    .await?;
+    let tx = client.transaction().await?;
+    assert!(password_login::lock_principal(&tx, principal).await?);
+    let authenticated = password::authenticate_password(&tx, &work, email, secret()?)
+        .await?
+        .context("password login refused")?;
+    let renewal = password_login::create_login(
+        &tx,
+        authenticated.principal().id(),
+        session_fixture::ISSUER,
+        audience,
+    )
+    .await?
+    .context("active password principal")?;
+    let login = renewal.login.id;
+    tx.commit().await?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    Ok(session_fixture::signed(
+        &session_fixture::header(),
+        &serde_json::json!({
+            "iss": session_fixture::ISSUER, "sub": principal.as_str(), "org": ORG,
+            "aud": audience, "roles": roles, "iat": now, "exp": now + 900,
+            "authority": {"login": login}, "jti": uuid::Uuid::new_v4().to_string(),
+        }),
+    ))
+}
+
 async fn assert_user_environment_membership(
     admin: &Client,
     admin_url: &str,
     identity_url: &str,
     project: &Client,
-    route_auth: &FlowHttpRouting,
-    loaded_release: &LoadedRelease,
+    identity_reader: Arc<Client>,
+    postgres: Arc<WamnPostgres>,
+    loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<()> {
     let user = create_user(
         admin,
@@ -441,14 +498,42 @@ async fn assert_user_environment_membership(
         "Other member",
     )
     .await?;
-    let token = issue_pat(
-        admin,
-        user.id(),
-        "membership test",
-        Duration::from_secs(3600),
+    let server = session_fixture::Server::start().await;
+    let suffix: String = admin.query_one(
+        "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        &[&ORG, &PROJECT, &ENVIRONMENT],
+    ).await?.get(0);
+    let audience = wamn_control_provision::session_target::session_audience(
+        &wamn_control_registry::Triple {
+            org: ORG.into(),
+            project: PROJECT.into(),
+            env: ENVIRONMENT.into(),
+        },
+        &suffix,
+    )?;
+    let verifier = wamn_session::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
+    let session_routing = FlowHttpRouting::new(
+        Some(Arc::clone(&loaded_release)),
+        RouteInFlightLimit::default(),
     )
-    .await?;
-    let authorization = format!("Bearer {}", token.token());
+    .with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
+        )),
+    ));
+    let route_auth = &session_routing;
+    let loaded_release = loaded_release.as_ref();
+    let authorization = format!(
+        "Bearer {}",
+        password_session(
+            admin_url,
+            user.id(),
+            "member@example.test",
+            &audience,
+            &["user-reader", "user-extra"],
+        )
+        .await?
+    );
     let membership = |org: &str, env: &str, principal_id: &str| MembershipRequest {
         org: org.to_owned(),
         project: PROJECT.to_owned(),
@@ -635,7 +720,7 @@ async fn assert_user_environment_membership(
     let caller = route_auth
         .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&authorization))
         .await
-        .expect("authenticate user PAT")
+        .expect("authenticate password session")
         .expect("authenticated caller");
     assert_eq!(caller.principal_id(), user.id().as_str());
     assert!(caller.permits(OPERATION));
@@ -648,62 +733,14 @@ async fn assert_user_environment_membership(
         "another tenant's role leaked"
     );
 
-    let expired = issue_pat(
-        admin,
-        user.id(),
-        "expired member",
-        Duration::from_secs(3600),
-    )
-    .await?;
-    admin
-        .execute(
-            "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
-         WHERE token_prefix = $1",
-            &[&expired.record().prefix()],
-        )
-        .await?;
-    let revoked = issue_pat(
-        admin,
-        user.id(),
-        "revoked member",
-        Duration::from_secs(3600),
-    )
-    .await?;
-    let revoked_authorization = format!("Bearer {}", revoked.token());
-    assert!(
-        route_auth
-            .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&revoked_authorization))
-            .await
-            .expect("authenticate user before PAT revocation")
-            .is_some()
-    );
-    revoke_pat(admin, revoked.record().prefix(), &mut AuthDrops::default()).await?;
-    for (label, invalid) in [
-        ("forged user PAT", flip_last_hex_digit(token.token())),
-        ("expired user PAT", expired.token().to_owned()),
-        ("revoked user PAT", revoked.token().to_owned()),
-    ] {
-        assert_eq!(
-            invoke(
-                route_auth,
-                loaded_release,
-                Some(&format!("Bearer {invalid}")),
-                &mut admissions
-            )
-            .await,
-            Err(unauthorized.clone()),
-            "{label} passed with valid environment membership"
-        );
-    }
-
     fixture_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
     let other_token =
-        issue_pat(admin, other.id(), "other member", Duration::from_secs(3600)).await?;
+        password_session(admin_url, other.id(), "other@example.test", &audience, &[]).await?;
     assert_eq!(
         invoke(
             route_auth,
             loaded_release,
-            Some(&format!("Bearer {}", other_token.token())),
+            Some(&format!("Bearer {other_token}")),
             &mut admissions
         )
         .await,
@@ -722,7 +759,7 @@ async fn assert_user_environment_membership(
             &mut admissions
         )
         .await,
-        Err(Refusal::Permission(OPERATION.into())),
+        Err(unauthorized.clone()),
         "role removal must affect the next request"
     );
     project.execute(
@@ -743,7 +780,7 @@ async fn assert_user_environment_membership(
             &mut admissions
         )
         .await,
-        Err(Refusal::Permission(OPERATION.into()))
+        Err(unauthorized.clone())
     );
     project
         .execute(
@@ -953,8 +990,9 @@ async fn production_operator_authentication(root: &Path) {
         &admin_url,
         &identity_url,
         &project,
-        &route_auth,
-        &loaded_release,
+        Arc::clone(&identity_reader),
+        Arc::clone(&postgres),
+        Arc::clone(&loaded_release),
     )
     .await
     .expect("test user environment membership through the production CLI and route authentication");

@@ -1670,8 +1670,9 @@ mod tests {
             "release": {"packages": [{"package-id": "fixture", "package-version": "1.0.0"}]},
             "components": [{"package-id": "fixture", "descriptor": {
                 "component": "entry", "interface-version": "0.1", "component-digest": digest,
-                "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []
-            }, "operations": {"fixture:item/get@1.0.0": {}}}],
+                "operations": {"fixture:item/get@1.0.0": {"input-ports": [], "output-ports": [], "parameters": []}},
+                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []
+            }}],
             "routes": [], "attachments": {},
             "composed-entry": {
                 "reference": format!("file:{}", wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap().display()),

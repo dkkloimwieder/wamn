@@ -422,7 +422,8 @@ The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` own
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases. Replicas need no wake service or process-local handoff.
-The only durability class is `standard`. Claims and exhausted-run reaping ignore effect-attempt records.
+Claims and exhausted-run reaping ignore effect-attempt records.
+Workflow runs have no event ordering guarantee.
 
 The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
@@ -676,7 +677,7 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials retain their declared scope and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
-For each new request, the host checks the principal, environment membership, and password login or source PAT.
+For each new request, the host checks the principal, environment membership, and password login.
 It intersects signed roles with the held roles and their permissions for the active tenant user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
@@ -725,9 +726,9 @@ Identity offers and mints no audience of an environment whose `registry.project_
 
 Session tokens use Ed25519 with `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
-`authority` is exactly one object: `{"login":"<login UUID>"}` or `{"pat":"<source PAT UUID>"}`.
+`authority` is the object `{"login":"<login UUID>"}`.
 The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
-The password issuer binds the existing login record. PAT exchange binds the authenticated source PAT.
+The password issuer binds the existing login record.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
 Unknown roles grant no implicit authority, and an empty permission set returns 403.
@@ -751,7 +752,6 @@ Authentication deadlines bound new admission and do not cancel work already acce
 
 The [session token owner](../../crates/identity/session/src/token.rs) defines the token and time rules.
 The [session verifier](../../crates/identity/session/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
-PAT exchange keeps no login record or renewal credential.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
@@ -905,7 +905,7 @@ An `env delete` deletes every key of the environment.
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
 Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org, also when the request names a project, so an application shell offers it beside the environments.
-A control session comes from a password login only, because the PAT exchange refuses a control audience.
+A control session comes from a password login.
 It carries no roles.
 For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.
 A revoked role therefore refuses the next request and the next renewal with 401.
@@ -1041,7 +1041,7 @@ An email that the identity rules refuse answers 400 with the reason, and a disab
 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
-It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
+It reads membership, environment status, the active user and roles before it signs the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
 

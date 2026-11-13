@@ -273,12 +273,12 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    seed_run_admission_facts(su, "t1", "capture", "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "capture", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
             status) \
-         VALUES ('t1','capture-off','f',1,'capture','dev', \
+         VALUES ('t1','capture-off','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                  'completed');"
     ))
     .await
@@ -306,9 +306,9 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,flow_id,flow_version,package_id,environment, \
+                   (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                     status,trigger_source,capture_mode) \
-                 VALUES ('t1','published-full','f',1,'capture','dev', \
+                 VALUES ('t1','published-full','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                          'completed','http','full')"
             ),
             &[],
@@ -319,9 +319,9 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,environment, \
+               (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                 status,trigger_source,capture_mode) \
-             VALUES ('t1','draft-full','f',1,'capture','dev', \
+             VALUES ('t1','draft-full','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                      'completed','scenario-draft','full')"
         ),
         &[],
@@ -329,25 +329,40 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     .await
     .expect("canonical direct draft may carry full");
 
-    // wamn-0h0g.22.7 (b1d42599) replaced the capture-mode COLUMN confinement
-    // with a whole-relation one: `wamn_app` holds table SELECT and DELETE on
-    // `runs` and no write of any shape. The admission that used to show the
-    // `off` default moved to the private management path, so what this leg
-    // still shows live is the confinement the reconciler restores.
-    // A MINTED GENERATION LOGIN, not the bare `wamn_app` ACL role: the read
-    // below is governed by the tenant floor, under which the ACL role derives a
-    // NULL key and matches nothing in silence (`wamn-0h0g.22.36`). The three
-    // refusals are grant-level and hold either way; the generation inherits
-    // exactly the ACL role's grants, so it is the same authority under test.
+    // Reconcile an out-of-band write grant before observing the application role.
+    su.batch_execute(&format!(
+        "GRANT INSERT, UPDATE, REFERENCES ON {SCHEMA}.runs TO wamn_app"
+    ))
+    .await
+    .expect("widen the application role for repair");
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("repair application write authority");
+    let writable: bool = su
+        .query_one(
+            "SELECT EXISTS (SELECT FROM pg_catalog.pg_attribute a \
+              WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped \
+                AND (has_column_privilege('wamn_app', a.attrelid, a.attnum, 'INSERT') \
+                  OR has_column_privilege('wamn_app', a.attrelid, a.attnum, 'UPDATE') \
+                  OR has_column_privilege('wamn_app', a.attrelid, a.attnum, 'REFERENCES')))",
+            &[&format!("{SCHEMA}.runs")],
+        )
+        .await
+        .expect("observe every surviving column privilege")
+        .get(0);
+    assert!(
+        !writable,
+        "reconciliation retained application write authority"
+    );
     let (app_generation, app) = mint_guest_generation(su, url, "t1").await;
     for (label, refused) in [
         (
             "admission",
             format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,flow_id,flow_version,package_id,environment, \
+                   (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                     status,trigger_source) \
-                 VALUES ('t1','app-forged','f',1,'capture','dev','dispatched','test')"
+                 VALUES ('t1','app-forged','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev','dispatched','test')"
             ),
         ),
         (

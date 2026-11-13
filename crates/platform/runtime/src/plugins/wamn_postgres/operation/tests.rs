@@ -6,10 +6,10 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::oneshot;
 use wamn_catalog::{
-    AttachmentTarget, AttachmentType, ComponentDescriptor, ComponentSqlField,
-    ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, OperationType, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRelease, ServingRoute,
+    AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
+    ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, OperationType,
+    PackageCoordinate, ServingAttachment, ServingComponent, ServingManifest, ServingRelease,
+    ServingRoute,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -59,23 +59,21 @@ ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0
 BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".into(),
-            descriptor: ComponentDescriptor::named("entry", "0.1", digest('a')),
-            statement_instances: BTreeMap::new(),
-            operations: BTreeMap::from([(READ_OPERATION.into(), ServingComponentOperation {
+            descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation { host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
-                permissions: BTreeSet::from([READ_OPERATION.into()]),
                 committed_result_schema: None,
                 statements: BTreeMap::from([("read.sql".into(), ComponentSqlStatement {
                     name: "read".into(), path: "read.sql".into(),
                     sql: "SELECT value FROM widget WHERE id = 1".into(),
                     transactional: false, ..statement.clone()
                 })]),
-            }), (OPERATION.into(), ServingComponentOperation {
+            }), (OPERATION.into(), AdmittedComponentOperation { host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.into()),
-                permissions: BTreeSet::from([OPERATION.into()]),
                 committed_result_schema: None,
                 statements: BTreeMap::from([("update.sql".into(), statement)]),
-            })]),
+            })]); descriptor },
+            statement_instances: BTreeMap::new(),
+
         }]),
 BTreeSet::from([ServingRoute {
             package_id: "base".into(), component: "entry".into(),

@@ -13,53 +13,19 @@ use crate::RunStatus;
 /// The `available_at` of a parked queue row.
 const PARKED_AT: &str = "'infinity'::timestamptz";
 
-/// Admit one automation run. `ON CONFLICT DO NOTHING` on the idempotency key
-/// returns no row for a repeated key, and the caller then reads the first run
-/// with [`select_automation_run_sql`].
-///
-/// Binds: `$1` `env_key`, `$2` package, `$3` release manifest digest, `$4` environment,
-/// `$5` wiring id, `$6` wiring version, `$7` wiring hash, `$8` service
-/// principal, `$9` idempotency key, `$10` input JSON text, `$11` durability
-/// class.
-pub fn insert_automation_run_sql() -> String {
-    format!(
-        "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, service_principal_id, \
-             idempotency_key, input_json, status, durability_class) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'automation', $8::text::uuid, $9, \
-                 $10::text::jsonb, '{dispatched}', $11) \
-         ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
-         RETURNING run_id",
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
-/// The run a repeated automation start admitted first. It returns no row when
-/// the key belongs to a different request.
-///
-/// Binds are those of [`insert_automation_run_sql`] without the durability
-/// class.
-pub fn select_automation_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE env_key = $1 AND package_id = $2 \
-        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
-        AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'automation' \
-        AND service_principal_id = $8::text::uuid AND idempotency_key = $9 \
-        AND input_json = $10::text::jsonb"
-}
-
 /// Admit one event workflow with its executor, actor, frozen nodes and delivery id.
 /// Binds: `env_key`, application, release, environment, workflow, version, hash,
-/// principal, role, delivery, actor, node digests, key, input, durability,
+/// principal, role, delivery, actor, node digests, key, input,
 /// source run, root run, depth.
 pub fn insert_event_run_sql() -> String {
     format!(
         "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
-             node_digests_json, idempotency_key, input_json, status, durability_class, \
+             node_digests_json, idempotency_key, input_json, status, \
              event_source_run_id, event_root_run_id, event_depth) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8::text::uuid, $9, $10, \
-                 $11::text::uuid, $12::text::jsonb, $13, $14::text::jsonb, '{dispatched}', $15, $16, $17, $18) \
+                 $11::text::uuid, $12::text::jsonb, $13, $14::text::jsonb, '{dispatched}', $15, $16, $17) \
          ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
@@ -83,15 +49,15 @@ pub fn select_event_run_sql() -> &'static str {
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
 /// wiring hash, `$8` executing principal, `$9` execution role, `$10` the
 /// invoking user, `$11` node digests JSON text, `$12` idempotency key, `$13`
-/// input JSON text, `$14` durability class.
+/// input JSON text.
 pub fn insert_manual_run_sql() -> String {
     format!(
         "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
-             node_digests_json, idempotency_key, input_json, status, durability_class) \
+             node_digests_json, idempotency_key, input_json, status) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8::text::uuid, $9, 'manual', \
-                 $10::text::uuid, $11::text::jsonb, $12, $13::text::jsonb, '{dispatched}', $14) \
+                 $10::text::uuid, $11::text::jsonb, $12, $13::text::jsonb, '{dispatched}') \
          ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
@@ -119,16 +85,15 @@ pub fn select_manual_run_sql() -> &'static str {
 /// Binds: `$1` `env_key`, `$2` application package, `$3` release manifest
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
 /// wiring hash, `$8` executing principal, `$9` execution role, `$10` node
-/// digests JSON text, `$11` idempotency key, `$12` input JSON text, `$13`
-/// durability class.
+/// digests JSON text, `$11` idempotency key, `$12` input JSON text.
 pub fn insert_workflow_schedule_run_sql() -> String {
     format!(
         "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, \
-             node_digests_json, idempotency_key, input_json, status, durability_class) \
+             node_digests_json, idempotency_key, input_json, status) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8::text::uuid, $9, 'schedule', \
-                 $10::text::jsonb, $11, $12::text::jsonb, '{dispatched}', $13) \
+                 $10::text::jsonb, $11, $12::text::jsonb, '{dispatched}') \
          ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
