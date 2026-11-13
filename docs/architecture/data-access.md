@@ -2,7 +2,7 @@
 
 Migration SQL defines an application's schema.
 `wamn-schema-introspection` reads PostgreSQL into a normalized schema description.
-`wamn-schema-generator` combines that description with exact manifest and SQL bytes to produce package artifacts.
+`wamn-compiler` owns authored declarations and their checks. It combines them with the schema description and SQL bytes to produce package artifacts. Catalog holds compiled release facts and does not depend on the compiler.
 The schema description is derived output, not an editable schema language.
 The generator's core transformation performs no filesystem, database, clock, or environment access.
 
@@ -200,7 +200,7 @@ A declaration template authors no `target.package-version`.
 A reference to an operation of the package takes `package.version`, and a reference to an operation of a base takes the `version` of that base in `base_dependencies`.
 A platform interface, such as `wamn:node/handler@0.1.0`, is not a package operation and keeps its WIT version.
 
-Every reader of an authored file resolves its references with `wamn_schema_generator::operation_reference` before it uses the file.
+Every reader of an authored file resolves its references with `wamn_compiler::operation_reference` before it uses the file.
 The readers are the generator, publication, the declaration render, the author-wiring verb, the dev coordinator and the composer.
 An authored id that carries a version, or a template that authors `target.package-version`, refuses.
 A web page keys `onOpen` and `onFill` by the reference, so one page shows one version of each package.
@@ -994,7 +994,7 @@ Reads by `file_id` require no current binding and use the recorded connection ge
 Removing a binding preserves these reads and application references to the file.
 Disabling the connection stops reads. The registry requires an active connection and project enablement.
 
-A package marks a UUID result field with `signed_reads` in its public operation declaration.
+A package marks a UUID result field with `result.signed_reads` in its public KCL operation declaration. Each entry may set `lifetime_seconds`; omission selects 900 seconds. The compiler refuses zero and values above 900.
 The host replaces that file ID with a signed URL after the operation returns. The guest uses the existing WIT contract.
 The roles that hold the operation can read the private file through that result.
 The optional `lifetime_seconds` accepts 1 through 900 and defaults to 900. Signed URLs last at most 15 minutes.

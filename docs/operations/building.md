@@ -384,6 +384,8 @@ The compile runs the KCL CLI that [`tools/install-kcl`](../../tools/install-kcl)
 That script pins the version and digest, and installs the binary under `.tools/kcl/`.
 The generator runs the script itself, so you do not install KCL by hand.
 If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
+The compiler owns the authored model in `crates/schema/generator/src/manifest.rs`. It checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
+
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
 
 - Plain English names in the schema module; use `type` for variant names; no plurals that the manifest does not already use.
@@ -445,13 +447,13 @@ They also include `apps/platform/data`, `crates/platform/digest`, `crates/platfo
 The build derives shared WIT inputs from `wit_bindgen::generate!` paths across the guest workspace, including their dependencies.
 It excludes generated WIT under `target` or `generated` because build records track those outputs.
 A change in a shared WIT input or platform tree makes every package stale.
-The input digest also covers the generator source, KCL templates, embedded SQL, Cargo manifest, and build script through `wamn_schema_generator::build_record::GENERATOR_FINGERPRINT`.
+The input digest also covers the generator source, KCL templates, embedded SQL, Cargo manifest, and build script through `wamn_compiler::build_record::GENERATOR_FINGERPRINT`.
 Both input digests cover these generator inputs, shared WIT, platform trees, and the lock file.
 A change to these inputs requires generation and compilation again without a version bump.
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
-Package readers of `apps/target/wamn` call `wamn_schema_generator::build_record::read_current` first, as `push-package` does.
+Package readers of `apps/target/wamn` call `wamn_compiler::build_record::read_current` first, as `push-package` does.
 If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
 If only the full digest changes, the build reuses generated output and rebuilds the package components.
 Build records the new full digest, so readers accept the rebuilt output.
@@ -541,7 +543,7 @@ The web scripts write the clients before they read them.
 `pnpm -r build`, `pnpm run lint`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
+cargo run --locked --offline -p wamn-compiler --example materialize_host_route_client
 ```
 
 The command writes only a changed file, and it removes a file that the contracts no longer generate.

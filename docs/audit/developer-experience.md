@@ -207,7 +207,7 @@ Problem: Each run resolves packages before it reaches Generate. Package resoluti
 
 Proposal: Give source preparation and artifact consumption separate boundaries. Prepare the candidate from authored inputs, then require a current build record when admission or publication consumes its output.
 
-Deletes: Remove the build record freshness prerequisite from development source resolution and its call to `write_compiled_manifest`.
+Deletes: Remove the build record freshness prerequisite from development source resolution.
 
 Risk: Accepting stale output at publication remains unacceptable. The saved-edit acceptance test must pass while publication still refuses an outdated build record.
 

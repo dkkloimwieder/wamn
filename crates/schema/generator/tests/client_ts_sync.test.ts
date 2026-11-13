@@ -1,4 +1,4 @@
-// Run after `cargo run -p wamn-schema-generator --example emit_client_ts` and `pnpm install`.
+// Run after `cargo run -p wamn-compiler --example emit_client_ts` and `pnpm install`.
 // From web/sync-bench: pnpm exec vitest run --config ../../crates/schema/generator/tests/client_ts_sync.config.mjs
 import "fake-indexeddb/auto";
 import { expect, it, vi } from "vitest";

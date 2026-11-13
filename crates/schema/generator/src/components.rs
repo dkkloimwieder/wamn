@@ -32,8 +32,8 @@ use tokio::process::Command;
 use crate::authoring::COMPILED_MANIFEST_NAME;
 use crate::build::{BuildRequest, package_output};
 use crate::build_record::{self, BUILD_RECORD_FILE, BuildComponent, BuildRecord};
-use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::PackageManifest;
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_digest::bytes_sha256;
 
 /// Where the components lie in a package's build output.
@@ -653,7 +653,7 @@ mod tests {
 
     fn scratch(name: &str) -> Scratch {
         let root = std::env::temp_dir().join(format!(
-            "wamn-schema-generator-components-{}-{name}",
+            "wamn-compiler-components-{}-{name}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);

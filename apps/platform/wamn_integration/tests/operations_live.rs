@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 use std::path::Path;
 use tokio_postgres::NoTls;
-use wamn_schema_generator::{
+use wamn_compiler::{
     DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
     render_effective_data_access_sql,
 };
@@ -28,9 +28,9 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
         &[],
     )?;
     client.batch_execute(std::str::from_utf8(&bytes)?).await?;
-    wamn_schema_generator::build_record::require_current(&package)?;
+    wamn_compiler::build_record::require_current(&package)?;
     let overlay = DataAccessOverlay::from_slice(&std::fs::read(
-        wamn_schema_generator::output_root(&package).join("platform-policy/data-access.json"),
+        wamn_compiler::output_root(&package).join("platform-policy/data-access.json"),
     )?)?;
     let relations = overlay
         .relations()

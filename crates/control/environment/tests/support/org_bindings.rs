@@ -140,7 +140,7 @@ pub async fn publish_declarations(
     database_url: &str,
 ) -> anyhow::Result<()> {
     use serde_json::json;
-    use wamn_schema_generator::build_record::{BUILD_RECORD_FILE, BuildComponent};
+    use wamn_compiler::build_record::{BUILD_RECORD_FILE, BuildComponent};
     for (name, connections) in [
         (
             "label_fixture",
@@ -239,8 +239,8 @@ manifest.Package {{
                 serde_json::to_vec(&graph)?,
             )?;
         }
-        let mut build_record = Box::pin(wamn_schema_generator::build::build_package(
-            &wamn_schema_generator::build::BuildRequest::new(
+        let mut build_record = Box::pin(wamn_compiler::build::build_package(
+            &wamn_compiler::build::BuildRequest::new(
                 &package,
                 &root.join("target/wamn"),
                 database_url,
@@ -250,7 +250,7 @@ manifest.Package {{
         // These packages live outside the app workspace, so build_package
         // generates their contracts but does not compile a guest. Encode an
         // unused guest with those exact exports for the normal admission path.
-        let output = wamn_schema_generator::output_root(&package);
+        let output = wamn_compiler::output_root(&package);
         let mut resolve = wit_parser::Resolve::new();
         resolve.push_str(
             "node.wit",

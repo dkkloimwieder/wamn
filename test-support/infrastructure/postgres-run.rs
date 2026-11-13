@@ -7,7 +7,7 @@ use std::process::ExitStatus;
 
 use anyhow::{Context as _, ensure};
 use rustix::process::{Pid, Signal, kill_process_group};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_test_infrastructure::postgres;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../deploy/sql/record-history.sql");
@@ -221,11 +221,9 @@ async fn apply_migrations(
 /// A `wamn.k` path compiles first, so the tables follow the source and not a
 /// committed `generated/wamn.json` that generation has yet to rewrite.
 async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> anyhow::Result<()> {
-    let bytes = if path.file_name()
-        == Some(std::ffi::OsStr::new(
-            wamn_schema_generator::AUTHORED_MANIFEST,
-        )) {
-        wamn_schema_generator::compile_manifest(path.parent().unwrap_or(Path::new(".")))?
+    let bytes = if path.file_name() == Some(std::ffi::OsStr::new(wamn_compiler::AUTHORED_MANIFEST))
+    {
+        wamn_compiler::compile_manifest(path.parent().unwrap_or(Path::new(".")))?
     } else {
         std::fs::read(path).with_context(|| format!("read manifest {}", path.display()))?
     };

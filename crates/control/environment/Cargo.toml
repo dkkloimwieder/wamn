@@ -68,7 +68,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }

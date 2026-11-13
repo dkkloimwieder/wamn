@@ -5745,6 +5745,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-compiler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "pg_query",
+ "postgres-protocol",
+ "proptest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "syn 3.0.6",
+ "tokio",
+ "tokio-postgres",
+ "url",
+ "wamn-catalog",
+ "wamn-component-composer",
+ "wamn-digest",
+ "wamn-fixture-package",
+ "wamn-number-pattern",
+ "wamn-record-history",
+ "wamn-scalar",
+ "wamn-schema-control",
+ "wamn-schema-introspection",
+ "wamn-test-postgres",
+ "wat",
+ "wit-parser 0.254.2",
+]
+
+[[package]]
 name = "wamn-component-composer"
 version = "0.1.0"
 dependencies = [
@@ -5797,6 +5828,7 @@ dependencies = [
  "tokio",
  "url",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-policy",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -5808,7 +5840,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -5831,6 +5862,7 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-registry",
  "wamn-digest",
  "wamn-event-wire",
@@ -5839,7 +5871,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-run-state",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-postgres",
 ]
 
@@ -5871,6 +5902,7 @@ dependencies = [
  "url",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-dev-control",
@@ -5885,7 +5917,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -5921,6 +5952,7 @@ dependencies = [
  "uuid",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -5941,7 +5973,6 @@ dependencies = [
  "wamn-runtime",
  "wamn-scalar",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -5988,6 +6019,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
@@ -5996,7 +6028,6 @@ dependencies = [
  "wamn-kubernetes",
  "wamn-run-state",
  "wamn-run-state-sqlite",
- "wamn-schema-generator",
  "wamn-test-postgres",
  "wash-runtime",
 ]
@@ -6063,6 +6094,7 @@ dependencies = [
  "uuid",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-digest",
@@ -6081,7 +6113,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6148,6 +6179,7 @@ dependencies = [
  "uuid",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6165,7 +6197,6 @@ dependencies = [
  "wamn-release-control",
  "wamn-runtime",
  "wamn-scalar",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6331,6 +6362,7 @@ dependencies = [
  "uuid",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-component-policy",
  "wamn-control-provision",
@@ -6350,7 +6382,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6432,6 +6463,7 @@ dependencies = [
  "url",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6443,7 +6475,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6513,6 +6544,7 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-cdc-reader",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6530,7 +6562,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6562,6 +6593,7 @@ dependencies = [
  "url",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6575,7 +6607,6 @@ dependencies = [
  "wamn-record-history",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6714,37 +6745,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-schema-generator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "pg_query",
- "postgres-protocol",
- "proptest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "syn 3.0.6",
- "tokio",
- "tokio-postgres",
- "url",
- "wamn-catalog",
- "wamn-component-composer",
- "wamn-digest",
- "wamn-fixture-package",
- "wamn-number-pattern",
- "wamn-record-history",
- "wamn-scalar",
- "wamn-schema-control",
- "wamn-schema-introspection",
- "wamn-test-postgres",
- "wat",
- "wit-parser 0.254.2",
-]
-
-[[package]]
 name = "wamn-schema-introspection"
 version = "0.1.0"
 dependencies = [
@@ -6789,13 +6789,13 @@ dependencies = [
  "uuid",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-digest",
  "wamn-kubernetes",
  "wamn-platform-identity",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-postgres",
 ]
 
@@ -6830,6 +6830,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-cdc-reader",
+ "wamn-compiler",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-dev-control",
@@ -6844,7 +6845,6 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-release-control",
  "wamn-runtime",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
@@ -6868,6 +6868,7 @@ dependencies = [
  "url",
  "wamn-broker",
  "wamn-catalog",
+ "wamn-compiler",
  "wamn-control-provision",
  "wamn-digest",
  "wamn-engine",
@@ -6880,7 +6881,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",

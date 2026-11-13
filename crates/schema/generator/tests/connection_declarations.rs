@@ -1,6 +1,6 @@
 //! Connection declarations carry shape, never deployed catalog authority.
 use serde_json::json;
-use wamn_catalog::manifest::{ConnectionMode, PackageManifest};
+use wamn_compiler::manifest::{ConnectionMode, PackageManifest};
 
 fn manifest() -> serde_json::Value {
     json!({"package":{"id":"fixture","version":"1.0.0"},
@@ -86,7 +86,7 @@ manifest.Package {{
             ),
         )
         .unwrap();
-        let compiled = wamn_schema_generator::compile_manifest(&directory);
+        let compiled = wamn_compiler::compile_manifest(&directory);
         assert_eq!(compiled.is_ok(), valid, "{entry}: {compiled:?}");
     }
     std::fs::remove_dir_all(directory).unwrap();

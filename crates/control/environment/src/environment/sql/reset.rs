@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_package_control::{apply_package, database::connect};
 
 use super::super::{Platform, analyse, document::EnvironmentDocument, ensure, stage};

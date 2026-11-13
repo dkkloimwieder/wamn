@@ -11,8 +11,8 @@ mod support;
 
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
+use wamn_compiler::operation_reference::{AuthoredDocument, read_authored_document};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
-use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 struct Fixture {
     args: PublishReleaseRequest,

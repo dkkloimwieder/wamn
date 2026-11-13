@@ -5,40 +5,25 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, ensure};
 
-use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::PackageManifest;
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Read the same base builds that component composition uses. The build record
 /// records each manifest’s digest. Release resolution tests the package
 /// artifact pin.
 pub(crate) fn load_base_manifests(
-    package_root: &Path,
     output_root: &Path,
-    manifest: &PackageManifest,
+    dependencies: &std::collections::BTreeMap<String, crate::manifest::BaseDependencyRequirement>,
 ) -> Result<Vec<PackageManifest>> {
-    manifest
-        .base_dependencies
+    dependencies
         .values()
         .map(|dependency| {
             let output = crate::build::package_output(output_root, &dependency.package);
-            let build_record = crate::build_record::read_current(
-                &crate::output::dependency_root(package_root, &dependency.package),
-                &output,
-            )
-            .with_context(|| format!("build the base package {} first", dependency.package))?;
             let bytes = fs::read(output.join(crate::authoring::COMPILED_MANIFEST_NAME))
                 .with_context(|| format!("read the manifest of base {}", dependency.package))?;
-            ensure!(
-                wamn_digest::bytes_sha256(&bytes) == build_record.outputs.manifest,
-                "base {} manifest differs from its build record",
-                dependency.package
-            );
             let base = PackageManifest::from_slice(&bytes)?;
             ensure!(
-                base.package.id == dependency.package
-                    && base.package.version == dependency.version
-                    && build_record.package.id == base.package.id
-                    && build_record.package.version == base.package.version,
+                base.package.id == dependency.package && base.package.version == dependency.version,
                 "base {} build does not match version {}",
                 dependency.package,
                 dependency.version
@@ -125,20 +110,4 @@ pub(crate) fn inherit_model_fields(
         }
     }
     Ok(())
-}
-
-/// Persist inherited members and preserve the other authored members.
-pub(crate) fn complete_manifest(bytes: &[u8], bases: &[PackageManifest]) -> Result<Vec<u8>> {
-    let mut manifest = PackageManifest::from_slice(bytes)?;
-    inherit_model_fields(&mut manifest, bases)?;
-    let mut document: serde_json::Value = serde_json::from_slice(bytes)?;
-    for (name, model) in &manifest.models {
-        if model.owner != manifest.package.id && !model.fields.is_empty() {
-            document["models"][name]["fields"] = serde_json::to_value(&model.fields)?;
-        }
-    }
-    if !manifest.sequences.is_empty() {
-        document["sequences"] = serde_json::to_value(&manifest.sequences)?;
-    }
-    Ok(serde_json::to_vec(&document)?)
 }

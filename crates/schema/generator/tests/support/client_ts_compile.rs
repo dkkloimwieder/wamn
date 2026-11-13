@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context as _, Result, ensure};
 use serde_json::json;
-use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr};
-use wamn_schema_generator::client_ts::emit_ts_client;
+use wamn_compiler::client_ir::{ClientContractIr, FieldIr};
+use wamn_compiler::client_ts::emit_ts_client;
 
 pub fn behavior(releases: &[(&str, ClientContractIr)]) -> Result<()> {
     with_clients(releases, |repository, root| {

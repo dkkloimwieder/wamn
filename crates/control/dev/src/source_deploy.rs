@@ -4,15 +4,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::{ManifestDigest, PackageCoordinate, manifest::PackageManifest};
+use wamn_catalog::{ManifestDigest, PackageCoordinate};
+use wamn_compiler::manifest::PackageManifest;
+use wamn_compiler::{
+    build::{BuildRequest, build_package, default_output_root, package_output},
+    build_record,
+};
 use wamn_environment_control::environment::{Platform, document::EnvironmentDocument};
 use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_release_control::publish_release::{
     EntryPublicationInputs, PublishReleaseRequest, publish_release,
-};
-use wamn_schema_generator::{
-    build::{BuildRequest, build_package, default_output_root, package_output},
-    build_record,
 };
 
 use crate::dev::config::read_package_manifest;

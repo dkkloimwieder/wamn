@@ -118,10 +118,10 @@ impl Error for ComponentDeclarationError {
 pub fn authored_base_digests(
     package_root: &Path,
 ) -> Result<BTreeMap<Box<str>, Box<str>>, ComponentDeclarationError> {
-    let manifest = wamn_schema_generator::package_manifest_path(package_root);
+    let manifest = wamn_compiler::package_manifest_path(package_root);
     // A hand-written source manifest does not consume package build output.
-    if manifest.parent() == Some(wamn_schema_generator::output_root(package_root).as_path()) {
-        wamn_schema_generator::build_record::require_current(package_root).map_err(|source| {
+    if manifest.parent() == Some(wamn_compiler::output_root(package_root).as_path()) {
+        wamn_compiler::build_record::require_current(package_root).map_err(|source| {
             ComponentDeclarationError {
                 type_: ComponentDeclarationErrorType::Read,
                 path: package_root.to_owned(),
@@ -179,7 +179,7 @@ pub fn render_declaration_document(
     };
     // The template names each operation by reference, and the version is
     // authored once, in the wamn.json of the package that holds the template.
-    let (_, owners) = wamn_schema_generator::operation_reference::package_owners_of(template)
+    let (_, owners) = wamn_compiler::operation_reference::package_owners_of(template)
         .map_err(|error| invalid(error.context().to_owned()))?;
     plan::render_declaration_document(template, &mut document, project_env_key, &owners)?;
     // An input port can name its package's generated route schema instead of
@@ -191,15 +191,15 @@ pub fn render_declaration_document(
         .and_then(Path::parent)
         .and_then(Path::parent)
         .unwrap_or_else(|| Path::new(""));
-    let files = wamn_schema_generator::route_schema::PackageFiles::open(package_root)
+    let files = wamn_compiler::route_schema::PackageFiles::open(package_root)
         .map_err(|error| invalid(format!("cannot read its build: {error:#}")))?;
     files
-        .publication(wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS)
+        .publication(wamn_compiler::route_schema::GENERATED_COMPONENT_OPERATIONS)
         .and_then(|generated| {
-            wamn_schema_generator::route_schema::merge_operations(&mut document, generated.as_ref())
+            wamn_compiler::route_schema::merge_operations(&mut document, generated.as_ref())
         })
         .map_err(|error| invalid(format!("cannot take its generated operations: {error}")))?;
-    wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
+    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
         files.schema(reference)
     })
     .map_err(|error| {

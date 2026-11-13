@@ -14,9 +14,9 @@ use wamn_scalar::SqlValueType;
 
 use super::{BTreeMap, CatalogIr, Table, column, relation};
 use crate::key::primary_key;
-use wamn_catalog::manifest::{CrudAction, ModelDeclaration, PackageManifest, validate_identifier};
-use wamn_catalog::manifest::{FieldRole, Target};
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::{CrudAction, ModelDeclaration, PackageManifest, validate_identifier};
+use crate::manifest::{FieldRole, Target};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Refuse what the package's numbering declarations cannot mean.
 ///

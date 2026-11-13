@@ -1,16 +1,15 @@
 use super::{
     ADMINISTRATION_DATABASE_URL, CATALOG, CDC_READER, CONDITION_BEARER_TOKEN, CdcReader,
     DOCUMENT_KEY, DUP_WINDOW_SECS, DatabaseIdentity, DevActivationIdentity, DevConfig,
-    DevConfigDocument, DevConfigError, DevConfigErrorType, DevPackageError, DevPackageErrorType,
-    ENVIRONMENT, EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL,
-    GUEST_DATABASE_URL, HOST_BINARY, HOST_CONFIG_FILE, HOST_GROUP, HOST_NAME,
-    HTTP_ADMITTER_DATABASE_URL, IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts,
-    NATS_TLS_CA, NATS_TLS_CERT, NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES,
-    PLATFORM_DOMAIN, POSTGRES_SYSTEM_DATABASES, PROJECT, PackageManifest, PackageSource, Path,
-    PathBuf, ROUTE_HOST, RUNNER, ReachabilityProbe, SCHEDULER_NATS_URL, STREAM_REPLICAS,
-    SYSTEM_DATABASE_URL, SessionIdentity, TARGET_DATABASE_ACL_FILE, TARGET_DATABASE_URL,
-    TARGET_PRIVILEGES_FILE, TARGET_TEMPLATE_DATABASE, Url, Value, WASMTIME_CACHE_DIR,
-    validate_operation_vocabulary,
+    DevConfigDocument, DevConfigError, DevConfigErrorType, ENVIRONMENT,
+    EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL, GUEST_DATABASE_URL,
+    HOST_BINARY, HOST_CONFIG_FILE, HOST_GROUP, HOST_NAME, HTTP_ADMITTER_DATABASE_URL,
+    IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts, NATS_TLS_CA, NATS_TLS_CERT,
+    NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES, PLATFORM_DOMAIN,
+    POSTGRES_SYSTEM_DATABASES, PROJECT, PackageSource, PathBuf, ROUTE_HOST, RUNNER,
+    ReachabilityProbe, SCHEDULER_NATS_URL, STREAM_REPLICAS, SYSTEM_DATABASE_URL, SessionIdentity,
+    TARGET_DATABASE_ACL_FILE, TARGET_DATABASE_URL, TARGET_PRIVILEGES_FILE,
+    TARGET_TEMPLATE_DATABASE, Url, Value, WASMTIME_CACHE_DIR,
 };
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
@@ -26,24 +25,9 @@ pub fn dev_config_schema_bytes() -> Vec<u8> {
     bytes
 }
 
-pub(super) fn validate_package_manifest(
-    root: &Path,
-    manifest: &PackageManifest,
-) -> Result<(), DevPackageError> {
-    validate_operation_vocabulary(manifest)
-        .map(|_| ())
-        .map_err(|source| {
-            DevPackageError::manifest(
-                DevPackageErrorType::ManifestInvalid,
-                wamn_schema_generator::package_manifest_path(root),
-                source,
-            )
-        })
-}
-
 pub(super) fn package_source_matches(
     source: &PackageSource,
-    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
+    dependency: &wamn_compiler::manifest::BaseDependencyRequirement,
 ) -> bool {
     source.manifest.package.id == dependency.package
         && source.manifest.package.version == dependency.version

@@ -10,7 +10,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         type_name,
         required,
         nullable,
-        revision: wamn_catalog::manifest::Revision::default(),
+        revision: crate::manifest::Revision::default(),
         values: Vec::new(),
         children: Vec::new(),
         minimum: None,

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use wamn_catalog::manifest::{OperationOwners, resolve_operation_reference};
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::{OperationOwners, resolve_operation_reference};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// The hand-written package manifest file at a package root. A package
 /// authored in `wamn.k` reads `generated/wamn.json` in its place.

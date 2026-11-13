@@ -7,7 +7,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::manifest::{ModelDeclaration, PackageManifest};
+use wamn_compiler::manifest::{ModelDeclaration, PackageManifest};
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 use wamn_schema_control::PackageDirectory;
 use wamn_schema_introspection::migration_policy::{

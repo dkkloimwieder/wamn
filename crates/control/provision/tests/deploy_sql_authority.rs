@@ -2444,9 +2444,9 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
+    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
         &wamn_fixture_package::manifest_bytes(),
     )
     .expect("parse fixture manifest");
@@ -2507,20 +2507,20 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     .lines()
     .map(|line| {
         let (table, fields) = line.split_once(':').expect("table and fields");
-        wamn_schema_generator::DataAccessRelationFields::new(
+        wamn_compiler::DataAccessRelationFields::new(
             "inventory",
             table,
             fields.split(',').map(str::to_owned).collect(),
         )
     })
     .collect::<Vec<_>>();
-    let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
+    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
         &relation_fields,
         &wamn_fixture_package::manifest_bytes(),
     )
     .expect("the fixture manifest derives its data access");
-    let grants = wamn_schema_generator::render_effective_data_access_sql(
-        &wamn_schema_generator::derive_effective_data_access(&relation_fields, &[overlay])
+    let grants = wamn_compiler::render_effective_data_access_sql(
+        &wamn_compiler::derive_effective_data_access(&relation_fields, &[overlay])
             .expect("the fixture data access is one installed set"),
     )
     .expect("the fixture data access renders");

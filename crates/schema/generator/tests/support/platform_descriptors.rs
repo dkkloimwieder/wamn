@@ -1,4 +1,4 @@
-use wamn_schema_generator::client_ir::{ClientContractIr, leaf_fields};
+use wamn_compiler::client_ir::{ClientContractIr, leaf_fields};
 
 use super::fixture;
 

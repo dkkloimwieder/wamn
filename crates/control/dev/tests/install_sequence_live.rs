@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls};
 use wamn_broker::Publisher;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::sql;
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure::ensure_project_database,
@@ -243,20 +243,18 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
         .await?
         .into_iter()
         .map(|row| {
-            wamn_schema_generator::DataAccessRelationFields::new(
+            wamn_compiler::DataAccessRelationFields::new(
                 SCHEMA,
                 row.get::<_, String>(0),
                 row.get::<_, Vec<String>>(1),
             )
         })
         .collect::<Vec<_>>();
-    let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
+    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
         &fields,
         &std::fs::read(package.path.join("wamn.json"))?,
     )?;
-    let evidence = package
-        .path
-        .join(wamn_schema_generator::DATA_ACCESS_OVERLAY_PATH);
+    let evidence = package.path.join(wamn_compiler::DATA_ACCESS_OVERLAY_PATH);
     std::fs::create_dir_all(evidence.parent().unwrap())?;
     std::fs::write(evidence, overlay.canonical_bytes())?;
     wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(

@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use wamn_schema_generator::client_ir::ClientContractIr;
-use wamn_schema_generator::client_ts::emit_ts_client;
+use wamn_compiler::client_ir::ClientContractIr;
+use wamn_compiler::client_ts::emit_ts_client;
 
 /// Known flaky under load: wfe gap wamn-c361p. The waiting worker can stay
 /// installed after skip-waiting, so the reload does not happen within 60 s.
@@ -33,7 +33,7 @@ async fn an_old_binding_entry_gets_an_ordinary_refusal() -> anyhow::Result<()> {
 pub(super) fn bindings(app: &Path, directory: &Path) -> anyhow::Result<()> {
     let r2 = ClientContractIr::from_release(
         "wamn_wms",
-        &wamn_schema_generator::output_root(app).join("contracts"),
+        &wamn_compiler::output_root(app).join("contracts"),
         &app.join("publication/attachments.json"),
     )?;
     let mut r1 = r2.clone();

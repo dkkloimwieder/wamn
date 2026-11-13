@@ -2,9 +2,7 @@
 
 use std::path::PathBuf;
 
-use wamn_schema_generator::build::{
-    BuildRequest, build_package, default_output_root, package_output,
-};
+use wamn_compiler::build::{BuildRequest, build_package, default_output_root, package_output};
 
 /// Arguments of `wamn build`.
 #[derive(Debug, clap::Args)]

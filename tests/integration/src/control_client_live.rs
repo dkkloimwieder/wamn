@@ -102,11 +102,9 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
 async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
     let platform_ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/platform_ui");
     // `pnpm exec` runs no package script, so the clients are written here.
-    wamn_schema_generator::materialize_host_route_client(
-        &wamn_schema_generator::host_route_client_output_root(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
-        ),
-    )?;
+    wamn_compiler::materialize_host_route_client(&wamn_compiler::host_route_client_output_root(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    ))?;
     let output = tokio::process::Command::new("pnpm")
         .current_dir(&platform_ui)
         .args(["exec", "vitest", "run", file])

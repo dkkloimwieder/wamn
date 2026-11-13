@@ -189,20 +189,20 @@ targets = [
   { workspace="root", package="wamn-runtime", target="test:session_verifier", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:sqlx_transaction_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-control", target="lib:wamn_schema_control", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="lib:wamn_schema_generator", tier="live-postgres" },
-  { workspace="root", package="wamn-schema-generator", target="test:build_live", tier="live-postgres" },
-  { workspace="root", package="wamn-schema-generator", target="test:client_component", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:client_contract_metadata", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:client_plan", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:client_projection", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:client_ts_emitter", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:connection_declarations", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:cursor", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:generation", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:manifest_authoring", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:numbering", tier="live-postgres" },
-  { workspace="root", package="wamn-schema-generator", target="test:platform_generation", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:statement_admission_live", tier="live-postgres" },
+  { workspace="root", package="wamn-compiler", target="lib:wamn_compiler", tier="live-postgres" },
+  { workspace="root", package="wamn-compiler", target="test:build_live", tier="live-postgres" },
+  { workspace="root", package="wamn-compiler", target="test:client_component", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:client_contract_metadata", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:client_plan", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:client_projection", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:client_ts_emitter", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:connection_declarations", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:cursor", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:generation", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:manifest_authoring", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:numbering", tier="live-postgres" },
+  { workspace="root", package="wamn-compiler", target="test:platform_generation", tier="contract" },
+  { workspace="root", package="wamn-compiler", target="test:statement_admission_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="lib:wamn_schema_introspection", tier="contract" },
   { workspace="root", package="wamn-schema-introspection", target="test:file_reference_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:ir", tier="contract" },
@@ -446,7 +446,7 @@ applications = ["apps/wamn_receiving", "apps/client_acme_receiving"]
 prerequisites = ["web-install"]
 
 [[preparation]]
-packages = ["wamn-schema-generator"]
+packages = ["wamn-compiler"]
 target = ["test:build_live"]
 prerequisites = ["client-acme"]
 
@@ -539,7 +539,7 @@ target = ["lib:wamn_control_provision", "test:deploy_sql_authority"]
 prerequisites = ["fixture"]
 
 [[preparation]]
-packages = ["wamn-schema-generator"]
+packages = ["wamn-compiler"]
 target = ["test:platform_generation", "test:client_plan", "test:client_projection", "test:client_component", "test:client_ts_emitter"]
 prerequisites = ["fixture"]
 

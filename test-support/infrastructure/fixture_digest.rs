@@ -17,13 +17,13 @@ use anyhow::Context as _;
 ///
 /// When the tree cannot be read.
 pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
-    wamn_schema_generator::build_record::require_current(root)?;
+    wamn_compiler::build_record::require_current(root)?;
     let mut context = wamn_digest::Hasher::new();
     let mut frame = |bytes: &[u8]| {
         context.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
         context.update(bytes);
     };
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest_path = wamn_compiler::package_manifest_path(root);
     frame(
         &std::fs::read(&manifest_path)
             .with_context(|| format!("read {}", manifest_path.display()))?,
@@ -61,8 +61,8 @@ pub fn write_physical_schema(
 ) -> anyhow::Result<()> {
     use wamn_schema_control::physical_schema::{PhysicalSchema, render};
 
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(
-        wamn_schema_generator::package_manifest_path(root),
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_compiler::package_manifest_path(root),
     )?)?;
     let mut migrations = Vec::new();
     for entry in std::fs::read_dir(root.join("migrations"))? {
@@ -74,8 +74,8 @@ pub fn write_physical_schema(
             });
         }
     }
-    let statements = render(&manifest, &migrations, &columns)?;
-    let output = wamn_schema_generator::output_root(root);
+    let statements = render(&(&manifest).into(), &migrations, &columns)?;
+    let output = wamn_compiler::output_root(root);
     std::fs::create_dir_all(&output)?;
     std::fs::write(
         output.join("physical-schema.json"),
@@ -89,13 +89,13 @@ pub fn write_physical_schema(
 
 /// Record output that a test writes, without compiling a guest.
 pub fn write_build_record(root: &Path) {
-    use wamn_schema_generator::build_record;
+    use wamn_compiler::build_record;
 
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(manifest_path).unwrap();
     // Refusal tests can deliberately write an invalid package declaration.
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
-    let output = wamn_schema_generator::output_root(root);
+    let output = wamn_compiler::output_root(root);
     std::fs::create_dir_all(&output).unwrap();
     let build_record = build_record::BuildRecord {
         schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
@@ -146,8 +146,8 @@ mod tests {
         )
         .unwrap();
         super::write_build_record(&package);
-        wamn_schema_generator::build_record::require_current(&package).unwrap();
+        wamn_compiler::build_record::require_current(&package).unwrap();
         std::fs::write(package.join("statement.sql"), "SELECT 1").unwrap();
-        wamn_schema_generator::build_record::require_current(&package).unwrap_err();
+        wamn_compiler::build_record::require_current(&package).unwrap_err();
     }
 }

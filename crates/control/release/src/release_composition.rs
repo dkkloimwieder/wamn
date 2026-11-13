@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompositionErrorType {
@@ -93,12 +93,11 @@ pub fn select_component_artifacts(
     let mut selected = Vec::with_capacity(packages.len());
     for package in packages {
         let component = plan::selected_component(package)?;
-        wamn_schema_generator::build_record::require_current(&package.root)
+        wamn_compiler::build_record::require_current(&package.root)
             .map_err(|source| CompositionError::owner("read the package build", source))?;
-        let build_record = wamn_schema_generator::build_record::read(
-            &wamn_schema_generator::output_root(&package.root),
-        )
-        .map_err(|source| CompositionError::owner("read the package build", source))?;
+        let build_record =
+            wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
+                .map_err(|source| CompositionError::owner("read the package build", source))?;
         selected.push(built_component(package, component, &build_record)?);
     }
     Ok(selected)
@@ -110,12 +109,11 @@ pub fn select_palette_artifacts(
 ) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
     let mut selected = Vec::new();
     for package in packages {
-        wamn_schema_generator::build_record::require_current(&package.root)
+        wamn_compiler::build_record::require_current(&package.root)
             .map_err(|source| CompositionError::owner("read the package build", source))?;
-        let build_record = wamn_schema_generator::build_record::read(
-            &wamn_schema_generator::output_root(&package.root),
-        )
-        .map_err(|source| CompositionError::owner("read the package build", source))?;
+        let build_record =
+            wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
+                .map_err(|source| CompositionError::owner("read the package build", source))?;
         for entry in &build_record.outputs.components {
             if package.manifest.components.contains_key(&entry.name) {
                 continue;
@@ -139,7 +137,7 @@ pub fn select_palette_artifacts(
 fn built_component(
     package: &PackageInput,
     component: &str,
-    build_record: &wamn_schema_generator::build_record::BuildRecord,
+    build_record: &wamn_compiler::build_record::BuildRecord,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let (path, entry) = plan::component_entry(package, component, build_record)?;
     let bytes = fs::read(&path).map_err(|source| {

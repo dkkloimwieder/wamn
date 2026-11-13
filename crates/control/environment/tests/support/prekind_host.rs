@@ -563,7 +563,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let device_descriptor = ComponentDescriptor::new(device.facts().clone(), Vec::new());
     let h = release(MANIFEST_H, version, Some(&device_descriptor))?;
     let mut facts = vec![device.facts().clone()];
-    wamn_schema_generator::build_record::require_current(&repository.join("apps").join(PACKAGE))?;
+    wamn_compiler::build_record::require_current(&repository.join("apps").join(PACKAGE))?;
     let mut descriptors = Vec::new();
     std::fs::write(
         local_component_path(directory, device.component_digest())?,
@@ -637,7 +637,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         wamn_environment_control::environment::document::Integration { version: 1 },
     );
     // Match the write mode declared by org_bindings::publish_declarations.
-    let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
+    let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({
             "package":{"id":"http_fixture","version":"1.0.0"},
             "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},

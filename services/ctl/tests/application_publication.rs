@@ -6,14 +6,14 @@ use std::process::Command;
 use anyhow::{Context as _, ensure};
 use serde_json::json;
 use wamn_catalog::{PackageCoordinate, ServingManifest};
-use wamn_schema_generator::build_record::{self, BuildComponent};
+use wamn_compiler::build_record::{self, BuildComponent};
 
 #[path = "../../../crates/control/environment/tests/support/local_registry.rs"]
 mod local_registry;
 
 fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = work.join("apps").join(id);
-    let output = wamn_schema_generator::output_root(&root);
+    let output = wamn_compiler::output_root(&root);
     std::fs::create_dir_all(root.join("publication/components"))?;
     std::fs::create_dir_all(root.join("migrations"))?;
     std::fs::write(

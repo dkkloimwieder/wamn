@@ -9,12 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-use wamn_schema_generator::build::{
+use wamn_compiler::build::{
     BuildRequest, build_components, build_package, generate_package, package_output,
 };
-use wamn_schema_generator::build_record;
+use wamn_compiler::build_record;
+use wamn_compiler::manifest::PackageManifest;
+use wamn_compiler::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 #[tokio::test(flavor = "current_thread")]
 async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<()> {
@@ -193,12 +193,11 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
     let second = workspace.root.join("target-second");
     // The default output can hold an older manifest even when the caller
     // selects a different output root. Authored routes must use current owners.
-    let previous = wamn_schema_generator::output_root(&workspace.package());
+    let previous = wamn_compiler::output_root(&workspace.package());
     fs::create_dir_all(&previous).expect("create previous build output");
-    let mut old: Value = serde_json::from_slice(
-        &wamn_schema_generator::compile_manifest(&workspace.package()).unwrap(),
-    )
-    .unwrap();
+    let mut old: Value =
+        serde_json::from_slice(&wamn_compiler::compile_manifest(&workspace.package()).unwrap())
+            .unwrap();
     old["package"]["version"] = Value::String("1.0.0".to_owned());
     fs::write(
         previous.join("wamn.json"),
@@ -638,7 +637,7 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             .nth(3)
             .unwrap();
         let verifier = workspace.root.join("verifier");
-        wamn_schema_generator::stage_sqlx_verifier(&workspace.package(), &verifier, repository)
+        wamn_compiler::stage_sqlx_verifier(&workspace.package(), &verifier, repository)
             .expect("stage the view projection verifier");
         let source = fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
         let source = source
@@ -655,7 +654,7 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
         fs::write(verifier.join("src/lib.rs"), &source).unwrap();
         let manifest =
             PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
-        let url = wamn_schema_generator::package_database_url(database.url(), &manifest).unwrap();
+        let url = wamn_compiler::package_database_url(database.url(), &manifest).unwrap();
         let compile = || {
             std::process::Command::new("cargo")
                 .current_dir(&verifier)
@@ -791,8 +790,7 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
     let overlay = workspace.overlay();
     let manifest_path = overlay.join("wamn.k");
     let manifest =
-        PackageManifest::from_slice(&wamn_schema_generator::compile_manifest(&overlay).unwrap())
-            .unwrap();
+        PackageManifest::from_slice(&wamn_compiler::compile_manifest(&overlay).unwrap()).unwrap();
     let source = fs::read_to_string(&manifest_path).unwrap();
     fs::write(
         &manifest_path,
@@ -894,7 +892,7 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
     let workspace = Workspace::new("nested-base");
     let database = wamn_test_postgres::database();
     let output = workspace.root.join("target/wamn");
-    let first = wamn_schema_generator::build::generate_package(&BuildRequest::new(
+    let first = wamn_compiler::build::generate_package(&BuildRequest::new(
         &workspace.package(),
         &output,
         database.url(),
@@ -907,7 +905,7 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
         .join("platform")
         .join(wamn_fixture_package::PACKAGE_ID);
     fs::rename(workspace.package(), &nested).unwrap();
-    let second = wamn_schema_generator::build::generate_package(&BuildRequest::new(
+    let second = wamn_compiler::build::generate_package(&BuildRequest::new(
         &nested,
         &output,
         database.url(),
@@ -917,7 +915,7 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
     assert_eq!(first.inputs, second.inputs);
     assert_eq!(first.outputs.manifest, second.outputs.manifest);
     assert_eq!(first.outputs.files, second.outputs.files);
-    wamn_schema_generator::build::generate_package(&BuildRequest::new(
+    wamn_compiler::build::generate_package(&BuildRequest::new(
         &workspace.overlay(),
         &output,
         database.url(),
@@ -929,7 +927,7 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
 /// Owner declarations survive compilation at a caller-selected output root.
 #[tokio::test(flavor = "current_thread")]
 async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records() {
-    use wamn_schema_generator::build::generate_package;
+    use wamn_compiler::build::generate_package;
 
     let workspace = Workspace::new("inherited-fields");
     workspace.edit_manifest(

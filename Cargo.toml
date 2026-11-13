@@ -260,7 +260,7 @@ wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
 wamn-run-state-sqlite = { path = "crates/execution/run-state-sqlite", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
 wamn-schema-control = { path = "crates/schema/control", version = "0.1.0" }
-wamn-schema-generator = { path = "crates/schema/generator", version = "0.1.0" }
+wamn-compiler = { path = "crates/schema/generator", version = "0.1.0" }
 wamn-schema-introspection = { path = "crates/schema/introspection", version = "0.1.0" }
 wamn-test-infrastructure = { path = "test-support/infrastructure", version = "0.1.0" }
 wamn-test-postgres = { path = "test-support/postgres", version = "0.1.0" }

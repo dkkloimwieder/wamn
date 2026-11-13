@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_package_control::apply_package::{self, PackageRoot};
 use wamn_schema_control::{AppliedPackage, PackageDirectory, plan_package_migrations};
 
@@ -27,8 +27,8 @@ impl Candidate {
     /// Inspect an already built source package without building or publishing it.
     pub fn source(root: PackageRoot) -> anyhow::Result<Self> {
         let directory = apply_package::read_package_root(&root)?;
-        let fingerprint = wamn_schema_generator::build_record::physical_schema_fingerprint(
-            &wamn_schema_generator::output_root(&root.path),
+        let fingerprint = wamn_compiler::build_record::physical_schema_fingerprint(
+            &wamn_compiler::output_root(&root.path),
         )?;
         Ok(Self {
             root,
@@ -287,7 +287,7 @@ pub(super) async fn open(
     }
     let candidate = Candidate::source(root)?;
     let manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
+        wamn_compiler::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
         manifest.package.id == id && manifest.package.version == version,
         "package artifact does not declare {id}@{version}"
@@ -735,7 +735,9 @@ pub async fn apply(
     let manifests = candidates
         .iter()
         .map(|candidate| {
-            wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)
+            wamn_compiler::manifest::PackageManifest::from_slice(
+                &candidate.directory.manifest_bytes,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let order = stage::apply_order(
@@ -1090,7 +1092,7 @@ mod tests {
         }
         overlay.base_dependencies.insert(
             "base".into(),
-            wamn_catalog::manifest::BaseDependencyRequirement {
+            wamn_compiler::manifest::BaseDependencyRequirement {
                 package: "alpha".into(),
                 version: "1.0.0".into(),
                 digest: candidates[0].root.artifact_digest.as_ref().unwrap().clone(),

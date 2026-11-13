@@ -4,7 +4,7 @@
 //! `cargo build` or `cargo test` needs Node.
 //!
 //! ```bash
-//! cargo run --locked --offline -p wamn-schema-generator --example compile_client_ts
+//! cargo run --locked --offline -p wamn-compiler --example compile_client_ts
 //! ```
 //!
 //! It emits fixture bindings under sync-bench source, writes a strict
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
-use wamn_schema_generator::client_ts::{RUNTIME_PACKAGE, emit_ts_client};
+use wamn_compiler::client_ts::{RUNTIME_PACKAGE, emit_ts_client};
 
 #[path = "../tests/support/platform_fixture.rs"]
 mod fixture;
@@ -163,7 +163,7 @@ fn tsc_version() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn integer_ids(fields: &mut [wamn_schema_generator::client_ir::FieldIr], ty: &str) {
+fn integer_ids(fields: &mut [wamn_compiler::client_ir::FieldIr], ty: &str) {
     for field in fields {
         if field.path.rsplit('.').next() == Some("id") {
             ty.clone_into(&mut field.type_name);

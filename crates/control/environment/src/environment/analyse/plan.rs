@@ -20,7 +20,7 @@ pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option
 /// never refuses.
 pub(super) fn sequence_refusals(
     applications: &wamn_catalog::EnvironmentApplications,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
 ) -> Vec<String> {
     match super::super::stage::sequence_defaults(applications, packages) {
         Ok(_) => Vec::new(),

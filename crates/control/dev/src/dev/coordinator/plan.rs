@@ -13,7 +13,7 @@ pub(super) fn project_catalog_for_package(
         .iter()
         .map(|package| package.manifest.clone())
         .collect::<Vec<_>>();
-    wamn_schema_generator::project_package_catalog(catalog, target, &manifests).map_err(|source| {
+    wamn_compiler::project_package_catalog(catalog, target, &manifests).map_err(|source| {
         ProductionDevStageError::invalid("project package catalog", source.to_string())
     })
 }

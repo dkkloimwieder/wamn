@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 
 pub(crate) async fn install(
     tx: &Transaction<'_>,
@@ -106,7 +106,7 @@ pub async fn write(
         let Some(interface) = resolve.id_of(*id) else {
             continue;
         };
-        if wamn_catalog::manifest::host_connection_interface(&interface)
+        if wamn_compiler::manifest::host_connection_interface(&interface)
             || interface.starts_with("wamn:postgres/")
         {
             continue;
@@ -127,8 +127,8 @@ pub async fn write(
             .with_context(|| format!("package declares no connection {name}"))?;
         let interface = require_imports(bytes, name, &declaration.interface)?;
         let mode = match declaration.mode {
-            wamn_catalog::manifest::ConnectionMode::Read => "read",
-            wamn_catalog::manifest::ConnectionMode::Write => "write",
+            wamn_compiler::manifest::ConnectionMode::Read => "read",
+            wamn_compiler::manifest::ConnectionMode::Write => "write",
         };
         let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
             &project_env_key,

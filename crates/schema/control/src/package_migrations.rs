@@ -10,7 +10,7 @@ use std::error::Error;
 use std::fmt;
 
 use wamn_catalog::PackageCoordinate;
-use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_record_history::history_table_name;
 
 use crate::{SqlStatement, Value};
@@ -330,14 +330,6 @@ pub fn plan_package_migrations(
         )
         .at_path(PACKAGE_MANIFEST_PATH)
     })?;
-    validate_operation_vocabulary(&manifest).map_err(|source| {
-        PackageMigrationError::with_source(
-            PackageMigrationErrorType::InvalidManifest,
-            "wamn.json has an invalid semantic manifest vocabulary",
-            source,
-        )
-        .at_path(PACKAGE_MANIFEST_PATH)
-    })?;
     let coordinate = PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
         .map_err(|source| {
             PackageMigrationError::with_source(
@@ -590,32 +582,6 @@ mod tests {
                 .error_type(),
             PackageMigrationErrorType::MigrationDrift
         );
-    }
-
-    #[test]
-    fn package_application_refuses_invalid_custom_operation_semantics() {
-        let mut directory = directory();
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&directory.manifest_bytes).expect("fixture is JSON");
-        manifest["custom_operations"] = serde_json::json!({
-            "quality.create_inspection": {
-                "type": "projection",
-                "visibility": "private",
-                "permission": "quality.create_inspection",
-                "input": {"fields": []},
-                "result": {"class": "one", "fields": []},
-                "errors": []
-            }
-        });
-        directory.manifest_bytes = serde_json::to_vec(&manifest).expect("serialize manifest");
-
-        let error = plan_package_migrations(&directory, None, &[])
-            .expect_err("package application admitted a private permission");
-        assert_eq!(
-            error.error_type(),
-            PackageMigrationErrorType::InvalidManifest
-        );
-        assert!(error.source().is_some());
     }
 
     #[test]

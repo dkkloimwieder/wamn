@@ -1,5 +1,5 @@
 [package]
-name = "wamn-schema-generator"
+name = "wamn-compiler"
 description = "Deterministic package-owned application artifacts derived from migration catalog IR."
 version.workspace = true
 edition.workspace = true

@@ -33,7 +33,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 wamn-schema-control = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 url = { workspace = true }

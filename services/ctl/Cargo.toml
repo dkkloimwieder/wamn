@@ -63,7 +63,7 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 wamn-catalog = { workspace = true }
 wamn-schema-control = { workspace = true }
 # `wamn build` calls the two-pass package build.
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 # The control operations that the verbs call.
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
