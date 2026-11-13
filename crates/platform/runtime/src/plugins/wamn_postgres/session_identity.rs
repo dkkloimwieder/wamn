@@ -1228,6 +1228,41 @@ impl WamnPostgres {
         }
     }
 
+    /// Read the revocation bounds stated by this project and its applications.
+    /// Shared auth facts use the shortest bound, so every application stays within its contract.
+    pub async fn configure_revocation(
+        &mut self,
+        project: &str,
+        applications: &[&str],
+    ) -> anyhow::Result<()> {
+        let (connection, _) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let mut bound = std::time::Duration::MAX;
+        for (target_type, target_id) in std::iter::once(("project", project)).chain(
+            applications
+                .iter()
+                .map(|application| ("application", *application)),
+        ) {
+            let row = connection.query_opt(
+                "SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'",
+                &[&target_type, &target_id],
+            ).await.context("read revocation configuration")?
+                .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
+            let value: String = row.try_get(0)?;
+            let seconds: u64 = serde_json::from_str(&value).with_context(|| {
+                format!(
+                    "{target_type} {target_id} revocation-seconds must be a nonnegative integer"
+                )
+            })?;
+            bound = bound.min(std::time::Duration::from_secs(seconds));
+        }
+        drop(connection);
+        self.auth = crate::auth_cache::AuthCache::with_ttl(bound);
+        Ok(())
+    }
+
     /// Bind the host's existing identity reader for inherited authorization.
     pub fn set_hierarchy_reader(&self, reader: Arc<tokio_postgres::Client>) {
         *self

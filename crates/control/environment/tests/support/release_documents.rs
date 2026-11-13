@@ -136,12 +136,14 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
         project: PROJECT.to_owned(),
         env: env.to_owned(),
         policy: POLICY.to_owned(),
+        revocation_seconds: 60,
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
             environment::document::ApplicationSelection {
                 current: DeclaredRelease::Digest(digest.to_owned()),
                 previous: None,
                 hostname: route_host.to_owned(),
+                revocation_seconds: 5,
                 client: None,
                 connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
                 packages: std::collections::BTreeSet::from([
@@ -1016,6 +1018,7 @@ pub mod workflow {
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
             policy: POLICY.into(),
+            revocation_seconds: 60,
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.
             applications: BTreeMap::from([(
@@ -1024,6 +1027,7 @@ pub mod workflow {
                     current: DeclaredRelease::None,
                     previous: None,
                     hostname: "integration.orders.example".into(),
+                    revocation_seconds: 5,
                     client: None,
                     connections: std::collections::BTreeMap::new(),
                     packages: [connector, "wamn_integration", CONSUMER]

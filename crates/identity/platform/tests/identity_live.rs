@@ -7,10 +7,10 @@ use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
-    IdentityErrorType, PreparedIdentityReads, Principal, PrincipalStatus, PrincipalType,
-    assign_project_role, create_service, create_user, disable_principal,
-    grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
-    resolve_principal, resolve_subject, revoke_project_env_membership,
+    IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
+    create_service, create_user, disable_principal, grant_project_env_membership,
+    has_project_env_membership, issue_pat, project_roles, resolve_principal, resolve_subject,
+    revoke_project_env_membership,
 };
 
 #[tokio::test]
@@ -303,34 +303,10 @@ async fn project_environment_membership_round_trip(
         )
         .await
         .expect("seed distinct registered project-environments");
-    let reads = PreparedIdentityReads::prepare(client)
-        .await
-        .expect("prepare the identity query");
     assert!(
         issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
             .await
             .is_err()
-    );
-    let service_token = issue_pat(
-        client,
-        service.id(),
-        "route service",
-        Duration::from_secs(3600),
-    )
-    .await
-    .expect("issue the service route PAT");
-    assert!(
-        route_principal_id(
-            &reads,
-            client,
-            service_token.token(),
-            "demo",
-            "widgets",
-            "dev"
-        )
-        .await
-        .is_none(),
-        "a PAT without project authority passed"
     );
     let other_user = create_user(
         client,
@@ -385,29 +361,7 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("unprepared query observes new grant")
     );
-    assign_project_role(
-        client,
-        service.id(),
-        "demo",
-        "widgets",
-        "operator",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect("assign the service operator role");
-    assert_eq!(
-        route_principal_id(
-            &reads,
-            client,
-            service_token.token(),
-            "demo",
-            "widgets",
-            "dev"
-        )
-        .await,
-        Some(service.id().to_string()),
-        "a service needs its role, not a user membership"
-    );
+
     for (org, project, env) in [
         ("other", "widgets", "dev"),
         ("demo", "inventory", "dev"),
@@ -785,19 +739,4 @@ async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgre
             "{type_} {id} {subject} {display_name}"
         );
     }
-}
-
-async fn route_principal_id(
-    reads: &PreparedIdentityReads,
-    client: &tokio_postgres::Client,
-    token: &str,
-    org: &str,
-    project: &str,
-    _env: &str,
-) -> Option<String> {
-    reads
-        .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
-        .await
-        .expect("read route PAT and target in one statement")
-        .map(|authenticated| authenticated.principal().id().to_string())
 }

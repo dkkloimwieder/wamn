@@ -142,7 +142,7 @@ The owner supplies these external cloud inputs.
     Its annotation names the group `wamn-edge`.
     OpenTofu reads that group in the cluster's `zone` from `deploy/gcp/project.k`.
     DNS for every route host must point to the global address that OpenTofu creates.
-    The owner supplies a firewall rule for TCP port 8443 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
+    The owner supplies a firewall rule for TCP port 8080 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
     Platform deployment creates the Service before OpenTofu plans the load balancer.
     The edge mounts the Secret `hosts/wamn-edge-tls`, which cert-manager creates from `deploy/gcp/letsencrypt.yaml`.
     The issuer uses Cloud DNS zone `wamn-dev` in project `wamn-dev`.
@@ -182,7 +182,7 @@ The teardown keeps these resources for later cloud integration. The owner makes 
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
 - The direct worker grants on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
-- The firewall rule that permits load balancer traffic to nginx on TCP port 8443. The project document declares the load balancer objects.
+- The firewall rule that permits ingress traffic to the Rust web front on TCP port 8080. The project document declares the load balancer objects.
 
 Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration can be another project, so a command without `--project` acts on the wrong one.
 
@@ -239,7 +239,7 @@ Make the firewall rule for the load balancer health tests (owner input 14):
 
 ```bash
 gcloud compute firewall-rules create wamn-edge-health-probe --project wamn-dev --network wamn --direction INGRESS \
-  --allow tcp:8443 --source-ranges 35.191.0.0/16,130.211.0.0/22
+  --allow tcp:8080 --source-ranges 35.191.0.0/16,130.211.0.0/22
 ```
 
 Make the registry and the buckets. The labels bucket has no public read:

@@ -183,6 +183,16 @@ pub struct HttpConfig {
     pub listen: SocketAddr,
 }
 
+impl HttpConfig {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.listen.ip().is_loopback(),
+            "edge ingress requires a loopback address"
+        );
+        Ok(())
+    }
+}
+
 /// The device loop: one attachment called for each frame of one device.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -275,7 +285,9 @@ impl EdgeConfig {
             }
             section.insert((*key).to_owned(), value);
         }
-        table.try_into().context("read the configuration")
+        let config: Self = table.try_into().context("read the configuration")?;
+        config.http.validate()?;
+        Ok(config)
     }
 }
 
@@ -304,6 +316,7 @@ mod tests {
         assert_eq!(forward.key_field.as_deref(), Some("value.idempotency_key"));
         assert_eq!(forward.credential_bound.get(), 5);
         assert_eq!(config.http.listen.port(), 8080);
+        assert!(parse(EXAMPLE, &[("WAMN_EDGE_LISTEN", "0.0.0.0:8080")]).is_err());
     }
 
     #[test]

@@ -59,9 +59,23 @@ pub async fn activate_session_key(
     issuer: &str,
     kid: &str,
 ) -> Result<(), IdentityError> {
+    activate_session_key_if_current(client, issuer, kid, None).await
+}
+
+async fn activate_session_key_if_current(
+    client: &mut Client,
+    issuer: &str,
+    kid: &str,
+    expected: Option<&str>,
+) -> Result<(), IdentityError> {
     let transaction = client.transaction().await.map_err(key_database_error)?;
     bind_provisioning(&transaction).await?;
     let active = lock_issuer(&transaction, issuer).await?;
+    // Scheduled publication must not undo a removal or an explicit activation.
+    if expected.is_some_and(|expected| active.as_deref() != Some(expected)) {
+        transaction.commit().await.map_err(key_database_error)?;
+        return Ok(());
+    }
     let row = transaction
         .query_opt(
             "SELECT signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
@@ -87,6 +101,63 @@ pub async fn activate_session_key(
         ).await.map_err(key_database_error)?;
     }
     transaction.commit().await.map_err(key_database_error)
+}
+
+/// Rotate a due issuer with the same publication, activation and retirement commands.
+/// A session lock serializes schedulers in different identity replicas.
+/// An issuer without an active key still requires explicit activation.
+pub async fn rotate_session_keys(
+    client: &mut Client,
+    issuer: &str,
+    interval: std::time::Duration,
+) -> Result<(), IdentityError> {
+    validate_issuer(issuer)?;
+    let seconds =
+        i64::try_from(interval.as_secs()).map_err(|_| invalid("invalid signing key interval"))?;
+    if seconds == 0 {
+        return Err(invalid("signing key interval must be positive"));
+    }
+    let locked: bool = client
+        .query_one(
+            "SELECT pg_try_advisory_lock(hashtextextended($1, 0))",
+            &[&issuer],
+        )
+        .await
+        .map_err(key_database_error)?
+        .get(0);
+    if !locked {
+        return Ok(());
+    }
+    let result: Result<(), IdentityError> = async {
+        let due = client.query_opt(
+            "SELECT s.active_kid::text FROM identity.session_signing_state s \
+             JOIN identity.session_keys k ON k.issuer=s.issuer AND k.kid=s.active_kid \
+             WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()",
+            &[&issuer, &seconds],
+        ).await.map_err(key_database_error)?;
+        if let Some(due) = due {
+            let expected: String = due.get(0);
+            let pending = client.query_opt(
+                "SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
+                 AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
+                 ORDER BY published_at DESC LIMIT 1", &[&issuer],
+            ).await.map_err(key_database_error)?;
+            let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer).await?.kid };
+            activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
+        }
+        retire_session_keys(client, issuer).await?;
+        Ok(())
+    }.await;
+    let unlock = client
+        .query_one(
+            "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+            &[&issuer],
+        )
+        .await
+        .map_err(key_database_error);
+    result?;
+    unlock?;
+    Ok(())
 }
 
 /// Read only the public projection, excluding keys at their retirement deadline.
@@ -124,6 +195,13 @@ pub async fn remove_compromised_session_key(
 ) -> Result<bool, IdentityError> {
     let transaction = client.transaction().await.map_err(key_database_error)?;
     bind_provisioning(&transaction).await?;
+    transaction
+        .query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            &[&issuer],
+        )
+        .await
+        .map_err(key_database_error)?;
     lock_issuer(&transaction, issuer).await?;
     transaction
         .execute(

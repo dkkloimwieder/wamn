@@ -2067,6 +2067,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -6035,7 +6036,6 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "object_store",
  "rcgen",
  "ring",
  "rusqlite",
@@ -6056,7 +6056,6 @@ dependencies = [
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
- "wamn-kubernetes",
  "wamn-registry",
  "wamn-run-state",
  "wamn-run-state-sqlite",
@@ -6851,6 +6850,31 @@ dependencies = [
  "serde_json",
  "tokio-postgres",
  "url",
+]
+
+[[package]]
+name = "wamn-web-front"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "object_store",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-subscriber",
+ "wamn-engine",
+ "wamn-kubernetes",
+ "wash-runtime",
 ]
 
 [[package]]

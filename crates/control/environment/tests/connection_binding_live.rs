@@ -352,8 +352,8 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
-        "applications": {PACKAGE:{"current": digest, "hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        "applications": {PACKAGE:{"current": digest, "revocation_seconds":5,"hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
     }
     async fn apply(
         &mut self,

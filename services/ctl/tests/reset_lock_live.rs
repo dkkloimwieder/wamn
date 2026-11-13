@@ -36,8 +36,8 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         .batch_execute(&wamn_environment_control::provision_project_env::role_posture_sql())
         .await?;
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev",
-        "applications":{"a":{"current":"none", "hostname":"a.invalid", "packages":["a"]}}
+        "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
+        "applications":{"a":{"current":"none", "revocation_seconds":5,"hostname":"a.invalid", "packages":["a"]}}
     }))?)?;
     let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
         system.url(),

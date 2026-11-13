@@ -145,10 +145,10 @@ async fn applications_publish_independently_before_destination_creation() -> any
     let file = scratch.path().join("environment.k");
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(&json!({
-            "org": "unprovisioned", "project": "publication", "env": "dev", "target": "cloud", "policy": "dev",
+            "org": "unprovisioned", "project": "publication", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
             "applications": {
-                "a": {"current": "none", "hostname": "a.example.invalid", "packages": ["appa"]},
-                "b": {"current": "none", "hostname": "b.example.invalid", "packages": ["appb"]}
+                "a": {"current": "none", "revocation_seconds":5,"hostname": "a.example.invalid", "packages": ["appa"]},
+                "b": {"current": "none", "revocation_seconds":5,"hostname": "b.example.invalid", "packages": ["appb"]}
             }
         }))?,
     )?;
@@ -279,9 +279,9 @@ async fn status_pulls_candidates_with_installed_registry_transport() -> anyhow::
     .await?;
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(&json!({
-            "org": "unprovisioned", "project": "publication", "env": "dev", "target": "cloud", "policy": "dev",
+            "org": "unprovisioned", "project": "publication", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
             "applications": {"a": {"current": release.digest.as_str(),
-                "hostname": "a.example.invalid", "packages": ["appa"]}}
+                "revocation_seconds":5,"hostname": "a.example.invalid", "packages": ["appa"]}}
         }))?,
     )?;
     let file = scratch.path().join("environment.k");

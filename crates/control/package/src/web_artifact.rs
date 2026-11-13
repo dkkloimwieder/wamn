@@ -9,7 +9,7 @@
 pub(super) mod plan;
 pub mod platform_ui;
 pub use plan::client_project;
-use plan::{cache_control, content_type, read_web_manifest, web_dist_files, web_manifest};
+use plan::{content_type, read_web_manifest, validate_path, web_dist_files, web_manifest};
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,6 @@ use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
 
 use crate::package_artifact::PackageRegistry;
-use crate::web_config::{CONFIG_CACHE, CONFIG_CONTENT_TYPE, CONFIG_FILE};
 
 /// Standalone output below a package's build directory.
 const ARTIFACT_DIRECTORY: &str = "web-artifact";
@@ -425,11 +424,6 @@ async fn pull_archive(
     Ok(tar)
 }
 
-/// A built file name carries its content hash, so a browser keeps it.
-const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
-/// The index names the current files, and the service worker `sw.js` keeps
-/// its name across builds, so a browser asks again at every load.
-const INDEX_CACHE: &str = "no-cache";
 /// The package, destination, and completion state of an artifact upload.
 #[derive(Debug)]
 pub struct UploadedClient {
@@ -446,14 +440,13 @@ pub struct UploadedClient {
 pub async fn upload_web_artifact(
     registry: &PackageRegistry,
     digest: &str,
-    org: &str,
     bucket: &str,
 ) -> Result<UploadedClient, WebArtifactError> {
     async {
         let sink = Sink::parse(bucket)?;
         let store = sink.store()?;
         let (package, root, written) =
-            upload_web_to_store(registry, digest, org, sink.prefix, store.as_ref()).await?;
+            upload_web_to_store(registry, digest, sink.prefix, store.as_ref()).await?;
         Ok(UploadedClient {
             package,
             location: format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket),
@@ -471,15 +464,12 @@ pub async fn upload_web_artifact(
 pub async fn upload_web_to_store(
     registry: &PackageRegistry,
     digest: &str,
-    org: &str,
     prefix: &str,
     store: &dyn ObjectStore,
 ) -> anyhow::Result<(String, String, bool)> {
-    ensure!(!org.is_empty(), "web upload requires an org");
     let (metadata, tar) = pull_web(registry, digest).await?;
     let (package, _) = metadata.package.split_once('@').expect("verified web.json");
     ensure_tag(package)?;
-    let project = client_project(&metadata.client_package)?;
     let root = [prefix.trim_matches('/'), "clients", package, &digest[7..]]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -496,38 +486,20 @@ pub async fn upload_web_to_store(
         .remove("index.html")
         .context("web artifact has no dist/index.html")?;
     for (name, bytes) in files {
-        put(
-            store,
-            &root,
-            &name,
-            bytes,
-            cache_control(&name)?,
-            content_type(&name)?,
-        )
-        .await?;
+        put(store, &root, &name, bytes, content_type(&name)?).await?;
     }
-    put(
-        store,
-        &root,
-        CONFIG_FILE,
-        crate::web_config::config_file_bytes(org, project),
-        CONFIG_CACHE,
-        CONFIG_CONTENT_TYPE,
-    )
-    .await?;
     put(
         store,
         &root,
         "index.html",
         index,
-        INDEX_CACHE,
         content_type("index.html")?,
     )
     .await?;
     Ok((package.to_owned(), root, true))
 }
 
-/// Write one object create-only with its Cache-Control and content type. An
+/// Write one object create-only with its content type. An
 /// existing object with equal bytes is the write of an earlier run that
 /// stopped, so it stays. An existing object with other bytes refuses.
 async fn put(
@@ -535,11 +507,9 @@ async fn put(
     root: &str,
     relative: &str,
     bytes: Vec<u8>,
-    cache: &'static str,
     content_type: &'static str,
 ) -> anyhow::Result<()> {
     let mut attributes = Attributes::new();
-    attributes.insert(Attribute::CacheControl, cache.into());
     attributes.insert(Attribute::ContentType, content_type.into());
     let key = object_store::path::Path::from(format!("{root}/{relative}"));
     let bytes = object_store::PutPayload::from(bytes);
@@ -1013,50 +983,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert_eq!(server.requests(), 1);
     }
 
+    use object_store::ObjectStore as _;
     use object_store::memory::InMemory;
-    use object_store::{ObjectStore as _, ObjectStoreExt as _};
-
-    #[tokio::test]
-    async fn an_existing_index_skips_all_writes_even_when_an_asset_is_absent() {
-        let scratch = ScratchRoot::create().unwrap();
-        artifact_fixture(scratch.path(), false);
-        let packed = pack_web_artifact(scratch.path()).unwrap();
-        let server = Server::start(vec![
-            (200, packed.manifest.clone()),
-            (200, packed.tar.clone()),
-            (200, packed.manifest.clone()),
-            (200, packed.tar.clone()),
-        ])
-        .await;
-        let registry = fixture_registry(&scratch, &server);
-        let store = InMemory::new();
-        let (_, root, written) =
-            super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
-                .await
-                .unwrap();
-        assert!(written);
-        let asset = object_store::path::Path::from(format!("{root}/assets/app.js"));
-        store.delete(&asset).await.unwrap();
-        let target = object_store::path::Path::from(format!("{root}/config.json"));
-        store.put(&target, "sentinel".into()).await.unwrap();
-        let (_, _, written) =
-            super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
-                .await
-                .unwrap();
-        assert!(!written);
-        assert!(store.head(&asset).await.is_err());
-        assert_eq!(
-            store
-                .get(&target)
-                .await
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap()
-                .as_ref(),
-            b"sentinel"
-        );
-    }
 
     #[tokio::test]
     async fn upload_refuses_digest_mismatches_and_non_web_artifacts_before_any_write() {
@@ -1090,7 +1018,6 @@ fs.copyFileSync('index.html', dist + '/index.html');
             let error = super::upload_web_to_store(
                 &fixture_registry(&scratch, &server),
                 &digest,
-                "acme",
                 "",
                 &store,
             )

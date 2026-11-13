@@ -86,18 +86,16 @@ const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
 const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
 const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
-    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id, identity.pats.expires_at AS pat_expires_at \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1 AND p.type = 'service' \
-        AND EXISTS (SELECT 1 FROM identity.project_roles r \
-            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($4::text[]))";
+    WHERE identity.pats.token_prefix = $1 AND p.type = 'service'";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -276,12 +274,18 @@ impl Principal {
 pub struct AuthenticatedPrincipal {
     principal: Principal,
     pat_id: Option<String>,
+    pat_deadline: Option<std::time::SystemTime>,
 }
 
 impl AuthenticatedPrincipal {
     /// The source PAT identity, present only after PAT authentication.
     pub fn pat_id(&self) -> Option<&str> {
         self.pat_id.as_deref()
+    }
+
+    /// The credential deadline from the authoritative PAT row.
+    pub fn pat_deadline(&self) -> Option<std::time::SystemTime> {
+        self.pat_deadline
     }
 
     /// Return the verified principal record.
@@ -738,6 +742,10 @@ fn decide_pat(
         return Ok(None);
     }
     Ok(Some(AuthenticatedPrincipal {
+        pat_deadline: Some(
+            row.try_get("pat_expires_at")
+                .map_err(|error| database_error(&error))?,
+        ),
         principal,
         pat_id: Some(
             row.try_get("pat_id")
@@ -928,8 +936,7 @@ pub async fn revoke_project_env_membership(
 /// be used only with the client it was prepared from; a different connection
 /// would refuse the statement name.
 ///
-/// Route authentication uses [`Self::authenticate_route_pat`] to read both
-/// the PAT and its project role or environment membership in one statement.
+/// Route authentication reads a service PAT with [`Self::authenticate_route_pat`].
 #[derive(Clone, Debug)]
 pub struct PreparedIdentityReads {
     route_pat: Statement,
@@ -946,30 +953,18 @@ impl PreparedIdentityReads {
         })
     }
 
-    /// Authenticate a route PAT and its system target in one round trip.
-    ///
-    /// Services need one of the accepted project roles. The caller must still
-    /// enforce the configured service identity and read operation permissions.
+    /// Authenticate a service PAT. The caller reads its application operation permissions.
     pub async fn authenticate_route_pat(
         &self,
         client: &(impl GenericClient + Sync),
         token: &str,
-        org: &str,
-        project: &str,
-        accepted_roles: &[&str],
     ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
         let Ok(parsed) = token.parse::<PatToken>() else {
             return Ok(None);
         };
         let prefix = parsed.lookup();
-        let org = require_target_segment("org", org)?;
-        let project = require_target_segment("project", project)?;
-        let roles = accepted_roles
-            .iter()
-            .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
         let row = client
-            .query_opt(&self.route_pat, &[&prefix, &org, &project, &roles])
+            .query_opt(&self.route_pat, &[&prefix])
             .await
             .map_err(|error| database_error(&error))?;
         decide_pat(row, &parsed)

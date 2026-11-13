@@ -335,14 +335,7 @@ async fn routing(
         FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default())
             .with_authenticator(Arc::new(
                 PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                    RouteAuthentication::new(
-                        identity_reader,
-                        postgres,
-                        ORG,
-                        PROJECT,
-                        operator_subject(ORG, PROJECT, ENVIRONMENT)?,
-                    )
-                    .await?,
+                    RouteAuthentication::new(identity_reader, postgres, PROJECT).await?,
                 )),
             )),
     )

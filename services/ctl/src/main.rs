@@ -52,6 +52,8 @@ enum Command {
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
     /// Provision the targeted database credential for the identity service.
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
+    /// Create an API service principal, authored grants, and its PAT.
+    CreateApiService(identity_verbs::ApiServiceArgs),
     /// Grant one user access to one project environment.
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Revoke one user's access to one project environment.
@@ -170,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
+        Command::CreateApiService(args) => identity_verbs::create_api_service(args).await,
         Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
         Command::Invite(args) => identity_verbs::invite(args).await,

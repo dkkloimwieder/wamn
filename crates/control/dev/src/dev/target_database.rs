@@ -1217,8 +1217,8 @@ mod tests {
             )
             .await?;
         let mut document = EnvironmentDocument::from_json(br#"{
-            "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev",
-            "applications":{"alpha":{"current":"none","hostname":"alpha.invalid","packages":["source_fixture"]}}
+            "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev","revocation_seconds":60,
+            "applications":{"alpha":{"current":"none","revocation_seconds":5,"hostname":"alpha.invalid","packages":["source_fixture"]}}
         }"#)?;
         let roots = [root.clone()];
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());

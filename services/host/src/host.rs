@@ -44,7 +44,6 @@ use wamn_execution_host::{
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_platform_identity::operator_subject;
 use wamn_registry::{Triple, control_nats_user, environment_nats_user, project_env_key};
 use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
@@ -380,7 +379,7 @@ pub struct HostArgs {
     /// Organization owning this host's project.
     ///
     /// Required only when the loaded release carries a PAT-protected HTTP
-    /// route; it targets both the operator subject and identity-reader URL.
+    /// route; it targets the identity-reader URL.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
@@ -1192,8 +1191,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             http_admitter_url
                 .as_deref()
                 .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-            let subject = operator_subject(org, project, &loaded_release.target().environment)
-                .context("derive the targeted operator subject")?;
             parse_system_reader_url(
                 SystemReader::Identity,
                 &system_url,
@@ -1205,7 +1202,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .await
                 .context("connect the targeted system identity reader")?;
             (
-                Some((org.to_owned(), subject)),
+                Some(org.to_owned()),
                 Some(Arc::new(client)),
                 Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
             )
@@ -1355,6 +1352,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )
         .await?;
         postgres = postgres.with_local_application(local);
+    }
+    if (pat_routes || session_routes)
+        && let Some(release) = &release
+    {
+        postgres
+            .configure_revocation(
+                &args.project,
+                &release
+                    .target()
+                    .applications
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
     }
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
@@ -1572,19 +1584,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let authenticator = PlatformRouteAuthenticator::default()
         .with_signature_authentication(Arc::clone(&facts), args.project.clone());
     let authenticator = match (&route_auth_target, &identity_reader) {
-        (Some((org, subject)), Some(identity_reader)) => {
-            authenticator.with_authentication(Arc::new(
-                RouteAuthentication::new(
-                    Arc::clone(identity_reader),
-                    Arc::clone(&postgres),
-                    org.clone(),
-                    args.project.clone(),
-                    subject.clone(),
-                )
-                .await
-                .context("prepare the route authentication identity reads")?,
-            ))
-        }
+        (Some(_), Some(identity_reader)) => authenticator.with_authentication(Arc::new(
+            RouteAuthentication::new(
+                Arc::clone(identity_reader),
+                Arc::clone(&postgres),
+                args.project.clone(),
+            )
+            .await
+            .context("prepare the route authentication identity reads")?,
+        )),
         (None, None) => authenticator,
         _ => unreachable!("route authentication inputs are constructed together"),
     };
@@ -1709,7 +1717,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     identity: route_auth_target
                         .as_ref()
                         .zip(identity_reader.as_ref())
-                        .map(|((org, _), client)| (Arc::clone(client), org.clone())),
+                        .map(|(org, client)| (Arc::clone(client), org.clone())),
                     changes: auth_changes.clone(),
                 },
                 Some(Arc::new(bridge)),

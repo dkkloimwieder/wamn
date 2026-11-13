@@ -1216,7 +1216,7 @@ mod tests {
     fn fresh_shared_host_consumes_installed_provider_runtime() -> anyhow::Result<()> {
         use crate::platform::{control, document::ClusterDocument};
         use serde_json::json;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
         for provider in ["gcp", "kind"] {
@@ -1303,7 +1303,7 @@ mod tests {
     #[test]
     fn shared_host_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
         use serde_json::json;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
         let fresh = materializer_host_values(&document, 70, 1, 120, None, false, None)?;
@@ -1349,7 +1349,7 @@ mod tests {
     fn shared_materializer_uses_platform_registry_transport_and_addresses() -> anyhow::Result<()> {
         use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
         use serde_json::json;
-        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         for (insecure_registry, registry, pod_registry) in [
             (true, LOCAL_REGISTRY, POD_REGISTRY),
             (false, "registry.example", "registry.example"),
@@ -1441,7 +1441,7 @@ mod tests {
         let document: EnvironmentDocument = serde_json::from_value(serde_json::json!({
             "org": "example", "project": "fixture", "env": "dev",
             "target": "test",
-            "policy": "default",
+            "policy": "default","revocation_seconds":60,
             "applications": {}}))
         .unwrap();
         let private = PrivateDirectory::create().unwrap();

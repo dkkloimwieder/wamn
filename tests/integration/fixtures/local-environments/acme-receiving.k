@@ -6,5 +6,6 @@ environment.Environment {
     project = "receiving"
     env = "dev"
     policy = "dev"
-    applications = {receiving = {current = "none", hostname = "receiving.localhost", packages = ["wamn_receiving", "client_acme_receiving"]}}
+    revocation_seconds = 60
+    applications = {receiving = {current = "none", revocation_seconds = 5, hostname = "receiving.localhost", packages = ["wamn_receiving", "client_acme_receiving"]}}
 }

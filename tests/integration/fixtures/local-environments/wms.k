@@ -6,5 +6,6 @@ environment.Environment {
     project = "wms"
     env = "dev"
     policy = "dev"
-    applications = {warehouse = {current = "none", hostname = "wms.localhost", packages = ["wamn_wms"]}}
+    revocation_seconds = 60
+    applications = {warehouse = {current = "none", revocation_seconds = 5, hostname = "wms.localhost", packages = ["wamn_wms"]}}
 }

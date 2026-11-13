@@ -54,7 +54,7 @@ fn database_url(url: &str, database: &str) -> anyhow::Result<String> {
 
 fn document() -> EnvironmentDocument {
     EnvironmentDocument::from_json(
-        br#"{"org":"install-sequence","project":"fixture","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
+        br#"{"org":"install-sequence","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{},"applications": {}}"#,
     ).unwrap()
 }
 

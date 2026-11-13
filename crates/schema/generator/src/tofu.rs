@@ -168,7 +168,7 @@ pub fn render_project_tofu(
             }},
             "google_compute_backend_service": {"edge_https": {
                 "name": "wamn-edge", "project": project.project_id,
-                "protocol": "HTTPS", "load_balancing_scheme": "EXTERNAL_MANAGED",
+                "protocol": "HTTP", "load_balancing_scheme": "EXTERNAL_MANAGED",
                 "health_checks": ["${google_compute_health_check.edge.id}"],
                 "backend": [{
                     "group": "${data.google_compute_network_endpoint_group.edge.self_link}",
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(backends.len(), 1);
         let backend = &backends["edge_https"];
         assert_eq!(backend["name"], "wamn-edge");
-        assert_eq!(backend["protocol"], "HTTPS");
+        assert_eq!(backend["protocol"], "HTTP");
         assert_eq!(backend["load_balancing_scheme"], "EXTERNAL_MANAGED");
         assert_eq!(
             backend["health_checks"],

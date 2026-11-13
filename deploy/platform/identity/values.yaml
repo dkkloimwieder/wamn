@@ -44,3 +44,6 @@ resources:
     memory: 128Mi
   limits:
     memory: 512Mi
+
+# Signing key rotation interval, in seconds. Thirty days.
+keyRotationSeconds: 2592000

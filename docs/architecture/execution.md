@@ -674,10 +674,11 @@ The route declares PAT authentication, session authentication, or both.
 Receiving and Acme publish both modes on their existing authenticated application routes.
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
-PAT authentication reads the current principal, credential, organization target, and applicable membership before admitting the request.
-Authorization reads the operation permissions of the principal.
+PAT authentication reads the current service principal and its credential.
+Authorization reads the principal’s operation permissions in the target project database.
 The host keeps both answers in its [auth memory](#auth-memory).
-Service credentials retain their declared target and cannot mint a user session.
+Service credentials use their authored application grants and cannot mint a user session.
+The route authenticator requires neither the platform operator subject nor a system `admin` role.
 
 A session token carries the user roles selected at minting and its revocable authority.
 For each new request, the host makes sure of the principal, environment membership, and password login.
@@ -687,8 +688,15 @@ Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
 Logout, reset, account disablement, membership removal, and PAT revocation reach an admitted PAT or session with the next drop of the [auth memory](#auth-memory).
 A host that cannot receive drops caches nothing, so it reads every request.
-The TTL of 60 seconds is the bound only if a drop is lost.
+The configured revocation bound applies when a drop is lost.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
+
+Create an API identity with `wamn-ctl create-api-service`.
+Supply the org, project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
+The verb needs the system administrator URL, the target application database URL, and the existing PAT issuer credentials.
+`--emit-secret` names a private JSON output file. The verb prints only the principal id.
+It creates or reuses the service, grants authored roles in the selected environment, then requests its PAT from identity.
+A partial creation can be retried. An API service cannot receive the reserved `admin` role through this verb.
 
 ### Auth memory
 
@@ -700,13 +708,27 @@ One read of `platform."user"`, `platform.user_role` and `platform.permission` an
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its project and keeps each value it sees, so a fact one host reads serves every host of the project.
 The control host serves every project, so it watches every key.
-The bucket keeps a value for at most 60 seconds, and so does the replica.
+Each environment document declares the project's `revocation_seconds` and each application's `revocation_seconds`.
+Both values are required nonnegative integers. Zero disables caching.
+Release preparation writes these values as `revocation-seconds` rows in `platform.setting` before Helm starts the host.
+Local development writes the same configuration before taking its database template.
+The HTTP admitter reads these rows through its existing read authority.
+The project row uses `target_type = project` and the project name as `target_id`.
+Each application row uses `target_type = application` and its declared application name as `target_id`.
+A host with authenticated routes refuses missing or invalid configuration at startup.
+It uses the shortest bound across the project and its applications for shared auth facts.
+Zero disables caching. A configuration change takes effect when the host restarts.
+The auth bucket has no platform-wide expiry. It holds at most 1 MiB of facts.
+A full bucket refuses a cache write, and the host keeps reading Postgres.
+The replica measures each value from its original publication time.
 
 An admitted PAT and an active session stay in the host that read them, because a token answer never leaves the host.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
 An `project_env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
 A host does not keep a token answer when any identity key changed during its read.
+A watch reset also invalidates reads already in progress.
+Every cached token answer ends at its credential deadline, even when the configured bound is longer.
 While the watch is broken, the host keeps no fact and opens the bucket again.
 If the stream ends or the NATS client loses its connection, the watch breaks.
 The host makes sure of the connection, because the client reconnects without ending the stream.
@@ -721,7 +743,7 @@ A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a d
 The writers are the application host, the control host, the identity service and `wamn-ctl`.
 The identity service and `wamn-ctl` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
 `WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
-A lost delete waits for the 60 seconds.
+A lost delete waits for at most the configured bound.
 
 The exact audience is `urn:wamn:project-env:{org}:{env}:{project}:{instance_suffix}`.
 The configured environment supplies its current suffix.
@@ -764,7 +786,8 @@ Failed renewal or login expiry requires explicit login and submission. Quitting 
 
 The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
 The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
-It follows the rules of the [auth memory](#auth-memory): the revision rule of a put, the watch, the 60 second limit and the broken watch.
+It follows the revision and watch rules of the [auth memory](#auth-memory).
+Connection facts keep their own 60-second expiry.
 The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
 The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
 It also holds exclusivity, target id, resource key, and target type.
@@ -1027,7 +1050,9 @@ Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes 
 The service limits password requests to eight per replica and HTTPS connections to 128 per replica.
 Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
 Enrollment uses the principal ID for its account counter. Login uses a digest of the normalized email.
-The source is the TLS peer address, never a forwarded header.
+The source is the client address forwarded by ingress in `X-Forwarded-For`.
+The Rust web front normalizes the final address in the chain before proxying a password request.
+Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 Operators behind a shared proxy also share its source limit.
@@ -1141,6 +1166,13 @@ Previously cached keys can still authenticate for their remaining 300-second fre
 
 Private signing keys remain in the system database and identity service.
 The public endpoint exposes only public key material.
+The identity service runs signing key rotation on a persisted schedule.
+`keyRotationSeconds` in the identity chart sets the interval. Its configured value is 2,592,000 seconds, or 30 days.
+The service calls the existing publish, activate and retire operations.
+Replicas serialize rotation with an issuer lock. Restarting a replica does not restart the schedule.
+An issuer without an active key requires explicit activation, including after removal of a compromised key.
+The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
+
 The [key cache](../../crates/platform/runtime/src/session_keys.rs) and [key owner](../../crates/identity/platform/src/session_keys.rs) define these bounds.
 
 ## Operator clients
@@ -1406,3 +1438,9 @@ The wamn adapter compares snapshot versions and gives accepted deliveries a loca
 The adapter keeps the snapshot value in each row and leaves `@wfe/sync` unchanged.
 An empty page keeps its incoming cursor, so an unchanged feed still answers 304.
 A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor whose transaction is at or below the pruning watermark of the history table refuses with `cursor_expired`, because pruning removed a change that the cursor did not see.
+
+### Device ingress
+
+The device listens only on a loopback address. A non-loopback address refuses before startup.
+The device has no request counter that sheds calls. Its instance pool retains warm instances only.
+Calls beyond the warm pool can use one-shot stores.

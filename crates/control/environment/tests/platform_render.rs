@@ -111,13 +111,20 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             deployment["metadata"]["namespace"]
         );
         let pod = &deployment["spec"]["template"]["spec"];
-        assert!(
-            pod["volumes"]
-                .as_array()
-                .unwrap()
+        if provider == Provider::Kind {
+            let ingress = objects
                 .iter()
-                .any(|volume| volume["secret"]["secretName"] == certificate["spec"]["secretName"])
-        );
+                .find(|object| object["kind"] == "Ingress")
+                .unwrap();
+            assert_eq!(
+                ingress["spec"]["tls"][0]["secretName"],
+                certificate["spec"]["secretName"]
+            );
+            assert_eq!(
+                ingress["spec"]["defaultBackend"]["service"]["name"],
+                deployment["metadata"]["name"]
+            );
+        }
         let containers = pod["containers"].as_array().unwrap();
         let routes = containers
             .iter()
@@ -154,14 +161,8 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             .unwrap();
         let web: serde_json::Value =
             serde_json::from_str(config["data"]["web.json"].as_str().unwrap())?;
-        assert_eq!(
-            web,
-            json!({"listen":"0.0.0.0:8080", "bucket": if document.buckets.web.is_empty() { "" } else { "gs://fixture-web" }})
-        );
-        let nginx = config["data"]["nginx.conf"].as_str().unwrap();
-        assert!(nginx.contains("proxy_pass http://127.0.0.1:8080;"));
-        assert!(nginx.contains("proxy_ssl_verify on;"));
-        assert!(nginx.contains("proxy_ssl_trusted_certificate /etc/wamn-edge/identity-ca/ca.crt;"));
+        assert_eq!(web["identity"], entry["values"]["identity"]);
+        assert!(web["identity_ca"].is_string());
         let service = objects
             .iter()
             .find(|object| object["kind"] == "Service")
@@ -205,7 +206,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         environment::document::EnvironmentDocument, platform::operations,
     };
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":"acme","project":"billing","env":"dev","target":"cloud","policy":"dev","applications":{}
+        "org":"acme","project":"billing","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}
     }))?)?;
     let cluster = "database-owner";
     let database = "recorded-environment-database";

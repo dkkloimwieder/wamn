@@ -451,9 +451,7 @@ pub(super) async fn assemble(
                     RouteAuthentication::new(
                         Arc::new(reader),
                         Arc::clone(&postgres),
-                        input.org,
                         input.project,
-                        subject,
                     )
                     .await?,
                 )),

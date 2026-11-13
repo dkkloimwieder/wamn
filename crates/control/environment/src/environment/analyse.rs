@@ -161,6 +161,7 @@ pub fn select_application(
         env: document.env.clone(),
         target: document.target.clone(),
         policy: document.policy.clone(),
+        revocation_seconds: document.revocation_seconds,
         schema: document.schema,
         applications: BTreeMap::from([(name.to_owned(), selection.clone())]),
         integrations: document
@@ -816,7 +817,7 @@ mod tests {
     fn project_schema_notices_require_a_warning() {
         use wamn_package_control::schema_baseline::{InitializationIdentity, SchemaReport};
         let document = EnvironmentDocument::from_json(
-            br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#,
+            br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#,
         ).unwrap();
         let mut authorities = Authorities {
             release_name: String::new(),

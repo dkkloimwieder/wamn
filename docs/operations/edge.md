@@ -4,7 +4,7 @@ These commands operate `wamn-edge` on its box. [Building](building.md#the-edge-b
 
 ## Serve
 
-Serve the release that the configuration names:
+Serve the release that the configuration names. The listener must use a loopback address:
 
 ```bash
 wamn-edge --config <path>
@@ -48,11 +48,19 @@ wamn-edge --config <path> intents resolve <id> <basis>
 
 ## Serve the cluster web edge
 
-The `edge-web` image builds `wamn-edge` with the `web` feature. The box binary does not have these two subcommands. Both require `--config`, a JSON file of the web edge.
+The `edge-web` image runs `wamn-web-front`, a separate service from the device binary.
+Its JSON configuration names the HTTP listener, web bucket, identity HTTPS endpoint, identity CA file and `trusted_proxy_hops`.
+Count trusted proxies from the direct peer toward the client. Zero uses the direct peer.
+Direct requests without a forwarded header also use the peer, including Kubernetes port forwards.
+The installer selects two for GCP: its load balancer appends the client and its own address to `X-Forwarded-For`.
+Local ingress uses one. The front forwards only the selected client address for throttling.
+TLS for browser traffic terminates at ingress.
 
 ```bash
-wamn-edge --config <path> web
-wamn-edge --config <path> web-probe
+wamn-web-front --config <path>
+wamn-web-front --config <path> probe
 ```
 
-`web` serves the bucket files of the releases that the file names. `web-probe` requests `/` and `/config.json` from `wamn-edge-web.edge.svc.cluster.local` for each host in the file. It fails if one response is not 200.
+The service discovers hosts from release ConfigMaps.
+The probe requests `/` and `/config.json` through the local listener for each declared host.
+It fails if a response is not HTTP 200.

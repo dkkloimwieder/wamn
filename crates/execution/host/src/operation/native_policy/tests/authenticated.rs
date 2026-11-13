@@ -1376,8 +1376,7 @@ async fn pat_caller(
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(Arc::new(reader), postgres, ORG, PROJECT, "warm-test")
-                    .await?,
+                RouteAuthentication::new(Arc::new(reader), postgres, PROJECT).await?,
             )),
         ));
     routing

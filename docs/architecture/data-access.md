@@ -987,7 +987,7 @@ A control host refuses this configuration.
 
 The edge sends `/api/<application>/files` and its child paths to this Service before the general `/api/` route.
 It keeps the full path and streams uploads without request buffering.
-No upload size limit is configured, so nginx uses `client_max_body_size 0`.
+The Rust web front streams upload bodies to the file service.
 The storage layer still refuses sizes outside the metadata integer range.
 
 File transfers share the route authenticator and its authentication cache for sessions and PATs.

@@ -3915,15 +3915,10 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         .batch_execute("SET ROLE wamn_identity_reader")
         .await
         .unwrap();
-    let authentication = RouteAuthentication::new(
-        Arc::new(identity_reader),
-        Arc::clone(&pg),
-        "org",
-        "project",
-        principal.subject(),
-    )
-    .await
-    .unwrap();
+    let authentication =
+        RouteAuthentication::new(Arc::new(identity_reader), Arc::clone(&pg), "project")
+            .await
+            .unwrap();
     let route = crate::plugins::route_authentication::tests::routing(&serde_json::json!(["pat"]))
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),

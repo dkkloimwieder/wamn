@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_nats::jetstream::kv::{Entry as KvEntry, Operation, Store};
 use futures_util::StreamExt as _;
@@ -82,14 +82,15 @@ where
         self.entries().clear();
     }
 
-    /// The live answer of `key`, or the ticket of a read of it. The bucket
-    /// expires a value at the same age as the replica.
+    /// The live answer of `key`, or the ticket of a read of it.
+    /// Replica expiry uses the original publication time.
     pub(crate) fn answer(&self, key: &str) -> Result<A, Ticket> {
         match self.entries().get(key) {
             Some(entry) if entry.seen.elapsed() < self.ttl => {
                 entry.answer.clone().ok_or(Ticket(entry.revision))
             }
-            _ => Err(Ticket(0)),
+            Some(entry) => Err(Ticket(entry.revision)),
+            None => Err(Ticket(0)),
         }
     }
 
@@ -97,7 +98,6 @@ where
     pub(crate) fn ticket(&self, key: &str) -> Ticket {
         self.entries()
             .get(key)
-            .filter(|entry| entry.seen.elapsed() < self.ttl)
             .map_or(Ticket(0), |entry| Ticket(entry.revision))
     }
 
@@ -110,7 +110,7 @@ where
             .and_then(|entry| entry.answer.clone())
     }
 
-    fn keep_entry(&self, key: String, revision: u64, answer: Option<A>) {
+    fn keep_entry(&self, key: String, revision: u64, answer: Option<A>, age: Duration) {
         // The caller holds the entries during the test, so a fact kept here
         // falls to the clear that follows a broken watch.
         let mut entries = self.entries();
@@ -129,14 +129,17 @@ where
         // The watch also delivers the revision this host put.
         if revision >= entry.revision {
             entry.revision = revision;
-            entry.seen = Instant::now();
-            entry.answer = answer;
+            entry.seen = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+            entry.answer = answer.filter(|_| age < self.ttl);
         }
     }
 
     /// Put `answer` at `key` if the key still has the revision of `ticket`,
     /// and keep it. Without the bucket, keep nothing.
     pub(crate) async fn put(&self, key: String, ticket: Ticket, answer: A) {
+        if self.ttl.is_zero() {
+            return;
+        }
         let Some(bucket) = self.bucket() else {
             return;
         };
@@ -148,7 +151,7 @@ where
             }
         };
         match tokio::time::timeout(PUT_TIMEOUT, bucket.update(&key, bytes.into(), ticket.0)).await {
-            Ok(Ok(revision)) => self.keep_entry(key, revision, Some(answer)),
+            Ok(Ok(revision)) => self.keep_entry(key, revision, Some(answer), Duration::ZERO),
             // A writer changed the key during the read, or another host put
             // it first. The watch brings the current value.
             Ok(Err(error))
@@ -191,7 +194,10 @@ where
             },
             Operation::Delete | Operation::Purge => None,
         };
-        self.keep_entry(entry.key, entry.revision, answer);
+        let age = SystemTime::now()
+            .duration_since(SystemTime::from(entry.created))
+            .unwrap_or_default();
+        self.keep_entry(entry.key, entry.revision, answer, age);
     }
 }
 
