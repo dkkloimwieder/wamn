@@ -37,7 +37,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         .context("the WMS test crate has an application parent")?
         .to_owned();
     let attachments: BTreeMap<String, ServingAttachment> =
-        wamn_schema_generator::route_schema::read_package_attachments(&app)?;
+        wamn_compiler::route_schema::read_package_attachments(&app)?;
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
     std::fs::write(

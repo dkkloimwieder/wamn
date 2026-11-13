@@ -31,7 +31,7 @@ wamn-record-history = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 wamn-package-control = { workspace = true }
 
 [dev-dependencies]

@@ -25,7 +25,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio_postgres::NoTls;
 use wamn_catalog::PackageCoordinate;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_environment_control::reconcile_package_data_access;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_package_control::component_admission::{
@@ -464,12 +464,12 @@ impl ProductionDevStageRunner {
         self.clear_after(DevStage::Introspect);
         let packages = self.package_inputs()?;
         for package in &packages {
-            let catalog = wamn_schema_generator::introspect_package(
-                self.config.target_database_url(),
-                &package.root,
-            )
-            .await
-            .map_err(|source| ProductionDevStageError::owner("introspect package", source))?;
+            let catalog =
+                wamn_compiler::introspect_package(self.config.target_database_url(), &package.root)
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("introspect package", source)
+                    })?;
             let catalog = project_catalog_for_package(&catalog, &package.manifest, &packages)?;
             self.catalogs
                 .insert(package.manifest.package.id.clone(), catalog);
@@ -505,14 +505,12 @@ impl ProductionDevStageRunner {
         );
         let database_url = self.config.target_database_url();
         generate_changed_packages(packages, &current, |package| async move {
-            let output_root = wamn_schema_generator::build::default_output_root(&package.root);
-            wamn_schema_generator::build::generate_package(
-                &wamn_schema_generator::build::BuildRequest::new(
-                    &package.root,
-                    &output_root,
-                    database_url,
-                ),
-            )
+            let output_root = wamn_compiler::build::default_output_root(&package.root);
+            wamn_compiler::build::generate_package(&wamn_compiler::build::BuildRequest::new(
+                &package.root,
+                &output_root,
+                database_url,
+            ))
             .await
             .map_err(|source| ProductionDevStageError::owner("build package", source))
         })
@@ -544,12 +542,11 @@ impl ProductionDevStageRunner {
         for package in selected {
             let package_id = &package.manifest.package.id;
             if wamn_release_control::delivery::sqlx::requires_verifier(&package.manifest) {
-                let built = wamn_schema_generator::build_record::read(
-                    &wamn_schema_generator::output_root(&package.root),
-                )
-                .map_err(|source| {
-                    ProductionDevStageError::owner("read generated package", source)
-                })?;
+                let built =
+                    wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
+                        .map_err(|source| {
+                        ProductionDevStageError::owner("read generated package", source)
+                    })?;
                 let current = SqlxMetadataInputs::of(&built);
                 if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
                     self.sqlx_metadata_inputs
@@ -584,7 +581,7 @@ impl ProductionDevStageRunner {
             })?;
         let packages = self.package_inputs()?;
         self.pending_builds.extend(
-            package_builds(&packages, wamn_schema_generator::build::current_build)
+            package_builds(&packages, wamn_compiler::build::current_build)
                 .into_iter()
                 .filter_map(|(id, build)| build.is_none().then_some(id)),
         );
@@ -593,14 +590,14 @@ impl ProductionDevStageRunner {
             if !self.pending_builds.contains(&package.manifest.package.id) {
                 continue;
             }
-            let output_root = wamn_schema_generator::build::default_output_root(&package.root);
-            let mut request = wamn_schema_generator::build::BuildRequest::new(
+            let output_root = wamn_compiler::build::default_output_root(&package.root);
+            let mut request = wamn_compiler::build::BuildRequest::new(
                 &package.root,
                 &output_root,
                 self.config.target_database_url(),
             );
             request.allow_stale_base_pins = true;
-            wamn_schema_generator::build::build_components(&request, &package.manifest.package.id)
+            wamn_compiler::build::build_components(&request, &package.manifest.package.id)
                 .await
                 .map_err(|source| ProductionDevStageError::owner("build components", source))?;
             if package.root.join("web/package.json").is_file() {
@@ -1293,7 +1290,7 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::build_record::generation_digest(&package.root)
+            wamn_compiler::build_record::generation_digest(&package.root)
                 .map_err(|source| ProductionDevStageError::owner("read the build inputs", source))
         })
         .collect()
@@ -1304,9 +1301,9 @@ fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDev
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::build_record::physical_schema_fingerprint(
-                &wamn_schema_generator::output_root(&package.root),
-            )
+            wamn_compiler::build_record::physical_schema_fingerprint(&wamn_compiler::output_root(
+                &package.root,
+            ))
             .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
         })
         .collect()
@@ -1316,8 +1313,8 @@ fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDev
 /// An unreadable build selects rebuilding, including each dependent overlay.
 fn current_package_builds(
     packages: &[PackageInput],
-) -> BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> {
-    package_builds(packages, wamn_schema_generator::build::current_generation)
+) -> BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> {
+    package_builds(packages, wamn_compiler::build::current_generation)
 }
 
 fn package_builds(
@@ -1325,10 +1322,9 @@ fn package_builds(
     mut current: impl FnMut(
         &Path,
         &Path,
-    )
-        -> anyhow::Result<Option<wamn_schema_generator::build_record::BuildRecord>>,
-) -> BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> {
-    let mut builds: BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> =
+    ) -> anyhow::Result<Option<wamn_compiler::build_record::BuildRecord>>,
+) -> BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> {
+    let mut builds: BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> =
         BTreeMap::new();
     for package in packages {
         let base_changed = package
@@ -1341,7 +1337,7 @@ fn package_builds(
         } else {
             current(
                 &package.root,
-                &wamn_schema_generator::build::default_output_root(&package.root),
+                &wamn_compiler::build::default_output_root(&package.root),
             )
             .ok()
             .flatten()
@@ -1353,19 +1349,13 @@ fn package_builds(
 
 async fn generate_changed_packages<F, Fut>(
     packages: Vec<PackageInput>,
-    current: &BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>>,
+    current: &BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>>,
     mut generate: F,
-) -> Result<
-    BTreeMap<String, wamn_schema_generator::build_record::BuildRecord>,
-    ProductionDevStageError,
->
+) -> Result<BTreeMap<String, wamn_compiler::build_record::BuildRecord>, ProductionDevStageError>
 where
     F: FnMut(PackageInput) -> Fut,
     Fut: std::future::Future<
-            Output = Result<
-                wamn_schema_generator::build_record::BuildRecord,
-                ProductionDevStageError,
-            >,
+            Output = Result<wamn_compiler::build_record::BuildRecord, ProductionDevStageError>,
         >,
 {
     let mut built = BTreeMap::new();
@@ -1387,11 +1377,11 @@ where
 #[derive(Debug, PartialEq, Eq)]
 struct SqlxMetadataInputs {
     inputs: String,
-    dependencies: Vec<wamn_schema_generator::build_record::BuildDependency>,
+    dependencies: Vec<wamn_compiler::build_record::BuildDependency>,
 }
 
 impl SqlxMetadataInputs {
-    fn of(build_record: &wamn_schema_generator::build_record::BuildRecord) -> Self {
+    fn of(build_record: &wamn_compiler::build_record::BuildRecord) -> Self {
         Self {
             inputs: build_record.inputs.generation_digest.clone(),
             dependencies: build_record.dependencies.clone(),
@@ -1672,7 +1662,7 @@ async fn prepare_local_bindings(
     config: &DevConfig,
     admissions: &[ComponentAdmission],
     environment: &wamn_environment_control::environment::document::EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     manifest_digest: &str,
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let system = wamn_package_control::database::connect(config.system_database_url()).await?;
@@ -1725,7 +1715,7 @@ async fn prepare_local_bindings(
             );
             prepared.push(PreparedLocalBinding {
                 package_id: admission.package_id().to_owned(),
-                read_only: binding.mode == wamn_catalog::manifest::ConnectionMode::Read,
+                read_only: binding.mode == wamn_compiler::manifest::ConnectionMode::Read,
                 requirement: requirement.clone(),
                 instance_id: binding.connection_id.clone(),
             });
@@ -1761,7 +1751,7 @@ async fn prepare_local_bindings(
 async fn reserve_local_bindings(
     config: &DevConfig,
     environment: &wamn_environment_control::environment::document::EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
 ) -> anyhow::Result<()> {
@@ -1792,7 +1782,7 @@ async fn reserve_local_bindings(
                     && input.requirement.store_alias() == binding.alias
                     && input.instance_id == binding.connection_id
                     && input.read_only
-                        == (binding.mode == wamn_catalog::manifest::ConnectionMode::Read)
+                        == (binding.mode == wamn_compiler::manifest::ConnectionMode::Read)
             }),
             "local org connection authority changed after candidate validation"
         );
@@ -1804,7 +1794,7 @@ async fn reserve_local_bindings(
 async fn resolve_local_bindings(
     config: &DevConfig,
     environment: &wamn_environment_control::environment::document::EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
     apply: Option<&[wamn_runtime::local_application::LocalBindingFacts]>,
@@ -1881,7 +1871,7 @@ async fn resolve_local_bindings(
                 binding.generation,
                 &definition.definition,
                 handle,
-                binding.mode == wamn_catalog::manifest::ConnectionMode::Read,
+                binding.mode == wamn_compiler::manifest::ConnectionMode::Read,
             );
             bindings.push(wamn_runtime::local_application::LocalBindingFacts {
                 package_id: input.package_id.clone(),
@@ -2052,7 +2042,7 @@ mod tests {
             });
             packages[2].manifest.base_dependencies.insert(
                 "base".to_owned(),
-                wamn_catalog::manifest::BaseDependencyRequirement {
+                wamn_compiler::manifest::BaseDependencyRequirement {
                     package: "base".to_owned(),
                     version: "1.0.0".to_owned(),
                     digest: format!("sha256:{}", "a".repeat(64)),
@@ -2088,12 +2078,10 @@ mod tests {
         }
     }
 
-    fn write_package_build(
-        package: &PackageInput,
-    ) -> wamn_schema_generator::build_record::BuildRecord {
-        use wamn_schema_generator::build_record;
+    fn write_package_build(package: &PackageInput) -> wamn_compiler::build_record::BuildRecord {
+        use wamn_compiler::build_record;
 
-        let output = wamn_schema_generator::output_root(&package.root);
+        let output = wamn_compiler::output_root(&package.root);
         fs::create_dir_all(&output).unwrap();
         let manifest = fs::read(package.root.join("wamn.json")).unwrap();
         let inputs = build_record::input_digest(&package.root).unwrap();
@@ -2137,7 +2125,7 @@ mod tests {
     fn package_output_snapshot(
         package: &PackageInput,
     ) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)> {
-        fs::read_dir(wamn_schema_generator::output_root(&package.root))
+        fs::read_dir(wamn_compiler::output_root(&package.root))
             .unwrap()
             .map(|entry| {
                 let path = entry.unwrap().path();
@@ -2184,7 +2172,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_edits_skip_generation_and_build_only_changed_packages_and_overlays() {
-        use wamn_schema_generator::{build, build_record};
+        use wamn_compiler::{build, build_record};
 
         for changed in ["other", "base"] {
             let fixture = PackageBuildFixture::new();
@@ -2250,7 +2238,7 @@ mod tests {
             }
             let rebuilt = build_record::read_current(
                 &package.root,
-                &wamn_schema_generator::output_root(&package.root),
+                &wamn_compiler::output_root(&package.root),
             )
             .unwrap();
             assert_eq!(
@@ -2333,7 +2321,7 @@ mod tests {
     async fn stale_absent_and_invalid_build_records_select_rebuilding() {
         let fixture = PackageBuildFixture::new();
         let package = &fixture.packages[1];
-        let path = wamn_schema_generator::output_root(&package.root).join("build.json");
+        let path = wamn_compiler::output_root(&package.root).join("build.json");
         for state in ["stale", "absent", "invalid"] {
             match state {
                 "stale" => fs::write(package.root.join("input.txt"), "changed").unwrap(),
@@ -2393,9 +2381,9 @@ mod tests {
     #[test]
     fn sqlx_preparation_is_keyed_on_the_generation_digest() {
         let build_record = |inputs: &str, base: &str| {
-            let build_record: wamn_schema_generator::build_record::BuildRecord =
+            let build_record: wamn_compiler::build_record::BuildRecord =
                 serde_json::from_value(serde_json::json!({
-                    "schema": wamn_schema_generator::build_record::BUILD_RECORD_SCHEMA,
+                    "schema": wamn_compiler::build_record::BUILD_RECORD_SCHEMA,
                     "package": {"id": "demo", "version": "1.0.0"},
                     "inputs": {"digest": "full", "generation_digest": inputs, "files": {}},
                     "dependencies": [{"id": "base", "version": "1.0.0", "digest": base}],
@@ -2617,11 +2605,11 @@ mod tests {
         model.enum_fields.clear();
         model
             .operations
-            .retain(|action, _| *action == wamn_catalog::manifest::CrudAction::Get);
+            .retain(|action, _| *action == wamn_compiler::manifest::CrudAction::Get);
         let bytes = serde_json::to_vec(&manifest).unwrap();
-        let transactional = wamn_schema_generator::StatementTransactionality::unclassified();
+        let transactional = wamn_compiler::StatementTransactionality::unclassified();
         let generate = |catalog| {
-            wamn_schema_generator::generate(&wamn_schema_generator::GenerationInput::new(
+            wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
                 catalog,
                 &bytes,
                 &[],
@@ -2637,7 +2625,7 @@ mod tests {
 
     #[test]
     fn each_package_selects_the_component_its_build_records() {
-        use wamn_schema_generator::build_record;
+        use wamn_compiler::build_record;
         let directory = std::env::temp_dir().join(format!(
             "wamn-dev-selection-{}-{}",
             std::process::id(),

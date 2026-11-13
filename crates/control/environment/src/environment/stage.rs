@@ -6,7 +6,7 @@ pub use plan::{apply_order, sequence_defaults};
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 
 use super::Platform;
 use super::analyse::{self, Installed};
@@ -51,7 +51,7 @@ pub async fn initialize(
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let package = open(platform, id, version).await?;
-        let path = wamn_schema_generator::package_manifest_path(package.root());
+        let path = wamn_compiler::package_manifest_path(package.root());
         let package_manifest = PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )

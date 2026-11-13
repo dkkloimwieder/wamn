@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::json;
-use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, ReplayIr, ResponseIr, RouteIr};
+use wamn_compiler::client_ir::{ClientContractIr, FieldIr, ReplayIr, ResponseIr, RouteIr};
 
 use super::{fixture, platform_claim};
 
@@ -30,7 +30,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
                     type_name: "text".to_owned(),
                     nullable: false,
                     required: true,
-                    revision: wamn_catalog::manifest::Revision::default(),
+                    revision: wamn_compiler::manifest::Revision::default(),
                     children: Vec::new(),
                     minimum: None,
                     maximum: None,

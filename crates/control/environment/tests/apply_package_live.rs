@@ -91,12 +91,12 @@ fn fixture_root() -> PathBuf {
 #[tokio::test]
 async fn migrated_view_uses_owner_rights_and_operation_grants() {
     use serde_json::json;
-    use wamn_environment_control::reconcile_package_data_access::{
-        ReconcilePackageDataAccessRequest, reconcile_package_data_access,
-    };
-    use wamn_schema_generator::{
+    use wamn_compiler::{
         DATA_ACCESS_OVERLAY_PATH, DataAccessRelationFields,
         derive_data_access_overlay_from_relation_fields,
+    };
+    use wamn_environment_control::reconcile_package_data_access::{
+        ReconcilePackageDataAccessRequest, reconcile_package_data_access,
     };
     use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
@@ -2520,7 +2520,7 @@ async fn introspection_accepts_only_the_event_admission_reads() {
         .unwrap()
         .get::<_, String>(0);
     assert!(acl.contains("wamn_executor_platform=U/"), "{acl}");
-    wamn_schema_generator::introspect_package(&url, &package)
+    wamn_compiler::introspect_package(&url, &package)
         .await
         .expect("introspection accepts the event admission reads");
 
@@ -2549,7 +2549,7 @@ async fn introspection_accepts_only_the_event_admission_reads() {
         ),
     ] {
         client.batch_execute(grant).await.unwrap();
-        let error = wamn_schema_generator::introspect_package(&url, &package)
+        let error = wamn_compiler::introspect_package(&url, &package)
             .await
             .expect_err(grant);
         assert!(
@@ -2558,7 +2558,7 @@ async fn introspection_accepts_only_the_event_admission_reads() {
         );
         client.batch_execute(revoke).await.unwrap();
     }
-    wamn_schema_generator::introspect_package(&url, &package)
+    wamn_compiler::introspect_package(&url, &package)
         .await
         .expect("introspection accepts the reads again after each revoke");
     std::fs::remove_dir_all(package).unwrap();

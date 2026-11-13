@@ -246,13 +246,13 @@ pub fn physical_schema(
 ) -> anyhow::Result<wamn_schema_control::physical_schema::PhysicalSchema> {
     use wamn_schema_control::physical_schema::{PhysicalSchema, render};
     let directory = crate::apply_package::read_package_directory(package_root)?;
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
-    let path = wamn_schema_generator::output_root(package_root).join("physical-schema.json");
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
+    let path = wamn_compiler::output_root(package_root).join("physical-schema.json");
     let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
     let schema: PhysicalSchema =
         serde_json::from_slice(&bytes).context("read physical schema description")?;
     anyhow::ensure!(
-        schema.statements == render(&manifest, &directory.migrations, &schema.columns)?,
+        schema.statements == render(&(&manifest).into(), &directory.migrations, &schema.columns)?,
         "physical schema differs from packaged migrations or generated definitions"
     );
     Ok(schema)
@@ -265,7 +265,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let package = plan_package_migrations(&directory, None, &[])
         .context("validate strict package directory before component publication")?;
     let package_manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+        wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
@@ -277,8 +277,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
     // An input port can name its package's generated route schema instead of
     // copying it, so the reference resolves against the package it belongs to.
-    let files = wamn_schema_generator::route_schema::PackageFiles::open(&args.package)?;
-    wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
+    let files = wamn_compiler::route_schema::PackageFiles::open(&args.package)?;
+    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
         files.schema(reference)
     })
     .with_context(|| {
@@ -339,7 +339,7 @@ struct ExpectedOperationContract {
 
 fn load_component_statement_facts(
     package_root: &Path,
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &wamn_compiler::manifest::PackageManifest,
     component: &AdmittedComponent,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     load_package_statements(package_root, manifest, Some(component))
@@ -349,26 +349,20 @@ fn load_component_statement_facts(
 #[cfg(any(test, feature = "test-util"))]
 pub fn load_package_statement_facts(
     package_root: &Path,
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &wamn_compiler::manifest::PackageManifest,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     load_package_statements(package_root, manifest, None)
 }
 
 fn load_package_statements(
     package_root: &Path,
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &wamn_compiler::manifest::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
-    wamn_schema_generator::build_record::require_current(package_root).map_err(|error| {
+    wamn_compiler::build_record::require_current(package_root).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
             format!("{error:#}"),
-        )
-    })?;
-    wamn_catalog::manifest::validate_operation_vocabulary(manifest).map_err(|error| {
-        ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementContractInvalid,
-            format!("package operation vocabulary is invalid: {error}"),
         )
     })?;
     let expected = expected_operation_contracts(manifest)?;
@@ -540,7 +534,7 @@ fn read_package_owned_file(
     // lies outside the package. It must stay inside that output root.
     let (candidate, owner) = match path.strip_prefix("generated") {
         Ok(output) => {
-            let output_root = wamn_schema_generator::output_root(package_root);
+            let output_root = wamn_compiler::output_root(package_root);
             let owner = output_root.canonicalize().map_err(|error| {
                 ComponentProjectionError::new(
                     ComponentProjectionErrorType::StatementPathInvalid,
@@ -801,7 +795,7 @@ mod tests {
     fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
         let package_root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
-        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(include_bytes!(
+        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(include_bytes!(
             "../tests/fixtures/component_package/wamn.json"
         ))
         .expect("fixture package manifest parses");
@@ -914,10 +908,7 @@ mod tests {
         for parent in [apps.clone(), apps.join("platform")] {
             for entry in std::fs::read_dir(&parent).expect("read the apps directory") {
                 let root = entry.expect("read an apps entry").path();
-                if root
-                    .join(wamn_schema_generator::AUTHORED_MANIFEST)
-                    .is_file()
-                {
+                if root.join(wamn_compiler::AUTHORED_MANIFEST).is_file() {
                     roots.push(root);
                 }
             }
@@ -925,15 +916,15 @@ mod tests {
         roots.sort();
         let mut statements = 0;
         for root in &roots {
-            wamn_schema_generator::build_record::require_current(root).unwrap();
-            let manifest_path = wamn_schema_generator::package_manifest_path(root);
+            wamn_compiler::build_record::require_current(root).unwrap();
+            let manifest_path = wamn_compiler::package_manifest_path(root);
             let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
                 panic!(
                     "read {}: {error}; build every package first",
                     manifest_path.display()
                 )
             });
-            let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&bytes)
+            let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&bytes)
                 .expect("the built manifest parses");
             let facts = load_package_statement_facts(root, &manifest)
                 .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
@@ -985,10 +976,8 @@ mod tests {
             serde_json::json!({"connections": ["postgres", "secondary-only"]});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
-        let manifest: wamn_catalog::manifest::PackageManifest =
+        let manifest: wamn_compiler::manifest::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
-        wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
-            .expect("the explicit component partition is valid");
         let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
             target: wamn_catalog::ComponentPackageCoordinate {
@@ -1031,8 +1020,8 @@ mod tests {
     fn signed_file_result_metadata_is_bound_from_the_package_only() {
         let mut manifest = overlay_manifest();
         let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
-        declaration.type_ = wamn_catalog::manifest::CustomOperationType::Projection;
-        declaration.visibility = wamn_catalog::manifest::OperationVisibility::Public;
+        declaration.type_ = wamn_compiler::manifest::CustomOperationType::Projection;
+        declaration.visibility = wamn_compiler::manifest::OperationVisibility::Public;
         declaration.permission = Some("audit.observe".into());
         declaration.errors.push("permission_denied".into());
         declaration.result = Some(
@@ -1042,7 +1031,7 @@ mod tests {
             }))
             .unwrap(),
         );
-        let export = wamn_catalog::manifest::canonical_operation_identity(
+        let export = wamn_compiler::manifest::canonical_operation_identity(
             &manifest.package,
             "audit.observe",
         )
@@ -1087,7 +1076,7 @@ mod tests {
         assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
     }
 
-    fn overlay_manifest() -> wamn_catalog::manifest::PackageManifest {
+    fn overlay_manifest() -> wamn_compiler::manifest::PackageManifest {
         serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
             .expect("fixture observer manifest parses")
     }
@@ -1095,7 +1084,7 @@ mod tests {
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
     fn stranger(
-        manifest: &wamn_catalog::manifest::PackageManifest,
+        manifest: &wamn_compiler::manifest::PackageManifest,
         name: &str,
         registered: Option<&str>,
     ) -> AdmittedComponent {

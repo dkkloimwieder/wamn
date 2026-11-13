@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
-use wamn_catalog::manifest::{
+use wamn_compiler::manifest::{
     OperationVisibility, PackageManifest, canonical_operation_identity,
     validate_operation_vocabulary,
 };
@@ -61,14 +61,14 @@ pub enum OperationGrantErrorType {
 pub struct OperationGrantError {
     type_: OperationGrantErrorType,
     context: Box<str>,
-    source: Option<wamn_catalog::ManifestError>,
+    source: Option<wamn_compiler::ManifestError>,
 }
 
 impl OperationGrantError {
     fn with_source(
         type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
-        source: wamn_catalog::ManifestError,
+        source: wamn_compiler::ManifestError,
     ) -> Self {
         Self {
             type_,
@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     fn fixture_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
+        wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
             .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::manifest_bytes()
     }
@@ -264,9 +264,9 @@ mod tests {
         assert_eq!(
             error
                 .source()
-                .and_then(|source| source.downcast_ref::<wamn_catalog::ManifestError>())
-                .map(wamn_catalog::ManifestError::error_type),
-            Some(wamn_catalog::ManifestErrorType::InvalidComponent)
+                .and_then(|source| source.downcast_ref::<wamn_compiler::ManifestError>())
+                .map(wamn_compiler::ManifestError::error_type),
+            Some(wamn_compiler::ManifestErrorType::InvalidComponent)
         );
     }
 
@@ -281,9 +281,9 @@ mod tests {
         assert_eq!(
             error
                 .source()
-                .and_then(|source| source.downcast_ref::<wamn_catalog::ManifestError>())
-                .map(wamn_catalog::ManifestError::error_type),
-            Some(wamn_catalog::ManifestErrorType::InvalidIdentity)
+                .and_then(|source| source.downcast_ref::<wamn_compiler::ManifestError>())
+                .map(wamn_compiler::ManifestError::error_type),
+            Some(wamn_compiler::ManifestErrorType::InvalidIdentity)
         );
     }
 }

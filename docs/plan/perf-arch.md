@@ -114,7 +114,7 @@ Notes on H2 vs H1. H2 is a one-line experiment that sizes H1: if warm reuse reco
 
 The benched update changes one field (`supplier_id`) on one row of `receiving.purchase_order`, 9 columns, with `row_version` bumped. Each worker owns its orders; there is no contention. Postgres turns that one-field change into 4 heap writes, 1 logical message, about 5 catalog lookups, about 6 jsonb renders in plpgsql, and one fsync.
 
-Two pipelined trips, 7 statements, from the captured replay `tools/bench/pg-minimum/update.sql`:
+Two pipelined trips, 7 statements, from the captured replay `xtask/bench/pg-minimum/update.sql`:
 
 1. Trip 1: `BEGIN`; one `SELECT` with six `set_config` calls (`statement_timeout`, `search_path`, `app.runner`, `app.role`, `app.user_id`, `app.operation`); `INSERT INTO platform.write_log … ON CONFLICT DO NOTHING RETURNING` (the claim).
 2. The command statement: `WITH target AS MATERIALIZED (SELECT … FOR UPDATE), updated AS (UPDATE purchase_order … RETURNING …) SELECT outcome …`.
@@ -156,7 +156,7 @@ Scaling note: every per-row trigger cost multiplies by rows per command. A WMS m
 
 ## Measurement plan
 
-Each experiment is cheap, isolates one option, and uses `tools/bench/local.sh` as it stands. Run paired against main, keep a result only if it repeats.
+Each experiment is cheap, isolates one option, and uses `cargo xtask bench-local` as it stands. Run paired against main, keep a result only if it repeats.
 
 | Experiment | Sizes | How | Decides |
 | --- | --- | --- | --- |

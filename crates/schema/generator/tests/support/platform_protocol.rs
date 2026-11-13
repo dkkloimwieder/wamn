@@ -1,15 +1,12 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use wamn_catalog::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::ManifestErrorType as GenerateErrorType;
+use wamn_compiler::manifest::PackageManifest;
 
 use super::{artifact, fixture};
 
-fn cases(
-    package: &wamn_schema_generator::GeneratedPackage,
-    action: &str,
-) -> BTreeMap<String, Value> {
+fn cases(package: &wamn_compiler::GeneratedPackage, action: &str) -> BTreeMap<String, Value> {
     artifact(
         package,
         &format!("generated/contracts/widget/{action}.errors.json"),

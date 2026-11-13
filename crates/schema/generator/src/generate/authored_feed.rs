@@ -6,9 +6,9 @@ use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
 use super::{CatalogIr, Projection, insert_bytes, sql};
-use wamn_catalog::ManifestError as GenerateError;
-use wamn_catalog::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
-use wamn_catalog::manifest::{
+use crate::ManifestError as GenerateError;
+use crate::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
+use crate::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
 
@@ -25,7 +25,7 @@ pub(super) fn prepare(
     files: &mut BTreeMap<String, Vec<u8>>,
     corpus: &mut BTreeMap<String, Vec<u8>>,
     catalog: &CatalogIr,
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &crate::manifest::PackageManifest,
     name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<Option<CustomOperationDeclaration>, GenerateError> {
@@ -136,7 +136,7 @@ fn member(name: &str) -> String {
 
 fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
-    package: &wamn_catalog::manifest::PackageIdentity,
+    package: &crate::manifest::PackageIdentity,
     name: &str,
     operation: &CustomOperationDeclaration,
     key_type: SqlValueType,
@@ -149,7 +149,7 @@ fn emit_data(
         .expect("validated statement");
     let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
-    let permission = wamn_catalog::manifest::canonical_operation_identity(package, name)?;
+    let permission = crate::manifest::canonical_operation_identity(package, name)?;
     let result = operation.result.as_ref().expect("validated feed result");
     let row_fields = result
         .fields
@@ -333,7 +333,7 @@ fn emit_component(
                 inputs,
                 "{}: request.{},",
                 member(&field.name),
-                wamn_catalog::manifest::binding_identifier(&field.name).expect("validated input")
+                crate::manifest::binding_identifier(&field.name).expect("validated input")
             )
             .expect("writing to a String cannot fail");
             inputs

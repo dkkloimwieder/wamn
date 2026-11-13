@@ -9,12 +9,12 @@ use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, his
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;
-use wamn_catalog::manifest::{CrudAction, PackageManifest};
-use wamn_catalog::manifest::{
+use crate::manifest::{CrudAction, PackageManifest};
+use crate::manifest::{
     DeleteMode, ModelDeclaration, OperationDeclaration, StaticSqlRelationDeclaration,
     TombstoneColumn,
 };
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// The history columns that the change feed of a list read selects
 /// (`crate::sql::changes`).

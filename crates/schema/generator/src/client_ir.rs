@@ -233,11 +233,8 @@ pub struct FieldIr {
     /// Whether this signed integer is a revision serialized as a decimal JSON
     /// string, and the input path whose record it guards when the contract
     /// names one.
-    #[serde(
-        default,
-        skip_serializing_if = "wamn_catalog::manifest::Revision::is_absent"
-    )]
-    pub revision: wamn_catalog::manifest::Revision,
+    #[serde(default, skip_serializing_if = "crate::manifest::Revision::is_absent")]
+    pub revision: crate::manifest::Revision,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.
@@ -294,7 +291,7 @@ pub struct ListIr {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Result fields whose values together name one row.
-    #[serde(with = "wamn_catalog::manifest::row_key")]
+    #[serde(with = "crate::manifest::row_key")]
     pub key_field: Vec<String>,
     /// Result field that carries the text a person reads, when the author
     /// states one. Otherwise the plan displays the declared record key.

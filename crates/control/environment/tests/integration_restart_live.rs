@@ -178,7 +178,7 @@ impl Application {
     async fn load(reader: Arc<IntegrationImports>) -> anyhow::Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let package = repository.join("apps/modbus_reader");
-        wamn_schema_generator::build_record::require_current(&package)?;
+        wamn_compiler::build_record::require_current(&package)?;
         let bytes = std::fs::read(
             repository.join("apps/target/wamn/modbus_reader/components/modbus_reader.wasm"),
         )?;
@@ -395,7 +395,7 @@ async fn apply(
     system_url: &str,
     project_url: &str,
     document: &EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let mut project = connect(project_url).await?;
     project
@@ -452,8 +452,8 @@ async fn apply(
                 .context("connection fixture package missing")?;
             let requirement = &manifest.connections["registers"];
             let mode = match requirement.mode {
-                wamn_catalog::manifest::ConnectionMode::Read => "read",
-                wamn_catalog::manifest::ConnectionMode::Write => "write",
+                wamn_compiler::manifest::ConnectionMode::Read => "read",
+                wamn_compiler::manifest::ConnectionMode::Write => "write",
             };
             tx.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING", &[&project_env_key, &component.descriptor.component_digest, package, &requirement.interface, &mode]).await?;
         }
@@ -559,7 +559,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         document.applications.get_mut(&application).unwrap().current =
             wamn_environment_control::environment::document::DeclaredRelease::Digest(digest);
     }
-    let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
+    let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),
     )?)?;
     let mut observer_package = package.clone();

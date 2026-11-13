@@ -44,7 +44,7 @@ pub async fn prepare(
     application: &str,
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     actor: &str,
 ) -> anyhow::Result<()> {
     for package in packages.iter().filter(|package| {
@@ -98,7 +98,7 @@ pub(super) async fn prepare_at(
     application: &str,
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     project_url: &str,
     actor: &str,
 ) -> anyhow::Result<()> {

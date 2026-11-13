@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use wamn_schema_generator::{host_route_client_output_root, materialize_host_route_client};
+use wamn_compiler::{host_route_client_output_root, materialize_host_route_client};
 
 fn main() -> Result<()> {
     let output_root =

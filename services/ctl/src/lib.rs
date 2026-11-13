@@ -13,7 +13,6 @@ pub mod application_verbs;
 pub mod artifact_verbs;
 pub mod build_verbs;
 pub mod component_verbs;
-pub mod delivery_verbs;
 pub mod dev;
 pub mod env_verbs;
 pub mod identity_verbs;

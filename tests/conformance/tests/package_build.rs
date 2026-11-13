@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use serde_json::Value;
-use wamn_schema_generator::build::{BuildRequest, build_package, package_output};
+use wamn_compiler::build::{BuildRequest, build_package, package_output};
 
 /// The top-level imports of a component.
 fn component_imports(bytes: &[u8]) -> Vec<String> {

@@ -3,15 +3,9 @@ use super::{CompositionError, PackageInput, PathBuf, SelectedComponentArtifact};
 pub(super) fn component_entry<'a>(
     package: &PackageInput,
     component: &str,
-    build_record: &'a wamn_schema_generator::build_record::BuildRecord,
-) -> Result<
-    (
-        PathBuf,
-        &'a wamn_schema_generator::build_record::BuildComponent,
-    ),
-    CompositionError,
-> {
-    let output = wamn_schema_generator::output_root(&package.root);
+    build_record: &'a wamn_compiler::build_record::BuildRecord,
+) -> Result<(PathBuf, &'a wamn_compiler::build_record::BuildComponent), CompositionError> {
+    let output = wamn_compiler::output_root(&package.root);
     let entry = build_record
         .outputs
         .components
@@ -34,7 +28,7 @@ pub(super) fn built_component(
     package: &PackageInput,
     component: &str,
     path: PathBuf,
-    entry: &wamn_schema_generator::build_record::BuildComponent,
+    entry: &wamn_compiler::build_record::BuildComponent,
     bytes: &[u8],
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let digest = wamn_digest::bytes_sha256(bytes);

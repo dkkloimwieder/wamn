@@ -120,7 +120,7 @@ The `http` role starts the composed entry with `poolSize` 0, and a Service of th
 
 When the environment has a route host, the chart also writes a ConfigMap.
 Its `release.json` names the host, the release digest, client packages in `clients`, and pinned web digests in `webs`.
-The platform image set lives only in the default values of the chart. `wamn-ctl build-platform` stamps it.
+The platform image set lives only in the default values of the chart. `cargo xtask build-platform` stamps it.
 The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.

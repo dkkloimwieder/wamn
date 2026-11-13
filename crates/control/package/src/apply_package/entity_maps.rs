@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 
 pub(super) async fn reconcile_entity_maps(
     tx: &Transaction<'_>,

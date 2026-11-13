@@ -14,14 +14,14 @@ use super::{
     insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
     server_owned_fields, sql, writable_path,
 };
-use wamn_catalog::manifest::{
+use crate::manifest::{
     AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
     CustomOperationResultDeclaration, CustomOperationType, DeleteMode, FieldText, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass,
     canonical_operation_identity, custom_artifact_stem, rust_type_identifier,
 };
-use wamn_catalog::manifest::{FieldReference, OperationErrorDetailKey, authored_name};
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::{FieldReference, OperationErrorDetailKey, authored_name};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
 
@@ -211,7 +211,7 @@ fn emit_custom_operation_contracts(
         .expect("custom-operation validation requires module.operation");
     let root = format!("generated/contracts/{module}/{local_name}");
     let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
-    let grant = (operation.visibility == wamn_catalog::manifest::OperationVisibility::Public)
+    let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
         .then(|| operation_id.clone());
     let statements =
         operation
@@ -435,10 +435,7 @@ fn statement_value_contract(
 fn operation_dependency<'a>(
     manifest: &'a PackageManifest,
     operation_name: &str,
-) -> Option<(
-    &'a str,
-    &'a wamn_catalog::manifest::BaseDependencyRequirement,
-)> {
+) -> Option<(&'a str, &'a crate::manifest::BaseDependencyRequirement)> {
     manifest
         .base_dependencies
         .iter()
@@ -474,7 +471,7 @@ fn custom_operation_error_contract(
             } else {
                 custom_operation_error_origin(operation, literal)
             };
-            let detail = wamn_catalog::manifest::custom_operation_error_detail(operation, literal);
+            let detail = crate::manifest::custom_operation_error_detail(operation, literal);
             let case_members = case
                 .as_object_mut()
                 .expect("error contract case is an object");
@@ -981,7 +978,7 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
-                revision: wamn_catalog::manifest::Revision::Flag(
+                revision: crate::manifest::Revision::Flag(
                     model.revision_field() == Some(column.name.as_str())
                         && !(action == CrudAction::Query
                             && model.feed_enabled()
@@ -1204,7 +1201,7 @@ fn error_contract(
     operation: &OperationDeclaration,
     model: &ModelDeclaration,
 ) -> Value {
-    use wamn_catalog::manifest::AccessOperationErrorLiteral as Code;
+    use crate::manifest::AccessOperationErrorLiteral as Code;
 
     let mut cases = vec![
         (Code::InvalidInput, json!({"literal": "invalid_input"})),
@@ -1286,7 +1283,7 @@ fn error_contract(
     let cases = cases
         .into_iter()
         .map(|(code, mut case)| {
-            let mut detail = wamn_catalog::manifest::access_operation_error_detail(action, code);
+            let mut detail = crate::manifest::access_operation_error_detail(action, code);
             if case["constraint"]
                 .as_str()
                 .is_some_and(|name| guarded.contains(name))
@@ -1436,7 +1433,7 @@ fn merge_json(mut left: Value, right: &Value) -> Value {
     Value::Object(left.clone())
 }
 
-fn count_contract(limit: &wamn_catalog::manifest::CountLimitDeclaration) -> Value {
+fn count_contract(limit: &crate::manifest::CountLimitDeclaration) -> Value {
     let mut contract = json!({
         "minimum": limit.minimum,
         "maximum": limit.maximum,

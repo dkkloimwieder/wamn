@@ -466,9 +466,9 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> AuthorWorkflo
 pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflowError> {
     // The document names each package operation by reference, and the version
     // comes from the wamn.json of the package that holds it.
-    let value = wamn_schema_generator::operation_reference::read_authored_document(
+    let value = wamn_compiler::operation_reference::read_authored_document(
         path,
-        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+        wamn_compiler::operation_reference::AuthoredDocument::Wiring,
     )
     .map_err(|error| {
         AuthorWorkflowError::with_source(

@@ -3,7 +3,7 @@
 //! Run `pnpm install --offline` at the repository root first, then:
 //!
 //! ```bash
-//! cargo run --offline -p wamn-schema-generator --example compile_client_components
+//! cargo run --offline -p wamn-compiler --example compile_client_components
 //! ```
 //!
 //! The existing manual TypeScript test writes only to a temporary directory.

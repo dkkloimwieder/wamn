@@ -5,8 +5,8 @@ use std::process::Command;
 
 use anyhow::ensure;
 use serde_json::json;
+use wamn_compiler::build_record;
 use wamn_environment_control::environment::document::EnvironmentDocument;
-use wamn_schema_generator::build_record;
 
 fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = root.join(id);
@@ -106,13 +106,13 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
     };
     let b = package(scratch.path(), "appb", "1.0.0")?;
     deploy(&b, false)?;
-    let b_output = wamn_schema_generator::output_root(&b);
+    let b_output = wamn_compiler::output_root(&b);
     let b_record = std::fs::read(b_output.join(build_record::BUILD_RECORD_FILE))?;
     // B's source is unavailable while A builds.
     std::fs::remove_dir_all(&b)?;
     let a = package(scratch.path(), "appa", "1.0.0")?;
     deploy(&a, false)?;
-    let output = wamn_schema_generator::output_root(&a);
+    let output = wamn_compiler::output_root(&a);
     let a_record = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
     package(scratch.path(), "appa", "2.0.0")?;
     deploy(&a, false)?;

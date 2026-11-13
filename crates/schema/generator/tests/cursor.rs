@@ -1,8 +1,8 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use wamn_catalog::manifest::CursorDirection;
+use wamn_compiler::manifest::CursorDirection;
+use wamn_compiler::{CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor};
 use wamn_scalar::SqlValueType;
-use wamn_schema_generator::{CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor};
 
 const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
 

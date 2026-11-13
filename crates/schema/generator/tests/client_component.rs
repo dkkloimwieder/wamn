@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
-use wamn_schema_generator::GeneratedFile;
-use wamn_schema_generator::client_component::emit_ts_components;
-use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, ReferenceIr};
-use wamn_schema_generator::client_plan::{ClientPlan, Role};
+use wamn_compiler::GeneratedFile;
+use wamn_compiler::client_component::emit_ts_components;
+use wamn_compiler::client_ir::{ClientContractIr, FieldIr, ReferenceIr};
+use wamn_compiler::client_plan::{ClientPlan, Role};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -51,7 +51,7 @@ fn every_served_role_emits_a_typed_description_without_components() {
                 Role::Delete => "Delete",
                 Role::Unsupported(_) => unreachable!(),
             };
-            let stem = wamn_schema_generator::client_ts::type_stem(screen.model, screen.name);
+            let stem = wamn_compiler::client_ts::type_stem(screen.model, screen.name);
             let value = description(&files, &model.model.name, &format!("{stem}{role}"));
             assert_eq!(value["id"], screen.contract.operation);
             assert_eq!(value["title"], screen.contract.label.as_deref().unwrap());

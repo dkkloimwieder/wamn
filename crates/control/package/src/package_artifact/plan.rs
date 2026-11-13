@@ -97,7 +97,7 @@ pub(super) fn tar_layer(
 pub(super) fn physical_path(root: &Path, logical: &str) -> PathBuf {
     let logical = Path::new(logical);
     if let Ok(output) = logical.strip_prefix("generated") {
-        wamn_schema_generator::output_root(root).join(output)
+        wamn_compiler::output_root(root).join(output)
     } else {
         root.join(logical)
     }

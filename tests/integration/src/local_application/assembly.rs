@@ -499,9 +499,9 @@ fn render_declaration(
     let mut base_digests =
         wamn_package_control::component_declaration::authored_base_digests(package.root)?;
     for base in input.packages {
-        wamn_schema_generator::build_record::require_current(base.root)?;
+        wamn_compiler::build_record::require_current(base.root)?;
         let manifest: Value = serde_json::from_slice(&std::fs::read(
-            wamn_schema_generator::package_manifest_path(base.root),
+            wamn_compiler::package_manifest_path(base.root),
         )?)?;
         let coordinate = format!(
             "{}@{}",

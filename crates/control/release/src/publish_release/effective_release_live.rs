@@ -162,7 +162,7 @@ fn base_and_overlay_project_admitted_routes() {
         .expect("consume exact package manifests and package contracts");
     let manifest_paths = inputs
         .iter()
-        .map(|input| wamn_schema_generator::package_manifest_path(&input.root))
+        .map(|input| wamn_compiler::package_manifest_path(&input.root))
         .collect::<Vec<_>>();
     let packages = inputs
         .iter()

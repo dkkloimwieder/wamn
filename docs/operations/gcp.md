@@ -122,39 +122,7 @@ The owner supplies these external cloud inputs.
    gcloud storage buckets update gs://wamn-dev-tofu-state --project wamn-dev --versioning
    ```
 
-8. Cloud Build submission permission for `wamn-agent@wamn-dev.iam.gserviceaccount.com` on `wamn-dev`. If the grant is missing, the owner runs:
-
-   ```bash
-   gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/cloudbuild.builds.editor
-   ```
-
-9. Artifact Registry writer permission for the default Cloud Build service account on `us-central1-docker.pkg.dev/wamn-dev/wamn`. The command reads the account that Cloud Build uses in `us-central1`. If the grant is missing, the owner runs:
-
-   ```bash
-   gcloud artifacts repositories add-iam-policy-binding wamn --project=wamn-dev --location=us-central1 --member="serviceAccount:$(gcloud builds get-default-service-account --project=wamn-dev --region=us-central1)" --role=roles/artifactregistry.writer
-   ```
-
-10. A monthly USD 30 budget for Cloud Build in `wamn-dev`, with alerts at 10%, 50%, and 90%. The billing account is `01E392-13CC0D-277806`. The [Cloud Build billing service](https://cloud.google.com/skus/sku-groups/deprecate-global-skus) is `8B5D-EF7D-EB12`. If the budget is missing, the owner runs:
-
-    ```bash
-    gcloud billing budgets create --billing-account=01E392-13CC0D-277806 --billing-project=wamn-dev --display-name=wamn-dev-cloud-build --budget-amount=30USD --calendar-period=month --filter-projects=projects/wamn-dev --filter-services=services/8B5D-EF7D-EB12 --threshold-rule=percent=0.10 --threshold-rule=percent=0.50 --threshold-rule=percent=0.90
-    ```
-
-    The [budget command](https://cloud.google.com/sdk/gcloud/reference/billing/budgets/create) sends alerts to the default billing recipients. The budget does not stop builds. The daily cap in [building](building.md#cloud-platform-builds) controls new submissions.
-
-11. Bucket read access for the agent on the state bucket. `gcloud builds submit` reads the metadata of `gs://wamn-dev-tofu-state` before it stages the source below `build/source/`. If the grant is missing, the owner runs:
-
-    ```bash
-    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-tofu-state --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/storage.legacyBucketReader
-    ```
-
-12. Log read access for the agent on `wamn-dev`. Cloud Build writes its build logs to Cloud Logging only, and the agent reads them when a cloud build fails. If the grant is missing, the owner runs:
-
-    ```bash
-    gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/logging.viewer
-    ```
-
-13. Read access to `buckets.web` for the Rust edge.
+8. Read access to `buckets.web` for the Rust edge.
     The edge chart renders the Kubernetes service account `hosts/wamn-edge`.
     Workload Identity authenticates Kubernetes workloads to Google Cloud.
     Grant that account `roles/storage.objectViewer` on the web bucket through Workload Identity.
@@ -447,13 +415,13 @@ done
 ## 4. Platform deployment boundary
 
 GCP and kind use the same platform artifact set and prepared chart contract.
-`build-platform` builds and pins the shared images, including `ctl`, and the role components.
-The cluster document selects UI storage and cloud build inputs.
+`cargo xtask build-platform` builds and pins the shared images, including `ctl`, and the role components.
+The cluster document selects UI storage. BuildKit runs on the calling machine.
 The prepared chart supplies the pinned `ctl` image for control operation Jobs in namespace `platform`.
 
 Use the target's configured registry for artifact production and publication.
 Loopback registries use HTTP.
-[Building](building.md#cloud-platform-builds) describes cloud artifact production.
+[Building](building.md#platform-artifacts) describes artifact production.
 
 [Deployment](deployment.md#local-platform) describes prepared chart deployment, status, access, and cleanup on kind.
 The deployment plan defines the remaining GCP integration work. [Deployment plan](../plan/deploy.md)
@@ -486,7 +454,7 @@ cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
 Get owner approval for one run and the section 3 teardown before you start.
 Complete the section 1 prerequisites with the dedicated cloud login and kubeconfig.
 Use a fresh disposable platform with no `journey` project.
-Prepare the GCP chart and images with [building](building.md#cloud-platform-builds).
+Prepare the GCP chart and images with [building](building.md#platform-artifacts).
 Upload its `platformUi` digest with `wamn web upload --platform-ui` as [web upload](web-upload.md#platform-ui) describes.
 
 Build `wamn` and `wamn-ctl` beside the test executable in `$CARGO_TARGET_DIR/debug`.
@@ -678,7 +646,7 @@ For a local host benchmark, use the [local run](benchmark.md#local-run).
 The tier 2 benchmark runs from `wamn-bench-client` in project `wamn-dev`, zone `us-central1-a`.
 The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool `pg`.
 Every other pod runs on pool `main`.
-Make the VM, copy the source of the commit to it, and build `wamn-bench`. `tier.sh` expects the source in `~/wamn`, the binary at `~/wamn/target/release/wamn-bench` and a mode 0700 directory `~/pat`:
+Make the VM, copy the source of the commit to it, and build `xtask`. `cargo xtask bench-tier` expects the source in `~/wamn`, the xtask command in that checkout and a mode 0700 directory `~/pat`:
 
 ```bash
 gcloud compute instances create wamn-bench-client --project wamn-dev --zone us-central1-a --machine-type e2-small \
@@ -688,7 +656,7 @@ gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --c
 git archive --format=tar.gz -o src.tar.gz HEAD
 gcloud compute scp src.tar.gz wamn-bench-client:src.tar.gz --project wamn-dev --zone us-central1-a
 gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'mkdir -p wamn && tar -xzf src.tar.gz -C wamn && umask 077 && mkdir -p ~/pat'
-gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p wamn-bench'
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p xtask'
 ```
 
 The VM counts 1 CPU against the quota of 8. `tier.sh` copies the PAT file to `~/pat` itself. After the runs, delete the PAT on the VM, the VM, and the local copy of the PAT:
@@ -702,8 +670,8 @@ The removed installer no longer prepares the seed database or operator PAT file.
 GCP deployment integration for these inputs remains unfinished.
 Use the [benchmark page](benchmark.md) for the independent benchmark procedure.
 
-`tools/bench/tier.sh` runs get and update for 60 seconds each at c16, which means 16 concurrent requests.
-It writes one `tests/bench/platform-<version>.json` file per platform version.
+`cargo xtask bench-tier` runs get and update for 60 seconds each at c16, which means 16 concurrent requests.
+It writes one result file in its printed temporary directory.
 Each call records throughput, p50, p95, p99, calls, errors, and `pg_stat_statements` calls per request.
 The script resets database statement counts before each call.
 It divides each statement count by the request count, rounds each ratio, and sums the ratios.

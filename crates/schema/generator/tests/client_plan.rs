@@ -1,6 +1,6 @@
 use serde_json::json;
-use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
-use wamn_schema_generator::client_plan::{
+use wamn_compiler::client_ir::{ClientContractIr, FieldIr, OperationIr};
+use wamn_compiler::client_plan::{
     ChosenRevision, ClientPlan, LinkReason, NoRole, RecordRead, ResolvedColumn, Role, RowLink,
     Rows, ScreenPlan, SuppliedType, UnresolvedColumn, UnsatisfiedNarrowing, UnsearchableSelector,
     effective_result_fields,
@@ -155,7 +155,7 @@ fn revision_inputs_join_the_declared_and_guarded_paths() {
     let mut guarded = release();
     let archive = operation(&mut guarded, "archive");
     for field in &mut archive.input_fields {
-        field.revision = wamn_catalog::manifest::Revision::default();
+        field.revision = wamn_compiler::manifest::Revision::default();
     }
     let plan = ClientPlan::from_ir(&guarded);
     assert_eq!(
@@ -505,7 +505,7 @@ fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
     query.input_fields.push(FieldIr {
         path: "note".to_owned(),
         children: Vec::new(),
-        revision: wamn_catalog::manifest::Revision::default(),
+        revision: wamn_compiler::manifest::Revision::default(),
         ..template
     });
     let plan = ClientPlan::from_ir(&mixed);
@@ -846,7 +846,7 @@ fn a_narrowing_no_list_takes_is_refused() {
             narrowed_by: "value.maker_id",
         }]
     );
-    let error = wamn_schema_generator::client_component::emit_ts_components(&plan)
+    let error = wamn_compiler::client_component::emit_ts_components(&plan)
         .expect_err("the build refuses the narrowing");
     assert_eq!(error.error_type().code(), "unsatisfied_narrowing");
     assert_eq!(

@@ -452,7 +452,7 @@ fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
     let root = lineage_fixture_directory().join(name);
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("migrations")).expect("create staged migrations directory");
-    std::fs::create_dir_all(wamn_schema_generator::output_root(&root).join("platform-policy"))
+    std::fs::create_dir_all(wamn_compiler::output_root(&root).join("platform-policy"))
         .expect("create staged evidence directory");
     for entry in std::fs::read_dir(source.join("migrations")).expect("read package migrations") {
         let entry = entry.expect("read one package migration entry");
@@ -463,10 +463,10 @@ fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
         .expect("copy one package migration");
     }
 
-    wamn_schema_generator::build_record::require_current(source)
+    wamn_compiler::build_record::require_current(source)
         .unwrap_or_else(|error| panic!("{error:#}"));
-    let manifest_bytes = std::fs::read(wamn_schema_generator::package_manifest_path(source))
-        .expect("read package manifest");
+    let manifest_bytes =
+        std::fs::read(wamn_compiler::package_manifest_path(source)).expect("read package manifest");
     std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
 
     std::fs::copy(overlay_evidence_path(source), overlay_evidence_path(&root))
@@ -984,5 +984,5 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
 
 /// The data-access evidence of the package at `root`, in its output root.
 fn overlay_evidence_path(root: &Path) -> PathBuf {
-    wamn_schema_generator::output_root(root).join("platform-policy/data-access.json")
+    wamn_compiler::output_root(root).join("platform-policy/data-access.json")
 }

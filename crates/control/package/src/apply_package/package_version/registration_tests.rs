@@ -549,7 +549,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         .await
         .unwrap();
     let baseline = state(&mut client).await;
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
         &std::fs::read(root.join("wamn.json")).unwrap(),
     )
     .unwrap();
@@ -571,9 +571,10 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     let source = || {
         let directory = crate::apply_package::read_package_directory(&root).unwrap();
         let manifest =
-            wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
+            wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+                .unwrap();
         let statements = wamn_schema_control::physical_schema::render(
-            &manifest,
+            &(&manifest).into(),
             &directory.migrations,
             &columns,
         )

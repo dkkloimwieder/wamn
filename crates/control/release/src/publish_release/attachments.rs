@@ -38,11 +38,11 @@ pub(super) fn read_package_attachments(
 /// The operation owners of each package the release presents, by package id.
 fn package_owners(
     package_manifests: &[PathBuf],
-) -> Result<BTreeMap<String, wamn_catalog::manifest::OperationOwners>, PublishManifestError> {
+) -> Result<BTreeMap<String, wamn_compiler::manifest::OperationOwners>, PublishManifestError> {
     let mut owners = BTreeMap::new();
     for path in package_manifests {
-        if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
-            wamn_schema_generator::build_record::require_current(root).map_err(|error| {
+        if let Some(root) = wamn_compiler::manifest_package_root(path) {
+            wamn_compiler::build_record::require_current(root).map_err(|error| {
                 PublishManifestError {
                     source: Some(error.into()),
                     ..PublishManifestError::new(
@@ -60,7 +60,7 @@ fn package_owners(
             )
         })?;
         let package =
-            wamn_catalog::manifest::OperationOwners::from_slice(&bytes).map_err(|error| {
+            wamn_compiler::manifest::OperationOwners::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
@@ -77,23 +77,22 @@ fn resolve_generated_input_schemas(
     package_manifests: &[PathBuf],
 ) -> Result<(), PublishManifestError> {
     let named = |attachment: &ServingAttachment| {
-        wamn_schema_generator::route_schema::names_generated_schema(attachment)
+        wamn_compiler::route_schema::names_generated_schema(attachment)
     };
     if !attachments.values().any(named) {
         return Ok(());
     }
     let mut roots = BTreeMap::new();
     for path in package_manifests {
-        let root = wamn_schema_generator::manifest_package_root(path)
-            .unwrap_or_else(|| std::path::Path::new(""));
-        let files =
-            wamn_schema_generator::route_schema::PackageFiles::open(root).map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::PackageManifest,
-                    format!("read current package build {}", path.display()),
-                    error,
-                )
-            })?;
+        let root =
+            wamn_compiler::manifest_package_root(path).unwrap_or_else(|| std::path::Path::new(""));
+        let files = wamn_compiler::route_schema::PackageFiles::open(root).map_err(|error| {
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
+                format!("read current package build {}", path.display()),
+                error,
+            )
+        })?;
         let bytes = std::fs::read(path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
@@ -102,7 +101,7 @@ fn resolve_generated_input_schemas(
             )
         })?;
         let manifest =
-            wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|error| {
+            wamn_compiler::manifest::PackageManifest::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
@@ -124,7 +123,7 @@ fn resolve_generated_input_schemas(
                 ),
             )
         })?;
-        wamn_schema_generator::route_schema::resolve_attachment(
+        wamn_compiler::route_schema::resolve_attachment(
             attachment_id,
             attachment,
             &mut |reference| root.schema(reference),
@@ -142,14 +141,14 @@ fn resolve_generated_input_schemas(
 
 fn read_authored_attachments(
     paths: &[PathBuf],
-    owners: &BTreeMap<String, wamn_catalog::manifest::OperationOwners>,
+    owners: &BTreeMap<String, wamn_compiler::manifest::OperationOwners>,
 ) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     let mut documents = Vec::new();
     for path in paths {
         // A missing authored document means the package authors no
         // attachments. Its generated entries are still read below.
         let mut document: BTreeMap<String, serde_json::Value> =
-            wamn_schema_generator::operation_reference::read_attachments_document(path)
+            wamn_compiler::operation_reference::read_attachments_document(path)
                 .map_err(|error| {
                     PublishManifestError::with_source(
                         PublishManifestErrorType::Document,
@@ -181,7 +180,7 @@ fn read_authored_attachments(
                     ),
                 )
             })?;
-            wamn_schema_generator::operation_reference::resolve_attachment_entry(
+            wamn_compiler::operation_reference::resolve_attachment_entry(
                 attachment_id,
                 entry,
                 package,
@@ -204,12 +203,12 @@ fn read_authored_attachments(
         documents.push((path.clone(), attachments));
         // Generation writes the route entries of the package's generated
         // operations beside the authored document.
-        let root = wamn_schema_generator::route_schema::package_root_of(path);
-        let generated = wamn_schema_generator::route_schema::read_generated_publication(
+        let root = wamn_compiler::route_schema::package_root_of(path);
+        let generated = wamn_compiler::route_schema::read_generated_publication(
             root,
-            wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
+            wamn_compiler::route_schema::GENERATED_ATTACHMENTS,
         )
-        .and_then(wamn_schema_generator::route_schema::generated_attachments)
+        .and_then(wamn_compiler::route_schema::generated_attachments)
         .map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
@@ -219,7 +218,7 @@ fn read_authored_attachments(
         })?;
         if !generated.is_empty() {
             documents.push((
-                wamn_schema_generator::output_root(root).join("publication/attachments.json"),
+                wamn_compiler::output_root(root).join("publication/attachments.json"),
                 generated,
             ));
         }
@@ -302,10 +301,8 @@ mod tests {
         )
         .expect("read the overlay attachments");
         let generated: BTreeMap<String, serde_json::Value> = serde_json::from_slice(
-            &std::fs::read(
-                wamn_schema_generator::output_root(&root).join("publication/attachments.json"),
-            )
-            .expect("read the generated overlay attachments"),
+            &std::fs::read(wamn_compiler::output_root(&root).join("publication/attachments.json"))
+                .expect("read the generated overlay attachments"),
         )
         .expect("parse the generated overlay attachments");
         assert!(!generated.is_empty());

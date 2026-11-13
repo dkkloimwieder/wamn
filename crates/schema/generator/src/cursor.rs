@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wamn_digest::canonical_json_bytes;
 
-use wamn_catalog::manifest::CursorDirection;
+use crate::manifest::CursorDirection;
 
 const VERSION: u8 = 1;
 

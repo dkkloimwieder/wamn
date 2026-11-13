@@ -1,11 +1,7 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target host       -t wamn-host:dev       .  # HTTP + durable queue host
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge-web -t wamn-edge-web:dev .  # cluster web edge
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
-# `wamn-ctl build-platform` builds host, ctl, identity, edge-web and roles, and
+#   cargo xtask build-platform --registry <registry> --out <chart directory>
+# For the edge box artifact, use --target edge with a checkout cache key.
+# `cargo xtask build-platform` builds host, ctl, identity and edge-web, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
 # that prevent concurrent writes, and one locked native target cache per checkout.
@@ -33,9 +29,9 @@ COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-# tools/bench and tools/submodule-pins are workspace members, so Cargo needs
+# xtask and tools/submodule-pins are workspace members, so Cargo needs
 # their manifests to load the workspace.
-COPY tools/bench ./tools/bench
+COPY xtask ./xtask
 COPY tools/submodule-pins ./tools/submodule-pins
 # The copied .cargo/config.toml selects clang/mold, limits build jobs, and
 # enables offline SQLx. It sets no rustc-wrapper, so this stage and
@@ -103,41 +99,6 @@ COPY --from=build-edge-web /native-output/wamn-edge /usr/local/bin/wamn-edge
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-edge"]
 
-# ---- locked component outputs shared by every embedding image --------------
-FROM toolchain AS component-toolchain
-RUN rustup target add --toolchain 1.99.0 wasm32-wasip2 \
- && rustup toolchain install 1.99.0 --profile minimal --target wasm32-wasip2
-COPY .cargo/config.toml /build/.cargo/config.toml
-COPY Cargo.toml /build/Cargo.toml
-COPY crates /build/crates
-COPY wit /build/wit
-COPY apps /build/apps
-COPY tools/guest-rustflags /build/tools/guest-rustflags
-WORKDIR /build/apps
-
-# tools/guest-rustflags maps /build to /wamn and the Cargo home to /cargo, so
-# each guest here has the digest of the same guest built by wamn build.
-# The router must match the pin beside its crate, as in wamn build.
-FROM component-toolchain AS component-builder
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-component-target-${WAMN_CHECKOUT_KEY},target=/build/apps/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
- && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
-      -p http-route \
- && (cd target/wasm32-wasip2/release \
-     && sha256sum -c /build/apps/platform/ingress/http-route/http_route.wasm.sha256) \
- && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
-      -p materializer \
- && install -d /component-output \
- && for artifact in \
-      http_route materializer; do \
-      install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
-        "/component-output/${artifact}.wasm"; \
-    done
-
 # ---- combined HTTP and durable-queue host image ----------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -157,13 +118,17 @@ RUN rm /build/deploy/platform/release/Chart.yaml
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
-COPY --from=component-builder /component-output/http_route.wasm /usr/local/share/wamn/http_route.wasm
+COPY --from=components /http.wasm /usr/local/share/wamn/http_route.wasm
 COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # `wamn-ctl env` applies manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
-ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
-ADD --checksum=sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz /tmp/kcl.tgz
+ARG HELM_URL
+ARG HELM_CHECKSUM
+ADD --checksum=${HELM_CHECKSUM} ${HELM_URL} /tmp/helm.tgz
+ARG KCL_URL
+ARG KCL_CHECKSUM
+ADD --checksum=${KCL_CHECKSUM} ${KCL_URL} /tmp/kcl.tgz
 RUN tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
  && tar -xzf /tmp/kcl.tgz -C /usr/local/bin kcl \
  && rm /tmp/helm.tgz /tmp/kcl.tgz
@@ -179,18 +144,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-native /native-output/wamn-identity /usr/local/bin/wamn-identity
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-identity"]
-
-# Compose the control-only platform entry after the route pin is validated.
-FROM component-builder AS control-entry
-COPY --from=build-native /native-output/wamn-component-composer /usr/local/bin/wamn-component-composer
-RUN wamn-component-composer --control-route /component-output/http_route.wasm --output /component-output/control_http.wasm
-
-# ---- role components: the http and materializer guests alone -------------
-# `wamn-ctl build-platform` exports them with --output and pushes each as a
-# role component of the platform image set (R15).
-FROM scratch AS roles
-COPY --from=control-entry /component-output/control_http.wasm /http_route.wasm
-COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
 
 # ---- edge box artifact: the stripped aarch64 binary alone ------------------
 # The box runs no container; export the file with --output (header above).

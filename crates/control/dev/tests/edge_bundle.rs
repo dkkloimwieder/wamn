@@ -24,7 +24,7 @@ fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application()
         std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")
             .expect("set WAMN_EDGE_DEVICE_COMPONENT to the built edge_device component"),
     );
-    wamn_schema_generator::build_record::require_current(&repository().join("apps/edge_device"))
+    wamn_compiler::build_record::require_current(&repository().join("apps/edge_device"))
         .unwrap_or_else(|error| panic!("{error:#}"));
     assert!(component.is_file(), "run wamn build apps/edge_device first");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))

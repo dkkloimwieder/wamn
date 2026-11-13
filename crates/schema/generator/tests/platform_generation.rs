@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
-use wamn_catalog::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
+use wamn_compiler::ManifestErrorType as GenerateErrorType;
+use wamn_compiler::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_schema_introspection::ir::{
     CatalogIr, Exclusion, ExclusionAccessMethod, ExclusionElement, ExclusionKey, Table,
 };
@@ -27,7 +27,7 @@ mod platform_sqlx;
 #[path = "support/platform_errors.rs"]
 mod platform_errors;
 
-fn artifact(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> Value {
+fn artifact(package: &wamn_compiler::GeneratedPackage, path: &str) -> Value {
     serde_json::from_slice(package.file(path).expect("generated artifact").bytes())
         .expect("generated JSON")
 }
@@ -345,11 +345,11 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let mut overlap = with_internal_relation();
     overlap["internal_relations"][fixture::UNREAD_TABLE]["table"] = json!("widget");
     let bytes = serde_json::to_vec(&overlap).unwrap();
-    let error = wamn_schema_generator::generate(&wamn_schema_generator::GenerationInput::new(
+    let error = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
         &fixture::catalog_with_unread_table(),
         &bytes,
         &[],
-        &wamn_schema_generator::StatementTransactionality::default(),
+        &wamn_compiler::StatementTransactionality::default(),
     ))
     .expect_err("model/internal relation overlap was accepted");
     assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
@@ -451,10 +451,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
             .file("generated/native-verifier/command_state.rs")
             .is_none()
     );
-    let contract = artifact(
-        &package,
-        wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
-    );
+    let contract = artifact(&package, wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH);
     assert!(
         contract["tables"]
             .as_array()
@@ -842,7 +839,7 @@ fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
         "generated/contracts/widget/record_batch.input.json",
     );
     assert_eq!(
-        wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
+        wamn_compiler::client_plan::idempotency_field(&input).as_deref(),
         Some("value.idempotency_key")
     );
 }
@@ -920,7 +917,7 @@ fn a_delete_mode_needs_no_delete_route() {
 
 /// Whether a refusal names the member that caused it. The top line states the
 /// closed vocabulary, and the parser's own message underneath names the key.
-fn names_the_member(error: &wamn_catalog::ManifestError, member: &str) -> bool {
+fn names_the_member(error: &wamn_compiler::ManifestError, member: &str) -> bool {
     std::error::Error::source(error).is_some_and(|source| source.to_string().contains(member))
 }
 
@@ -948,7 +945,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         "a label alone is a complete declaration"
     );
     assert_eq!(
-        widget.operations[&wamn_catalog::manifest::CrudAction::Query]
+        widget.operations[&wamn_compiler::manifest::CrudAction::Query]
             .label
             .as_deref(),
         Some("Find widgets")
@@ -1392,17 +1389,14 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
 #[test]
 fn a_contract_change_moves_the_route_schema_the_attachment_names() {
     const ROUTE: &str = "generated/routes/widget/create.json";
-    let published = |package: &wamn_schema_generator::GeneratedPackage| {
-        artifact(
-            package,
-            wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
-        )
+    let published = |package: &wamn_compiler::GeneratedPackage| {
+        artifact(package, wamn_compiler::route_schema::GENERATED_ATTACHMENTS)
     };
-    let served = |package: &wamn_schema_generator::GeneratedPackage| {
+    let served = |package: &wamn_compiler::GeneratedPackage| {
         let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
             serde_json::from_value(published(package)).expect("the generated attachments decode");
-        wamn_schema_generator::route_schema::resolve_attachments(&mut attachments, &mut |path| {
-            wamn_schema_generator::route_schema::parse(
+        wamn_compiler::route_schema::resolve_attachments(&mut attachments, &mut |path| {
+            wamn_compiler::route_schema::parse(
                 path,
                 package
                     .file(path)
@@ -1456,10 +1450,7 @@ fn a_package_without_routes_takes_the_default_route_members() {
         .expect("the manifest is an object")
         .remove("routes");
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let attachments = artifact(
-        &package,
-        wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
-    );
+    let attachments = artifact(&package, wamn_compiler::route_schema::GENERATED_ATTACHMENTS);
     let get = &attachments["widget-get-http"];
     assert_eq!(get["auth-policy"], json!({"modes": ["pat", "session"]}));
     assert_eq!(get["definition"]["id"], "widget-get-http");
@@ -1467,7 +1458,7 @@ fn a_package_without_routes_takes_the_default_route_members() {
     assert_eq!(
         artifact(
             &package,
-            wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS,
+            wamn_compiler::route_schema::GENERATED_COMPONENT_OPERATIONS,
         )["fixture"]["platform-fixture:widget/get@2.1.1"]["input-ports"][0]["schema"],
         json!({"$ref": "generated/routes/widget/get.json"})
     );
@@ -1555,49 +1546,36 @@ fn without_relations(mut manifest: Value) -> Value {
     manifest
 }
 
-fn derive(manifest: &Value) -> Result<Value, wamn_catalog::ManifestError> {
+fn derive(manifest: &Value) -> Result<Value, wamn_compiler::ManifestError> {
     let sql = fixture::authored_sql();
     let sources = sql
         .iter()
-        .map(|(path, bytes)| wamn_schema_generator::AuthoredSql::new(path, bytes))
+        .map(|(path, bytes)| wamn_compiler::AuthoredSql::new(path, bytes))
         .collect::<Vec<_>>();
-    let compiled = wamn_schema_generator::derive_manifest(
+    let compiled = wamn_compiler::derive_manifest(
         &fixture::catalog(),
         &serde_json::to_vec(manifest).expect("serialize manifest"),
         &sources,
+        &[parsed(&fixture::manifest())],
     )?;
     Ok(serde_json::from_slice(&compiled).expect("compiled JSON"))
 }
 
-/// Generation derives each custom operation's relations from its statements,
-/// and the compiled manifest carries exactly what the fixture application's
-/// compiled manifest carries
-/// (docs/architecture/data-access.md#application-declarations).
+/// The compiler accepts authored declarations and refuses computed members in input.
 #[test]
 fn the_compiled_manifest_carries_the_relations_the_statements_reach() {
     let committed = fixture::manifest();
-    let compiled = derive(&without_relations(committed.clone())).expect("derive the manifest");
-    assert_eq!(compiled, committed);
-    // The widget list reads the whole row, so it reads every column.
-    assert_eq!(
-        compiled["custom_operations"]["widget.list"]["relations"][0]["select_fields"],
-        json!([
-            "code",
-            "created_at",
-            "edit_version",
-            "id",
-            "maker_id",
-            "note"
-        ])
-    );
-
-    let error = derive(&committed).expect_err("a stated relation is refused");
-    assert!(
-        error
-            .to_string()
-            .contains("states its relations, which generation derives from its statements"),
-        "{error}"
-    );
+    derive(&without_relations(committed)).expect("derive the authored manifest");
+    let mut authored = without_relations(fixture::manifest());
+    for (member, value) in [("relations", json!([])), ("feed_source", Value::Null)] {
+        authored["custom_operations"]["widget.list"][member] = value;
+        assert!(derive(&authored).is_err());
+        authored["custom_operations"]["widget.list"]
+            .as_object_mut()
+            .unwrap()
+            .remove(member);
+    }
+    assert!(derive(&fixture::manifest()).is_err());
 }
 
 /// A constraint that a command maps to an error belongs to the relation that

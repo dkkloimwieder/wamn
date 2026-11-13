@@ -5,12 +5,10 @@ use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
 use serde_json::json;
-use wamn_schema_generator::client_component::emit_ts_components;
-use wamn_schema_generator::client_plan::ClientPlan;
+use wamn_compiler::client_component::emit_ts_components;
+use wamn_compiler::client_plan::ClientPlan;
 
-pub fn compile_descriptions(
-    release: &wamn_schema_generator::client_ir::ClientContractIr,
-) -> Result<()> {
+pub fn compile_descriptions(release: &wamn_compiler::client_ir::ClientContractIr) -> Result<()> {
     let repository = repository_root()?;
     let root =
         std::env::temp_dir().join(format!("wamn-compile-descriptions-{}", std::process::id()));
@@ -23,7 +21,7 @@ pub fn compile_descriptions(
 fn compile(
     repository: &Path,
     root: &Path,
-    release: &wamn_schema_generator::client_ir::ClientContractIr,
+    release: &wamn_compiler::client_ir::ClientContractIr,
 ) -> Result<()> {
     let files = emit_ts_components(&ClientPlan::from_ir(release))?;
     for file in &files {

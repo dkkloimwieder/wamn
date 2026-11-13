@@ -3,8 +3,7 @@ The schema module of a package manifest (docs/plan/manifest-authoring.md).
 
 A package's wamn.k imports this module, and the generator compiles wamn.k to
 generated/wamn.json. Each schema lists its keys in the order of the manifest
-reader, crates/schema/generator/src/manifest.rs, and the compiled JSON keeps
-that order. A default here is an authoring default: it fills a value that the
+reader, crates/schema/generator/src/manifest.rs. A default here is an authoring default: it fills a value that the
 author did not write, and the compiled JSON states it. An author who sets an
 optional key to None leaves the key out of the compiled JSON.
 
@@ -21,7 +20,6 @@ or to name a set that no CHECK carries. A model query that one table answers
 states its sort and filters, and the generator writes its SQL.
 """
 
-import regex
 
 type ColumnType = "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid"
 type Direction = "ascending" | "descending"
@@ -98,7 +96,11 @@ schema Input:
     line?: CountLimit
     fields: [Field]
 
+schema SignedRead:
+    lifetime_seconds?: int
+
 schema Result:
+    signed_reads?: {str:SignedRead}
     class: ResultClass
     fields: [Field]
 
@@ -148,9 +150,6 @@ schema CustomOperation[name: str]:
     label?: str
     description?: str
     lists?: List
-
-    check:
-        not error_details or "idempotency_conflict" not in error_details, "${name} states the detail of idempotency_conflict, which the generator derives; remove it"
 
 # Whether a command claims its key. Such a command takes the public envelope: a
 # batch of keyed inputs under one raw body bound.
@@ -317,11 +316,6 @@ schema Model[name: str, schema_name: str]:
     if operations and operations.delete and not operations.delete.permission:
         operations.delete.permission = "${name}.delete"
 
-    check:
-        not server_owned_fields or all field in server_owned_fields {
-            field not in ["created_at", "created_by", "updated_at", "updated_by"]
-        }, "${name} states a stamp column as server-owned; the generator reads each stamp from the table, so remove it"
-
 schema Sequence:
     """A number sequence and its default pattern. Any command of the package
     calls it through sequences::<name>::next."""
@@ -345,8 +339,6 @@ schema Connection:
     interface: str
     mode: "read" | "write"
 
-    check:
-        interface != "", "interface is empty"
 
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""
@@ -365,7 +357,6 @@ schema Package:
     routes?: Routes
 
     check:
-        all name in connections { regex.match(name, "^[a-z][a-z0-9-]{0,62}$") }, "connection name must match ^[a-z][a-z0-9-]{0,62}$"
         # A model tests nothing here: an operation assigned with = replaces
         # the model's fill only after the model's own tests run.
         all _, model in models {

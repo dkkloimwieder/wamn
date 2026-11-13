@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::manifest::FilterMatch;
+use crate::schema::FilterMatch;
 
 #[cfg(test)]
 mod grammar;

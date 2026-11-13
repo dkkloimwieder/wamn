@@ -162,8 +162,8 @@ pub fn fixture_http_entry(
     wamn_release_control::publish_release::ComposedApplication,
 )> {
     let package = repository.join("apps").join(PACKAGE);
-    let output = wamn_schema_generator::output_root(&package);
-    let build_record = wamn_schema_generator::build_record::read_current(&package, &output)?;
+    let output = wamn_compiler::output_root(&package);
+    let build_record = wamn_compiler::build_record::read_current(&package, &output)?;
     let component = build_record
         .outputs
         .components

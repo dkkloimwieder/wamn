@@ -13,6 +13,7 @@ ops = []
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+wamn-compiler = { workspace = true }
 wamn-digest.workspace = true
 wamn-event-wire = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -52,7 +53,6 @@ wamn-test-postgres = { workspace = true, optional = true }
 # postgres-protocol quoting functions.
 
 [dev-dependencies]
-wamn-schema-generator = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-test-postgres = { workspace = true }

@@ -1,0 +1,48 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+anyhow.workspace = true
+cargo_metadata = "0.23"
+csv = "1"
+base64.workspace = true
+url.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml.workspace = true
+toml.workspace = true
+regex = "1"
+tempfile.workspace = true
+wamn-digest.workspace = true
+wamn-compiler.workspace = true
+wamn-component-composer.workspace = true
+wamn-release-control.workspace = true
+wamn-environment-control.workspace = true
+wamn-dev-control.workspace = true
+wamn-package-control.workspace = true
+wamn-package-artifact.workspace = true
+wash-runtime = { workspace = true, features = ["oci"] }
+oci-client.workspace = true
+docker_credential = "=1.4.0"
+reqwest = { workspace = true, features = ["rustls", "json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "process", "io-util", "signal"] }
+tokio-postgres.workspace = true
+uuid = { workspace = true, features = ["v7"] }
+rustix = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

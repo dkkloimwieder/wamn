@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::fixture;
 
-fn source(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> String {
+fn source(package: &wamn_compiler::GeneratedPackage, path: &str) -> String {
     String::from_utf8(package.file(path).unwrap().bytes().to_vec()).unwrap()
 }
 

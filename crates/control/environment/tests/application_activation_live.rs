@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
+use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentityType};
 use wamn_digest::bytes_sha256;
 use wamn_environment_control::environment::{
@@ -238,7 +238,7 @@ fn package(
     )]);
     let physical = wamn_schema_control::physical_schema::PhysicalSchema {
         statements: wamn_schema_control::physical_schema::render(
-            &manifest,
+            &(&manifest).into(),
             &directory.migrations,
             &columns,
         )?,
@@ -248,8 +248,8 @@ fn package(
         root.join("generated/physical-schema.json"),
         serde_json::to_vec(&physical)?,
     )?;
-    let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
-        &[wamn_schema_generator::DataAccessRelationFields::new(
+    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
+        &[wamn_compiler::DataAccessRelationFields::new(
             name,
             "data",
             vec!["id".into(), "value".into()],
@@ -738,7 +738,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .values()
         .flat_map(|model| model.operations.values())
     {
-        let token = wamn_catalog::manifest::canonical_operation_identity(
+        let token = wamn_compiler::manifest::canonical_operation_identity(
             &candidate_packages[1].package,
             &operation.permission,
         )?;
@@ -1043,7 +1043,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .values()
             .flat_map(|model| model.operations.values())
         {
-            let token = wamn_catalog::manifest::canonical_operation_identity(
+            let token = wamn_compiler::manifest::canonical_operation_identity(
                 &candidate_packages[1].package,
                 &operation.permission,
             )?;
@@ -1488,7 +1488,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let maps = schemas
         .iter()
         .flat_map(|schema| {
-            wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES
+            wamn_compiler::manifest::CONTROL_OWNED_RELATION_TABLES
                 .map(|table| format!("{schema}.{table}"))
         })
         .collect::<Vec<_>>();

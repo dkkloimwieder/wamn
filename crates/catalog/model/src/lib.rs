@@ -1,14 +1,4 @@
-//! Canonical immutable catalog identities and definition hashing.
-//!
-//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
-//!
-//! This crate owns the pure definition plane, and — since wamn-0h0g.18.2 — the
-//! statement text of the wiring-activation verb over it. The pointer's write and
-//! its env-hot read are one contract confirming one definition hash, and this is
-//! the only crate the management driver and the serving plane both already
-//! depend on. Persistence, publication, activation transitions, and
-//! compatibility readers still live in effect crates: no connection,
-//! transaction, or clock is reachable from here.
+//! Compiled release facts, immutable catalog identities, and definition hashing.
 
 mod component_artifact_reference;
 mod component_facts;
@@ -18,7 +8,6 @@ mod environment_application;
 pub mod feed;
 mod host_route;
 pub mod manifest;
-mod manifest_error;
 mod package;
 pub mod profile;
 mod route_identity;
@@ -65,7 +54,6 @@ pub use host_route::{
     HostRouteSet, host_route_package, host_route_path_prefix, host_route_version,
     is_granted_host_route_operation, is_host_route_operation,
 };
-pub use manifest_error::{ManifestError, ManifestErrorType};
 pub use package::PackageCoordinate;
 pub use route_identity::{
     operation_token, route_attachment_id, route_path, sealed_operation_reference,

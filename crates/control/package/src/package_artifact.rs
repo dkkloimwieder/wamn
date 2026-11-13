@@ -41,14 +41,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, bail, ensure};
 use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
     ComponentPackageCoordinate, component_artifact_reference,
 };
+use wamn_compiler::AUTHORED_MANIFEST;
+use wamn_compiler::manifest::{PackageManifest, PolicyContractState};
 use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-use wamn_schema_generator::AUTHORED_MANIFEST;
 
 use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
 use crate::component_declaration::{
@@ -94,8 +94,8 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
             "query",
             "generated/platform-policy/data-access.json",
             "generated/contracts",
-            wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
-            wamn_schema_generator::PHYSICAL_SCHEMA_PATH,
+            wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
+            wamn_compiler::PHYSICAL_SCHEMA_PATH,
             "generated/sql",
             "generated/publication",
             "generated/routes",
@@ -156,7 +156,7 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
-    wamn_schema_generator::build_record::require_current(root)?;
+    wamn_compiler::build_record::require_current(root)?;
     crate::component_admission::physical_schema(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
@@ -222,8 +222,8 @@ pub(crate) async fn connection_components(
         }
         return Ok(result);
     }
-    let output = wamn_schema_generator::output_root(root);
-    let build_record = wamn_schema_generator::build_record::read(&output)?;
+    let output = wamn_compiler::output_root(root);
+    let build_record = wamn_compiler::build_record::read(&output)?;
     let target = ComponentPackageCoordinate::new(
         ADMISSION_PROJECT_ENV_KEY,
         &manifest.package.id,
@@ -332,7 +332,7 @@ fn pack_layers(
     publication: &BTreeMap<String, Vec<u8>>,
     mut descriptors: Vec<DescriptorFile>,
 ) -> anyhow::Result<PackedPackage> {
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let (package_id, version) = package_coordinate(&manifest_bytes)
@@ -474,7 +474,7 @@ struct SourceComponent {
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
-    build_record: &wamn_schema_generator::build_record::BuildRecord,
+    build_record: &wamn_compiler::build_record::BuildRecord,
 ) -> anyhow::Result<Vec<SourceComponent>> {
     let wired = wiring_components(root)?;
     let mut templates = BTreeMap::new();
@@ -506,7 +506,7 @@ fn source_components(
             },
         );
     }
-    let output = wamn_schema_generator::output_root(root);
+    let output = wamn_compiler::output_root(root);
     templates
         .into_iter()
         .map(|(name, template)| {
@@ -678,11 +678,9 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
-    let build_record = wamn_schema_generator::build_record::read_current(
-        root,
-        &wamn_schema_generator::output_root(root),
-    )?;
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let build_record =
+        wamn_compiler::build_record::read_current(root, &wamn_compiler::output_root(root))?;
+    let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     refuse_workflow_declarations(&manifest_bytes)?;
@@ -970,7 +968,7 @@ impl OpenedPackage {
     ///
     /// When the unpacked file cannot be read.
     pub fn manifest(&self) -> anyhow::Result<Vec<u8>> {
-        let path = self.root.join(wamn_schema_generator::COMPILED_MANIFEST);
+        let path = self.root.join(wamn_compiler::COMPILED_MANIFEST);
         std::fs::read(&path).with_context(|| format!("read {}", path.display()))
     }
 
@@ -1089,7 +1087,7 @@ fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
         layers[0].media_type
     );
     write_file(
-        &root.join(wamn_schema_generator::COMPILED_MANIFEST),
+        &root.join(wamn_compiler::COMPILED_MANIFEST),
         &layers[0].bytes,
     )?;
     for layer in &layers[1..=tar_count] {
@@ -1179,10 +1177,10 @@ mod tests {
     /// The `build.json` of the package at `root`, current for its tree, with
     /// the components `receiving` and `blob-put` in its build output.
     fn write_build_record(root: &Path) {
-        use wamn_schema_generator::build_record;
-        let output = wamn_schema_generator::output_root(root);
+        use wamn_compiler::build_record;
+        let output = wamn_compiler::output_root(root);
         if let Ok(manifest) = PackageManifest::from_slice(
-            &std::fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
+            &std::fs::read(wamn_compiler::package_manifest_path(root)).unwrap(),
         ) {
             use wamn_schema_control::physical_schema::{PhysicalSchema, render};
             let columns = manifest
@@ -1210,7 +1208,7 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let statements = render(&manifest, &migrations, &columns).unwrap();
+            let statements = render(&(&manifest).into(), &migrations, &columns).unwrap();
             write(
                 &output,
                 "physical-schema.json",
@@ -1263,11 +1261,11 @@ mod tests {
     }
 
     fn receiving_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::require_current(
+        wamn_compiler::build_record::require_current(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         )
         .unwrap();
-        std::fs::read(wamn_schema_generator::package_manifest_path(
+        std::fs::read(wamn_compiler::package_manifest_path(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         ))
         .unwrap()
@@ -1298,7 +1296,7 @@ mod tests {
         write(&root, "generated/contracts/receipt.json", b"{}\n");
         write(
             &root,
-            wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
+            wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
             b"{\"tables\": []}\n",
         );
         write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
@@ -1319,7 +1317,7 @@ mod tests {
 
     fn manifest(root: &Path) -> PackageManifest {
         PackageManifest::from_slice(
-            &std::fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
+            &std::fs::read(wamn_compiler::package_manifest_path(root)).unwrap(),
         )
         .unwrap()
     }
@@ -1368,7 +1366,7 @@ mod tests {
 
     #[tokio::test]
     async fn physical_fingerprint_survives_publication_and_nonphysical_edits() {
-        use wamn_schema_generator::build::{BuildRequest, build_package, default_output_root};
+        use wamn_compiler::build::{BuildRequest, build_package, default_output_root};
         let _guard = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -1454,7 +1452,7 @@ manifest.Package {
         );
 
         // An immutable artifact cannot admit generated SQL that its inputs do not derive.
-        let output = wamn_schema_generator::output_root(&root).join("physical-schema.json");
+        let output = wamn_compiler::output_root(&root).join("physical-schema.json");
         let mut physical: wamn_schema_control::physical_schema::PhysicalSchema =
             serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
         physical.statements.pop();
@@ -1559,7 +1557,7 @@ manifest.Package {
         assert_eq!(first.layers.len(), 4, "one manifest and three tar layers");
         std::fs::write(root.join("web/src/main.ts"), b"changed source\n").unwrap();
         std::fs::write(root.join("generated/web/index.html"), b"changed output\n").unwrap();
-        let web = wamn_schema_generator::output_root(&root).join("web-artifact/dist");
+        let web = wamn_compiler::output_root(&root).join("web-artifact/dist");
         write(&web, "index.html", b"standalone output\n");
         // A package build refreshes the full input digest after a source edit.
         write_build_record(&root);
@@ -1570,10 +1568,8 @@ manifest.Package {
         root: &Path,
         manifest: &PackageManifest,
     ) -> anyhow::Result<Vec<SourceComponent>> {
-        let build_record = wamn_schema_generator::build_record::read_current(
-            root,
-            &wamn_schema_generator::output_root(root),
-        )?;
+        let build_record =
+            wamn_compiler::build_record::read_current(root, &wamn_compiler::output_root(root))?;
         source_components(root, manifest, &build_record)
     }
 
@@ -1646,8 +1642,7 @@ manifest.Package {
 
         std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
         std::fs::remove_file(
-            wamn_schema_generator::output_root(&root)
-                .join(wamn_schema_generator::build_record::BUILD_RECORD_FILE),
+            wamn_compiler::output_root(&root).join(wamn_compiler::build_record::BUILD_RECORD_FILE),
         )
         .unwrap();
         let error = format!(
@@ -1762,7 +1757,7 @@ manifest.Package {
         assert!(!unpacked.join("generated/web").exists());
         assert_eq!(
             std::fs::read(
-                wamn_schema_generator::output_root(&unpacked).join("required-schema-contract.json")
+                wamn_compiler::output_root(&unpacked).join("required-schema-contract.json")
             )
             .unwrap(),
             b"{\"tables\": []}\n"

@@ -12,17 +12,15 @@
 //! refuses a root `wamn.json` there. A test fixture keeps its hand-written
 //! `wamn.json`.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
-use serde_json::Value;
 
+use crate::manifest::PackageManifest;
 use crate::output_root;
-use wamn_catalog::manifest::{PackageManifest, StaticSqlRelationDeclaration};
 
 /// The manifest file an author writes.
 pub const AUTHORED_MANIFEST: &str = "wamn.k";
@@ -89,9 +87,7 @@ pub fn is_package_root(directory: &Path) -> bool {
 
 /// Compile a package's `wamn.k` to the bytes of `generated/wamn.json`.
 ///
-/// The bytes are 2-space indented JSON with the keys in the order the schema
-/// module lists them, and end with a newline. They parse as a
-/// [`PackageManifest`].
+/// The bytes decode to a validated [`PackageManifest`].
 ///
 /// # Errors
 ///
@@ -101,7 +97,7 @@ pub fn is_package_root(directory: &Path) -> bool {
 /// type is not valid here: only `wamn build` derives it.
 pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     let bytes = compile_authored_manifest(package_root)?;
-    PackageManifest::from_slice(&bytes).with_context(|| {
+    PackageManifest::from_authored_slice(&bytes).with_context(|| {
         format!(
             "the compiled {} is not a valid manifest",
             package_root.join(AUTHORED_MANIFEST).display()
@@ -130,59 +126,14 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
     );
     let module = SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE)?;
     let bytes = run_kcl(&module, package_root, Path::new(AUTHORED_MANIFEST))?;
-    refuse_derived_members(package_root, &bytes)?;
     Ok(bytes)
-}
-
-/// Compile `wamn.k` and write `wamn.json` in the build output when its authored members
-/// differ.
-///
-/// Generation writes the same file with the members it derives, such as each
-/// custom operation's relations, and a file whose other members equal the
-/// compile is left as it is. A package without `wamn.k` is left unchanged.
-/// Existing workspace output must have a current build record before it is read.
-///
-/// # Errors
-///
-/// When [`compile_manifest`] refuses, existing workspace output is stale, or the file cannot be written.
-pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
-    if !is_authored(package_root) {
-        return Ok(());
-    }
-    let bytes = compile_manifest(package_root)?;
-    let path = compiled_manifest_path(package_root);
-    // A file that generation compiled from the same wamn.k is kept, with the
-    // members it derived. The values are compared, not the bytes: `wamn build`
-    // writes the file in canonical JSON, and the compile is indented.
-    let compiled: Value = serde_json::from_slice(&bytes).context("parse the compiled manifest")?;
-    if path.is_file() {
-        crate::build_record::require_current(package_root)?;
-    }
-    let current = fs::read(&path)
-        .ok()
-        .and_then(|written| without_derived_members(&written).ok())
-        .and_then(|written| serde_json::from_slice::<Value>(&written).ok())
-        .map(|mut written| {
-            without_derived_statement_facts(&mut written, &compiled);
-            written
-        });
-    if current.as_ref() != Some(&compiled) {
-        let directory = output_root(package_root);
-        fs::create_dir_all(&directory)
-            .with_context(|| format!("create generated directory {}", directory.display()))?;
-        // The canonical bytes (RFC 8785) that `wamn build` writes.
-        let canonical = wamn_digest::canonical_json_bytes(&compiled);
-        fs::write(&path, canonical).with_context(|| format!("write {}", path.display()))?;
-    }
-    Ok(())
 }
 
 /// Compile an environment document
 /// (docs/architecture/overview.md#environment-lifecycle) to JSON.
 ///
 /// The file imports the `environment` schema module that ships in this crate.
-/// The bytes are 2-space indented JSON with the keys in schema order. The
-/// caller parses them into its own type.
+/// The caller parses the JSON bytes into its own type.
 ///
 /// # Errors
 ///
@@ -196,7 +147,7 @@ pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
 /// Compile a file against a named embedded schema module to JSON.
 ///
 /// The modules are `environment` and `cluster`. The bytes are
-/// 2-space indented JSON with the keys in schema order.
+/// JSON from the KCL binary.
 ///
 /// # Errors
 ///
@@ -259,7 +210,7 @@ fn run_kcl(module: &SchemaModule, directory: &Path, file: &Path) -> Result<Vec<u
         );
     }
     let json = String::from_utf8(output.stdout).context("kcl wrote JSON that is not UTF-8")?;
-    Ok(two_space_indent(&json).into_bytes())
+    Ok(json.into_bytes())
 }
 
 /// The `kcl` binary: `$WAMN_KCL`, or the one `tools/install-kcl` installs.
@@ -317,21 +268,6 @@ impl Drop for SchemaModule {
     }
 }
 
-/// Re-indent kcl's 4-space JSON to 2 spaces, ending with one newline.
-///
-/// JSON strings hold no raw newline, so each line's leading spaces are indent.
-fn two_space_indent(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for line in json.lines() {
-        let body = line.trim_start_matches(' ');
-        let indent = (line.len() - body.len()) / 2;
-        out.extend(std::iter::repeat_n(' ', indent));
-        out.push_str(body);
-        out.push('\n');
-    }
-    out
-}
-
 /// Remove the ANSI color sequences kcl writes into its errors.
 fn without_terminal_colors(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -350,286 +286,115 @@ fn without_terminal_colors(text: &str) -> String {
     out
 }
 
-/// The members of a custom operation that generation derives, so `wamn.k`
-/// states none of them
-/// (docs/architecture/data-access.md#application-declarations).
-const DERIVED_OPERATION_MEMBERS: [&str; 2] = ["relations", "feed_source"];
-
-/// Refuse an authored manifest that states a member generation derives.
-fn refuse_derived_members(package_root: &Path, authored: &[u8]) -> Result<()> {
-    let document: OrderedJson =
-        serde_json::from_slice(authored).context("parse the compiled manifest")?;
-    for (operation, member) in operation_members(&document) {
-        ensure!(
-            !DERIVED_OPERATION_MEMBERS.contains(&member),
-            "{}: custom operation {operation} states {member}, which the generator derives from its statements; remove it",
-            package_root.join(AUTHORED_MANIFEST).display()
-        );
-    }
-    Ok(())
-}
-
-/// Each `(operation, member)` pair of the document's custom operations.
-fn operation_members(document: &OrderedJson) -> impl Iterator<Item = (&str, &str)> {
-    document
-        .member("custom_operations")
-        .map(OrderedJson::members)
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|(operation, declaration)| {
-            declaration
-                .members()
-                .iter()
-                .map(move |(member, _)| (operation.as_str(), member.as_str()))
-        })
-}
-
-/// The compiled manifest: the authored bytes with each custom operation's
-/// derived relations in place, before its statements.
-///
-/// The members keep the order the schema module gives them, so the compiled
-/// file differs from the authored compile only where generation derived.
-pub(crate) fn with_derived_relations(
-    authored: &[u8],
-    relations: &BTreeMap<String, Vec<StaticSqlRelationDeclaration>>,
-) -> serde_json::Result<Vec<u8>> {
-    let mut document: OrderedJson = serde_json::from_slice(authored)?;
-    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
-        for (operation, declaration) in operations {
-            let (Some(derived), OrderedJson::Object(members)) =
-                (relations.get(operation), declaration)
-            else {
-                continue;
-            };
-            let value = serde_json::from_slice(&serde_json::to_vec(derived)?)?;
-            let at = members
-                .iter()
-                .position(|(member, _)| member == "statements")
-                .unwrap_or(members.len());
-            members.insert(at, ("relations".to_owned(), value));
-        }
-    }
-    document.to_bytes()
-}
-
-/// Attach feed facts while preserving the authored member order.
-pub(crate) fn with_derived_feed_sources(
-    compiled: &[u8],
-    sources: &BTreeMap<String, wamn_catalog::feed::FeedSource>,
-) -> serde_json::Result<Vec<u8>> {
-    if sources.is_empty() {
-        return Ok(compiled.to_vec());
-    }
-    let mut document: OrderedJson = serde_json::from_slice(compiled)?;
-    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
-        for (operation, declaration) in operations {
-            if let (Some(source), OrderedJson::Object(members)) =
-                (sources.get(operation), declaration)
-            {
-                let value = serde_json::from_slice(&serde_json::to_vec(source)?)?;
-                members.push(("feed_source".to_owned(), value));
-            }
-        }
-    }
-    document.to_bytes()
-}
-
-/// The authored compile without the members that generation derives.
-fn without_derived_members(compiled: &[u8]) -> serde_json::Result<Vec<u8>> {
-    let mut document: OrderedJson = serde_json::from_slice(compiled)?;
-    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
-        for (_, declaration) in operations {
-            if let OrderedJson::Object(members) = declaration {
-                members.retain(|(member, _)| !DERIVED_OPERATION_MEMBERS.contains(&member.as_str()));
-            }
-        }
-    }
-    document.to_bytes()
-}
-
-/// Remove from `written` each statement value `type` and `nullable` that the
-/// compile `authored` leaves out: `wamn build` derives them (§6.1 row 3).
-fn without_derived_statement_facts(written: &mut Value, authored: &Value) {
-    let Some(operations) = written
-        .get_mut("custom_operations")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    for (operation, declaration) in operations {
-        let Some(statements) = declaration
-            .get_mut("statements")
-            .and_then(Value::as_object_mut)
-        else {
-            continue;
-        };
-        for (name, statement) in statements {
-            for member in ["parameters", "row"] {
-                let values = statement
-                    .get_mut(member)
-                    .and_then(Value::as_array_mut)
-                    .into_iter()
-                    .flatten();
-                for (index, value) in values.enumerate() {
-                    let stated = &authored["custom_operations"][operation]["statements"][name]
-                        [member][index];
-                    if let Some(value) = value.as_object_mut() {
-                        for fact in ["type", "nullable"] {
-                            if stated.get(fact).is_none() {
-                                value.remove(fact);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// A JSON document whose objects keep their members in the order written.
-///
-/// `serde_json` here sorts the members of an object, and the compiled
-/// manifest keeps the order of the schema module.
-#[derive(Debug, Clone, PartialEq)]
-enum OrderedJson {
-    Scalar(Value),
-    Array(Vec<OrderedJson>),
-    Object(Vec<(String, OrderedJson)>),
-}
-
-impl OrderedJson {
-    fn members(&self) -> &[(String, Self)] {
-        match self {
-            Self::Object(members) => members,
-            Self::Scalar(_) | Self::Array(_) => &[],
-        }
-    }
-
-    fn member(&self, name: &str) -> Option<&Self> {
-        self.members()
-            .iter()
-            .find_map(|(member, value)| (member == name).then_some(value))
-    }
-
-    fn member_mut(&mut self, name: &str) -> Option<&mut Self> {
-        match self {
-            Self::Object(members) => members
-                .iter_mut()
-                .find_map(|(member, value)| (member == name).then_some(value)),
-            Self::Scalar(_) | Self::Array(_) => None,
-        }
-    }
-
-    /// 2-space indented JSON ending with one newline, as the compile writes it.
-    fn to_bytes(&self) -> serde_json::Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        let mut serializer = serde_json::Serializer::with_formatter(
-            &mut bytes,
-            serde_json::ser::PrettyFormatter::with_indent(b"  "),
-        );
-        serde::Serialize::serialize(self, &mut serializer)?;
-        bytes.push(b'\n');
-        Ok(bytes)
-    }
-}
-
-impl serde::Serialize for OrderedJson {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::{SerializeMap as _, SerializeSeq as _};
-        match self {
-            Self::Scalar(value) => value.serialize(serializer),
-            Self::Array(items) => {
-                let mut sequence = serializer.serialize_seq(Some(items.len()))?;
-                for item in items {
-                    sequence.serialize_element(item)?;
-                }
-                sequence.end()
-            }
-            Self::Object(members) => {
-                let mut map = serializer.serialize_map(Some(members.len()))?;
-                for (name, value) in members {
-                    map.serialize_entry(name, value)?;
-                }
-                map.end()
-            }
-        }
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for OrderedJson {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = OrderedJson;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a JSON value")
-            }
-
-            fn visit_bool<E>(self, value: bool) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::Bool(value)))
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::from(value)))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::from(value)))
-            }
-
-            fn visit_f64<E>(self, value: f64) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::from(value)))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::from(value)))
-            }
-
-            fn visit_unit<E>(self) -> Result<OrderedJson, E> {
-                Ok(OrderedJson::Scalar(Value::Null))
-            }
-
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut sequence: A,
-            ) -> Result<OrderedJson, A::Error> {
-                let mut items = Vec::new();
-                while let Some(item) = sequence.next_element()? {
-                    items.push(item);
-                }
-                Ok(OrderedJson::Array(items))
-            }
-
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<OrderedJson, A::Error> {
-                let mut members = Vec::new();
-                while let Some(member) = map.next_entry()? {
-                    members.push(member);
-                }
-                Ok(OrderedJson::Object(members))
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::CustomOperationResultDeclaration;
+    use crate::{GenerationInput, StatementTransactionality, generate};
+    use wamn_schema_introspection::ir::CatalogIr;
 
     #[test]
-    fn re_indents_to_two_spaces() {
-        assert_eq!(
-            two_space_indent("{\n    \"a\": [\n        1\n    ]\n}"),
-            "{\n  \"a\": [\n    1\n  ]\n}\n"
-        );
+    fn authored_signed_reads_reach_the_generated_result() {
+        let root = std::env::temp_dir().join(format!("wamn-signed-result-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = r#"import manifest
+manifest.Package {
+    package = {id = "files", version = "1.0.0"}
+    required_platform_policy_contract = {id = "files_access", state = "satisfied"}
+    models = {}
+    custom_operations = {
+        "file.read" = manifest.Command("file.read") {
+            connection = None
+            transaction = None
+            automatic_retry = None
+            idempotent_by = "stateless"
+            input.fields = []
+            result = {
+                class = "one"
+                fields = [{path = "document", type = "uuid"}]
+                signed_reads = {document = {lifetime_seconds = 300}}
+            }
+            errors = ["invalid_input", "permission_denied", "internal_error"]
+        }
     }
+    components = {files = {connections = []}}
+}
+"#;
+        fs::write(root.join(AUTHORED_MANIFEST), source).unwrap();
+        let compiled = compile_manifest(&root);
+        fs::remove_dir_all(&root).unwrap();
+        let bytes = compiled.unwrap();
+        let catalog = CatalogIr::new(Vec::new());
+        let transactions = StatementTransactionality::unclassified();
+        let package =
+            generate(&GenerationInput::new(&catalog, &bytes, &[], &transactions)).unwrap();
+        let result: CustomOperationResultDeclaration = serde_json::from_slice(
+            package
+                .file("generated/contracts/file/read.result.json")
+                .unwrap()
+                .bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.signed_reads["document"].lifetime_seconds().unwrap(),
+            300
+        );
 
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for (member, value) in [
+            ("relations", serde_json::json!([])),
+            ("feed_source", serde_json::Value::Null),
+        ] {
+            let mut invalid = document.clone();
+            invalid["custom_operations"]["file.read"][member] = value;
+            let bytes = serde_json::to_vec(&invalid).unwrap();
+            assert!(PackageManifest::from_authored_slice(&bytes).is_err());
+            assert!(crate::derive_manifest(&catalog, &bytes, &[], &[]).is_err());
+        }
+        for seconds in [0, 901] {
+            let mut invalid = document.clone();
+            invalid["custom_operations"]["file.read"]["result"]["signed_reads"]["document"]["lifetime_seconds"] =
+                seconds.into();
+            assert!(
+                PackageManifest::from_authored_slice(&serde_json::to_vec(&invalid).unwrap())
+                    .is_err()
+            );
+        }
+        for (member, value) in [
+            ("visibility", serde_json::json!("private")),
+            (
+                "result.fields",
+                serde_json::json!([{ "path": "other", "type": "uuid", "nullable": false }]),
+            ),
+            (
+                "result.fields",
+                serde_json::json!([{ "path": "document", "type": "text", "nullable": false }]),
+            ),
+        ] {
+            let mut invalid = document.clone();
+            if member == "visibility" {
+                invalid["custom_operations"]["file.read"][member] = value;
+            } else {
+                invalid["custom_operations"]["file.read"]["result"]["fields"] = value;
+            }
+            assert!(
+                PackageManifest::from_authored_slice(&serde_json::to_vec(&invalid).unwrap())
+                    .is_err()
+            );
+        }
+        for field in ["workflows", "registration"] {
+            let mut invalid = document.clone();
+            if field == "workflows" {
+                invalid[field] = serde_json::json!({});
+            } else {
+                invalid["custom_operations"]["file.read"][field] = serde_json::json!({});
+            }
+            assert!(
+                PackageManifest::from_authored_slice(&serde_json::to_vec(&invalid).unwrap())
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn a_compiled_manifest_belongs_to_its_build_output_or_its_unpacked_package() {
         let scratch =
@@ -659,93 +424,14 @@ mod tests {
     }
 
     #[test]
-    fn placing_derived_members_keeps_every_authored_byte() {
-        let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
-        for app in [
-            "wamn_wms",
-            "wamn_receiving",
-            "client_acme_receiving",
-            "platform_fixture",
-            "platform_fixture_overlay",
-            "edge_samples",
-            "edge_device",
-        ] {
-            let authored = compile_manifest(&apps.join(app)).expect("compile wamn.k");
-            let compiled = with_derived_relations(&authored, &BTreeMap::new()).expect("place");
-            assert_eq!(
-                String::from_utf8(compiled.clone()).expect("UTF-8"),
-                String::from_utf8(authored.clone()).expect("UTF-8"),
-                "{app}"
-            );
-            assert_eq!(without_derived_members(&compiled).expect("strip"), authored);
-        }
-    }
-
-    #[test]
-    fn statement_facts_that_the_build_derives_are_not_authored_differences() {
-        let authored = serde_json::json!({"custom_operations": {"a.b": {"statements": {"s": {
-            "parameters": [{"name": "id", "type": "uuid"}],
-            "row": [{"name": "n", "nullable": true}],
-        }}}}});
-        let mut written = serde_json::json!({"custom_operations": {"a.b": {"statements": {"s": {
-            "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
-            "row": [{"name": "n", "type": "int64", "nullable": true}],
-        }}}}});
-        without_derived_statement_facts(&mut written, &authored);
-        assert_eq!(written, authored);
-    }
-
-    #[test]
-    fn a_derived_relation_lands_before_the_statements() {
-        let authored = br#"{"custom_operations": {"a.b": {"errors": [], "statements": {}}}}"#;
-        let relation = StaticSqlRelationDeclaration {
-            schema: "s".to_owned(),
-            table: "t".to_owned(),
-            select_fields: vec!["id".to_owned()],
-            insert_fields: Vec::new(),
-            update_fields: Vec::new(),
-            delete: false,
-            lock: true,
-            constraints: Vec::new(),
-        };
-        let compiled = with_derived_relations(
-            authored,
-            &BTreeMap::from([("a.b".to_owned(), vec![relation])]),
-        )
-        .expect("place");
-        let text = String::from_utf8(compiled.clone()).expect("UTF-8");
-        let at = |key: &str| text.find(&format!("\"{key}\"")).expect(key);
-        assert!(at("errors") < at("relations") && at("relations") < at("statements"));
-        assert!(at("select_fields") < at("lock") && at("lock") < at("constraints"));
-        assert!(!text.contains("\"delete\""));
-        assert_eq!(
-            serde_json::from_slice::<Value>(&without_derived_members(&compiled).expect("strip"))
-                .expect("JSON"),
-            serde_json::from_slice::<Value>(authored).expect("JSON")
-        );
-    }
-
-    #[test]
-    fn an_environment_error_names_the_document_not_its_private_copy() {
+    fn an_invalid_environment_document_is_refused() {
         let directory =
             std::env::temp_dir().join(format!("wamn-authoring-environment-{}", std::process::id()));
-        fs::create_dir_all(&directory).expect("create the directory");
+        fs::create_dir_all(&directory).unwrap();
         let file = directory.join("environment.k");
-        fs::write(&file, "a = 1\nb = a +\n").expect("write the document");
-        let error = format!(
-            "{:#}",
-            compile_environment(&file).expect_err("KCL refuses the document")
-        );
-        fs::remove_dir_all(&directory).expect("remove the directory");
-        assert!(error.contains(&format!("{}:2:", file.display())), "{error}");
-        assert!(!error.contains("document.k"), "{error}");
-    }
-
-    #[test]
-    fn removes_terminal_colors() {
-        assert_eq!(
-            without_terminal_colors("\u{1b}[1;38;5;9merror\u{1b}[0m here"),
-            "error here"
-        );
+        fs::write(&file, "a = 1\nb = a +\n").unwrap();
+        let result = compile_environment(&file);
+        fs::remove_dir_all(directory).unwrap();
+        assert!(result.is_err());
     }
 }

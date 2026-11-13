@@ -4,8 +4,8 @@
 //! not provision them or execute any development stage.
 
 pub(super) mod plan;
+use plan::package_source_matches;
 pub use plan::{dev_config_schema, dev_config_schema_bytes};
-use plan::{package_source_matches, validate_package_manifest};
 
 use std::error::Error;
 use std::fmt;
@@ -22,7 +22,7 @@ use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout_at};
 use tokio_postgres::Config as PostgresConfig;
 use url::Url;
-use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
+use wamn_compiler::manifest::PackageManifest;
 
 use super::activation::DevActivationIdentity;
 
@@ -526,11 +526,10 @@ impl ResolvedDevPackages {
     pub(super) fn read_compiled_manifests(&mut self) -> Result<(), DevPackageError> {
         for package in &mut self.base_packages {
             package.manifest =
-                read_manifest_file(&wamn_schema_generator::package_manifest_path(&package.root))?;
+                read_manifest_file(&wamn_compiler::package_manifest_path(&package.root))?;
         }
-        self.overlay_manifest = read_manifest_file(&wamn_schema_generator::package_manifest_path(
-            &self.overlay_root,
-        ))?;
+        self.overlay_manifest =
+            read_manifest_file(&wamn_compiler::package_manifest_path(&self.overlay_root))?;
         Ok(())
     }
 }
@@ -967,7 +966,6 @@ pub fn resolve_dev_packages(
     overlay_root: &Path,
 ) -> Result<ResolvedDevPackages, DevPackageError> {
     let overlay_manifest = read_package_manifest(overlay_root)?;
-    validate_package_manifest(overlay_root, &overlay_manifest)?;
 
     let sources = config
         .package_sources
@@ -1017,7 +1015,6 @@ pub fn resolve_dev_packages(
                 ));
             }
         };
-        validate_package_manifest(&source.root, &source.manifest)?;
         base_packages.push(ResolvedBasePackage {
             alias: alias.clone().into_boxed_str(),
             root: source.root.clone(),
@@ -1039,9 +1036,9 @@ pub fn resolve_dev_packages(
 }
 
 pub(crate) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
-    if wamn_schema_generator::is_authored(root) {
-        let path = root.join(wamn_schema_generator::AUTHORED_MANIFEST);
-        let bytes = wamn_schema_generator::compile_manifest(root).map_err(|source| {
+    if wamn_compiler::is_authored(root) {
+        let path = root.join(wamn_compiler::AUTHORED_MANIFEST);
+        let bytes = wamn_compiler::compile_manifest(root).map_err(|source| {
             DevPackageError::manifest(DevPackageErrorType::ManifestInvalid, path.clone(), source)
         })?;
         return PackageManifest::from_slice(&bytes).map_err(|source| {
@@ -1049,12 +1046,12 @@ pub(crate) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
         });
     }
     // JSON in a build output directory still consumes an artifact.
-    let path = wamn_schema_generator::package_manifest_path(root);
-    if path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
-        wamn_schema_generator::build_record::require_current(root).map_err(|source| {
+    let path = wamn_compiler::package_manifest_path(root);
+    if path.parent() == Some(wamn_compiler::output_root(root).as_path()) {
+        wamn_compiler::build_record::require_current(root).map_err(|source| {
             DevPackageError::manifest(
                 DevPackageErrorType::ManifestInvalid,
-                root.join(wamn_schema_generator::build_record::BUILD_RECORD_FILE),
+                root.join(wamn_compiler::build_record::BUILD_RECORD_FILE),
                 source,
             )
         })?;
@@ -1170,7 +1167,7 @@ pub(crate) mod tests {
     const ENDPOINT_COUNT: usize = 10;
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::require_current(&wamn_fixture_package::overlay_root())
+        wamn_compiler::build_record::require_current(&wamn_fixture_package::overlay_root())
             .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::overlay_manifest_bytes()
     }
@@ -1408,7 +1405,7 @@ pub(crate) mod tests {
 
     #[test]
     fn source_resolution_accepts_absent_and_stale_build_records() {
-        use wamn_schema_generator::build_record;
+        use wamn_compiler::build_record;
 
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
         let root = scratch.path().join("source_package");
@@ -1432,7 +1429,7 @@ manifest.Package {
         let addresses = ["127.0.0.1:41000".parse().unwrap(); ENDPOINT_COUNT];
         let config =
             parse_config(&serde_json::to_vec(&complete_document(&addresses)).unwrap()).unwrap();
-        let output = wamn_schema_generator::output_root(&root);
+        let output = wamn_compiler::output_root(&root);
 
         let resolved = resolve_dev_packages(&config, &root).unwrap();
         assert_eq!(resolved.overlay_manifest().package.version, "1.0.0");
@@ -1560,7 +1557,7 @@ manifest.Package {
             TempPackage::with_manifest(&wamn_package_control::test_support::fixture_manifest());
         let overlay_root = overlay.root().to_path_buf();
         let base_root = base.root().to_path_buf();
-        let expected = wamn_catalog::manifest::PackageManifest::from_slice(&overlay_manifest())
+        let expected = wamn_compiler::manifest::PackageManifest::from_slice(&overlay_manifest())
             .expect("parse repository overlay")
             .base_dependencies
             .remove("base_fixture")

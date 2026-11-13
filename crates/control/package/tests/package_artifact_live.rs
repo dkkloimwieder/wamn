@@ -32,10 +32,10 @@ fn apps() -> PathBuf {
 
 #[tokio::test]
 async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyhow::Result<()> {
-    use wamn_schema_generator::build_record;
+    use wamn_compiler::build_record;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let package = scratch.path().join("apps/package");
-    let output = wamn_schema_generator::output_root(&package);
+    let output = wamn_compiler::output_root(&package);
     std::fs::create_dir_all(&package)?;
     std::fs::create_dir_all(&output)?;
     std::fs::write(package.join("wamn.k"), "# original package\n")?;
@@ -207,7 +207,7 @@ async fn push_repeat_fetch_and_refusals() {
     .expect("fetch by the tag");
     assert_eq!(
         std::fs::read(opened.root().join("generated/wamn.json")).unwrap(),
-        std::fs::read(wamn_schema_generator::package_manifest_path(&package)).unwrap()
+        std::fs::read(wamn_compiler::package_manifest_path(&package)).unwrap()
     );
     assert_eq!(
         package_artifact_digest(opened.root()).expect("pack the unpacked tree"),
@@ -219,7 +219,7 @@ async fn push_repeat_fetch_and_refusals() {
     assert!(!unpacked.exists(), "the unpacked package is removed");
 
     let descriptor = fixture.pulled_descriptor(&first.tag, "receiving").await;
-    wamn_schema_generator::build_record::require_current(&package).unwrap();
+    wamn_compiler::build_record::require_current(&package).unwrap();
     let built = std::fs::read(apps().join("target/wamn/wamn_receiving/components/receiving.wasm"))
         .expect("read the built receiving component");
     assert_eq!(
@@ -263,7 +263,7 @@ async fn push_repeat_fetch_and_refusals() {
 /// digests and leaves no new component in the registry (R11).
 #[tokio::test]
 async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
-    use wamn_schema_generator::build_record;
+    use wamn_compiler::build_record;
 
     let fixture = Fixture::start("immutable").await;
     let wms = push_package(&fixture.request(apps().join("wamn_wms")))
@@ -391,7 +391,7 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
     // The build of the copy: Receiving's, with the inputs of the copy and the
     // jsonata component that WMS's build recorded.
     {
-        use wamn_schema_generator::build_record;
+        use wamn_compiler::build_record;
         let output = copy.join("target/wamn/wamn_receiving");
         std::fs::create_dir_all(output.parent().unwrap()).unwrap();
         build_record::require_current(&apps().join("wamn_receiving")).unwrap();

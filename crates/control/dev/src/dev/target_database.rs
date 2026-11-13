@@ -74,8 +74,10 @@ pub async fn schema_changes(
     let mut diffs = Vec::new();
     for (application, selection) in &document.applications {
         let (selected, rest): (Vec<_>, Vec<_>) = remaining.into_iter().partition(|candidate| {
-            wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)
-                .is_ok_and(|manifest| selection.packages.contains(&manifest.package.id))
+            wamn_compiler::manifest::PackageManifest::from_slice(
+                &candidate.directory.manifest_bytes,
+            )
+            .is_ok_and(|manifest| selection.packages.contains(&manifest.package.id))
         });
         remaining = rest;
         if selected.is_empty() {
@@ -123,7 +125,7 @@ pub(crate) fn validate_schema_reset(
         .reset_sources
         .clone();
     for candidate in &all {
-        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
             &candidate.directory.manifest_bytes,
         )?;
         let source = sources
@@ -164,7 +166,7 @@ pub async fn adopt_schema(
     lease.instance(&config).await?;
     let mut roots = BTreeMap::new();
     for source in config.package_sources() {
-        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
             &apply_package::read_package_directory(source)?.manifest_bytes,
         )?;
         if !document
@@ -182,7 +184,7 @@ pub async fn adopt_schema(
             };
             let directory = apply_package::read_package_root(&root)?;
             let manifest =
-                wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
+                wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
             roots.insert(manifest.package.id, root);
         }
     }
@@ -243,13 +245,13 @@ pub async fn schema_operation(
             .iter()
             .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset)
     {
-        let output = wamn_schema_generator::build::default_output_root(root);
+        let output = wamn_compiler::build::default_output_root(root);
         for diff in &diffs {
             for (id, source) in &diff.reset_sources {
                 if diff.packages.contains_key(id) {
                     continue;
                 }
-                let root = wamn_schema_generator::build_record::source_root(&output.join(id))?;
+                let root = wamn_compiler::build_record::source_root(&output.join(id))?;
                 let candidate =
                     wamn_environment_control::environment::sql::schema::Candidate::source(
                         PackageRoot {
@@ -299,7 +301,9 @@ pub async fn schema_operation(
     let manifests = candidates
         .iter()
         .map(|candidate| {
-            wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)
+            wamn_compiler::manifest::PackageManifest::from_slice(
+                &candidate.directory.manifest_bytes,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let order = wamn_environment_control::environment::stage::apply_order(
@@ -371,12 +375,12 @@ pub async fn schema_operation(
         .filter(|(_, manifest)| current.packages.contains_key(&manifest.package.id))
         .map(|(root, _)| root.clone())
         .collect::<Vec<_>>();
-    let output = wamn_schema_generator::build::default_output_root(root);
+    let output = wamn_compiler::build::default_output_root(root);
     for (id, installed) in &current.packages {
         if manifests.iter().any(|manifest| manifest.package.id == *id) {
             continue;
         }
-        let retained = wamn_schema_generator::build_record::source_root(&output.join(id))?;
+        let retained = wamn_compiler::build_record::source_root(&output.join(id))?;
         let candidate =
             wamn_environment_control::environment::sql::schema::Candidate::source(PackageRoot {
                 path: retained.clone(),
@@ -1248,7 +1252,7 @@ mod tests {
         )?;
         let physical: wamn_schema_control::physical_schema::PhysicalSchema =
             serde_json::from_slice(&std::fs::read(
-                wamn_schema_generator::output_root(&root).join("physical-schema.json"),
+                wamn_compiler::output_root(&root).join("physical-schema.json"),
             )?)?;
         fixture_digest::write_physical_schema(&root, physical.columns)?;
         fixture_digest::write_build_record(&root);

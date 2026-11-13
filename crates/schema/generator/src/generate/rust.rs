@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
-use wamn_catalog::manifest::{CustomOperationType, authored_name};
+use crate::manifest::{CustomOperationType, authored_name};
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
@@ -12,8 +12,8 @@ use super::{
     WamnAccessor, WamnApi, column, insert_bytes, operation_constraints, operation_exclusions,
     query_variants, sql,
 };
-use wamn_catalog::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
+use crate::ManifestError as GenerateError;
+use crate::manifest::{
     CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
     rust_identifier, rust_type_identifier,
 };

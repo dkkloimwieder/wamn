@@ -39,7 +39,7 @@ serde_yaml = { workspace = true }
 sqlx = { workspace = true, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 wasi-virt = { workspace = true }

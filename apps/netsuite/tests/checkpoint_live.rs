@@ -91,19 +91,17 @@ pub async fn invoke(
             vec![NativeComponent {
                 fact: component.clone(),
                 bytes: std::fs::read(
-                    wamn_schema_generator::output_root(
-                        &super::support::repository().join("apps/netsuite"),
-                    )
-                    .join("components/netsuite.wasm"),
+                    wamn_compiler::output_root(&super::support::repository().join("apps/netsuite"))
+                        .join("components/netsuite.wasm"),
                 )?,
             }],
             None,
         )
         .await?;
-    let document = wamn_schema_generator::operation_reference::read_authored_document(
+    let document = wamn_compiler::operation_reference::read_authored_document(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../apps/netsuite/publication/wirings/netsuite_pull.json"),
-        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+        wamn_compiler::operation_reference::AuthoredDocument::Wiring,
     )?;
     let wiring: wamn_catalog::WiringDocument = serde_json::from_value(document)?;
     // The NetSuite pull is an environment workflow

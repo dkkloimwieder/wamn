@@ -6,7 +6,7 @@ pub use plan::{require_cli_version, requires_verifier};
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 
 /// Prepare the SQLx metadata of the package's generated verifier into its
 /// build output, against the migrated database at `database_url`.
@@ -14,7 +14,7 @@ pub async fn prepare(package_root: &Path, database_url: &str) -> anyhow::Result<
     let package_root = package_root.to_owned();
     let database_url = database_url.to_owned();
     tokio::task::spawn_blocking(move || {
-        wamn_schema_generator::prepare_sqlx_metadata(&package_root, &database_url)
+        wamn_compiler::prepare_sqlx_metadata(&package_root, &database_url)
     })
     .await
     .context("join the SQLx metadata preparation")?
@@ -27,7 +27,7 @@ mod tests {
     #[test]
     fn package_search_path_preserves_other_connection_options() {
         let manifest = manifest();
-        let database_url = wamn_schema_generator::package_database_url(
+        let database_url = wamn_compiler::package_database_url(
             "postgresql://user:password@127.0.0.1:5432/test?application_name=local%2Bprobe&options=-cstatement_timeout%3D2500%20-csearch_path%3Dold&connect_timeout=5",
             &manifest,
         ).expect("target SQLx to the package schemas");
@@ -46,9 +46,8 @@ mod tests {
         );
         assert_eq!(connection.get_user(), Some("user"));
         assert_eq!(connection.get_password(), Some(b"password".as_slice()));
-        let plain =
-            wamn_schema_generator::package_database_url("postgresql://127.0.0.1/test", &manifest)
-                .expect("target the unconfigured local connection");
+        let plain = wamn_compiler::package_database_url("postgresql://127.0.0.1/test", &manifest)
+            .expect("target the unconfigured local connection");
         assert_eq!(
             plain
                 .parse::<tokio_postgres::Config>()

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
-use wamn_schema_generator::{
+use wamn_compiler::{
     classify_statements_with_existing_grants_in_transaction, materialize_package_verified,
 };
 
@@ -314,7 +314,7 @@ async fn existing_grants_planner_refuses_the_intermediate_state_and_preserves_au
 async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()> {
     use std::time::SystemTime;
 
-    use wamn_schema_generator::{
+    use wamn_compiler::{
         AuthoredSql, GenerationInput, StatementTransactionality, compile_manifest, derive_manifest,
         generate,
     };
@@ -333,7 +333,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
         .iter()
         .map(|(path, bytes)| AuthoredSql::new(path, bytes))
         .collect::<Vec<_>>();
-    let manifest = derive_manifest(&catalog, &manifest, &sources)?;
+    let manifest = derive_manifest(&catalog, &manifest, &sources, &[])?;
     let package = generate(&GenerationInput::new(
         &catalog,
         &manifest,

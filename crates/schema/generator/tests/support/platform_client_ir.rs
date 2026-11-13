@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
-use wamn_schema_generator::client_ir::{ClientContractIr, ClientIrErrorType, RouteIr, leaf_fields};
+use wamn_compiler::client_ir::{ClientContractIr, ClientIrErrorType, RouteIr, leaf_fields};
 
 use super::fixture;
 
@@ -11,7 +11,7 @@ fn operation<'a>(
     ir: &'a ClientContractIr,
     model: &str,
     name: &str,
-) -> &'a wamn_schema_generator::client_ir::OperationIr {
+) -> &'a wamn_compiler::client_ir::OperationIr {
     ir.models
         .iter()
         .find(|candidate| candidate.name == model)
@@ -92,7 +92,7 @@ impl ReleaseFiles {
         }
     }
 
-    fn project(&self) -> Result<ClientContractIr, wamn_schema_generator::client_ir::ClientIrError> {
+    fn project(&self) -> Result<ClientContractIr, wamn_compiler::client_ir::ClientIrError> {
         std::fs::write(
             &self.attachments,
             serde_json::to_vec(&self.published).unwrap(),
@@ -427,7 +427,7 @@ fn paging_and_closed_values_reach_the_platform_ir() {
 /// projected too. `materialize_package test` holds the bytes.
 #[test]
 fn each_fixture_route_projects_a_direct_client_route() {
-    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
+    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
     let package = wamn_fixture_package::package_root();
     let publication = package.join("publication");
@@ -437,7 +437,7 @@ fn each_fixture_route_projects_a_direct_client_route() {
     attachments.extend(
         serde_json::from_slice::<BTreeMap<String, Value>>(
             &std::fs::read(
-                wamn_schema_generator::output_root(&package).join("publication/attachments.json"),
+                wamn_compiler::output_root(&package).join("publication/attachments.json"),
             )
             .unwrap(),
         )
@@ -452,7 +452,7 @@ fn each_fixture_route_projects_a_direct_client_route() {
     );
     let release = ClientContractIr::from_release(
         "platform_fixture",
-        &wamn_schema_generator::output_root(&package).join("contracts"),
+        &wamn_compiler::output_root(&package).join("contracts"),
         &publication.join("attachments.json"),
     )
     .unwrap();

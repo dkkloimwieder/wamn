@@ -175,7 +175,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
                 &repository.join("deploy/gcp/project.k"),
             )?;
             let infrastructure: serde_json::Value =
-                serde_json::from_slice(&wamn_schema_generator::render_project_tofu(
+                serde_json::from_slice(&wamn_compiler::render_project_tofu(
                     &project.canonical_json()?,
                     "state",
                     "fixture",

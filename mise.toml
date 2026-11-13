@@ -1,0 +1,7 @@
+# The Linux x86_64 artifacts used by repository tasks and container builds.
+# Install with mise install; use mise exec -- <command> when shims are absent.
+[tools]
+"http:helm" = { version = "4.2.2", url = "https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz", checksum = "sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6", bin_path = "linux-amd64" }
+"http:kcl" = { version = "0.13.0", url = "https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz", checksum = "sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e" }
+"http:tofu" = { version = "1.12.8", url = "https://github.com/opentofu/opentofu/releases/download/v1.12.8/tofu_1.12.8_linux_amd64.tar.gz", checksum = "sha256:de50b220b2f243685f05f8acec0b39440bbdeaa4a5a85b02024d293a1299a625" }
+"http:wash" = { version = "2.10.0", url = "https://github.com/wasmCloud/wasmCloud/releases/download/v2.10.0/wash-x86_64-unknown-linux-gnu", checksum = "sha256:64f8e61d352fa8102569bea7333e4d86e09bdfe718e800cef7a7ca2fedc5880a", format = "raw", rename_exe = "wash" }

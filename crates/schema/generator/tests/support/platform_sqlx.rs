@@ -1,6 +1,6 @@
 use std::fs;
 
-use wamn_schema_generator::stage_sqlx_verifier;
+use wamn_compiler::stage_sqlx_verifier;
 
 use super::fixture;
 

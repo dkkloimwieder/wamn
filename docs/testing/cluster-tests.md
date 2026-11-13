@@ -19,7 +19,7 @@ A simulated outcome does not establish that a real process recovers or cleans up
 
 ## Completion
 
-Run one case with `tools/test-changes --cluster --name <test>`, as [cluster tests](../operations/cluster-tests.md) describes.
+Run one case with `cargo xtask test-changes --tier kind --name <test>`, as [cluster tests](../operations/cluster-tests.md) describes.
 A selected case whose declared prerequisite is missing fails and names it.
 Each Receiving and WMS cluster test writes its results to its own new directory and prints the path.
 That directory is inside the parent that `WAMN_RECEIVING_EVIDENCE_DIR` or `WAMN_WMS_EVIDENCE_DIR` names, or inside the system temporary directory when the variable is not set.

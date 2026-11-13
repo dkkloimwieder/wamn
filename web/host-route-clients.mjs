@@ -21,7 +21,7 @@ execFileSync(
     "--offline",
     "--quiet",
     "--package",
-    "wamn-schema-generator",
+    "wamn-compiler",
     "--example",
     "materialize_host_route_client",
   ],

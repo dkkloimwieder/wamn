@@ -43,13 +43,14 @@ pub(super) async fn assert_host_role(tx: &impl GenericClient) -> anyhow::Result<
 /// Exact byte slices retain the authored statement and its literals.
 pub(super) async fn execute_migration(
     tx: &impl GenericClient,
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &wamn_compiler::manifest::PackageManifest,
     statement: &wamn_schema_control::SqlStatement,
     transactional: bool,
 ) -> anyhow::Result<()> {
     let parsed = pg_query::parse(&statement.sql).context("parse admitted package migration")?;
+    let compiled = manifest.into();
     for raw in &parsed.protobuf.stmts {
-        let owner = wamn_schema_control::physical_schema::migration_owner(manifest, raw);
+        let owner = wamn_schema_control::physical_schema::migration_owner(&compiled, raw);
         ensure!(
             transactional || owner == manifest.package.id,
             "nontransactional SQL must execute as its own package: {}",

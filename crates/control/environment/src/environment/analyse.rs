@@ -109,7 +109,7 @@ pub struct Analysis {
     pub notices: Vec<Notice>,
     pub actor: String,
     pub plan: Vec<String>,
-    pub packages: Vec<wamn_catalog::manifest::PackageManifest>,
+    pub packages: Vec<wamn_compiler::manifest::PackageManifest>,
 }
 
 /// Evidence that does not prevent application activation.
@@ -303,7 +303,7 @@ pub(super) async fn read_release_packages(
     platform: &Platform,
     manifest: &ServingManifest,
 ) -> anyhow::Result<(
-    Vec<wamn_catalog::manifest::PackageManifest>,
+    Vec<wamn_compiler::manifest::PackageManifest>,
     BTreeMap<String, String>,
 )> {
     let mut packages = Vec::new();
@@ -311,16 +311,16 @@ pub(super) async fn read_release_packages(
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = super::stage::open(platform, id, version).await?;
-        let path = wamn_schema_generator::package_manifest_path(opened.root());
-        let package_manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+        let path = wamn_compiler::package_manifest_path(opened.root());
+        let package_manifest = wamn_compiler::manifest::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
         .with_context(|| format!("parse {}", path.display()))?;
         fingerprints.insert(
             id.to_owned(),
-            wamn_schema_generator::build_record::physical_schema_fingerprint(
-                &wamn_schema_generator::output_root(opened.root()),
-            )?,
+            wamn_compiler::build_record::physical_schema_fingerprint(&wamn_compiler::output_root(
+                opened.root(),
+            ))?,
         );
         packages.push(package_manifest);
     }
@@ -950,7 +950,7 @@ mod tests {
 
     fn sequences(
         entries: &[(&str, &[(&str, &str)])],
-    ) -> Vec<wamn_catalog::manifest::PackageManifest> {
+    ) -> Vec<wamn_compiler::manifest::PackageManifest> {
         entries
             .iter()
             .map(|(package, declared)| {
@@ -961,7 +961,7 @@ mod tests {
                     .map(|(name, pattern)| {
                         (
                             (*name).to_owned(),
-                            wamn_catalog::manifest::SequenceDeclaration {
+                            wamn_compiler::manifest::SequenceDeclaration {
                                 pattern: (*pattern).to_owned(),
                             },
                         )

@@ -42,7 +42,7 @@ pub async fn provision_resources(
     platform: &Platform,
     control: &serde_json::Value,
     document: &EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     admin_url: &str,
 ) -> anyhow::Result<()> {
     platform
@@ -498,7 +498,7 @@ pub async fn provision(
 pub async fn ensure_project_database(
     platform: &Platform,
     document: &EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     admin: &tokio_postgres::Client,
     admin_url: &str,
 ) -> anyhow::Result<String> {
@@ -518,7 +518,7 @@ pub async fn ensure_project_database(
 pub(crate) async fn ensure_project_database_with_migrations(
     platform: &Platform,
     document: &EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
     admin: &tokio_postgres::Client,
     admin_url: &str,
     sources: &[wamn_schema_control::MigrationSource],
@@ -577,7 +577,7 @@ pub async fn restore_project_database_access(
 /// Prepare only the selected packages' roles through the administrator.
 pub(super) async fn ensure_package_roles(
     admin: &tokio_postgres::Client,
-    packages: &[wamn_catalog::manifest::PackageManifest],
+    packages: &[wamn_compiler::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     for package in packages {
         admin
@@ -698,12 +698,12 @@ pub(super) async fn prepare_cdc(
 pub async fn installed_manifests(
     platform: &Platform,
     document: &EnvironmentDocument,
-) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
+) -> anyhow::Result<Vec<wamn_compiler::manifest::PackageManifest>> {
     let mut manifests = Vec::new();
     for (id, baseline) in super::stage::installed(platform, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
-        let path = wamn_schema_generator::package_manifest_path(package.root());
-        manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
+        let path = wamn_compiler::package_manifest_path(package.root());
+        manifests.push(wamn_compiler::manifest::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )?);
     }
@@ -868,7 +868,7 @@ pub(crate) async fn ensure_cdc_inputs(
 async fn ensure_streams(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_catalog::manifest::PackageManifest],
+    manifests: &[wamn_compiler::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let Some(events) = &platform.events else {
         return Ok(());
@@ -878,7 +878,7 @@ async fn ensure_streams(
         &triple,
         manifests
             .iter()
-            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
+            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs),
     );
     let broker = async_nats::jetstream::new(
         events

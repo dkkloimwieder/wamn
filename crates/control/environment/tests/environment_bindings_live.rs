@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use wamn_broker::auth_changes::AuthDrops;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_environment_control::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connections::administration;
 
@@ -510,7 +510,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     let mut manifest = package("modbus");
     let declaration = manifest.connections.get_mut("upstream").unwrap();
     declaration.interface = "wamn:modbus/write@1.0.0".into();
-    declaration.mode = wamn_catalog::manifest::ConnectionMode::Read;
+    declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
     assert_eq!(
         bindings::analyse(&client, &doc, &[manifest.clone()])
             .await
@@ -519,7 +519,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
         "connection_read_imports_write_interface"
     );
     manifest.connections.get_mut("upstream").unwrap().mode =
-        wamn_catalog::manifest::ConnectionMode::Write;
+        wamn_compiler::manifest::ConnectionMode::Write;
     assert_eq!(
         bindings::analyse(&client, &doc, &[manifest.clone()])
             .await
@@ -528,7 +528,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
         1
     );
     let declaration = manifest.connections.get_mut("upstream").unwrap();
-    declaration.mode = wamn_catalog::manifest::ConnectionMode::Read;
+    declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
     declaration.interface = "wamn:modbus/read@1.0.0".into();
     assert_eq!(
         bindings::analyse(&client, &doc, &[manifest])
