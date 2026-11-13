@@ -250,9 +250,7 @@ manifest.Package {
                 }
             }
             idempotent_by = "claim"
-            canonicalization = {
-                line_order = {ascending_by = "widget_id", positive_member = "amount"}
-            }
+
             label = "Record a batch"
             description = "One submission that records several lines at once."
         }

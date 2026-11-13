@@ -62,8 +62,7 @@ impl Control<'_> {
             .context("control path")?;
         let url = format!("{}{path}", self.url);
         let request = if attachment.route.type_.is_read() {
-            let query =
-                wamn_execution_contract::encode_read_query(value.as_object().context("query")?);
+            let query = wamn_client::encode_read_query(value.as_object().context("query")?);
             self.client.get(format!("{url}?{query}"))
         } else {
             self.client

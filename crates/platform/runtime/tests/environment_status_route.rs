@@ -48,7 +48,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     }});
     let attachment: Value = json!({"type": "http", "package-id": "status_test",
         "component": "purchase", "operation": READ,
-        "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+        "definition-hash": wamn_digest::canonical_json_sha256(&definition),
         "definition": definition, "auth-policy": {"modes": ["none"]}});
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
@@ -62,12 +62,12 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
             "type": "get"}],
         "attachments": {ROUTE: attachment, "purchase-http": {"type":"http","package-id":"status_test",
             "component":"purchase","operation":READ,
-            "definition-hash":wamn_execution_contract::canonical_json_sha256(&wiring_route),
+            "definition-hash":wamn_digest::canonical_json_sha256(&wiring_route),
             "definition":wiring_route,"auth-policy":{"modes":["none"]}}}
 
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "environment status test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             [(

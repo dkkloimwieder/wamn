@@ -7,8 +7,8 @@ use wamn_catalog::{
     AdmittedComponent, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
     ServingComposedEntry, ServingEntryMember, ServingManifest, ServingRelease,
 };
+use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
-use wamn_engine::component_admission::component_digest;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_platform_identity::connection_changes::ConnectionChanges;
@@ -126,7 +126,7 @@ struct Release {
 fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
     let scratch = ScratchRoot::create().expect("scratch artifact directory");
     let entry = operation_caller();
-    let entry_digest = component_digest(&entry);
+    let entry_digest = bytes_sha256(&entry);
     let bare = component_bytes(ROOT, Case::Unobserved);
     let mut member = fact(ROOT, &bare, false);
     member

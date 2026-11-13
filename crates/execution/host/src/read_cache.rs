@@ -84,7 +84,7 @@ pub(crate) fn matches(if_none_match: &str, tag: &str) -> bool {
 
 /// The first 32 hex digits of the SHA-256 of the canonical JSON of `value`.
 fn digest(value: &Value) -> String {
-    let hash = wamn_execution_contract::canonical_json_sha256(value);
+    let hash = wamn_digest::canonical_json_sha256(value);
     let hex = &hash["sha256:".len()..];
     hex[..32].to_owned()
 }

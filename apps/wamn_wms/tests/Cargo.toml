@@ -11,6 +11,7 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+wamn-client.workspace = true
 wamn-identity-client = { workspace = true }
 wamn-credential-store = { workspace = true }
 wamn-schema-generator = { workspace = true }
@@ -23,7 +24,6 @@ serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
 uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-integration-tests = { workspace = true }
 

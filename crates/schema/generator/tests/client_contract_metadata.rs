@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
@@ -10,9 +10,9 @@ fn catalog() -> CatalogIr {
         "inventory",
         "stock",
         vec![
-            Column::new("id", ColumnType::Uuid, false, None, None),
-            Column::new("edit_version", ColumnType::Int64, false, None, None),
-            Column::new("title", ColumnType::Text, false, None, None),
+            Column::new("id", SqlValueType::Uuid, false, None, None),
+            Column::new("edit_version", SqlValueType::Int64, false, None, None),
+            Column::new("title", SqlValueType::Text, false, None, None),
         ],
         vec![Constraint::primary_key("stock_pkey", ["id"]).unwrap()],
         Vec::new(),

@@ -60,7 +60,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let http = reqwest::Client::new();
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
             let request_element = input.as_object().context("read input is an object")?;
-            let query = wamn_execution_contract::encode_read_query(request_element);
+            let query = wamn_client::encode_read_query(request_element);
             let response = http.get(format!("{}{path}?{query}", application.endpoint))
                 .header(reqwest::header::HOST, &application.route_host)
                 .bearer_auth(&application.bearer).send().await?;
@@ -1028,7 +1028,7 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
         let Value::Object(request_element) = request_element else {
             unreachable!("each read request element is an object");
         };
-        let query = wamn_execution_contract::encode_read_query(&request_element);
+        let query = wamn_client::encode_read_query(&request_element);
         let response = http
             .get(format!("{}{path}?{query}", application.endpoint))
             .header(reqwest::header::HOST, &application.route_host)

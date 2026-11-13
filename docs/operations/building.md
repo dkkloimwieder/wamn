@@ -443,7 +443,7 @@ It uses the same schema planner and installed SQL records as deployment.
 The build record stores no installed schema identity.
 A query edit reruns Generate and keeps Migrate and existing introspection results.
 The input files include the package's own files and `apps/Cargo.lock`.
-They also include `apps/platform/data`, `apps/platform/execution/contract`, and `apps/platform/execution/jsonata`.
+They also include `apps/platform/data`, `crates/platform/digest`, `crates/platform/scalar`, and `apps/platform/execution/jsonata`.
 The build derives shared WIT inputs from `wit_bindgen::generate!` paths across the guest workspace, including their dependencies.
 It excludes generated WIT under `target` or `generated` because build records track those outputs.
 A change in a shared WIT input or platform tree makes every package stale.

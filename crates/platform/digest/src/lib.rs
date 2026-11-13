@@ -1,64 +1,16 @@
-//! Shared execution contract vocabulary.
-//!
-//! MVP outcome: crash floor · M0 execution · flow composition.
-//!
-//! What outlived the flow-language retirement (wamn-0h0g.26.5) is the
-//! vocabulary other bounded contexts still speak:
-//!
-//! - **canonical JSON** — [`canonical_json_bytes`] / [`canonical_json_sha256`],
-//!   the byte-exact identity every durable boundary binds;
-//! - **node contract** — [`node_contract`], the emission, failure and
-//!   connection-requirement vocabulary plus portable HTTP request-target
-//!   normalization, all that outlived the standard-node registry
-//!   (wamn-0h0g.26.14);
-//! - **ports** — [`MAIN_PORT`] / [`ERROR_PORT`] / [`EntryKind`], persisted names
-//!   the walk and the exposure row both read;
-//! - **cases** — [`TestSetCase`] and [`Expect`], the publish gate's bounded test
-//!   contract;
-//! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals;
-//! - **read query** — [`encode_read_query`] / [`decode_read_query`], the one
-//!   query-string encoding of a read request element.
-
-mod canonical_scalar;
-mod effect_outcome;
-mod expect;
-pub mod node_contract;
-mod ports;
-mod read_query;
-mod status;
-mod test_set;
+//! Canonical JSON bytes and SHA-256 identities.
 
 use std::fmt::Write as _;
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-pub use canonical_scalar::{canonical_numeric, canonical_timestamptz, format_timestamptz};
-pub use effect_outcome::EffectOutcome;
-pub use expect::{Expect, ExpectError, ExpectedOutcome};
-pub use node_contract::{
-    CanonicalHttpTarget, ConnectionRequirement, PortableHttpTargetError,
-    normalize_portable_http_target,
-};
-pub use ports::{ERROR_PORT, EntryKind, MAIN_PORT};
-pub use read_query::{ReadQueryError, decode_read_query, encode_read_query};
-pub use status::WiringFailureKind;
-pub use test_set::{
-    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorType, validate_cases,
-};
-
 /// `sha256:<hex>` over the canonical representation of arbitrary JSON.
 ///
 /// This is the stable identity used when a durable boundary must compare a
 /// replayed JSON body with the outcome that previously committed.
 pub fn canonical_json_sha256(value: &Value) -> String {
-    let digest = Sha256::digest(canonical_json_bytes(value));
-    let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
-    hash.push_str("sha256:");
-    for byte in digest {
-        write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    hash
+    bytes_sha256(&canonical_json_bytes(value))
 }
 
 /// Canonical bytes for an arbitrary JSON value.
@@ -67,9 +19,8 @@ pub fn canonical_json_sha256(value: &Value) -> String {
 /// sorts them itself. Canonical bytes are record identity, so they must not
 /// depend on the `serde_json` features that a build unifies: a crate that
 /// turns on `preserve_order` (jsonata-core does) makes a `serde_json::Map`
-/// keep insertion order in every crate of that build (wamn-g1jd). The
-/// contract crate's dev-dependencies turn `preserve_order` on, so its tests
-/// run under that condition. `float_roundtrip` keeps a parsed `f64` exact, so
+/// keep insertion order in every crate of that build (wamn-g1jd).
+/// `float_roundtrip` keeps a parsed `f64` exact, so
 /// re-serializing reproduces the same bytes.
 ///
 /// wamn-0h0g.26.5 replaced a hand-rolled RFC 8785 canonicalizer with this:
@@ -115,11 +66,40 @@ impl serde::Serialize for SortedKeys<'_> {
 /// build-record digests all use it. [`canonical_json_sha256`] is the same
 /// spelling over canonical JSON bytes.
 ///
-/// Guests never take a raw digest, and a new compiled item in this crate
-/// changes every guest's bytes and pinned digest, so it is native only.
-#[cfg(not(target_family = "wasm"))]
 pub fn bytes_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    format_sha256(&sha256(bytes))
+}
+
+/// SHA-256 over exact bytes.
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    hasher.finalize()
+}
+
+/// Incremental SHA-256 for framed inputs.
+#[derive(Debug, Clone, Default)]
+pub struct Hasher(Sha256);
+
+impl Hasher {
+    /// Start a SHA-256 input stream.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append bytes to the input stream.
+    pub fn update(&mut self, bytes: impl AsRef<[u8]>) {
+        self.0.update(bytes);
+    }
+
+    /// Finish the stream and return its SHA-256 result.
+    pub fn finalize(self) -> [u8; 32] {
+        self.0.finalize().into()
+    }
+}
+
+/// Format a SHA-256 result as `sha256:<lowercase hex>`.
+pub fn format_sha256(digest: &[u8; 32]) -> String {
     let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
     hash.push_str("sha256:");
     for byte in digest {
@@ -132,11 +112,9 @@ pub fn bytes_sha256(bytes: &[u8]) -> String {
 mod tests {
     use serde_json::json;
 
-    #[cfg(not(target_family = "wasm"))]
     use super::bytes_sha256;
     use super::{canonical_json_bytes, canonical_json_sha256};
 
-    #[cfg(not(target_family = "wasm"))]
     #[test]
     fn raw_byte_digests_match_fixed_sha256_vectors() {
         let binary: Vec<u8> = (0..=255).collect();
@@ -155,7 +133,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_family = "wasm"))]
     #[test]
     fn canonical_json_hash_is_the_raw_digest_of_canonical_bytes() {
         let value = json!({"b": [1, "two"], "a": null});

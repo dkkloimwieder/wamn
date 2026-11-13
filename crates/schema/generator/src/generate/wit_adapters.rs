@@ -1,16 +1,16 @@
 //! Standard adapters between application values and declared typed contracts.
 
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use wamn_catalog::manifest::OperationErrorDetailKey;
 use wamn_catalog::manifest::{
     OperationErrorDetailDeclaration, binding_identifier, rust_identifier, rust_type_identifier,
 };
-use wamn_catalog::schema::ColumnType;
 
 /// Emit a row conversion without requiring an application crate dependency.
 pub(super) fn emit_row_adapter<'a>(
-    fields: impl IntoIterator<Item = (&'a str, ColumnType, bool)>,
+    fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool)>,
 ) -> String {
     let mut source = String::from(
         "\n#[allow(unused_macros)]\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
@@ -25,15 +25,16 @@ pub(super) fn emit_row_adapter<'a>(
         let member =
             binding_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
         let value = match ty {
-            ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
-                "value.0"
-            }
-            ColumnType::Boolean
-            | ColumnType::Int32
-            | ColumnType::Int64
-            | ColumnType::Float64
-            | ColumnType::Text
-            | ColumnType::Bytes => "value",
+            SqlValueType::Uuid
+            | SqlValueType::Numeric
+            | SqlValueType::Timestamptz
+            | SqlValueType::Json => "value.0",
+            SqlValueType::Boolean
+            | SqlValueType::Int32
+            | SqlValueType::Int64
+            | SqlValueType::Float64
+            | SqlValueType::Text
+            | SqlValueType::Bytes => "value",
         };
         let value = if list.is_some() {
             if value == "value" {
@@ -59,10 +60,10 @@ pub(super) fn emit_row_adapter<'a>(
 pub(super) fn emit_error_mapper<'a>(
     error_type: &str,
     cases: impl IntoIterator<Item = (&'a str, &'a OperationErrorDetailDeclaration)>,
-    revision: Option<ColumnType>,
+    revision: Option<SqlValueType>,
 ) -> String {
     // A revision detail parses at the width its own column declares.
-    let revision_type = if revision == Some(ColumnType::Int32) {
+    let revision_type = if revision == Some(SqlValueType::Int32) {
         "i32"
     } else {
         "i64"

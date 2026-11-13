@@ -135,7 +135,7 @@ pub enum FailedOutcome {
 pub struct PartialCompletion {
     pub committed_result: String,
     pub failed_outcome: FailedOutcome,
-    pub effect_outcome: Option<wamn_execution_contract::EffectOutcome>,
+    pub effect_outcome: Option<EffectOutcome>,
 }
 
 /// One terminal result from inline router execution.
@@ -496,7 +496,7 @@ fn read_query_request_element(target: &str) -> Result<Value, HttpResponse> {
         return Err(error_response(400, "invalid-target"));
     }
     let query = target.split_once('?').map_or("", |(_, query)| query);
-    let request_element = wamn_execution_contract::decode_read_query(query)
+    let request_element = crate::read_query::decode_read_query(query)
         .map_err(|_| error_response(400, "invalid-target"))?;
     Ok(Value::Array(vec![Value::Object(request_element)]))
 }
@@ -984,3 +984,26 @@ mod guest;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod entry_response;
+
+mod read_query;
+
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings;
+pub use bindings::wamn::router_delivery::delivery::EffectOutcome;
+
+impl EffectOutcome {
+    /// The frozen result label returned over HTTP.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RefusedBeforeDispatch => "refused-before-dispatch",
+            Self::Responded => "responded",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::EffectUncertain => "effect-uncertain",
+            Self::ResponseLost => "response-lost",
+        }
+    }
+}

@@ -263,7 +263,7 @@ async fn build_with_credentials(
     let wiring_hash = document.wiring_hash().as_str().to_owned();
     let release = Arc::new(
         LoadedRelease::load_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &document)),
+            &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
             wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT)
                 .with_applications(
@@ -399,7 +399,6 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
             },
         )]),
         edges: Vec::new(),
-        cases: Vec::new(),
     }
 }
 
@@ -597,7 +596,7 @@ async fn seed_with_client(
         "connections": [],
         "components": {},
     });
-    let package_artifact_digest = wamn_execution_contract::canonical_json_sha256(&package_manifest);
+    let package_artifact_digest = wamn_digest::canonical_json_sha256(&package_manifest);
     client
         .execute(
             "INSERT INTO catalog.packages \
@@ -753,7 +752,7 @@ async fn seed_additional_wirings(
             "INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[&ENV_KEY, package, package_version,
-              &wamn_execution_contract::canonical_json_sha256(&manifest)],
+              &wamn_digest::canonical_json_sha256(&manifest)],
         ).await?;
     }
     for document in documents {

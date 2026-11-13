@@ -18,6 +18,8 @@ wasm_component_model_implements = [
 ]
 
 [dependencies]
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 wamn-credential-store = { workspace = true }
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
@@ -33,7 +35,6 @@ wamn-package-artifact = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-materializer = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }
 wamn-session = { workspace = true }

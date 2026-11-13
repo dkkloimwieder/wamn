@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
-use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
+use wamn_digest::{bytes_sha256, canonical_json_bytes};
 
 /// The guests that the component-builder stage compiles in one invocation.
 const COMPONENTS: &[&str] = &[

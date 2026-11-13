@@ -371,7 +371,7 @@ mod tests {
             .iter()
             .map(|(id, attachment)| (id.as_str(), attachment.definition_hash.as_str()))
             .collect::<Vec<_>>();
-        let digest = wamn_execution_contract::canonical_json_sha256(
+        let digest = wamn_digest::canonical_json_sha256(
             &serde_json::to_value(&attachments).expect("attachments serialize"),
         );
         let mut declaration =
@@ -398,7 +398,7 @@ mod tests {
                     .is_some()
             );
         }
-        let declaration = wamn_execution_contract::canonical_json_sha256(&declaration);
+        let declaration = wamn_digest::canonical_json_sha256(&declaration);
         assert_eq!(routes, FIXTURE_ROUTES);
         assert_eq!(digest, FIXTURE_ATTACHMENTS_DIGEST);
         assert_eq!(declaration, FIXTURE_DECLARATION_DIGEST);

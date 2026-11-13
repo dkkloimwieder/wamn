@@ -23,11 +23,11 @@ use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_dev_control::dev::edge_bundle::{EdgeScope, write_package};
+use wamn_digest::bytes_sha256;
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
 };
 use wamn_edge::serve::{EdgeHost, serve};
-use wamn_execution_contract::bytes_sha256;
 use wamn_session::keys::PublicSessionKey;
 use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
 

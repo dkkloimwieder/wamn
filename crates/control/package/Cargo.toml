@@ -10,6 +10,7 @@ default = []
 test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-package-artifact/test-util"]
 
 [dependencies]
+wamn-digest.workspace = true
 wit-component = { workspace = true }
 wit-parser = { workspace = true }
 anyhow = { workspace = true }
@@ -30,7 +31,6 @@ wasmparser = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-record-history = { workspace = true }

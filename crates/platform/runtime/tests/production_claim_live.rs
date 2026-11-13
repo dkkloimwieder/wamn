@@ -165,7 +165,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(janitor.get::<_, Option<String>>(3), None);
     assert_eq!(
         janitor.get::<_, String>(4),
-        wamn_execution_contract::canonical_json_sha256(&janitor_body)
+        wamn_digest::canonical_json_sha256(&janitor_body)
     );
     assert!(janitor.get::<_, bool>(5));
     assert!(!janitor.get::<_, bool>(6));

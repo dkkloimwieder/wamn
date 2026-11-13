@@ -1097,7 +1097,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         assert_eq!(
             authorize_closure(&route, Some(&manifest), None, &snapshot),

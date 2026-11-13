@@ -62,7 +62,7 @@ pub fn release(
         value["components"][0] =
             serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new())?)?;
     }
-    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
+    let bytes = wamn_digest::canonical_json_bytes(&value);
     wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
         .context("the fixture release is a valid canonical manifest")?;
     Ok(bytes)

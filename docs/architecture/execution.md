@@ -51,9 +51,10 @@ Publish writes GET for a route to a `get`, `query` or `projection` operation, an
 A GET carries exactly one request item in its query string.
 The router reads its bounded body for authentication, but takes the operation input from the query string.
 Each top-level member is one parameter, and its value is the compact JSON text of the member.
-Parameters stand in byte order of their names, and every byte outside the RFC 3986 unreserved set is escaped.
-The router refuses any other spelling, and a request target longer than 8 KiB, with HTTP 400 and the code `invalid-target`.
-The [read query codec](../../apps/platform/execution/contract/src/read_query.rs) owns this encoding, and its fixture vectors bind the TypeScript encoder to it.
+The client encoder sorts parameter names and uses one escaping format so its requests share cache entries.
+The parser accepts any parameter order and valid escaping, and parses each value as JSON.
+The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
+The [client encoder](../../crates/client/core/src/read_query.rs) writes the query. The [HTTP parser](../../apps/platform/ingress/http-route/src/read_query.rs) reads it.
 
 The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
@@ -295,7 +296,9 @@ Here, `tenant` holds the edge organization ID.
 A begin with a known key and another input hash is a conflict.
 A begin with a finished key answers the stored outcome, and an open intent with no outcome is uncertain until an operator resolves it.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
-Publish writes two input facts into the serving manifest route from the generated contracts: the key field (`idempotency`) and the canonical item form (`canonicalization`).
+Publish writes the key field (`idempotency`) into the serving manifest route.
+The server hashes parsed JSON with sorted object keys. It leaves out `request_id` and the key field.
+It preserves scalar spelling and array order. A retry with changed input is an idempotency conflict.
 
 A host or wiring route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 Base routes keep this response for declared page and band limits.
@@ -1296,7 +1299,7 @@ Unknown replay information grants no retry.
 An operation without an HTTP route remains visible as unexposed.
 Event handlers do not become operator actions.
 
-The shared request builder canonicalizes typed UUID, timestamp, and numeric input through `wamn-client`.
+The shared request builder validates typed UUID, timestamp, and numeric input and keeps its spelling.
 The invocation layer canonicalizes bytes and does not reinterpret field types.
 The current client submits one outer envelope item, while nested repeated fields remain supported.
 Cursors remain opaque and reset when filters or sorting change.

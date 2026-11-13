@@ -164,7 +164,7 @@ pub async fn image_archive(image: &str, from: &Registry, archive: &Path) -> anyh
             .await
             .with_context(|| format!("read the manifest {manifest} of {image}"))?;
         ensure!(
-            wamn_package_artifact::sha256_digest(&bytes) == manifest,
+            wamn_digest::bytes_sha256(&bytes) == manifest,
             "the manifest {manifest} of {image} does not match its digest"
         );
         let document: serde_json::Value = serde_json::from_slice(&bytes)
@@ -187,7 +187,7 @@ pub async fn image_archive(image: &str, from: &Registry, archive: &Path) -> anyh
                 .await
                 .with_context(|| format!("read blob {blob} of {image}"))?;
             ensure!(
-                wamn_package_artifact::sha256_digest(&data) == blob,
+                wamn_digest::bytes_sha256(&data) == blob,
                 "the blob {blob} of {image} does not match its digest"
             );
             blobs.insert(blob.to_owned(), data);

@@ -1,12 +1,9 @@
 //! The persisted status/kind vocabularies — the storage-literal side of the
 //! engine's execution taxonomy. Each maps 1:1 to a `text` column value via
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
-//! tied to `deploy/sql/run-state.sql` by a drift-guard test). A `From<…>` conversion
-//! adapts `wamn_execution_contract::node_contract::NodeError` into its persisted
-//! form.
+//! tied to `deploy/sql/run-state.sql` by a drift-guard test).
 
 use serde::{Deserialize, Serialize};
-use wamn_execution_contract::node_contract::NodeError;
 
 /// A run's lifecycle status. `Dispatched` is the write-ahead pre-state (a run row
 /// exists before the runner picks it up). `InfrastructureFailure` is a janitor
@@ -174,16 +171,5 @@ impl NodeErrorType {
 
     pub fn from_sql(s: &str) -> Option<NodeErrorType> {
         NodeErrorType::ALL.into_iter().find(|v| v.as_sql() == s)
-    }
-}
-
-impl From<&NodeError> for NodeErrorType {
-    fn from(e: &NodeError) -> NodeErrorType {
-        match e {
-            NodeError::Retryable(_) => NodeErrorType::Retryable,
-            NodeError::RateLimited(_) => NodeErrorType::RateLimited,
-            NodeError::Terminal(_) => NodeErrorType::Terminal,
-            NodeError::InvalidInput(_) => NodeErrorType::InvalidInput,
-        }
     }
 }

@@ -266,7 +266,7 @@ impl EnvironmentDocument {
     /// Never for a valid document.
     pub fn canonical_json(&self) -> anyhow::Result<Vec<u8>> {
         let value = serde_json::to_value(self).context("encode the environment")?;
-        Ok(wamn_execution_contract::canonical_json_bytes(&value))
+        Ok(wamn_digest::canonical_json_bytes(&value))
     }
 
     /// The document as an `environment.k` file that compiles to this document.

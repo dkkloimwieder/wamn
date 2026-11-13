@@ -34,6 +34,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use crate::client_ir::{
     ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr, SORT_DIRECTION_INPUT,
@@ -100,7 +101,7 @@ impl std::error::Error for ClientTsError {}
 /// The TypeScript spelling of one contract type.
 ///
 /// The frozen `wamn:postgres` vocabulary is the authority, read through
-/// [`ColumnType`](wamn_catalog::schema::ColumnType)'s own wire
+/// [`SqlValueType`](wamn_scalar::SqlValueType)'s own wire
 /// literals rather than restated, so a type added there cannot be silently
 /// missed here. `string` is the one literal outside that vocabulary: generated
 /// CRUD input contracts spell `request_id` that way.
@@ -114,12 +115,10 @@ impl std::error::Error for ClientTsError {}
 ///
 /// [`ClientTsError`] names a contract type with no TypeScript spelling.
 pub fn ts_type(type_name: &str) -> Result<&'static str, ClientTsError> {
-    use wamn_catalog::schema::ColumnType;
-
     if type_name == "string" {
         return Ok("string");
     }
-    let column: ColumnType =
+    let column: SqlValueType =
         serde_json::from_value(serde_json::Value::String(type_name.to_owned())).map_err(|_| {
             ClientTsError::new(
                 ClientTsErrorType::UnknownType,
@@ -127,15 +126,15 @@ pub fn ts_type(type_name: &str) -> Result<&'static str, ClientTsError> {
             )
         })?;
     Ok(match column {
-        ColumnType::Boolean => "boolean",
-        ColumnType::Int32 | ColumnType::Float64 => "number",
-        ColumnType::Int64 => "Int64",
-        ColumnType::Text => "string",
-        ColumnType::Bytes => "number[]",
-        ColumnType::Numeric => "Numeric",
-        ColumnType::Timestamptz => "Timestamptz",
-        ColumnType::Json => "JsonValue",
-        ColumnType::Uuid => "Uuid",
+        SqlValueType::Boolean => "boolean",
+        SqlValueType::Int32 | SqlValueType::Float64 => "number",
+        SqlValueType::Int64 => "Int64",
+        SqlValueType::Text => "string",
+        SqlValueType::Bytes => "number[]",
+        SqlValueType::Numeric => "Numeric",
+        SqlValueType::Timestamptz => "Timestamptz",
+        SqlValueType::Json => "JsonValue",
+        SqlValueType::Uuid => "Uuid",
     })
 }
 
@@ -379,9 +378,7 @@ fn shape_digest(model: &ModelIr) -> String {
     if shapes.is_empty() {
         shapes.insert(fields_shape(&model.fields).to_string());
     }
-    wamn_execution_contract::bytes_sha256(
-        &serde_json::to_vec(&shapes).expect("row shapes serialize"),
-    )
+    wamn_digest::bytes_sha256(&serde_json::to_vec(&shapes).expect("row shapes serialize"))
 }
 
 fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {

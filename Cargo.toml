@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
+members = ["crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -106,6 +106,8 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 assert_is_empty = "allow"
 
 [workspace.dependencies]
+wamn-digest = { path = "crates/platform/digest", version = "0.1.0" }
+wamn-scalar = { path = "crates/platform/scalar", version = "0.1.0" }
 wit-component = "=0.254.2"
 wit-parser = "=0.254.2"
 wamn-credential-store = { path = "crates/identity/credential-store" }
@@ -250,7 +252,6 @@ wamn-ctl = { path = "services/ctl", version = "0.1.0" }
 wamn-identity = { path = "services/identity", version = "0.1.0" }
 wamn-event-reg = { path = "apps/platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "apps/platform/events/wire", version = "0.1.0" }
-wamn-execution-contract = { path = "apps/platform/execution/contract", version = "0.1.0" }
 wamn-engine = { path = "crates/platform/engine", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
 wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }

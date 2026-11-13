@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wamn_engine::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
@@ -133,7 +133,7 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
             .expect("verified canonical bytes load without a mount");
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
-        component_digest(canonical)
+        bytes_sha256(canonical)
     );
 
     let mut trailing = canonical.to_vec();
@@ -248,7 +248,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
         .await
         .expect("the published release pulls");
 
-    assert_eq!(component_digest(&canonical_bytes), manifest_digest);
+    assert_eq!(bytes_sha256(&canonical_bytes), manifest_digest);
 
     let origin = format!("{artifact_base}@{manifest_digest}");
     let loaded_release =
@@ -462,7 +462,7 @@ async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
     let mut lied = canonical.to_vec();
     lied[1] = b'F';
     assert_eq!(lied.len(), canonical.len());
-    assert_ne!(component_digest(&lied), digest);
+    assert_ne!(bytes_sha256(&lied), digest);
 
     let registry = lying_registry(
         serde_json::to_vec(&wire).expect("the published envelope serializes"),

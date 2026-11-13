@@ -271,9 +271,9 @@ async fn host_request(
     timeout: Duration,
 ) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
     let mut url = endpoint.clone();
-    url.set_query(Some(&wamn_execution_contract::encode_read_query(
-        unit_request_element(&fixture.request_body)?,
-    )));
+    url.set_query(Some(&wamn_client::encode_read_query(unit_request_element(
+        &fixture.request_body,
+    )?)));
     let response = http
         .get(url)
         .timeout(timeout)

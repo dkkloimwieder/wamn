@@ -80,13 +80,13 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             "components": [], "routes": [],
             "attachments": {"http": {"type":"http", "package-id":application,
                 "component":application, "operation":"get", "definition":{},
-                "definition-hash":wamn_execution_contract::bytes_sha256(application.as_bytes()),
+                "definition-hash":wamn_digest::bytes_sha256(application.as_bytes()),
                 "auth-policy":{"modes":["none"]}}}
         }))?;
         let member = wamn_catalog::ServingEntryMember {
             package_id: application.into(),
             component: application.into(),
-            digest: wamn_execution_contract::bytes_sha256(application.as_bytes()),
+            digest: wamn_digest::bytes_sha256(application.as_bytes()),
         };
         release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
             reference: format!("entries@{}", member.digest),
@@ -97,7 +97,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         applications.insert(application.into(), json!({
             "packages":[application], "current":release.digest().as_str(),
             "hostname":format!("{application}.example"),
-            "client":{"package":application, "web":wamn_execution_contract::bytes_sha256(application.as_bytes())}
+            "client":{"package":application, "web":wamn_digest::bytes_sha256(application.as_bytes())}
         }));
         releases.insert(application, release);
     }
@@ -216,10 +216,8 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         .map(|(name, release)| Ok((*name, render(&document, name, release)?)))
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
     let release = releases.get_mut("orders").unwrap();
-    release.composed_entry.as_mut().unwrap().reference = format!(
-        "entries@{}",
-        wamn_execution_contract::bytes_sha256(b"updated entry")
-    );
+    release.composed_entry.as_mut().unwrap().reference =
+        format!("entries@{}", wamn_digest::bytes_sha256(b"updated entry"));
     document.applications.get_mut("orders").unwrap().current =
         DeclaredRelease::Digest(release.digest().to_string());
     for (application, release) in &releases {
@@ -437,7 +435,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
                 .map(|package| json!({"package-id":package, "package-version":"2.1.0"}))
                 .collect::<Vec<_>>(),
         )?;
-        let release = manifest(&wamn_execution_contract::canonical_json_bytes(&release))?;
+        let release = manifest(&wamn_digest::canonical_json_bytes(&release))?;
         let values = render_values(&document, &release, &path, 70)?;
         assert_complete(&template(&values, NAMESPACE)?, &fixture_secrets(&document))
             .with_context(|| connector.to_owned())?;
@@ -692,7 +690,7 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
     use wamn_environment_control::environment::{self, Platform};
     let scratch = ScratchRoot::create()?;
     let file = scratch.path().join("environment.k");
-    let digest = wamn_execution_contract::bytes_sha256(b"selected release");
+    let digest = wamn_digest::bytes_sha256(b"selected release");
     let document = fixture_document("dev", "orders.example", &digest);
     std::fs::write(&file, document.to_kcl())?;
     let original = std::fs::read(&file)?;

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME};
 use wamn_dev_control::dev::edge_bundle::{EdgeScope, write_package};
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")

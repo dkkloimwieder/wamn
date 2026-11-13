@@ -21,7 +21,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
-use sha2::{Digest as _, Sha256};
 use wac_graph::types::{ItemKind, Package, Types};
 use wac_graph::{CompositionGraph, EncodeOptions, NodeId, PackageId};
 use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
@@ -42,7 +41,7 @@ pub fn compose_control_entry(route: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         .next()
         .expect("route pin exists");
     anyhow::ensure!(
-        digest_text(&Sha256::digest(&route).into()) == format!("sha256:{pin}"),
+        wamn_digest::bytes_sha256(&route) == format!("sha256:{pin}"),
         "control route differs from the platform route pin"
     );
     compose_application(route, wat::parse_str("(component)")?)
@@ -338,7 +337,7 @@ fn name_statement_instances(
         }
         let name = format!("sql-{position}");
         statement_import(graph, *member, &name, STATEMENTS_INTERFACE)?;
-        instances.insert(name, digest_text(&member.digest));
+        instances.insert(name, wamn_digest::format_sha256(&member.digest));
     }
     Ok(instances)
 }
@@ -409,16 +408,6 @@ fn label_statement_imports(
     Ok(output.finish())
 }
 
-fn digest_text(digest: &[u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut text = String::with_capacity("sha256:".len() + 64);
-    text.push_str("sha256:");
-    for byte in digest {
-        write!(text, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    text
-}
-
 /// Append one custom section to the end of a component binary.
 fn append_custom_section(bytes: &mut Vec<u8>, name: &str, payload: &[u8]) {
     let mut content = Vec::with_capacity(5 + name.len() + payload.len());
@@ -443,7 +432,7 @@ fn leb128(bytes: &mut Vec<u8>, mut value: usize) {
 }
 
 fn instantiate(graph: &mut CompositionGraph, name: &str, bytes: Vec<u8>) -> anyhow::Result<Member> {
-    let digest = Sha256::digest(&bytes).into();
+    let digest = wamn_digest::sha256(&bytes);
     let package = Package::from_bytes(name, None, bytes, graph.types_mut())
         .with_context(|| format!("read member component {name}"))?;
     let package = graph
@@ -811,7 +800,7 @@ mod tests {
             HTTP_HANDLER,
         );
         let application = component(STATEMENTS_IMPORT, "test:base/op@1.0.0");
-        let digest = super::digest_text(&Sha256::digest(&application).into());
+        let digest = wamn_digest::format_sha256(&Sha256::digest(&application).into());
         let composed = compose_application(route, application).expect("entry authority composes");
         assert_eq!(
             super::names(&composed, "composed", false).expect("read imports"),

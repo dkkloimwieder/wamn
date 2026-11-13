@@ -71,7 +71,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     ]);
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(manifest)?),
+        &wamn_digest::canonical_json_bytes(&serde_json::to_value(manifest)?),
         "native files fixture",
         ReleaseScope::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
             "files":{"packages":["session_test"],"connections":{}}

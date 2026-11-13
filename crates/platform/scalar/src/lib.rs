@@ -1,11 +1,40 @@
-//! The canonical spelling of the scalars that a request is compared by.
-//!
-//! Two deliveries of one request can spell a time or a number differently.
-//! The write log compares requests by their canonical JSON bytes, so the
-//! generated codec respells these scalars first, and the data access binds the
-//! same spelling. An operation contract states the rule as
-//! `timestamptz: utc_rfc3339_six_fractional_digits` and
-//! `numeric: postgresql_lexical_scale_preserved`.
+//! Scalar text formats and the platform SQL type vocabulary.
+
+use serde::{Deserialize, Serialize};
+
+/// The non-null cases of frozen `wamn:postgres/types.sql-value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SqlValueType {
+    Boolean,
+    Int32,
+    Int64,
+    Float64,
+    Text,
+    Bytes,
+    Numeric,
+    Timestamptz,
+    Json,
+    Uuid,
+}
+
+impl SqlValueType {
+    /// Frozen wire literal.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Boolean => "boolean",
+            Self::Int32 => "int32",
+            Self::Int64 => "int64",
+            Self::Float64 => "float64",
+            Self::Text => "text",
+            Self::Bytes => "bytes",
+            Self::Numeric => "numeric",
+            Self::Timestamptz => "timestamptz",
+            Self::Json => "json",
+            Self::Uuid => "uuid",
+        }
+    }
+}
 
 /// A `timestamptz` in UTC with six fractional digits, or `None` for a value
 /// that is not RFC 3339. Fractional digits beyond microseconds are truncated.

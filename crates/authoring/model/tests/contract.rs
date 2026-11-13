@@ -2,8 +2,8 @@ use serde_json::{Value, json};
 use wamn_authoring_model::{
     AuthoringCommandType, AuthoringDocument, AuthoringQueryOutcome, AuthoringQueryResponse,
     AuthoringQueryType, AuthoringResponseEnvelope, ContractDecodeErrorType, GetReportRefusal,
-    MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId, ReportProjection, SCHEMA_VERSION,
-    ValidatedDraftRef, decode_document,
+    MAX_QUERY_ID_BYTES, QueryId, ReportProjection, SCHEMA_VERSION, ValidatedDraftRef,
+    decode_document,
 };
 
 fn scope() -> Value {
@@ -198,9 +198,8 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
 }
 
 #[test]
-fn public_numeric_and_test_set_bounds_match_their_owners() {
+fn public_numeric_bounds_match_their_owners() {
     assert_eq!(MAX_QUERY_ID_BYTES, 64);
-    assert_eq!(MAX_TEST_SET_CASES, 256);
 }
 
 #[test]
@@ -268,53 +267,6 @@ fn finalized_report_projects_only_current_control_store_facts() {
     assert!(refused.is_err(), "a pending projection still decodes");
 }
 
-/// The constitutional clause's refusal, frozen as a whole wire document.
-///
-/// A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it, so a candidate
-/// reaching a component with a non-empty effects projection is refused TYPED
-/// rather than executed. The refusal names the exact components, so a client can
-/// act on it without parsing prose.
-#[test]
-fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
-    let document = json!({
-        "document": "response",
-        "body": {
-            "schema-version": SCHEMA_VERSION,
-            "command-id": "gate-1",
-            "outcome": {
-                "status": "refused",
-                "value": {
-                    "command": "gate",
-                    "reason": {
-                        "type": "effectful-component-reached",
-                        "components": ["example:accounting", "example:mailer"]
-                    }
-                }
-            }
-        }
-    });
-    let decoded = decode(&document);
-    assert_eq!(
-        serde_json::to_value(decoded).expect("round trip"),
-        document,
-        "the effect-posture refusal is not wire-stable"
-    );
-
-    // It is a gate refusal and nothing else: the components list is required,
-    // so a refusal that names no component cannot be composed.
-    let mut incomplete = document;
-    incomplete["body"]["outcome"]["value"]["reason"]
-        .as_object_mut()
-        .expect("reason is an object")
-        .remove("components");
-    assert_eq!(
-        decode_document(&serde_json::to_string(&incomplete).expect("serializes"))
-            .expect_err("the refusal must name the components it refused on")
-            .error_type(),
-        ContractDecodeErrorType::Json
-    );
-}
-
 #[test]
 fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
     // `report-not-successful` is publish's alone; the gate cannot answer with it.
@@ -338,107 +290,6 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
             .error_type(),
         ContractDecodeErrorType::Json
     );
-    // And the converse: the gate's effect-posture refusal is not publish's.
-    let inverted = json!({
-        "document": "response",
-        "body": {
-            "schema-version": SCHEMA_VERSION,
-            "command-id": "publish-1",
-            "outcome": {
-                "status": "refused",
-                "value": {
-                    "command": "publish",
-                    "reason": {
-                        "type": "effectful-component-reached",
-                        "components": ["example:accounting"]
-                    }
-                }
-            }
-        }
-    });
-    assert_eq!(
-        decode_document(&serde_json::to_string(&inverted).expect("serializes"))
-            .expect_err("a gate-only refusal cannot answer publish")
-            .error_type(),
-        ContractDecodeErrorType::Json
-    );
-}
-
-#[test]
-fn retired_and_forbidden_vocabulary_is_absent() {
-    let schema = wamn_authoring_model::json_schema_string();
-    for retired in [
-        "get-run",
-        "GetRun",
-        "RunProjection",
-        "RunStatus",
-        "RunFailure",
-        "RunNodeProjection",
-        "NodeOutputProjection",
-        "OutputTooLarge",
-        "GetRunRefusal",
-        "suite-run",
-        "suite-projection",
-        "grant-draft-safe-generation",
-        "revoke-draft-safe-generation",
-        "cycle-detected",
-        "depth-exceeded",
-        "expanded-node-limit",
-        "plan-expansion",
-        "TestSetInput",
-        "TestSetIdentity",
-        // wamn-0h0g.8.5.5: the draft concept is a client-side file, so every
-        // operation, payload and refusal that named server-side draft state is
-        // gone from the wire rather than merely unmounted.
-        "save-draft",
-        "read-draft",
-        "draft-run",
-        "SaveDraft",
-        "ReadDraft",
-        "DraftRun",
-        "DraftRunCapture",
-        "DraftIdentity",
-        "DraftDocument",
-        "DraftRevisionRef",
-        "ValidatedDraftIdentity",
-        "expected-revision",
-        "revision-conflict",
-        "draft-revision-not-found",
-        "unresolvable-callee-name",
-        "missing-recorded-callability",
-        "contract-incompatibility",
-        "ValidationIssue",
-        "SafeUint64",
-        // wamn-0h0g.8.28: both commands carry the document, so neither can look
-        // one up and neither can find it missing or drifted from a stored row.
-        // `ValidatedDraftRef` itself SURVIVES — `gate` answers with one, carrying
-        // the identity the server derived — so only the refusals are retired.
-        "validated-draft-not-found",
-        "validated-draft-drift",
-        // wamn-0h0g.7.11 renamed the gate's wire literal. The superseded
-        // spelling is retired vocabulary, not merely unused.
-        "test-set-run",
-    ] {
-        assert!(
-            !schema.contains(retired),
-            "retired literal survived: {retired}"
-        );
-    }
-    for required in [
-        // Quoted: bare `gate` is a substring of every `Gate*` definition name,
-        // so an unquoted probe would pass on a schema that had lost the literal.
-        "\"gate\"",
-        "get-report",
-        "publish",
-        // The constitutional clause's refusal is part of the public contract.
-        "effectful-component-reached",
-        "x-max-utf8-bytes",
-    ] {
-        assert!(
-            schema.contains(required),
-            "required literal is absent: {required}"
-        );
-    }
 }
 
 #[test]

@@ -16,6 +16,8 @@ path = "src/bin/wamn-throughput.rs"
 test = false
 
 [dependencies]
+wamn-client.workspace = true
+wamn-digest.workspace = true
 base64 = { workspace = true }
 hmac = { workspace = true }
 ring = { workspace = true }
@@ -59,7 +61,6 @@ wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-component-composer = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-test-infrastructure = { workspace = true }

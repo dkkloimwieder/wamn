@@ -420,7 +420,7 @@ async fn get_case(
     case: &str,
     expected: u16,
 ) -> anyhow::Result<()> {
-    let query = wamn_execution_contract::encode_read_query(
+    let query = wamn_client::encode_read_query(
         json!({"id": PURCHASE_ORDER_ID})
             .as_object()
             .context("the get item is an object")?,

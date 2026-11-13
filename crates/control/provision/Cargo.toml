@@ -13,6 +13,7 @@ ops = []
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+wamn-digest.workspace = true
 # Native broker configuration types. Network effects stay in wamn-ctl.
 # server_2_11 and server_2_12 are the features wash-runtime enables. This crate
 # enables them too, so stream::Config has the same fields in a build of this
@@ -35,7 +36,6 @@ wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
-wamn-execution-contract = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the platform model.
 wamn-project-state = { workspace = true }

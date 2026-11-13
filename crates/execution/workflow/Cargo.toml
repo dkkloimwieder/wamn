@@ -9,7 +9,6 @@ license.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-execution-contract = { workspace = true }
 # The route path, the operation host, and the delivery bridge. This crate sits
 # above it, and it never depends on this crate.
 wamn-execution-host = { workspace = true }
@@ -31,6 +30,7 @@ serde_json = { workspace = true }
 tokio-postgres = { workspace = true }
 
 [dev-dependencies]
+wamn-digest.workspace = true
 wamn-schema-generator.workspace = true
 wamn-platform-identity = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

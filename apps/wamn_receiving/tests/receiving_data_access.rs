@@ -10,7 +10,7 @@ mod tests {
     use serde_json::{Value, json};
     use tokio_postgres::{Client, NoTls, Row, Transaction};
     use uuid::Uuid;
-    use wamn_execution_contract::canonical_json_bytes;
+    use wamn_digest::canonical_json_bytes;
 
     const MANIFEST: &str = "wamn_receiving/wamn.json";
     const OVERLAY_MANIFEST: &str = "client_acme_receiving/wamn.json";

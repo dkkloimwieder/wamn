@@ -13,6 +13,7 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-digest.workspace = true
 wamn-platform-identity = { workspace = true }
 wamn-credential-store = { workspace = true }
 async-trait = { workspace = true }

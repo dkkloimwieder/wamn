@@ -7,7 +7,7 @@ pub(super) fn authoritative_environment_policy(
 ) -> anyhow::Result<AuthoritativeEnvironmentPolicy> {
     let value =
         serde_json::to_value(&policy).context("serialize authoritative environment policy")?;
-    let source_policy_hash = wamn_execution_contract::canonical_json_sha256(&value);
+    let source_policy_hash = wamn_digest::canonical_json_sha256(&value);
     Ok(AuthoritativeEnvironmentPolicy {
         source_policy_org: source_policy_org.to_owned().into_boxed_str(),
         policy,

@@ -90,7 +90,7 @@ pub async fn write(
 ) -> anyhow::Result<u64> {
     let mut written = 0;
     ensure!(
-        wamn_engine::component_admission::component_digest(bytes) == digest,
+        wamn_digest::bytes_sha256(bytes) == digest,
         "component differs from its admitted digest {digest}"
     );
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?

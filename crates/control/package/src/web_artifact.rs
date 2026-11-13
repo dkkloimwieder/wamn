@@ -18,7 +18,7 @@ use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
-use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
+use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
 use wamn_schema_generator::build_record::{self, BuildRecord};
@@ -634,7 +634,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
+    use wamn_digest::{bytes_sha256, canonical_json_bytes};
     use wamn_package_artifact::registry_pull::test_server::Server;
     use wamn_schema_generator::build_record::{self, BuildRecord};
     use wamn_test_infrastructure::scratch::ScratchRoot;

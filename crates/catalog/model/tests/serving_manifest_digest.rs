@@ -81,7 +81,6 @@ fn routes() -> BTreeSet<ServingRoute> {
         reads: BTreeSet::new(),
         revision: None,
         idempotency: None,
-        canonicalization: None,
     }])
 }
 
@@ -456,10 +455,9 @@ fn released_workflow_changes_do_not_reach_the_digest() {
     ] {
         let mut value = serde_json::to_value(&baseline).unwrap();
         value["workflow"] = workflow;
-        let (read, _) = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&value),
-        )
-        .unwrap();
+        let (read, _) =
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&value))
+                .unwrap();
         assert_eq!(read.digest(), baseline.digest());
         assert_eq!(read.canonical_bytes(), baseline.canonical_bytes());
     }

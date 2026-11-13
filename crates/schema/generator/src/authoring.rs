@@ -171,7 +171,7 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
         fs::create_dir_all(&directory)
             .with_context(|| format!("create generated directory {}", directory.display()))?;
         // The canonical bytes (RFC 8785) that `wamn build` writes.
-        let canonical = wamn_execution_contract::canonical_json_bytes(&compiled);
+        let canonical = wamn_digest::canonical_json_bytes(&compiled);
         fs::write(&path, canonical).with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())

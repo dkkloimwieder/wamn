@@ -93,7 +93,7 @@ pub fn build_request(
     }
     Ok(BuiltRequest {
         request_element,
-        body: wamn_execution_contract::canonical_json_bytes(&envelope).into_boxed_slice(),
+        body: wamn_digest::canonical_json_bytes(&envelope).into_boxed_slice(),
     })
 }
 
@@ -335,20 +335,21 @@ fn canonical_field(
         "object" => canonical_object(field.children, value, schema, path)?,
         "array" => canonical_array(field, value, schema, path)?,
         "text" | "string" => Value::String(string(value, path)?.to_owned()),
-        "uuid" => Value::String(
+        "uuid" => {
             uuid::Uuid::parse_str(string(value, path)?)
-                .map_err(|source| caused(path, "expected a UUID", source))?
-                .hyphenated()
-                .to_string(),
-        ),
-        "timestamptz" => Value::String(
-            wamn_execution_contract::canonical_timestamptz(string(value, path)?)
-                .ok_or_else(|| invalid(path, "expected an RFC3339 timestamp"))?,
-        ),
-        "numeric" => Value::String(
-            wamn_execution_contract::canonical_numeric(string(value, path)?)
-                .ok_or_else(|| invalid(path, "expected decimal text without an exponent"))?,
-        ),
+                .map_err(|source| caused(path, "expected a UUID", source))?;
+            value.clone()
+        }
+        "timestamptz" => {
+            wamn_scalar::canonical_timestamptz(string(value, path)?)
+                .ok_or_else(|| invalid(path, "expected an RFC3339 timestamp"))?;
+            value.clone()
+        }
+        "numeric" => {
+            wamn_scalar::canonical_numeric(string(value, path)?)
+                .ok_or_else(|| invalid(path, "expected decimal text without an exponent"))?;
+            value.clone()
+        }
         "int32" | "int64" => canonical_integer(field.field.type_name, value, schema, path)?,
         "float64" => {
             let number = match value {

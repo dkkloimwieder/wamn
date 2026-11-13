@@ -24,8 +24,8 @@ use wamn_catalog::edge_bundle::{
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_control_registry::project_env_key;
+use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::local_component_path;
-use wamn_execution_contract::bytes_sha256;
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 

@@ -280,7 +280,6 @@ impl Fixture {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         let bytes = manifest.canonical_bytes();
         let release = Arc::new(

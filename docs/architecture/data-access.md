@@ -109,8 +109,6 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `input.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
 | Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
-| Canonicalization `excluded_fields`, `line_order` | Application command-identity choices. A command that claims its key gets `excluded_fields` `request_id` and `value.idempotency_key` from the schema module, written only to change. Retain `line_order`. |
-| Canonicalization `payload`, `uuid`, `timestamptz`, `numeric`, `duplicate_line` | Fixed platform codecs and duplicate-line refusal. Derive. |
 | Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors, `idempotency_conflict` among them. |
 | `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.delete`, `.lock` | SQL authority. The SQL owns what a statement reads, writes, locks and deletes, so generation derives each relation from the statements over the tables of the package's own schemas and writes it into the compiled manifest. PostgreSQL then plans each statement under the grants it derives. Derive. |
 | `relations[].constraints` | The constraints a statement relies on: each one its SQL names in `ON CONFLICT ON CONSTRAINT`, and each one `constraint_errors` maps, on the reached relation that defines it. Derive. |
@@ -377,9 +375,9 @@ The host stores the hash bytes unchanged and returns stored result text unchange
 The entry returns that text and runs no work. `finished` leaves no operation open, so another begin is allowed immediately.
 
 The host projects each base route's operation id and idempotency key path through `wamn:flow-http-routing/routing@0.1.0`.
-The request-hash rule declares excluded paths, line order, and numeric or timestamp spelling.
-It excludes `request_id` from the hash and keeps the key.
-The guest applies spelling and line order before invocation, then excludes the declared paths only for hashing.
+The server hashes the parsed request element with sorted object keys.
+It leaves out `request_id` and the route's idempotency key field.
+It preserves scalar spelling and array order before hashing and invocation.
 The hash bytes retain the `sha256:` prefix of the canonical JSON digest.
 Host routes and wiring attachments carry no base-operation rules.
 The route also carries the host operation deadline in milliseconds.
@@ -414,12 +412,10 @@ The `resolved` payload carries the operator basis text for the existing `intent-
 The write log supports no operator resolution, so it produces no `resolved`.
 An unread commit answer returns `uncertain`.
 
-The request is the SHA-256 of the canonical item without `request_id`, with the key kept.
-The route carries the canonical form of its input item (`canonicalization`), which publish reads from the generated input contract.
-The engine applies it before it hashes an item and before the component gets it.
-It spells each `numeric` leaf as PostgreSQL does, with its scale kept, and each `timestamptz` leaf in UTC with six fractional digits.
-It orders the declared lines, and the declared exclusions leave the hash.
-The component's normalize keeps only its checks.
+The request hash covers parsed JSON with sorted object keys.
+It leaves out `request_id` and the route's key field.
+The server preserves scalar spelling and array order before hashing and invocation.
+A repeat with a different spelling or line order is an idempotency conflict.
 The result is the answer body of the item, `{"value": ...}`, without its `request_id`.
 
 Production-claim errors retain PostgreSQL's primary message and constraint name.
@@ -1195,11 +1191,9 @@ Fresh databases install none of these objects, and apply-package installs only t
 
 ## Canonical values and SQL names
 
-`wamn_execution_contract::canonical_json_bytes` owns durable command, cursor, and package-record JSON bytes.
-Input canonicalization precedes idempotency hashing.
-It normalizes representation without changing values.
-Timestamp spelling, UUID case, and key order normalize, while PostgreSQL numeric scale remains significant.
-A changed numeric scale remains a changed command body.
+`wamn-digest` owns canonical JSON bytes and SHA-256 identities.
+`wamn-scalar` owns number and timestamp text formats and the SQL type enum.
+Scalar formats serve SQL input and cursor parsing. Request hashes preserve the supplied spelling.
 A generated update compares each supplied field with its current value as PostgreSQL text.
 A numeric scale-only change, such as `1.0` to `1.00`, is therefore a change that increases the revision.
 

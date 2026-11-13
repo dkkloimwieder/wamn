@@ -559,7 +559,7 @@ async fn moved_bytes_under_an_applied_version_are_refused() {
         serde_json::from_slice(&std::fs::read(released.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     moved["routes"]["path_prefix"] = serde_json::json!("/changed-fixture");
-    let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
+    let moved_bytes = wamn_digest::canonical_json_bytes(&moved);
     std::fs::write(released.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
     wamn_test_infrastructure::fixture_digest::write_build_record(&released);
     assert_ne!(

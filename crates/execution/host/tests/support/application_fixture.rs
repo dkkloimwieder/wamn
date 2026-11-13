@@ -230,7 +230,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     // The manifest's own serialization leaves out its empty sections.
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&manifest)?),
+        &wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["session_test"]}}))?,

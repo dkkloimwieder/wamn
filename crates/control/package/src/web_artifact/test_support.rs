@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
+use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::PackageRegistry;
 use wamn_package_artifact::registry_pull::test_server::Server;
 use wamn_schema_generator::build_record::{

@@ -48,8 +48,8 @@ pub use component_facts::{
     ComponentConnectionType, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
     ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
     ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
-    ComponentSchema, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
-    bind_component_statement_facts, normalize_component_fact, verify_stored_effect_projection,
+    ComponentSchema, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
+    normalize_component_fact, verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
@@ -72,15 +72,14 @@ pub use route_identity::{
     split_sealed_operation,
 };
 pub use serving_manifest::{
-    AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
-    INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
-    OperationType, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
-    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RouteAttachment,
-    RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
-    SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingComposedEntry, ServingEntryMember, ServingManifest,
-    ServingRelation, ServingRelease, ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
-    parse_attachment_auth_policy, parse_workflow_schedule, release_manifest_configmap_name,
+    AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL,
+    MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE, OperationType, PAT_AUTHENTICATION_MODE,
+    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
+    RouteAttachment, SERVING_MANIFEST_FORMAT_VERSION, SESSION_AUTHENTICATION_MODE,
+    ServedAttachment, ServingAttachment, ServingComponent, ServingComponentOperation,
+    ServingComposedEntry, ServingEntryMember, ServingManifest, ServingRelation, ServingRelease,
+    ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, parse_attachment_auth_policy,
+    parse_workflow_schedule, release_manifest_configmap_name,
 };
 pub use signed_file_read::{
     MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
@@ -104,7 +103,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
+use wamn_digest::bytes_sha256 as digest;
 
 /// Complete catalog bootstrap for a fresh project database, including its transaction.
 pub const CATALOG_SCHEMA_SQL: &str = concat!(
@@ -437,17 +436,6 @@ fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdenti
     }
 }
 
-fn digest(input: &[u8]) -> String {
-    let digest = Sha256::digest(input);
-    let mut output = String::with_capacity(HASH_PREFIX.len() + HASH_HEX_LEN);
-    output.push_str(HASH_PREFIX);
-    for byte in digest {
-        use fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
-    }
-    output
-}
-
 /// The tenant-scoped immutable identity of a flow artifact.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ArtifactId {
@@ -564,7 +552,7 @@ impl CanonicalJson {
                 });
             }
         }
-        let bytes = wamn_execution_contract::canonical_json_bytes(&value).into_boxed_slice();
+        let bytes = wamn_digest::canonical_json_bytes(&value).into_boxed_slice();
         Ok(Self { value, bytes })
     }
 
@@ -861,6 +849,12 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(&length.to_be_bytes());
     output.extend_from_slice(value);
 }
+
+/// Default node output port.
+pub const MAIN_PORT: &str = "main";
+
+/// Node output port for failures.
+pub const ERROR_PORT: &str = "error";
 
 #[cfg(test)]
 mod tests {

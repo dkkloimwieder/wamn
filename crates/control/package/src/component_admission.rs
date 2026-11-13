@@ -26,6 +26,7 @@ use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use serde::{Deserialize, Deserializer};
+use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
@@ -39,7 +40,6 @@ use wamn_package_artifact::registry_credentials::RegistryCredentials;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_schema_control::plan_package_migrations;
 
 mod declared_sql;
@@ -1208,7 +1208,7 @@ mod tests {
         let config_bytes = b"config-bytes";
         let expected = component_artifact_layout(component_bytes, config_bytes);
         let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
-        let digest = wamn_engine::component_admission::component_digest(component_bytes);
+        let digest = wamn_digest::bytes_sha256(component_bytes);
         let reference = component_artifact_reference("registry.example/wamn/components", &digest)
             .expect("shared digest reference derives");
 
@@ -1236,7 +1236,7 @@ mod tests {
         assert_eq!(manifest.layers[0].media_type, expected.layer_media_type());
         assert_eq!(
             manifest.layers[0].digest,
-            wamn_engine::component_admission::component_digest(component_bytes)
+            wamn_digest::bytes_sha256(component_bytes)
         );
         assert_eq!(
             manifest.layers[0].size,
@@ -1245,7 +1245,7 @@ mod tests {
         assert_eq!(manifest.config.media_type, expected.config_media_type());
         assert_eq!(
             manifest.config.digest,
-            wamn_engine::component_admission::component_digest(config_bytes)
+            wamn_digest::bytes_sha256(config_bytes)
         );
         assert_eq!(
             manifest.config.size,

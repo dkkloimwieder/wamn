@@ -64,7 +64,7 @@ impl Route {
         let request_element = request_element
             .as_object()
             .context("a read sends one object request element")?;
-        let query = wamn_execution_contract::encode_read_query(request_element);
+        let query = wamn_client::encode_read_query(request_element);
         let response = client
             .get(format!("{}{path}?{query}", self.endpoint))
             .header("Host", &self.host)

@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
+use wamn_digest::bytes_sha256;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
-use wamn_execution_contract::bytes_sha256;
 
 use super::{
     PublishReleaseManifest, ReleaseComponents, publish_release_with_package_manifests,
@@ -234,7 +234,6 @@ fn base_and_overlay_project_admitted_routes() {
         assert_eq!(route.reads, contract.reads);
         assert_eq!(route.revision, contract.revision);
         assert_eq!(route.idempotency, contract.idempotency);
-        assert_eq!(route.canonicalization, contract.canonicalization);
     }
     let kind_of = |operation: &str| {
         first

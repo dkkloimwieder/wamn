@@ -26,6 +26,5 @@ pub(super) fn package_route(
         reads: contract.reads,
         revision: contract.revision,
         idempotency: contract.idempotency,
-        canonicalization: contract.canonicalization,
     })
 }

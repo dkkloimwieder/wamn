@@ -47,6 +47,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 
+use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader,
@@ -57,7 +58,6 @@ use wamn_platform_identity::{
     IssuedPat, assign_project_role, create_service, create_user, issue_pat, resolve_subject,
     revoke_pat,
 };
-use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_session::PAT_TOKEN_PREFIX;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
@@ -98,18 +98,7 @@ fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_j
                 "operation": operation,
             },
         },
-        "cases": [
-            {
-                "case-id": "creates",
-                "input": {"name": "first"},
-                "expect": {"outcome": "responded", "status": 201},
-            },
-            {
-                "case-id": "rejects",
-                "input": {"name": "second"},
-                "expect": {"outcome": "responded", "status": 200},
-            },
-        ],
+
     })
 }
 
@@ -171,7 +160,6 @@ const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
 /// gate's effect law is shown to key on POSTURE rather than on one known
 /// package. If the registry ever classified a new capability as ambient by
 /// accident, this is where it would surface.
-const BLOBSTORE_WIRING: &str = "labels-write";
 const BLOBSTORE_COMPONENT: &str = "blob-put";
 const BLOBSTORE_COMPONENT_DIGEST: &str =
     "sha256:3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d";
@@ -380,7 +368,7 @@ impl ArtifactRegistry {
                     .context("the synthetic descriptor is a component descriptor")?;
             std::fs::write(
                 root.join(format!("descriptors/{}.json", parsed.component)),
-                wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&parsed)?),
+                wamn_digest::canonical_json_bytes(&serde_json::to_value(&parsed)?),
             )?;
         }
         wamn_test_infrastructure::fixture_digest::write_physical_schema(
@@ -413,7 +401,7 @@ impl ArtifactRegistry {
                 location
             };
             let separator = if location.contains('?') { '&' } else { '?' };
-            let digest = wamn_execution_contract::bytes_sha256(bytes);
+            let digest = wamn_digest::bytes_sha256(bytes);
             http.put(format!("{location}{separator}digest={digest}"))
                 .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
                 .body(bytes.to_vec())
@@ -478,7 +466,7 @@ fn effectful_descriptor() -> serde_json::Value {
             EFFECTFUL_OPERATION: {"input-ports": [], "output-ports": [], "parameters": []},
         },
         "imports": imports,
-        "imports-fingerprint": wamn_execution_contract::canonical_json_sha256(&imports),
+        "imports-fingerprint": wamn_digest::canonical_json_sha256(&imports),
         "effects": [{
             "package": "wamn:connection",
             "provenance": "imported",
@@ -1156,8 +1144,7 @@ async fn empty_case_store_requirement_needs_no_runtime_binding_world(
         (true, false, false),
         "the test fixture gained a fabricated release or binding world"
     );
-    let mut document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
-    document["cases"] = serde_json::json!([]);
+    let document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
     let wiring_hash = derived_hash(&document);
     let response = post(
         "/authoring",
@@ -1180,62 +1167,12 @@ async fn empty_case_store_requirement_needs_no_runtime_binding_world(
     );
     assert_eq!(
         stored_gate_report(admin, &wiring_hash).await,
-        Some((true, serde_json::json!({"cases": 0}))),
+        Some((true, serde_json::json!({}))),
         "the empty-case judgment did not persist its exact case count"
     );
 }
 
-/// Nonempty cases stop at the admitted effect posture before runtime bindings.
-///
-/// This is partial coverage only for wamn-61d0: it tests that the common normalized
-/// connection posture participates in Gate. Blobstore normalization and
-/// blob-put behavior remain owned by that bead.
-async fn nonempty_case_store_requirement_refuses_effect_posture(
-    admin: &Client,
-    project: &Client,
-    token: &str,
-) {
-    assert_eq!(
-        effectful_candidate_runtime_state(project).await,
-        (true, false, false),
-        "the test fixture gained a fabricated release or binding world"
-    );
-    let document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
-    let response = post(
-        "/authoring",
-        Some(token),
-        &[],
-        &gate_document_for_package_in("gate-effectful", PROJECT, EFFECTFUL_PACKAGE, &document),
-    )
-    .await;
-    assert_eq!(response.status, 200, "{}", response.body);
-    assert_eq!(
-        outcome(&response.body)["value"],
-        serde_json::json!({
-            "command": "gate",
-            "reason": {
-                "type": "effectful-component-reached",
-                "components": [EFFECTFUL_COMPONENT],
-            },
-        }),
-        "a nonempty case bypassed the admitted effect posture: {}",
-        response.body
-    );
-    assert!(
-        stored_gate_report(admin, &derived_hash(&document))
-            .await
-            .is_none(),
-        "an effectful nonempty candidate was given a gate report"
-    );
-}
-
-#[derive(Clone, Copy)]
-enum ConnectionGateCase {
-    EmptyCases,
-    NonemptyCases,
-}
-
-async fn run_connection_gate_case(case: ConnectionGateCase) {
+async fn run_connection_gate_case() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let url = database.url();
@@ -1291,24 +1228,12 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
         gate.body
     );
 
-    match case {
-        ConnectionGateCase::EmptyCases => {
-            empty_case_store_requirement_needs_no_runtime_binding_world(
-                &admin,
-                &project,
-                principal.token(),
-            )
-            .await;
-        }
-        ConnectionGateCase::NonemptyCases => {
-            nonempty_case_store_requirement_refuses_effect_posture(
-                &admin,
-                &project,
-                principal.token(),
-            )
-            .await;
-        }
-    }
+    empty_case_store_requirement_needs_no_runtime_binding_world(
+        &admin,
+        &project,
+        principal.token(),
+    )
+    .await;
 
     surface.abort();
     project_task.abort();
@@ -1317,12 +1242,7 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
 
 #[tokio::test]
 async fn empty_case_connection_component_without_release_or_binding_reports_zero_cases() {
-    run_connection_gate_case(ConnectionGateCase::EmptyCases).await;
-}
-
-#[tokio::test]
-async fn nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture() {
-    run_connection_gate_case(ConnectionGateCase::NonemptyCases).await;
+    run_connection_gate_case().await;
 }
 
 /// The external Gate retains one deployment-pinned endpoint while `wamn dev`
@@ -1871,7 +1791,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert!(stored.0, "an accepted gate stored a failing report");
     assert_eq!(
         stored.1,
-        serde_json::json!({"cases": 2}),
+        serde_json::json!({}),
         "the stored summary does not count the judged document's cases"
     );
     // The REFUSED candidate below writes none, and the un-gated one never did:
@@ -1905,7 +1825,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
                     "report-id": candidate_hash,
                     "validated-draft": {"validated-draft-id": candidate_hash},
                     "passed": true,
-                    "summary": {"cases": 2},
+                    "summary": {},
                 },
             },
         }),
@@ -2010,12 +1930,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // document against the exact package's admitted component facts; a missing
     // operation cannot disappear through the posture queries' joins and mint a
     // green report.
-    let mut incompatible_without_cases = candidate_graph(
+    let incompatible_without_cases = candidate_graph(
         "orders-missing-operation-no-cases",
         "entity",
         "missing-operation",
     );
-    incompatible_without_cases["cases"] = serde_json::json!([]);
     let incompatible_without_cases_hash = derived_hash(&incompatible_without_cases);
     let incompatible = post(
         "/authoring",
@@ -2053,71 +1972,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(project_case_runs(&project).await, runs);
     assert_eq!(project_queue_count(&project).await, 0);
 
-    // ---- THE CONSTITUTIONAL CLAUSE FIRES ------------------------------------
-    // wamn-0h0g.8.5.5: gate cases are EFFECT-FREE BY CONTRACT. A gate is a
-    // judgment about a document, not an execution of it, so a candidate that
-    // reaches a component whose admitted effects projection is non-empty is
-    // refused TYPED and executes nothing.
-    //
-    // This is the behavior test, not a source scan. The SAME unreleased
-    // connection-bearing component accepted above now carries cases, so its
-    // admitted effect posture becomes the exact refusing predicate.
-    let runs_before_effectful = project_case_runs(&project).await;
-    let command_count_before_effectful = command_rows(&admin).await.len();
-    nonempty_case_store_requirement_refuses_effect_posture(&admin, &project, alice.token()).await;
-    // Nothing executed. The refusal precedes everything the verb could do with
-    // the candidate, so there is no run and no queue row.
-    assert_eq!(
-        project_case_runs(&project).await,
-        runs_before_effectful,
-        "an effectful candidate admitted a run before being refused"
-    );
-    assert_eq!(project_queue_count(&project).await, 0);
-    // A refusal is still an authorized command, so it IS attributed.
-    assert_eq!(
-        command_rows(&admin).await.len(),
-        command_count_before_effectful + 1,
-        "a typed gate refusal was not attributed"
-    );
-    // THE SAME CLAUSE, AGAINST THE BLOBSTORE CAPABILITY (wamn-61d0). The case
-    // above tests that it fires for another registered effect. This tests that it fires
-    // for `wasmcloud:blobstore`, the capability 2b added — so the effect law
-    // keys on POSTURE, not on one known package, and the registry's first new
-    // consumer is refused by it like any other effect.
-    let blobstore = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &gate_document_in(
-            "gate-blobstore",
-            PROJECT,
-            &candidate_graph(BLOBSTORE_WIRING, BLOBSTORE_COMPONENT, "put"),
-        ),
-    )
-    .await;
-    assert_eq!(blobstore.status, 200, "{}", blobstore.body);
-    assert_eq!(
-        outcome(&blobstore.body)["value"],
-        serde_json::json!({
-            "command": "gate",
-            "reason": {
-                "type": "effectful-component-reached",
-                "components": [BLOBSTORE_COMPONENT],
-            },
-        }),
-        "a blobstore-effect candidate was not refused by its effect posture: {}",
-        blobstore.body
-    );
-
-    // The PURE candidate was ACCEPTED a few lines above, against the very same
-    // effective release and the very same posture read. That is what makes this a
-    // predicate rather than a blanket refusal: one document passes the clause
-    // and one does not, and the effects projection is the only difference.
-    assert_eq!(
-        outcome(&accepted.body)["status"],
-        serde_json::json!("completed"),
-        "the effect-free predicate refused the pure candidate too"
-    );
     // Bytes that are not a wiring document are a typed product refusal, not a
     // 501 and not a fabricated report. This REPLACES the unknown-candidate arm
     // (wamn-0h0g.8.28): a document the command carries cannot be "not found", so

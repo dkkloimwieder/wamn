@@ -15,7 +15,7 @@ use tokio_postgres::config::Host;
 use tokio_postgres::{Client, Config, NoTls};
 
 use wamn_authoring_model::GateRefusal;
-use wamn_authoring_model::gate::{judge_gate_document, validate_gate_cases};
+use wamn_authoring_model::gate::judge_gate_document;
 use wamn_catalog::{AdmittedComponent, ComponentPackageScope};
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
@@ -394,7 +394,7 @@ pub struct GateRequest<'a> {
 /// `wiring_hash` is therefore both the report's key and the report id the
 /// result hands back.
 ///
-/// `summary` counts the cases the judged document declares. It records no
+/// `summary` is empty. It records no
 /// per-case verdict, because nothing was executed — the gate judged the
 /// document, and a summary claiming case results would be a lie about work that
 /// did not happen.
@@ -423,7 +423,7 @@ pub enum GateJudgment {
 /// construct.
 ///
 /// The order of the three legs is load-bearing and is the order they landed in:
-/// a candidate that does not resolve cannot be judged, a malformed `cases` array
+/// a candidate that does not resolve cannot be judged, a malformed document
 /// is refused before any posture is read, and **a nonempty case set's effect-free
 /// clause fires before anything else can act on the candidate**.
 pub async fn run_gate(
@@ -431,9 +431,7 @@ pub async fn run_gate(
     request: &GateRequest<'_>,
 ) -> anyhow::Result<GateJudgment> {
     let document = request.document;
-    if let Err(refusal) = validate_gate_cases(document) {
-        return Ok(GateJudgment::Refused(refusal));
-    }
+
     let scope = match ComponentPackageScope::new(
         admission.env_key.to_string(),
         request.package_id,
@@ -458,7 +456,7 @@ pub async fn run_gate(
         return Ok(GateJudgment::Refused(refusal));
     }
     Ok(GateJudgment::Accepted(GateReport {
-        summary: serde_json::json!({ "cases": document.cases.len() }),
+        summary: serde_json::json!({}),
         wiring_hash: document.wiring_hash().as_str().to_owned(),
         passed: true,
     }))
@@ -466,72 +464,8 @@ pub async fn run_gate(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
 
     use super::*;
-
-    /// The cases array is the DOCUMENT's own, decoded by the contract type.
-    ///
-    /// This replaces two tests of a `candidate_cases` helper that read the array
-    /// out of a stored `graph_json` blob. wamn-0h0g.8.28 deleted that helper with
-    /// the stored-row lookup it served: the gate now receives an already-parsed
-    /// `WiringDocument`, so the same bound is held by the same contract type one
-    /// layer earlier, and `deny_unknown_fields` refuses a foreign array there.
-    #[test]
-    fn the_documents_cases_array_is_the_contract_type() {
-        let document = wamn_catalog::WiringDocument::parse(&json!({
-            "format-version": "0.1",
-            "wiring-id": "orders-create",
-            "version": 1,
-            "entry": "node",
-            "nodes": {"node": {
-                "component": "entity",
-                "interface-version": "0.1",
-                "operation": "create",
-            }},
-            "cases": [{
-                "case-id": "roundtrip",
-                "input": {"a": 1},
-                "expect": {"outcome": "responded", "status": 201},
-            }],
-        }))
-        .expect("a well-formed document parses");
-        assert_eq!(document.cases.len(), 1);
-        assert_eq!(document.cases[0].case_id, "roundtrip");
-        assert_eq!(document.cases[0].expect.status, Some(201));
-
-        // A document carrying no cases reaches an empty selection, not an error.
-        let bare = wamn_catalog::WiringDocument::parse(&json!({
-            "format-version": "0.1",
-            "wiring-id": "orders-create",
-            "version": 1,
-            "entry": "node",
-            "nodes": {"node": {
-                "component": "entity",
-                "interface-version": "0.1",
-                "operation": "create",
-            }},
-        }))
-        .expect("a document with no cases parses");
-        assert!(bare.cases.is_empty());
-
-        // A foreign field in a case is REFUSED, not silently narrowed.
-        assert!(
-            wamn_catalog::WiringDocument::parse(&json!({
-                "format-version": "0.1",
-                "wiring-id": "orders-create",
-                "version": 1,
-                "entry": "node",
-                "nodes": {"node": {
-                    "component": "entity",
-                    "interface-version": "0.1",
-                    "operation": "create",
-                }},
-                "cases": [{"case-id": "x", "input": {}, "why": 1}],
-            }))
-            .is_err()
-        );
-    }
 
     /// The expected identity is DERIVED from the parsed connection, never
     /// hand-copied beside it.

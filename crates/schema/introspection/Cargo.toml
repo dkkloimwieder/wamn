@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-scalar.workspace = true
 wamn-catalog = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

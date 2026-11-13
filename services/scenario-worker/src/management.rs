@@ -387,8 +387,8 @@ pub(crate) async fn insert_command_audit(
 
 fn canonical_request_hash(command: &AuthoringRequest) -> anyhow::Result<String> {
     let value = serde_json::to_value(command).context("project closed command request to JSON")?;
-    Ok(wamn_execution_contract::bytes_sha256(
-        &wamn_execution_contract::canonical_json_bytes(&value),
+    Ok(wamn_digest::bytes_sha256(
+        &wamn_digest::canonical_json_bytes(&value),
     ))
 }
 
@@ -963,7 +963,7 @@ async fn publish(
     let request_hash = canonical_request_hash(command)?;
     let target_ref: Box<str> = match wamn_catalog::WiringDocument::parse(&input.document) {
         Ok(document) => document.wiring_hash().as_str().to_owned().into(),
-        Err(_) => wamn_execution_contract::bytes_sha256(
+        Err(_) => wamn_digest::bytes_sha256(
             serde_json::to_vec(&input.document)
                 .context("serialize the submitted publish document for attribution")?
                 .as_slice(),
@@ -1026,7 +1026,7 @@ async fn gate_route(
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
 }
 
-/// Judge one candidate against its own `cases` array, attributing the judgment
+/// Judge one candidate against admitted component facts, attributing the judgment
 /// to its verified author.
 ///
 /// # The judgment reads; this transaction writes both of its facts at once
@@ -1072,7 +1072,7 @@ async fn gate(
         // and non-empty, and a refusal is attributed like any other outcome.
         target_ref: match &parsed {
             Ok(document) => document.wiring_hash().as_str().to_owned().into(),
-            Err(_) => wamn_execution_contract::bytes_sha256(
+            Err(_) => wamn_digest::bytes_sha256(
                 serde_json::to_vec(&input.document)
                     .context("serialize the submitted document for attribution")?
                     .as_slice(),

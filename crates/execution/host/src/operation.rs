@@ -16,9 +16,7 @@ use opentelemetry::propagation::Extractor;
 use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use wamn_catalog::{
-    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponent, ServingRoute,
-};
+use wamn_catalog::{AdmittedComponent, ComponentSqlField, ServingComponent, ServingRoute};
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -37,7 +35,7 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField,
-    StatementValueType, VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
+    VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -61,7 +59,6 @@ pub struct CallIntents {
     package: String,
     kind: wamn_catalog::OperationType,
     key_field: Option<String>,
-    canonicalization: Option<wamn_catalog::RouteCanonicalization>,
 }
 
 impl CallIntents {
@@ -74,7 +71,6 @@ impl CallIntents {
             package: &self.package,
             kind: self.kind,
             key_field: self.key_field.as_deref(),
-            canonicalization: self.canonicalization.as_ref(),
         }
     }
 }
@@ -390,7 +386,6 @@ impl OperationHost {
             package: route.package_id.clone(),
             kind: route.type_,
             key_field: route.idempotency.clone(),
-            canonicalization: route.canonicalization.clone(),
         }))
     }
 
@@ -681,24 +676,9 @@ impl NodeAcquisition {
     }
 }
 
-fn lower_statement_value_type(value_type: ComponentSqlValueType) -> StatementValueType {
-    match value_type {
-        ComponentSqlValueType::Boolean => StatementValueType::Boolean,
-        ComponentSqlValueType::Int32 => StatementValueType::Int32,
-        ComponentSqlValueType::Int64 => StatementValueType::Int64,
-        ComponentSqlValueType::Float64 => StatementValueType::Float64,
-        ComponentSqlValueType::Text => StatementValueType::Text,
-        ComponentSqlValueType::Bytes => StatementValueType::Bytes,
-        ComponentSqlValueType::Numeric => StatementValueType::Numeric,
-        ComponentSqlValueType::Timestamptz => StatementValueType::Timestamptz,
-        ComponentSqlValueType::Json => StatementValueType::Json,
-        ComponentSqlValueType::Uuid => StatementValueType::Uuid,
-    }
-}
-
 fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
     StatementField {
-        value_type: lower_statement_value_type(field.value_type),
+        value_type: field.value_type,
         nullable: field.nullable,
     }
 }

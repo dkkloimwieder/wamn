@@ -38,8 +38,9 @@ path = "tests/prune_run_history_live.rs"
 required-features = ["ops"]
 
 [dependencies]
+wamn-client.workspace = true
+wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
-wamn-execution-contract = { workspace = true }
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed

@@ -22,5 +22,5 @@ pub fn template_fingerprint(
         "env_key": identity.env_key(),
         "catalog": identity.catalog,
     });
-    wamn_execution_contract::canonical_json_sha256(&fields)
+    wamn_digest::canonical_json_sha256(&fields)
 }

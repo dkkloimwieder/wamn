@@ -3436,7 +3436,7 @@ host:
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local materializer transport fixture";
-        let digest = wamn_engine::component_admission::component_digest(bytes);
+        let digest = wamn_digest::bytes_sha256(bytes);
         let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
         std::fs::write(&path, bytes).unwrap();
         let mut request = v2::WorkloadStartRequest {
@@ -3514,7 +3514,7 @@ host:
             std::env::temp_dir().join(format!("wamn-host-local-workload-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local component transport fixture";
-        let digest = wamn_engine::component_admission::component_digest(bytes);
+        let digest = wamn_digest::bytes_sha256(bytes);
         let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
         let request = v2::WorkloadStartRequest {
             workload_id: "wamn-dev-flow-http".to_owned(),
@@ -3752,7 +3752,6 @@ host:
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "orders".into(),

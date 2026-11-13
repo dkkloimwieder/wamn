@@ -184,10 +184,8 @@ impl ServingComponentOperation {
     /// Whether this released operation carries the admitted operation's own facts.
     pub fn carries(&self, admitted: &AdmittedComponentOperation) -> bool {
         let schema = admitted.committed_result_schema.as_ref().map(|schema| {
-            String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                &schema.schema,
-            ))
-            .expect("canonical JSON uses UTF-8")
+            String::from_utf8(wamn_digest::canonical_json_bytes(&schema.schema))
+                .expect("canonical JSON uses UTF-8")
         });
         self.registered_operation == admitted.registered_operation
             && self.committed_result_schema == schema
@@ -250,7 +248,7 @@ impl Ord for ServingComponent {
             ))
             .then_with(|| {
                 let bytes = |descriptor: &ComponentDescriptor| {
-                    wamn_execution_contract::canonical_json_bytes(
+                    wamn_digest::canonical_json_bytes(
                         &serde_json::to_value(descriptor).expect("a descriptor serializes"),
                     )
                 };
@@ -285,10 +283,8 @@ impl ServingComponent {
                 registered_operation: operation.registered_operation.clone(),
                 permissions: operation.registered_operation.iter().cloned().collect(),
                 committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
-                    String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                        &schema.schema,
-                    ))
-                    .expect("canonical JSON uses UTF-8")
+                    String::from_utf8(wamn_digest::canonical_json_bytes(&schema.schema))
+                        .expect("canonical JSON uses UTF-8")
                 }),
                 statements: operation.statements.clone(),
             };
@@ -424,145 +420,6 @@ pub struct ServingRoute {
     /// without one keys its intents by the request element `request_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency: Option<String>,
-    /// The canonical form of an input request element, from the generated input
-    /// contract. A route without one takes its request elements as they are sent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canonicalization: Option<RouteCanonicalization>,
-}
-
-/// The canonical form of one route's input request element
-/// (`docs/history/host-transaction.md` 7, ruling (a)).
-///
-/// Two spellings of one request are one request: the host respells the
-/// declared leaves and orders the declared lines before it hashes the request element
-/// and before the component gets it. Paths are dotted request element paths, and `[]`
-/// names each element of a list, such as `value.line[].quantity`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RouteCanonicalization {
-    /// Request element paths that the request hash leaves out. The key and the
-    /// `request_id` are never here.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub excluded: BTreeSet<String>,
-    /// The line list and the member whose ascending order is its canonical
-    /// order.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lines: Option<RouteLineOrder>,
-    /// The leaves that take the canonical spelling of their type.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub spelling: BTreeMap<String, CanonicalSpelling>,
-}
-
-/// The line list of a request element and the member that orders it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RouteLineOrder {
-    /// The dotted path of the list, such as `value.line`.
-    pub path: String,
-    pub ascending_by: String,
-}
-
-/// The canonical spelling of one leaf type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CanonicalSpelling {
-    /// PostgreSQL's own text of the value, scale kept.
-    Numeric,
-    /// UTC RFC 3339 with six fractional digits.
-    Timestamptz,
-}
-
-impl RouteCanonicalization {
-    /// Respell the declared leaves of `request_element` and order its declared lines.
-    ///
-    /// A value that the respelling refuses keeps its text, and the component
-    /// refuses it.
-    pub fn apply(&self, request_element: &mut Value) {
-        for (path, spelling) in &self.spelling {
-            let segments = path.split('.').collect::<Vec<_>>();
-            respell(request_element, &segments, *spelling);
-        }
-        if let Some(order) = &self.lines
-            && let Some(Value::Array(lines)) = order
-                .path
-                .split('.')
-                .try_fold(&mut *request_element, |value, name| value.get_mut(name))
-        {
-            lines.sort_by_cached_key(|line| {
-                line.get(&order.ascending_by)
-                    .map_or_else(String::new, Value::to_string)
-            });
-        }
-    }
-
-    /// `request_element` without its excluded paths: what the request hash covers.
-    #[must_use]
-    pub fn hashed(&self, request_element: &Value) -> Value {
-        let mut hashed = request_element.clone();
-        for path in &self.excluded {
-            let segments = path.split('.').collect::<Vec<_>>();
-            remove(&mut hashed, &segments);
-        }
-        hashed
-    }
-}
-
-/// Respell the leaves at `segments` below `value`.
-fn respell(value: &mut Value, segments: &[&str], spelling: CanonicalSpelling) {
-    let Some((first, rest)) = segments.split_first() else {
-        if let Value::String(text) = value {
-            let respelled = match spelling {
-                CanonicalSpelling::Numeric => wamn_execution_contract::canonical_numeric(text),
-                CanonicalSpelling::Timestamptz => {
-                    wamn_execution_contract::canonical_timestamptz(text)
-                }
-            };
-            if let Some(respelled) = respelled {
-                *text = respelled;
-            }
-        }
-        return;
-    };
-    match first.strip_suffix("[]") {
-        Some(name) => {
-            if let Some(Value::Array(elements)) = value.get_mut(name) {
-                for element in elements {
-                    respell(element, rest, spelling);
-                }
-            }
-        }
-        None => {
-            if let Some(member) = value.get_mut(*first) {
-                respell(member, rest, spelling);
-            }
-        }
-    }
-}
-
-/// Remove the members at `segments` below `value`.
-fn remove(value: &mut Value, segments: &[&str]) {
-    match segments {
-        [] => {}
-        [last] => {
-            if let Some(object) = value.as_object_mut() {
-                object.remove(*last);
-            }
-        }
-        [first, rest @ ..] => match first.strip_suffix("[]") {
-            Some(name) => {
-                if let Some(Value::Array(elements)) = value.get_mut(name) {
-                    for element in elements {
-                        remove(element, rest);
-                    }
-                }
-            }
-            None => {
-                if let Some(member) = value.get_mut(*first) {
-                    remove(member, rest);
-                }
-            }
-        },
-    }
 }
 
 /// One relation of a project database, by schema and name.
@@ -1016,15 +873,13 @@ impl ServingManifest {
 
     /// The RFC 8785 canonical bytes mounted by serving processes.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        wamn_execution_contract::canonical_json_bytes(&self.as_value())
+        wamn_digest::canonical_json_bytes(&self.as_value())
     }
 
     /// The content digest over [`Self::canonical_bytes`].
     pub fn digest(&self) -> ManifestDigest {
-        ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(
-            &self.as_value(),
-        ))
-        .expect("the shared canonicalizer emits a canonical sha256 digest")
+        ManifestDigest::parse(wamn_digest::canonical_json_sha256(&self.as_value()))
+            .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
     /// Parse, validate, and admit only canonical format-11 bytes.
@@ -1062,14 +917,11 @@ impl ServingManifest {
             }
         })?;
         manifest.validate()?;
-        if manifest.as_value() != current
-            || wamn_execution_contract::canonical_json_bytes(&document) != bytes
-        {
+        if manifest.as_value() != current || wamn_digest::canonical_json_bytes(&document) != bytes {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
-        let digest =
-            ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(&document))
-                .expect("the shared canonicalizer emits a canonical sha256 digest");
+        let digest = ManifestDigest::parse(wamn_digest::canonical_json_sha256(&document))
+            .expect("the shared canonicalizer emits a canonical sha256 digest");
         Ok((manifest, digest))
     }
 
@@ -1207,7 +1059,7 @@ impl ServingManifest {
                             message: format!("committed-result schema is invalid JSON: {error}"),
                         }
                     })?;
-                    if wamn_execution_contract::canonical_json_bytes(&value) != schema.as_bytes() {
+                    if wamn_digest::canonical_json_bytes(&value) != schema.as_bytes() {
                         return invalid("committed-result schema must be canonical JSON");
                     }
                     let normalized =
@@ -1513,7 +1365,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         }])
     }
 
@@ -1730,10 +1581,9 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("application");
-        let error = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&document),
-        )
-        .expect_err("composed-entry.application is required in format eleven");
+        let error =
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&document))
+                .expect_err("composed-entry.application is required in format eleven");
         assert_eq!(
             error,
             CatalogIdentityError::InvalidDefinition {
@@ -1788,12 +1638,12 @@ mod tests {
                 "schedule": "0 * * * *",
             },
         });
-        let bytes = wamn_execution_contract::canonical_json_bytes(&document);
+        let bytes = wamn_digest::canonical_json_bytes(&document);
         let (decoded, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
         assert_eq!(decoded, manifest);
         assert_eq!(
             digest.as_str(),
-            wamn_execution_contract::canonical_json_sha256(&document)
+            wamn_digest::canonical_json_sha256(&document)
         );
         assert_ne!(digest, manifest.digest());
         let mut spaced = bytes;
@@ -1814,19 +1664,18 @@ mod tests {
             .clone();
         document["components"][0]["operations"][&operation]["committed-result-schema"] =
             serde_json::json!("{\"type\":\"array\"}");
-        let (declared, digest) = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&document),
-        )
-        .expect("canonical committed schema loads");
+        let (declared, digest) =
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&document))
+                .expect("canonical committed schema loads");
         assert_ne!(digest, original.digest());
         assert_eq!(serde_json::to_value(&declared).unwrap(), document);
         for schema in ["{ \"type\": \"array\" }", "{\"type\":\"unknown\"}", "{"] {
             document["components"][0]["operations"][&operation]["committed-result-schema"] =
                 serde_json::json!(schema);
             assert!(
-                ServingManifest::from_canonical_bytes(
-                    &wamn_execution_contract::canonical_json_bytes(&document),
-                )
+                ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(
+                    &document
+                ),)
                 .is_err(),
                 "{schema}"
             );
@@ -1838,10 +1687,8 @@ mod tests {
             .unwrap()
             .remove("registered-operation");
         assert!(
-            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
-                &document
-            ),)
-            .is_err()
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&document),)
+                .is_err()
         );
     }
 
@@ -2553,7 +2400,7 @@ mod tests {
             "attachments": {"old": {}},
             "registrations": {"old": {}}
         });
-        let bytes = wamn_execution_contract::canonical_json_bytes(&value);
+        let bytes = wamn_digest::canonical_json_bytes(&value);
         let (read, _) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
         assert_eq!(read, manifest);
         assert_eq!(read.digest(), manifest.digest());

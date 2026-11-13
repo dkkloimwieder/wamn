@@ -29,10 +29,10 @@ use wamn_catalog::edge_bundle::{
     INGRESS_FILE_NAME,
 };
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
+use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_component_in_release};
-use wamn_execution_contract::bytes_sha256;
 
 use crate::grants::Grants;
 

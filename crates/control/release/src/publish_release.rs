@@ -27,9 +27,9 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageScope,
-    ManifestDigest, OperationType, PackageCoordinate, RouteCanonicalization,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRelation, ServingRelease, ServingRoute,
+    ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRelation, ServingRelease,
+    ServingRoute,
 };
 use wamn_engine::release_manifest::ReleaseScope;
 use wamn_schema_control::{
@@ -237,7 +237,6 @@ pub struct RouteContract {
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     idempotency: Option<String>,
-    canonicalization: Option<RouteCanonicalization>,
 }
 
 #[cfg(test)]
@@ -248,7 +247,6 @@ impl From<OperationType> for RouteContract {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         }
     }
 }
@@ -400,7 +398,7 @@ fn compose_verified_application(
     route_digest: &str,
 ) -> anyhow::Result<ComposedApplication> {
     ensure!(
-        wamn_engine::component_admission::component_digest(route_bytes) == route_digest,
+        wamn_digest::bytes_sha256(route_bytes) == route_digest,
         "route layer bytes differ from pinned digest {route_digest}"
     );
     let bytes = wamn_component_composer::compose_application(
@@ -410,7 +408,7 @@ fn compose_verified_application(
     .context("compose the route layer with the admitted application")?;
     wamn_engine::statement_instances::statement_instances(&bytes)
         .context("validate composed application statement ownership")?;
-    let digest = wamn_engine::component_admission::component_digest(&bytes);
+    let digest = wamn_digest::bytes_sha256(&bytes);
     let application_digests = application_digests(application, application_bytes)?;
     Ok(ComposedApplication {
         bytes: bytes.into_boxed_slice(),
@@ -466,7 +464,7 @@ pub fn refresh_composed_entry(
     applications: &wamn_catalog::EnvironmentApplications,
 ) -> anyhow::Result<bool> {
     let (member, bytes) = covering_application(published, candidates, applications, None)?;
-    let route_digest = wamn_engine::component_admission::component_digest(route_bytes);
+    let route_digest = wamn_digest::bytes_sha256(route_bytes);
     if entry.as_ref().is_some_and(|entry| {
         entry.application.package_id == member.scope.package_id
             && entry.application.component == member.component
@@ -1135,7 +1133,7 @@ mod tests {
 
     fn refresh_definition_hash(attachment: &mut ServingAttachment) {
         attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-            wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+            wamn_digest::canonical_json_sha256(&attachment.definition),
         )
         .expect("the canonicalizer emits a valid definition hash");
     }
@@ -1167,7 +1165,7 @@ mod tests {
             "kind": "http",
             "route": {"path": path},
         });
-        let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        let definition_hash = wamn_digest::canonical_json_sha256(&definition);
         ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: package_id.to_owned(),
@@ -1326,7 +1324,7 @@ mod tests {
             "kind": "http",
             "route": {"path": "/widget/get"},
         });
-        let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        let definition_hash = wamn_digest::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
@@ -1361,7 +1359,7 @@ mod tests {
             "kind": "http",
             "route": {"path": "/widget/get"},
         });
-        let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        let authored_hash = wamn_digest::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
@@ -1391,7 +1389,7 @@ mod tests {
         );
         assert_eq!(
             resolved["fixture-http"].definition_hash.as_str(),
-            wamn_execution_contract::canonical_json_sha256(&resolved["fixture-http"].definition)
+            wamn_digest::canonical_json_sha256(&resolved["fixture-http"].definition)
         );
 
         let mut package_authored = authored.clone();
@@ -1559,7 +1557,7 @@ mod tests {
     fn unchanged_members_keep_the_composed_entry_bytes() {
         let bytes = wat::parse_str("(component)").unwrap();
         let mut member = closure_component("entry", None);
-        member.component_digest = wamn_engine::component_admission::component_digest(&bytes);
+        member.component_digest = wamn_digest::bytes_sha256(&bytes);
         let published = |member: &AdmittedComponent| {
             let manifest = ServingManifest::new(
                 ServingRelease {
@@ -1589,8 +1587,8 @@ mod tests {
         let before = b"already composed";
         let mut entry = Some(ComposedApplication {
             bytes: before.to_vec().into_boxed_slice(),
-            digest: wamn_engine::component_admission::component_digest(before),
-            route_digest: wamn_engine::component_admission::component_digest(route_bytes),
+            digest: wamn_digest::bytes_sha256(before),
+            route_digest: wamn_digest::bytes_sha256(route_bytes),
             application: wamn_catalog::ServingEntryMember {
                 package_id: "base".to_owned(),
                 component: "entry".to_owned(),
@@ -1611,7 +1609,7 @@ mod tests {
         assert_eq!(entry.as_ref().unwrap().bytes(), before);
 
         let changed = wat::parse_str("(component (component))").unwrap();
-        member.component_digest = wamn_engine::component_admission::component_digest(&changed);
+        member.component_digest = wamn_digest::bytes_sha256(&changed);
         assert!(
             refresh_composed_entry(
                 &mut entry,
@@ -1643,7 +1641,7 @@ mod tests {
             .map(|(package, bytes)| {
                 let mut fact = closure_component("entry", None);
                 fact.scope.package_id = package.into();
-                fact.component_digest = wamn_engine::component_admission::component_digest(bytes);
+                fact.component_digest = wamn_digest::bytes_sha256(bytes);
                 fact
             })
             .collect();
@@ -1668,7 +1666,6 @@ mod tests {
                     reads: BTreeSet::new(),
                     revision: None,
                     idempotency: None,
-                    canonicalization: None,
                 })
                 .collect(),
             BTreeMap::new(),
@@ -1777,9 +1774,7 @@ mod tests {
                 requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
             }],
         );
-        let bytes = wamn_execution_contract::canonical_json_bytes(
-            &serde_json::to_value(&descriptor).unwrap(),
-        );
+        let bytes = wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap());
         std::fs::write(
             root.join(wamn_package_control::package_artifact::DESCRIPTOR_DIRECTORY)
                 .join(format!("{}.json", fact.component)),
@@ -1812,9 +1807,7 @@ mod tests {
         let second = project("acme--plant--prod");
         assert_eq!(first, second);
         assert_eq!(
-            wamn_execution_contract::canonical_json_bytes(
-                &serde_json::to_value(&first.descriptor).unwrap()
-            ),
+            wamn_digest::canonical_json_bytes(&serde_json::to_value(&first.descriptor).unwrap()),
             layer
         );
         let _ = std::fs::remove_dir_all(&root);

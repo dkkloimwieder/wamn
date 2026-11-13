@@ -739,7 +739,6 @@ pub(crate) mod tests {
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "orders".to_string(),

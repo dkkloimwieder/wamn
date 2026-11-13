@@ -25,3 +25,11 @@ pub mod oauth_authorization;
 pub mod oauth_encryption;
 pub mod oauth_token;
 mod pod_identity;
+
+mod effect_outcome;
+mod portable_http_target;
+
+pub use effect_outcome::EffectOutcome;
+pub use portable_http_target::{
+    CanonicalHttpTarget, PortableHttpTargetError, normalize_portable_http_target,
+};

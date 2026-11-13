@@ -138,8 +138,8 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         "installed_schema_acl":schema_acl, "retained_schema_acl":retained_acl,
         "schema_admission_claim":false,
         "positive":positive, "controls":negative,
-        "baseline_observed_schema_sha256":component_digest(&serde_json::to_vec(&baseline)?),
-        "additive_observed_schema_sha256":component_digest(&serde_json::to_vec(&additive)?),
+        "baseline_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&baseline)?),
+        "additive_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&additive)?),
         "result":"pass",
     });
     println!("{}", serde_json::to_string_pretty(&evidence)?);

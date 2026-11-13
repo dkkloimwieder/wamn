@@ -516,7 +516,7 @@ fn render_declaration(
                     .component_directory
                     .join(format!("{}.wasm", base.component)),
             )?;
-            *digest = wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
+            *digest = wamn_digest::bytes_sha256(&bytes).into_boxed_str();
         }
     }
     let value = wamn_package_control::component_declaration::render_declaration_document(
@@ -604,7 +604,7 @@ fn selected_attachments(
             };
             attachment.definition["route"]["method"] = Value::String(method.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-                wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+                wamn_digest::canonical_json_sha256(&attachment.definition),
             )?;
             result.insert(id.clone(), attachment);
         }

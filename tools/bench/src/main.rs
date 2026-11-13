@@ -9,7 +9,7 @@ use anyhow::{Context as _, bail, ensure};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use wamn_execution_contract::encode_read_query;
+use wamn_client::encode_read_query;
 
 /// The most rows one query returns (`limit.maximum` in the Receiving manifest).
 const PAGE: i64 = 100;

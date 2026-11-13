@@ -24,7 +24,7 @@ use wasmparser::{
 
 use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
 
-use crate::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 
 /// One component index: a nested member and its digest, or anything else.
 enum ComponentEntry {
@@ -77,7 +77,7 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
                         .get(start..end)
                         .context("a nested component section is out of range")?;
                     components.push(ComponentEntry::Member {
-                        digest: component_digest(member),
+                        digest: bytes_sha256(member),
                         statements: statement_instances(member)
                             .context("validate nested member statement instances")?,
                     });
@@ -255,7 +255,7 @@ mod tests {
     }
 
     fn record(member: &str) -> String {
-        let digest = component_digest(&wat::parse_str(member).unwrap());
+        let digest = bytes_sha256(&wat::parse_str(member).unwrap());
         let json = serde_json::to_string(&BTreeMap::from([("sql-0", digest)])).unwrap();
         format!(
             r#"(@custom "{STATEMENT_INSTANCES_SECTION}" {})"#,

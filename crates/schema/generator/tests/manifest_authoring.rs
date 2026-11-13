@@ -297,7 +297,7 @@ fn a_key_the_reader_defaults_stays_absent() {
 }
 
 #[test]
-fn a_command_that_takes_the_envelope_gets_its_bounds_and_canonical_input() {
+fn a_command_that_takes_the_envelope_gets_its_bounds() {
     let package = Package::new(&source(
         "",
         r#"        }
@@ -314,15 +314,10 @@ fn a_command_that_takes_the_envelope_gets_its_bounds_and_canonical_input() {
         archive["input"]["envelope"],
         json!({"minimum": 1, "maximum": 100})
     );
-    assert_eq!(
-        archive["canonicalization"],
-        json!({"excluded_fields": ["request_id", "value.idempotency_key"]})
-    );
     // A command guarded by state takes one input and claims no key.
     let touch = manifest["custom_operations"]["widget.touch"]
         .as_object()
         .expect("an operation object");
-    assert!(!touch.contains_key("canonicalization"));
     assert_eq!(
         touch["input"],
         json!({"fields": [
@@ -333,16 +328,12 @@ fn a_command_that_takes_the_envelope_gets_its_bounds_and_canonical_input() {
 
     let changed = Package::new(&source(
         "",
-        r#"            input: {raw_body_maximum = 4096, envelope = {minimum = 1, maximum = 10}}
-            canonicalization = {excluded_fields = ["request_id"]}"#,
+        r"            input: {raw_body_maximum = 4096, envelope = {minimum = 1, maximum = 10}}
+",
     ));
     let archive = &changed.compile()["custom_operations"]["widget.archive"];
     assert_eq!(archive["input"]["raw_body_maximum"], 4096);
     assert_eq!(archive["input"]["envelope"]["maximum"], 10);
-    assert_eq!(
-        archive["canonicalization"]["excluded_fields"],
-        json!(["request_id"])
-    );
 }
 
 #[test]

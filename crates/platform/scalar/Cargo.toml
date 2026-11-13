@@ -1,0 +1,13 @@
+[package]
+name = "wamn-scalar"
+description = "Scalar text formats and SQL value types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

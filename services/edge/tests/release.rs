@@ -13,9 +13,9 @@ use wamn_catalog::{
     PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation,
     ServingManifest, ServingRelease,
 };
+use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseScope;
-use wamn_execution_contract::bytes_sha256;
 
 const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "scale";

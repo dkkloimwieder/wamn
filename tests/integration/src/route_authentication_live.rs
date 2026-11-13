@@ -263,7 +263,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             "method": "POST"
         }
     });
-    let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+    let definition_hash = wamn_digest::canonical_json_sha256(&definition);
     let manifest = serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
@@ -288,7 +288,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
         }}
 
     });
-    let bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
+    let bytes = wamn_digest::canonical_json_bytes(&manifest);
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",

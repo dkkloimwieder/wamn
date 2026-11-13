@@ -15,6 +15,7 @@ name = "wamn-benchmark-gate"
 path = "src/benchmark.rs"
 
 [dependencies]
+wamn-digest.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }

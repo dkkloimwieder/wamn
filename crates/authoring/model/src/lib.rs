@@ -24,9 +24,6 @@ pub const SCHEMA_VERSION: &str = "0.2";
 /// human-readable prefix while keeping the trace-only value tightly bounded.
 pub const MAX_QUERY_ID_BYTES: usize = 64;
 
-/// Maximum number of cases one flow document may carry.
-pub const MAX_TEST_SET_CASES: usize = 256;
-
 /// Non-empty, bounded, trace-only query correlation identity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QueryId(Box<str>);
@@ -323,7 +320,7 @@ pub struct ValidatedDraftRef {
     pub validated_draft_id: String,
 }
 
-/// Judge one wiring document against its own bounded `cases` array.
+/// Judge one wiring document against its admitted component facts.
 ///
 /// # This carries the DOCUMENT, and that is the whole of wamn-0h0g.8.28
 ///
@@ -490,22 +487,6 @@ pub enum GateRefusal {
     #[schemars(rename_all = "kebab-case")]
     InvalidDocument {
         detail: String,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    InvalidTestSet {
-        detail: String,
-    },
-    /// The candidate reaches a component whose admitted effects projection is
-    /// non-empty.
-    ///
-    /// A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it: effects
-    /// belong to admitted runs under run identity, and a report must be
-    /// reproducible from the document alone or its hash-keyed identity is a lie.
-    /// The refusal names the exact components that carry effects rather than a
-    /// free-text detail, so a client can act on it.
-    #[schemars(rename_all = "kebab-case")]
-    EffectfulComponentReached {
-        components: Vec<String>,
     },
     CommandIdReuse,
 }

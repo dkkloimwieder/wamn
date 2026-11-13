@@ -123,7 +123,6 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
             },
         )]),
         Vec::new(),
-        Vec::new(),
     )
     .expect("the fixture workflow is structurally valid")
 }

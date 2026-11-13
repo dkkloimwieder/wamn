@@ -7,13 +7,13 @@
 //! crate is generated for it.
 
 use std::collections::BTreeMap;
+use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, bail};
 use sqlx::{
     AssertSqlSafe, Column as _, Connection as _, Either, Executor as _, SqlSafeStr as _,
     TypeInfo as _,
 };
-use wamn_catalog::schema::ColumnType;
 
 /// What describe says about one statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,18 +102,18 @@ pub(crate) async fn describe_statements(
 
 /// The transport type of a PostgreSQL type name that SQLx reports, if the
 /// manifest vocabulary has one.
-pub(crate) fn column_type(postgres_name: &str) -> Option<ColumnType> {
+pub(crate) fn column_type(postgres_name: &str) -> Option<SqlValueType> {
     match postgres_name {
-        "BOOL" => Some(ColumnType::Boolean),
-        "INT4" => Some(ColumnType::Int32),
-        "INT8" => Some(ColumnType::Int64),
-        "FLOAT8" => Some(ColumnType::Float64),
-        "TEXT" => Some(ColumnType::Text),
-        "BYTEA" => Some(ColumnType::Bytes),
-        "NUMERIC" => Some(ColumnType::Numeric),
-        "TIMESTAMPTZ" => Some(ColumnType::Timestamptz),
-        "JSON" | "JSONB" => Some(ColumnType::Json),
-        "UUID" => Some(ColumnType::Uuid),
+        "BOOL" => Some(SqlValueType::Boolean),
+        "INT4" => Some(SqlValueType::Int32),
+        "INT8" => Some(SqlValueType::Int64),
+        "FLOAT8" => Some(SqlValueType::Float64),
+        "TEXT" => Some(SqlValueType::Text),
+        "BYTEA" => Some(SqlValueType::Bytes),
+        "NUMERIC" => Some(SqlValueType::Numeric),
+        "TIMESTAMPTZ" => Some(SqlValueType::Timestamptz),
+        "JSON" | "JSONB" => Some(SqlValueType::Json),
+        "UUID" => Some(SqlValueType::Uuid),
         _ => None,
     }
 }
@@ -125,16 +125,16 @@ mod tests {
     #[test]
     fn every_manifest_type_has_one_postgres_name() {
         for (name, expected) in [
-            ("BOOL", ColumnType::Boolean),
-            ("INT4", ColumnType::Int32),
-            ("INT8", ColumnType::Int64),
-            ("FLOAT8", ColumnType::Float64),
-            ("TEXT", ColumnType::Text),
-            ("BYTEA", ColumnType::Bytes),
-            ("NUMERIC", ColumnType::Numeric),
-            ("TIMESTAMPTZ", ColumnType::Timestamptz),
-            ("JSONB", ColumnType::Json),
-            ("UUID", ColumnType::Uuid),
+            ("BOOL", SqlValueType::Boolean),
+            ("INT4", SqlValueType::Int32),
+            ("INT8", SqlValueType::Int64),
+            ("FLOAT8", SqlValueType::Float64),
+            ("TEXT", SqlValueType::Text),
+            ("BYTEA", SqlValueType::Bytes),
+            ("NUMERIC", SqlValueType::Numeric),
+            ("TIMESTAMPTZ", SqlValueType::Timestamptz),
+            ("JSONB", SqlValueType::Json),
+            ("UUID", SqlValueType::Uuid),
         ] {
             assert_eq!(column_type(name), Some(expected));
         }

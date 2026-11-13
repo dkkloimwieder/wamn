@@ -6,8 +6,8 @@
 //! the database, and the command bytes, in one form.
 
 use serde_json::{Value, json};
-use wamn_execution_contract::{canonical_numeric, canonical_timestamptz};
 use wamn_postgres_statements::{Json, Numeric, TimestampTz, Uuid};
+use wamn_scalar::{canonical_numeric, canonical_timestamptz};
 
 use crate::Invalid;
 

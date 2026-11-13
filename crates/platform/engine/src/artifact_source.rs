@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use wamn_catalog::AdmittedComponent;
 
-use crate::component_admission::component_digest;
 use wamn_catalog::component_digest_tag;
+use wamn_digest::bytes_sha256;
 
 /// A source that returns only verified component bytes.
 #[async_trait]
@@ -196,7 +196,7 @@ impl ArtifactSource for LocalComponentSource {
         let bytes = tokio::fs::read(path).await.map_err(|_| {
             ComponentArtifactFetchError::unavailable(reference, "composed-entry-body-unavailable")
         })?;
-        if component_digest(&bytes) != digest {
+        if bytes_sha256(&bytes) != digest {
             return Err(ComponentArtifactFetchError::mismatched(
                 reference,
                 "composed-entry-body-digest-mismatch",
@@ -219,7 +219,7 @@ pub fn verify_component_body(
             "component-artifact-body-size-mismatch",
         ));
     }
-    if component_digest(bytes) != expected_digest {
+    if bytes_sha256(bytes) != expected_digest {
         return Err(ComponentArtifactFetchError::mismatched(
             reference,
             "component-artifact-body-digest-mismatch",
@@ -298,7 +298,7 @@ mod tests {
                 )]),
                 connections: Vec::new(),
             },
-            component_digest(bytes),
+            bytes_sha256(bytes),
             ["wasi:logging/logging@0.1.0".to_owned()],
             Vec::new(),
         )
@@ -352,7 +352,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("wamn-local-entry-{}", std::process::id()));
         std::fs::create_dir(&root).expect("create owned local entry fixture");
         let bytes = b"composed-local-entry";
-        let digest = component_digest(bytes);
+        let digest = bytes_sha256(bytes);
         let path = local_component_path(&root, &digest).unwrap();
         std::fs::write(&path, bytes).unwrap();
         let source = LocalComponentSource::new(root.clone());

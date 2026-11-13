@@ -25,7 +25,7 @@ impl NetworkPolicy for ConnectionNetworkPolicy {
 mod tests {
     use std::sync::Mutex;
 
-    use wamn_execution_contract::node_contract::normalize_portable_http_target;
+    use crate::normalize_portable_http_target;
 
     use super::*;
     use crate::connection_authority::{

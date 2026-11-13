@@ -81,12 +81,11 @@ The provisioning owner locks and compares environment identity before refreshing
 That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.
 
-Authoring cases judge a wiring document and permit no effects.
-The case runner refuses a reachable component with admitted effects, including the effects of each base composed into it.
-Reports are immutable and keyed by the wiring hash within the `env_key`.
+Wiring admission checks the document against admitted component facts.
+Wiring documents carry no test cases.
+Reports are immutable and keyed by the wiring hash within the environment.
 Concurrent attempts return the stored winner for that hash.
-The service keeps no durable table for resuming individual cases.
-Effectful application tests remain separate from this authoring contract.
+Application tests run separately.
 
 ## Release identity
 

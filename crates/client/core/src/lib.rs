@@ -144,9 +144,8 @@ impl WamnClient {
         parameters: &BTreeMap<String, String>,
         request_elements: &[serde_json::Value],
     ) -> Result<Vec<ItemOutcome>, ClientError> {
-        let body = wamn_execution_contract::canonical_json_bytes(&serde_json::Value::Array(
-            request_elements.to_vec(),
-        ));
+        let body =
+            wamn_digest::canonical_json_bytes(&serde_json::Value::Array(request_elements.to_vec()));
         let response = self.send_body(route, parameters, body).await?;
 
         if response.status != 200 {
@@ -241,5 +240,8 @@ fn read_query(body: &[u8]) -> Option<String> {
     let [request_element] = request_elements.as_slice() else {
         return None;
     };
-    Some(wamn_execution_contract::encode_read_query(request_element))
+    Some(encode_read_query(request_element))
 }
+
+mod read_query;
+pub use read_query::encode_read_query;

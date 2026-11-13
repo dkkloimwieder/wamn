@@ -118,7 +118,7 @@ async fn a_read_is_a_get_with_its_one_request_element_in_the_query_and_no_body()
         sent.url,
         format!(
             "http://flow-http.wamn-system.svc/widget/get?{}",
-            wamn_execution_contract::encode_read_query(request_element.as_object().unwrap())
+            wamn_client::encode_read_query(request_element.as_object().unwrap())
         )
     );
     assert!(sent.body.is_empty());

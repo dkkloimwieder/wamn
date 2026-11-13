@@ -717,9 +717,9 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let before_generation = reader.store_id("registers").await?.unwrap();
     // The engine counts compiles by the digest of the component bytes.
     let code = |built: &integration::BuiltIntegration| -> anyhow::Result<String> {
-        Ok(wamn_engine::component_admission::component_digest(
-            &std::fs::read(built.directory.join("integration.wasm"))?,
-        ))
+        Ok(wamn_digest::bytes_sha256(&std::fs::read(
+            built.directory.join("integration.wasm"),
+        )?))
     };
     let (first_code, second_code) = (code(&first)?, code(&second)?);
     let compiled = wamn_engine::integration::compile_count(&first_code);

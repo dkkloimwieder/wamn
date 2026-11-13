@@ -123,9 +123,8 @@ fn route_request(
             .context("route path")?
     );
     let request = if attachment.route.type_.is_read() {
-        let query = wamn_execution_contract::encode_read_query(
-            value.as_object().context("read request object")?,
-        );
+        let query =
+            wamn_client::encode_read_query(value.as_object().context("read request object")?);
         if !query.is_empty() {
             url.push('?');
             url.push_str(&query);
@@ -292,7 +291,11 @@ mod tests {
         assert!(request.body().is_none());
         assert_eq!(
             Value::Object(
-                wamn_execution_contract::decode_read_query(request.url().query().unwrap()).unwrap()
+                request
+                    .url()
+                    .query_pairs()
+                    .map(|(name, value)| (name.into_owned(), serde_json::from_str(&value).unwrap()))
+                    .collect()
             ),
             value
         );

@@ -75,7 +75,7 @@ pub(super) fn applications_argument(
     applications: &wamn_catalog::EnvironmentApplications,
 ) -> anyhow::Result<String> {
     let value = serde_json::to_value(applications).context("encode the applications")?;
-    String::from_utf8(wamn_execution_contract::canonical_json_bytes(&value))
+    String::from_utf8(wamn_digest::canonical_json_bytes(&value))
         .context("the canonical applications are UTF-8")
 }
 

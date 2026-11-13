@@ -38,7 +38,7 @@ pub(in super::super) fn validate_attachment_definition_hashes(
     attachments: &BTreeMap<String, ServingAttachment>,
 ) -> Result<(), PublishManifestError> {
     for (attachment_id, attachment) in attachments {
-        let derived = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
+        let derived = wamn_digest::canonical_json_sha256(&attachment.definition);
         if attachment.definition_hash.as_str() != derived {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::Document,
@@ -138,7 +138,7 @@ pub(in super::super) fn resolve_route_methods(
             serde_json::Value::String(method.to_owned()),
         );
         attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-            wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+            wamn_digest::canonical_json_sha256(&attachment.definition),
         )
         .expect("the shared canonicalizer emits a valid definition hash");
     }

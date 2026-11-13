@@ -261,12 +261,12 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             }}],
         "routes": [{"package-id":"root","component":"node","operation":ROOT,"type":"command"}],
         "attachments": {ATTACHMENT: {"type":"http","package-id":"root","component":"node","operation":ROOT,
-            "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
+            "definition-hash":wamn_digest::canonical_json_sha256(&definition),
             "definition":definition,"auth-policy":{"modes":["session"]},"registered-operation":ROOT}}
 
     });
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "native session route test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
@@ -590,7 +590,7 @@ fn swap_statement_bindings(composed: &[u8]) -> Vec<u8> {
 fn native_member_statement_instances() {
     super::run_isolated_test("authenticated::native_member_statement_instances", async {
         let (composed, child) = super::member_instances_component();
-        let child_digest = wamn_engine::component_admission::component_digest(&child);
+        let child_digest = wamn_digest::bytes_sha256(&child);
         let engine = wamn_engine::build_engine(&[]).expect("validation engine");
         let admitted = validate_component_admission(
             &engine,
@@ -615,9 +615,7 @@ fn native_member_statement_instances() {
                 ("sql-0".to_owned(), child_digest.clone()),
                 (
                     "sql-1".to_owned(),
-                    wamn_engine::component_admission::component_digest(
-                        &super::member_root_component()
-                    )
+                    wamn_digest::bytes_sha256(&super::member_root_component())
                 ),
             ]),
             "admission carries the record it verified into the admitted facts"
@@ -741,7 +739,7 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
         "authenticated::native_sql_free_command_begins_from_its_transaction_field",
         async {
             let (composed, child) = super::sql_free_instances_component();
-            let child_digest = wamn_engine::component_admission::component_digest(&child);
+            let child_digest = wamn_digest::bytes_sha256(&child);
             let engine = wamn_engine::build_engine(&[]).expect("validation engine");
             let admitted = validate_component_admission(
                 &engine,
@@ -1355,10 +1353,10 @@ async fn pat_caller(
     let mut manifest = serde_json::to_value(release.manifest())?;
     manifest["routes"] =
         json!([{"package-id":"root","component":"node","operation":ROOT,"type":"command"}]);
-    manifest["attachments"] = json!({ATTACHMENT: {"type":"http","package-id":"root","component":"node","operation":ROOT,"definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),"definition":definition,"auth-policy":{"modes":["pat"]},"registered-operation":ROOT}});
+    manifest["attachments"] = json!({ATTACHMENT: {"type":"http","package-id":"root","component":"node","operation":ROOT,"definition-hash":wamn_digest::canonical_json_sha256(&definition),"definition":definition,"auth-policy":{"modes":["pat"]},"registered-operation":ROOT}});
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "warm PAT test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,

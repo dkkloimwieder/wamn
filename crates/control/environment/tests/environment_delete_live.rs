@@ -131,7 +131,7 @@ esac
     let env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let bytes = b"stranded release";
-    let digest = wamn_execution_contract::bytes_sha256(bytes);
+    let digest = wamn_digest::bytes_sha256(bytes);
     let transaction = project.transaction().await?;
     transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(

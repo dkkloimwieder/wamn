@@ -115,8 +115,8 @@ pub use production_claim::{
 pub use resources::retained_transaction_for_test;
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
 pub use statements::{
-    PreparedStatementMembers, PreparedStatementSet, StatementField, StatementValueType,
-    VerifiedStatement, VerifiedStatementSet,
+    PreparedStatementMembers, PreparedStatementSet, StatementField, VerifiedStatement,
+    VerifiedStatementSet,
 };
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and

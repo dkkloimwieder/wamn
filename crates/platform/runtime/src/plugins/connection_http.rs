@@ -16,10 +16,10 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 
+use crate::EffectOutcome;
+use crate::normalize_portable_http_target;
 use tracing::Instrument as _;
 use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
-use wamn_execution_contract::EffectOutcome;
-use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -1897,7 +1897,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         authorize_release_closure(&manifest, &invocation, &snapshot)
             .expect("a released route authorizes its origin export");

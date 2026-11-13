@@ -1,10 +1,6 @@
 //! The wire scalars every operation parses, spelled once.
 //!
-//! Parse and RE-SPELL, not merely validate. The canonicalization contract
-//! fixes uuids as lowercase-hyphenated and timestamps as UTC RFC 3339 with six
-//! fractional digits, so a caller's spelling must reach the database -- and
-//! the command bytes -- in one form, or two deliveries of the same command
-//! would canonicalize differently and the idempotency key would stop working.
+//! Parse scalar text for SQL input. Request identity uses the supplied JSON.
 
 use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
@@ -20,13 +16,13 @@ pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
 }
 
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
-    wamn_execution_contract::canonical_timestamptz(value)
+    wamn_scalar::canonical_timestamptz(value)
         .map(TimestampTz)
         .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 /// A positive quantity, RE-SPELLED as PostgreSQL's own text for the same
-/// datum by [`wamn_execution_contract::canonical_numeric`], which keeps the
+/// datum by [`wamn_scalar::canonical_numeric`], which keeps the
 /// scale and refuses an exponent. Zero is refused here rather than by the
 /// `quantity > 0` check constraints, whose violation the contract can only
 /// report as `internal_error`. A sign is refused too: a quantity is positive.
@@ -34,7 +30,7 @@ pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> 
     let positive = value
         .bytes()
         .any(|byte| byte.is_ascii_digit() && byte != b'0');
-    wamn_execution_contract::canonical_numeric(value)
+    wamn_scalar::canonical_numeric(value)
         .filter(|respelled| positive && !respelled.starts_with('-'))
         .map(Numeric)
         .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
@@ -43,7 +39,7 @@ pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> 
 /// A counted quantity: zero or positive, RE-SPELLED as [`numeric`] does. A
 /// count of zero is how an adjust says that the stock is gone.
 pub(crate) fn count(field: &str, value: &str) -> Result<Numeric, AccessError> {
-    wamn_execution_contract::canonical_numeric(value)
+    wamn_scalar::canonical_numeric(value)
         .filter(|respelled| !respelled.starts_with('-'))
         .map(Numeric)
         .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))

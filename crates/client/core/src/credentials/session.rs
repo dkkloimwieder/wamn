@@ -121,7 +121,7 @@ impl SessionCredentials {
                 url: self.target.endpoint.to_string(),
                 method: "POST".to_owned(),
                 headers,
-                body: wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
+                body: wamn_digest::canonical_json_bytes(&serde_json::json!({
                     "aud": self.target.audience,
                 })),
             })

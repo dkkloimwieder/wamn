@@ -591,7 +591,7 @@ impl ClientContractIr {
     /// digest in the platform.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        wamn_execution_contract::canonical_json_bytes(
+        wamn_digest::canonical_json_bytes(
             &serde_json::to_value(self).expect("the IR always serializes"),
         )
     }

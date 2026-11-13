@@ -372,7 +372,7 @@ async fn reconcile_target_identity_guard_live() {
         )
         .await
         .expect("read converged project-local policy");
-    let expected_source_hash = wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+    let expected_source_hash = wamn_digest::canonical_json_sha256(&serde_json::json!({
         "backup-cadence": "",
         "cpu": "100m",
         "durability-class": "standard",

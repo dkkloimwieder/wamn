@@ -170,7 +170,7 @@ fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Va
         "host": "purchase.example.test", "path": path, "method": "POST"
     }});
     json!({"type": "http", "package-id": "session_test", "component": "purchase",
-        "operation": operation, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+        "operation": operation, "definition-hash": wamn_digest::canonical_json_sha256(&definition),
         "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": operation})
 }
 
@@ -205,12 +205,12 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
             WRITE_ROUTE: route_attachment(WRITE_ROUTE, "/purchase/write", WRITE, modes),
             ATTACHMENT: {"type":"http","package-id":"session_test","component":"purchase","operation":READ,
-                "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
+                "definition-hash":wamn_digest::canonical_json_sha256(&definition),
                 "definition":definition,"auth-policy":{"modes":modes},"registered-operation":READ}}
 
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "session route test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             [(

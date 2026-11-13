@@ -260,7 +260,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
     let value: Value = serde_json::from_slice(manifest).unwrap();
     assert_eq!(
         manifest,
-        &wamn_execution_contract::canonical_json_bytes(&value),
+        &wamn_digest::canonical_json_bytes(&value),
         "wamn.json is not canonical"
     );
     let digest = build_record_first.outputs.manifest.clone();
@@ -771,7 +771,7 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
             PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
         let name = manifest.components.keys().next().unwrap().clone();
         let path = format!("components/{name}.wasm");
-        let digest = wamn_execution_contract::bytes_sha256(bytes);
+        let digest = wamn_digest::bytes_sha256(bytes);
         fs::create_dir_all(output.join("components")).unwrap();
         fs::write(output.join(&path), bytes).unwrap();
         let mut built = build_record::read(output).unwrap();

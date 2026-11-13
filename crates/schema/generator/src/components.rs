@@ -34,7 +34,7 @@ use crate::build::{BuildRequest, package_output};
 use crate::build_record::{self, BUILD_RECORD_FILE, BuildComponent, BuildRecord};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";

@@ -9,7 +9,7 @@ use std::fmt;
 
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
 
 use crate::data::error::{AccessError, AccessErrorType, AllowedConstraints};
@@ -340,7 +340,7 @@ struct PreparedCommand {
 }
 
 /// Respell the command the way its SQL binds it: canonical ids, times and
-/// quantities, and its lines in `purchase_order_line_id` order.
+/// quantities for SQL input. Line order stays as supplied.
 fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
     if command.idempotency_key.is_empty() {
         return Err(RecordReceiptError::invalid(
@@ -373,7 +373,6 @@ fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceip
         let quantity = canonical_positive_numeric(&line.quantity)?;
         lines.push((purchase_order_line_id, quantity, location_id));
     }
-    lines.sort_by_key(|line| line.0);
     let line = lines
         .iter()
         .map(|(line_id, quantity, location_id)| {
@@ -563,8 +562,7 @@ fn validate_count(
 
 /// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
 ///
-/// Case is representation, so it re-spells. The caller writes the re-spelled
-/// text into the canonical command, and the idempotency key hashes that.
+/// The database receives a parsed UUID. Request identity uses the input JSON.
 fn canonical_uuid(value: &str, field: &'static str) -> Result<Uuid, RecordReceiptError> {
     Uuid::parse_str(value)
         .map_err(|_| RecordReceiptError::invalid(format!("{field} must be a UUID"), field))
@@ -573,11 +571,9 @@ fn canonical_uuid(value: &str, field: &'static str) -> Result<Uuid, RecordReceip
 /// Parse any accepted RFC 3339 instant and re-spell it as UTC with six
 /// fractional digits.
 ///
-/// The command hashes the re-spelled bytes, never the arriving bytes. A client
-/// whose retry infrastructure re-spells one instant gets one command instead of
-/// an idempotency conflict.
+/// The database receives this timestamp format. Request identity uses the input JSON.
 fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
-    wamn_execution_contract::canonical_timestamptz(value).ok_or_else(|| {
+    wamn_scalar::canonical_timestamptz(value).ok_or_else(|| {
         RecordReceiptError::invalid(
             "value.occurred_at must be an RFC3339 timestamp",
             "value.occurred_at",
@@ -604,7 +600,7 @@ fn canonical_positive_numeric(value: &str) -> Result<String, RecordReceiptError>
     let positive = value
         .bytes()
         .any(|byte| byte.is_ascii_digit() && byte != b'0');
-    wamn_execution_contract::canonical_numeric(value)
+    wamn_scalar::canonical_numeric(value)
         .filter(|parsed| positive && !parsed.starts_with('-'))
         .ok_or_else(|| RecordReceiptError::invalid(
             "value.line[].quantity must be a positive PostgreSQL numeric string written without an exponent",
@@ -637,21 +633,6 @@ mod tests {
             quantity: quantity.into(),
             location_id: LOCATION_ID.into(),
         }
-    }
-
-    #[test]
-    fn line_order_is_presentation() {
-        let first = prepare(&command(vec![
-            line(SECOND_LINE_ID, "12.3400"),
-            line(FIRST_LINE_ID, "1.000000"),
-        ]))
-        .unwrap();
-        let reordered = prepare(&command(vec![
-            line(FIRST_LINE_ID, "1.000000"),
-            line(SECOND_LINE_ID, "12.3400"),
-        ]))
-        .unwrap();
-        assert_eq!(first.line_json, reordered.line_json);
     }
 
     #[test]

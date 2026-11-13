@@ -12,7 +12,7 @@ use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
     BTreeMap, BTreeSet, OperationType, PathBuf, PublishManifestError, PublishManifestErrorType,
-    RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute,
+    RouteContract, RouteContracts, ServingRelation, ServingRoute,
 };
 
 /// Every package's parsed manifest and the contract kind of every operation
@@ -247,8 +247,8 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
                 .record
                 .and_then(|record| record.revision_field)
                 .filter(|_| contract.type_ == OperationType::Get);
-            let (idempotency, canonicalization) = if contract.type_.is_read() {
-                (None, None)
+            let idempotency = if contract.type_.is_read() {
+                None
             } else {
                 read_input_identity(&path)?
             };
@@ -259,7 +259,6 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
                     reads,
                     revision,
                     idempotency,
-                    canonicalization,
                 },
             });
         }
@@ -267,13 +266,10 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
     Ok(kinds)
 }
 
-/// The idempotency key field and the canonical item form of the input
-/// contract beside `operation_path`.
+/// The idempotency key field of the input contract beside `operation_path`.
 ///
-/// An operation with no input contract declares neither.
-fn read_input_identity(
-    operation_path: &Path,
-) -> Result<(Option<String>, Option<RouteCanonicalization>), PublishManifestError> {
+/// An operation with no input contract declares no key field.
+fn read_input_identity(operation_path: &Path) -> Result<Option<String>, PublishManifestError> {
     let name = operation_path.to_string_lossy();
     let input_path = std::path::PathBuf::from(format!(
         "{}.input.json",
@@ -281,7 +277,7 @@ fn read_input_identity(
     ));
     let bytes = match std::fs::read(&input_path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
@@ -300,9 +296,8 @@ fn read_input_identity(
             error,
         )
     })?;
-    Ok((
-        wamn_schema_generator::client_plan::idempotency_field(&contract),
-        wamn_schema_generator::client_plan::route_canonicalization(&contract),
+    Ok(wamn_schema_generator::client_plan::idempotency_field(
+        &contract,
     ))
 }
 

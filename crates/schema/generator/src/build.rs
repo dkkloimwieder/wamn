@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
 use tokio_postgres::NoTls;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
@@ -42,7 +42,7 @@ use crate::materialize::{
 use wamn_catalog::manifest::{
     CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
 };
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =

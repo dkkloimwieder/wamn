@@ -182,7 +182,7 @@ fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<Strin
 }
 
 /// The output port whose schema admits any JSON.
-const MAIN_PORT: &str = "main";
+use wamn_catalog::MAIN_PORT;
 /// The output port whose schema is an array of request elements.
 const REQUEST_ELEMENTS_PORT: &str = "items";
 

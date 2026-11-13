@@ -123,7 +123,6 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
             },
         )]),
         Vec::new(),
-        Vec::new(),
     )?;
     admin
         .execute(

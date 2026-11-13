@@ -2,14 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use wamn_scalar::SqlValueType;
 
 use serde_json::json;
 use tokio::sync::oneshot;
 use wamn_catalog::{
     AttachmentTarget, AttachmentType, ComponentDescriptor, ComponentSqlField,
-    ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, OperationType, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRelease, ServingRoute,
+    ComponentSqlStatement, DefinitionHash, OperationType, PackageCoordinate, ServingAttachment,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease, ServingRoute,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -49,7 +49,7 @@ fn release() -> Arc<LoadedRelease> {
         binds: Vec::new(),
         columns: vec![ComponentSqlField {
             name: "value".into(),
-            value_type: ComponentSqlValueType::Int32,
+            value_type: SqlValueType::Int32,
             nullable: false,
         }],
         transactional: true,
@@ -81,7 +81,7 @@ BTreeSet::from([ServingRoute {
             package_id: "base".into(), component: "entry".into(),
             operation: READ_OPERATION.into(), type_: OperationType::Get,
             reads: BTreeSet::new(), revision: None,
-            idempotency: None, canonicalization: None,
+            idempotency: None,
         }]),
 BTreeMap::from([("entry".into(), ServingAttachment {
             type_: AttachmentType::Http, package_id: "base".into(),

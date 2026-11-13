@@ -455,7 +455,7 @@ enum Compat {
 
 /// A registry's `schema_version` is compatible if its MAJOR matches and its
 /// MINOR is not newer than what this crate implements (additive-within-major,
-/// per the `0.1.x` freeze rule — mirrors `wamn-execution-contract`).
+/// per the `0.1.x` freeze rule).
 fn compatible(v: &str) -> Compat {
     let parse = |s: &str| -> Option<(u32, u32)> {
         let (maj, min) = s.split_once('.')?;

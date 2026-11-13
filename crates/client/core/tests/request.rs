@@ -111,92 +111,6 @@ fn batch() -> Value {
     }]}})
 }
 
-fn batch_schema() -> Value {
-    json!({"type":"array","minItems":1,"maxItems":1,"items":{
-        "type":"object", "required":["request_id","value"],"additionalProperties":false,
-        "properties":{"request_id":{"type":"string"},"value":{
-            "type":"object", "required":["idempotency_key","occurred_at","line"], "additionalProperties":false,
-            "properties": {
-                "idempotency_key":{"type":"string","minLength":1},
-                "occurred_at":{"type":"string","pattern":"Z$"},
-                "line":{"type":"array","minItems":1,"maxItems":2,"items":{
-                    "type":"object","required":["widget_id","quantity"],"additionalProperties":false,
-                    "properties":{
-                        "widget_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-                        "quantity":{"type":"string","pattern":"^[0-9]+(\\.[0-9]+)?$"}
-                    }
-                }}
-            }
-        }}
-    }})
-}
-
-#[test]
-fn nested_request_bytes_canonicalize_uuid_time_and_numeric_once() {
-    let input = batch();
-    let built =
-        build_request(BATCH_FIELDS, &input, Some(&batch_schema())).expect("canonical request");
-    assert_eq!(built.body(), br#"[{"request_id":"r1","value":{"idempotency_key":"intent-1","line":[{"quantity":"5.000","widget_id":"abcdef00-0000-0000-0000-000000000001"}],"occurred_at":"2026-09-08T12:30:00.123456Z"}}]"#);
-    assert_eq!(input, batch(), "building never changes the editable draft");
-    for (written, canonical) in [
-        ("-0.00", "-0.00"),
-        ("0012.3400", "12.3400"),
-        (".50", "0.50"),
-        ("5.", "5"),
-    ] {
-        let mut input = batch();
-        input["value"]["line"][0]["quantity"] = json!(written);
-        let built = build_request(BATCH_FIELDS, &input, None).unwrap();
-        assert_eq!(
-            built.request_element()["value"]["line"][0]["quantity"],
-            canonical
-        );
-    }
-    for refused in ["+0005.000", " 5.000", "5.000 "] {
-        let mut input = batch();
-        input["value"]["line"][0]["quantity"] = json!(refused);
-        assert_eq!(
-            build_request(BATCH_FIELDS, &input, None)
-                .unwrap_err()
-                .error_type(),
-            RequestErrorType::InvalidValue
-        );
-    }
-    for (written, canonical) in [
-        ("2024-03-01T00:30:00+02:00", "2024-02-29T22:30:00.000000Z"),
-        (
-            "2026-08-29T12:34:56.1234567Z",
-            "2026-08-29T12:34:56.123456Z",
-        ),
-    ] {
-        let mut input = batch();
-        input["value"]["occurred_at"] = json!(written);
-        let built = build_request(BATCH_FIELDS, &input, None).unwrap();
-        assert_eq!(built.request_element()["value"]["occurred_at"], canonical);
-    }
-    for refused in [
-        "2026-02-29T00:00:00Z",
-        "2024-04-31T00:00:00Z",
-        "2026-08-29T12:34:56+24:00",
-        "1999-12-31T23:59:59.5-00:00:30",
-    ] {
-        let mut input = batch();
-        input["value"]["occurred_at"] = json!(refused);
-        assert_eq!(
-            build_request(BATCH_FIELDS, &input, None)
-                .unwrap_err()
-                .error_type(),
-            RequestErrorType::InvalidValue
-        );
-    }
-    assert_eq!(
-        build_request(BATCH_FIELDS, built.request_element(), Some(&batch_schema()))
-            .expect("canonical values stay canonical")
-            .body(),
-        built.body()
-    );
-}
-
 #[test]
 fn nested_arrays_enforce_bounds_and_required_child_fields() {
     let mut request_element = batch();
@@ -257,36 +171,6 @@ fn integer_carriers_follow_the_served_schema() {
             None
         )
         .is_err()
-    );
-}
-
-#[test]
-fn numeric_canonicalization_preserves_scale_without_a_precision_limit() {
-    let fields = [scalar("quantity", "numeric", true, false)];
-    for (input, expected) in [
-        (
-            "000123456789012345678901234567890.000000",
-            "123456789012345678901234567890.000000",
-        ),
-        ("-000.000", "-0.000"),
-        ("-.0500", "-0.0500"),
-        ("0005.", "5"),
-    ] {
-        let built =
-            build_request(&fields, &json!({"quantity":input}), None).expect("lexical numeric");
-        assert_eq!(built.request_element()["quantity"], expected);
-    }
-    for input in [
-        ".", "+", "-", "1e3", "NaN", "Infinity", "1.2.3", "+1", " 1", "1 ",
-    ] {
-        assert!(
-            build_request(&fields, &json!({"quantity":input}), None).is_err(),
-            "accepted {input}"
-        );
-    }
-    assert!(
-        build_request(&fields, &json!({"quantity": 5.0}), None).is_err(),
-        "numeric must preserve original text scale"
     );
 }
 

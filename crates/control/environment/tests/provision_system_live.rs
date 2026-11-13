@@ -1004,10 +1004,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .iter()
                 .find(|file| file.relative_path == record.relative_path)
                 .unwrap();
-            assert_eq!(
-                record.sha256,
-                wamn_execution_contract::bytes_sha256(&source.bytes)
-            );
+            assert_eq!(record.sha256, wamn_digest::bytes_sha256(&source.bytes));
         }
         let actor = wamn_control_provision::PlatformComponent::Provisioning
             .principal_id()

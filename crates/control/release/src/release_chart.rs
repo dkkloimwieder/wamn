@@ -372,10 +372,9 @@ mod tests {
             "components":[],"routes":[],"attachments":{},
             "workflow":{"attachments":{"orders-http":{"type":"http","wiring-id":"orders"}}}
         });
-        let (manifest, _) = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&value),
-        )
-        .unwrap();
+        let (manifest, _) =
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&value))
+                .unwrap();
         let roles = roles(&manifest, "acme", "orders", "dev");
         assert!(roles.is_empty());
     }

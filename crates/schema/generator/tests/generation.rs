@@ -7,7 +7,7 @@ use wamn_catalog::manifest::{
     CrudAction, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
     resolve_operation_reference, validate_operation_vocabulary,
 };
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_ts::emit_ts_client;
 use wamn_schema_generator::{
@@ -389,7 +389,7 @@ fn a_revision_carries_the_width_its_column_declares() {
             if column.name() == "row_version" {
                 Column::new(
                     "row_version",
-                    ColumnType::Int32,
+                    SqlValueType::Int32,
                     false,
                     Some(ColumnDefault::int32(1)),
                     None,
@@ -437,7 +437,7 @@ fn a_revision_carries_the_width_its_column_declares() {
         .iter()
         .map(|column| {
             if column.name() == "row_version" {
-                Column::new("row_version", ColumnType::Text, false, None, None)
+                Column::new("row_version", SqlValueType::Text, false, None, None)
             } else {
                 column.clone()
             }
@@ -1001,8 +1001,8 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
 #[test]
 fn prefix_range_and_is_null_filters_match_their_fields() {
     let ir = catalog_with_columns(&[
-        ("note", ColumnType::Text, true),
-        ("weight", ColumnType::Numeric, false),
+        ("note", SqlValueType::Text, true),
+        ("weight", SqlValueType::Numeric, false),
     ]);
     let mut modes = manifest();
     let query = &mut modes["models"]["gadget"]["operations"]["query"];
@@ -1140,7 +1140,7 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
 /// a part of any field in any case.
 #[test]
 fn a_query_searches_its_declared_text_fields() {
-    let ir = catalog_with_columns(&[("note", ColumnType::Text, true)]);
+    let ir = catalog_with_columns(&[("note", SqlValueType::Text, true)]);
     let mut search = manifest();
     let query = &mut search["models"]["gadget"]["operations"]["query"];
     query.as_object_mut().unwrap().remove("authored_sql");
@@ -1458,30 +1458,30 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("sku", ColumnType::Text, false, None, None),
-            Column::new("note", ColumnType::Text, true, None, None),
+            Column::new("sku", SqlValueType::Text, false, None, None),
+            Column::new("note", SqlValueType::Text, true, None, None),
             Column::new(
                 "priority",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(0)),
                 None,
             ),
             Column::new(
                 "sequence_number",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
@@ -1584,10 +1584,10 @@ fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &st
             "[package]\nname = \"typed-crud-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
              \n[dependencies]\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\n\
              uuid = \"1\"\nwit-bindgen = {{ version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\
-             wamn-execution-contract = {{ path = \"{}\" }}\n\
+             wamn-scalar = {{ path = \"{}\" }}\n\
              wamn-postgres-statements = {{ path = \"{}\" }}\n\
              \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
-            platform.join("execution/contract").display(),
+            root.join("crates/platform/scalar").display(),
             platform.join("data/postgres-statements").display(),
         ),
     )
@@ -1798,9 +1798,9 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
     );
     compile_inventory_item_component(&package, "");
     for (ty, id, wrong) in [
-        (ColumnType::Int32, "2147483647", "\"2147483647\""),
+        (SqlValueType::Int32, "2147483647", "\"2147483647\""),
         (
-            ColumnType::Int64,
+            SqlValueType::Int64,
             "\"9007199254740993\"",
             "9007199254740993",
         ),
@@ -2067,7 +2067,7 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
 // ---------------------------------------------------------------------------
 
 /// The support catalog, with each named column added to `gadget`.
-fn catalog_with_columns(columns: &[(&str, ColumnType, bool)]) -> CatalogIr {
+fn catalog_with_columns(columns: &[(&str, SqlValueType, bool)]) -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     let stamped = rebuilt_table(
@@ -2089,9 +2089,9 @@ fn catalog_with_columns(columns: &[(&str, ColumnType, bool)]) -> CatalogIr {
 
 fn all_stamps_catalog() -> CatalogIr {
     catalog_with_columns(&[
-        ("created_by", ColumnType::Uuid, false),
-        ("updated_at", ColumnType::Timestamptz, false),
-        ("updated_by", ColumnType::Uuid, false),
+        ("created_by", SqlValueType::Uuid, false),
+        ("updated_at", SqlValueType::Timestamptz, false),
+        ("updated_by", SqlValueType::Uuid, false),
     ])
 }
 
@@ -2183,8 +2183,8 @@ fn deleting_manifest(mode: &str) -> Value {
 
 fn tombstone_catalog() -> CatalogIr {
     catalog_with_columns(&[
-        ("deleted_at", ColumnType::Timestamptz, true),
-        ("deleted_by", ColumnType::Uuid, true),
+        ("deleted_at", SqlValueType::Timestamptz, true),
+        ("deleted_by", SqlValueType::Uuid, true),
     ])
 }
 
@@ -2354,9 +2354,9 @@ fn a_delete_mode_travels_with_its_owner_and_its_marker_columns() {
 
     for marker in ["deleted_at", "deleted_by"] {
         let ty = if marker == "deleted_at" {
-            ColumnType::Timestamptz
+            SqlValueType::Timestamptz
         } else {
-            ColumnType::Uuid
+            SqlValueType::Uuid
         };
         assert_eq!(
             run(
@@ -2489,19 +2489,19 @@ fn audit_log_columns_refuse_against_the_catalog() {
         ),
         (
             "a wrongly typed time",
-            catalog_with_columns(&[("updated_at", ColumnType::Text, false)]),
+            catalog_with_columns(&[("updated_at", SqlValueType::Text, false)]),
             timestamps_only.clone(),
             "updated_at",
         ),
         (
             "a wrongly typed actor",
-            catalog_with_columns(&[("created_by", ColumnType::Text, false)]),
+            catalog_with_columns(&[("created_by", SqlValueType::Text, false)]),
             with_audit_log(&json!(["created_at", "created_by"]), "none"),
             "created_by",
         ),
         (
             "a nullable selected column",
-            catalog_with_columns(&[("updated_at", ColumnType::Timestamptz, true)]),
+            catalog_with_columns(&[("updated_at", SqlValueType::Timestamptz, true)]),
             timestamps_only.clone(),
             "updated_at",
         ),
@@ -2519,7 +2519,7 @@ fn audit_log_columns_refuse_against_the_catalog() {
         ),
         (
             "an overlay-added reserved-name column",
-            catalog_with_columns(&[("updated_by", ColumnType::Uuid, false)]),
+            catalog_with_columns(&[("updated_by", SqlValueType::Uuid, false)]),
             overlay_added,
             "updated_by",
         ),
@@ -2964,9 +2964,9 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     for (ty, rust, default) in [
-        (ColumnType::Int32, "i32", ColumnDefault::int32(42)),
+        (SqlValueType::Int32, "i32", ColumnDefault::int32(42)),
         (
-            ColumnType::Int64,
+            SqlValueType::Int64,
             "i64",
             ColumnDefault::int64(9_007_199_254_740_993),
         ),
@@ -3072,16 +3072,16 @@ fn generated_operations_require_a_supported_single_column_key() {
     let gadget = table(&base, "gadget");
     let manifest = manifest();
     for ty in [
-        ColumnType::Uuid,
-        ColumnType::Int32,
-        ColumnType::Int64,
-        ColumnType::Text,
-        ColumnType::Boolean,
-        ColumnType::Float64,
-        ColumnType::Bytes,
-        ColumnType::Numeric,
-        ColumnType::Timestamptz,
-        ColumnType::Json,
+        SqlValueType::Uuid,
+        SqlValueType::Int32,
+        SqlValueType::Int64,
+        SqlValueType::Text,
+        SqlValueType::Boolean,
+        SqlValueType::Float64,
+        SqlValueType::Bytes,
+        SqlValueType::Numeric,
+        SqlValueType::Timestamptz,
+        SqlValueType::Json,
     ] {
         let columns = gadget
             .columns()
@@ -3099,9 +3099,9 @@ fn generated_operations_require_a_supported_single_column_key() {
             rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
         );
         let result = run(&catalog, &manifest, &QUERY_SOURCES);
-        if ty == ColumnType::Uuid {
+        if ty == SqlValueType::Uuid {
             result.unwrap();
-        } else if matches!(ty, ColumnType::Int32 | ColumnType::Int64) {
+        } else if matches!(ty, SqlValueType::Int32 | SqlValueType::Int64) {
             let error = result.unwrap_err();
             assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
             assert_eq!(error.object(), Some("inventory.gadget.id"));
@@ -3166,7 +3166,7 @@ fn generated_update_keeps_the_revision_on_a_true_no_op() {
     let mut manifest = manifest();
     manifest["models"]["gadget"]["operations"]["update"]["writable_fields"] =
         json!(["stock_id", "note"]);
-    let catalog = catalog_with_columns(&[("note", ColumnType::Text, true)]);
+    let catalog = catalog_with_columns(&[("note", SqlValueType::Text, true)]);
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
     let sql = std::str::from_utf8(
         package
@@ -3203,7 +3203,7 @@ fn generated_update_counts_a_numeric_scale_only_change() {
     let mut manifest = manifest();
     manifest["models"]["gadget"]["operations"]["update"]["writable_fields"] =
         json!(["received_quantity"]);
-    let catalog = catalog_with_columns(&[("received_quantity", ColumnType::Numeric, false)]);
+    let catalog = catalog_with_columns(&[("received_quantity", SqlValueType::Numeric, false)]);
     let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
     assert_eq!(
         std::str::from_utf8(
@@ -3266,8 +3266,8 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
     let base = all_stamps_catalog();
     let model = table(&base, "gadget");
     for (ty, rust, wit, json_type) in [
-        (ColumnType::Int32, "i32", "s32", "integer"),
-        (ColumnType::Int64, "i64", "s64", "string"),
+        (SqlValueType::Int32, "i32", "s32", "integer"),
+        (SqlValueType::Int64, "i64", "s64", "string"),
     ] {
         let columns = model
             .columns()
@@ -3317,7 +3317,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
         let codec = text("generated/wit/gadget_query_codec.rs");
         assert_eq!(
             codec.contains("change.id.to_string()"),
-            ty == ColumnType::Int64
+            ty == SqlValueType::Int64
         );
         let wit_source = package
             .files()

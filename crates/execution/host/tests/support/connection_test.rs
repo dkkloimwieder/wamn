@@ -271,13 +271,13 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         serde_json::from_slice(&std::fs::read(built.directory.join("config.json"))?)?;
     native_config["code"] = "native-meter".into();
     native_config["runtime_type"] = "native".into();
-    let native_config = wamn_execution_contract::canonical_json_bytes(&native_config);
+    let native_config = wamn_digest::canonical_json_bytes(&native_config);
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(built.directory.join("manifest.json"))?)?;
-    manifest["config"]["digest"] = wamn_package_artifact::sha256_digest(&native_config).into();
+    manifest["config"]["digest"] = wamn_digest::bytes_sha256(&native_config).into();
     manifest["config"]["size"] = native_config.len().into();
-    let manifest = wamn_execution_contract::canonical_json_bytes(&manifest);
-    let native_digest = wamn_package_artifact::sha256_digest(&manifest);
+    let manifest = wamn_digest::canonical_json_bytes(&manifest);
+    let native_digest = wamn_digest::bytes_sha256(&manifest);
     let native_repository =
         wamn_package_artifact::Repository::open(&configuration, &native_digest)?;
     native_repository.manifest().await?;
@@ -286,7 +286,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .push_blob(
             &native_repository.reference,
             native_config.clone(),
-            &wamn_package_artifact::sha256_digest(&native_config),
+            &wamn_digest::bytes_sha256(&native_config),
         )
         .await?;
     native_repository
@@ -349,9 +349,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     assert_eq!(counts(&admin).await?, before);
     let wasm = std::fs::read(built.directory.join("integration.wasm"))?;
     assert_eq!(
-        wamn_engine::integration::compile_count(
-            &wamn_engine::component_admission::component_digest(&wasm)
-        ),
+        wamn_engine::integration::compile_count(&wamn_digest::bytes_sha256(&wasm)),
         1
     );
     gateway.abort();

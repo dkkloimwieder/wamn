@@ -11,7 +11,6 @@ pub(super) fn manifest() -> Value {
         "type": "command", "visibility": "public", "permission": "widget.archive",
         "connection": "postgres", "transaction": "explicit_per_input",
         "automatic_retry": false, "idempotent_by": "claim",
-        "canonicalization": {"excluded_fields": ["idempotency_key"]},
         "input": {"fields": [
             {"path": "idempotency_key", "type": "text", "nullable": false},
             {"path": "id", "type": "uuid", "nullable": false},

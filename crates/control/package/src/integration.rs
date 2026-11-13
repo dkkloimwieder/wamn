@@ -11,7 +11,8 @@ use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::RuntimeType;
-use wamn_package_artifact::{PackageRegistry, Repository, sha256_digest};
+use wamn_digest::bytes_sha256;
+use wamn_package_artifact::{PackageRegistry, Repository};
 
 pub use wamn_package_artifact::integration::ARTIFACT_TYPE;
 use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
@@ -50,7 +51,7 @@ fn source_files(
         } else if kind.is_file() {
             files.insert(
                 path.strip_prefix(root)?.to_string_lossy().into_owned(),
-                sha256_digest(&std::fs::read(path)?),
+                bytes_sha256(&std::fs::read(path)?),
             );
         }
     }
@@ -67,13 +68,13 @@ fn source_digest(root: &Path) -> anyhow::Result<String> {
         for name in ["Cargo.toml", "Cargo.lock"] {
             files.insert(
                 format!("../{name}"),
-                sha256_digest(&std::fs::read(workspace.join(name))?),
+                bytes_sha256(&std::fs::read(workspace.join(name))?),
             );
         }
     }
-    Ok(sha256_digest(
-        &wamn_execution_contract::canonical_json_bytes(&json!(files)),
-    ))
+    Ok(bytes_sha256(&wamn_digest::canonical_json_bytes(&json!(
+        files
+    ))))
 }
 
 /// Build an integration for `wasm32-wasip2` and write its artifact locally.
@@ -166,15 +167,15 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         inputs == source_digest(&root)?,
         "integration sources changed during the build"
     );
-    let config = wamn_execution_contract::canonical_json_bytes(&json!({
+    let config = wamn_digest::canonical_json_bytes(&json!({
         "code":code, "runtime_type":RuntimeType::Wasm, "source_digest":inputs
     }));
-    let manifest = wamn_execution_contract::canonical_json_bytes(&json!({
+    let manifest = wamn_digest::canonical_json_bytes(&json!({
         "schemaVersion":2, "mediaType":OCI_IMAGE_MEDIA_TYPE, "artifactType":ARTIFACT_TYPE,
-        "config":{"mediaType":CONFIG_TYPE,"digest":sha256_digest(&config),"size":config.len()},
-        "layers":[{"mediaType":WASM_TYPE,"digest":sha256_digest(&component),"size":component.len()}]
+        "config":{"mediaType":CONFIG_TYPE,"digest":bytes_sha256(&config),"size":config.len()},
+        "layers":[{"mediaType":WASM_TYPE,"digest":bytes_sha256(&component),"size":component.len()}]
     }));
-    let digest = sha256_digest(&manifest);
+    let digest = bytes_sha256(&manifest);
     let directory = repository
         .join("integrations/target/wamn")
         .join(code)
@@ -226,7 +227,7 @@ pub async fn publish(
     for bytes in [&built.component, &built.config] {
         repository
             .client
-            .push_blob(&repository.reference, bytes.clone(), &sha256_digest(bytes))
+            .push_blob(&repository.reference, bytes.clone(), &bytes_sha256(bytes))
             .await?;
     }
     repository

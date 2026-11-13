@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-digest.workspace = true
 wamn-authoring-model = { workspace = true }
 # wamn-0h0g.8.28: the gate judges the DOCUMENT, so it needs the one validating
 # reader for wiring bytes and the hash derived from them. Taking this dependency
@@ -24,7 +25,6 @@ wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }

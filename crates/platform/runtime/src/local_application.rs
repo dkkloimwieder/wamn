@@ -600,7 +600,7 @@ pub fn validate_local_facts(
 
 /// Mark one physical database creation as belonging to a local tenant session.
 pub fn local_target_marker(env_key: &str, environment: &str, instance: u32) -> String {
-    let digest = wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+    let digest = wamn_digest::canonical_json_sha256(&serde_json::json!({
         "env_key": env_key, "environment": environment, "database-instance": instance,
     }));
     format!("wamn-local-target:{digest}")
