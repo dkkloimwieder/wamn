@@ -44,4 +44,10 @@ R8. P15 and P27 (step S1b): accepted. They delete code with no product caller, w
 
 ## Rulings made during the work
 
-(None yet.)
+W1. `wamn-execution-contract` and `wamn-pg-core` move from S1 to S2. Tab 01 sends the digest code to the new `wamn-digest` and the scalar format to the new `wamn-scalar`, and tab 06 sends quoting to `postgres-protocol`. These are S2 owners, so the deletion lands with them in one change. S1 keeps the other ruled deletions.
+
+W2. `MAIN_PORT` and `ERROR_PORT` (tab 01, open point): one definition in `wamn-catalog`, which describes node ports. The workflow crate reads it from there. The `jsonata` guest uses the catalog constant if the guest can depend on the catalog without a new host dependency. Otherwise the guest reads the port names from its WIT, and the copy goes. The agreement test `port_constant_agreement.rs` goes.
+
+W3. Read query (tab 01): strictness is dropped, as the owner ruled. The decoder accepts any spelling that it can parse, and the encoder writes one canonical form.
+
+W4. S1 runs as two lanes: S1-A (scenario worker, authoring model, `wamn-gates`, `deploy/gates`, `wamn-gate-harness`, `wamn-client`, P27) and S1-C (user PATs, flow columns, `stream_seq`, the `ServingManifest` strip, P15, the unused WIT world and dependencies, `vendor/pg-walstream`). S1b runs inside these two lanes.
