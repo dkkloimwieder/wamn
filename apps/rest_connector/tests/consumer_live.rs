@@ -85,7 +85,7 @@ pub async fn execution_role(
 /// Install the run plane, the environment policy and `manifest` as the
 /// serving release, and return the host's platform database access under the
 /// scoped logins of its families: the executor for admission, and the
-/// admitter for the per-node grant read. The host's credential check refuses
+/// admitter for the per-node grant read. The host's credential test refuses
 /// any other login, the superuser included.
 pub async fn workflow_host(
     admin: &Client,
@@ -325,7 +325,7 @@ pub async fn install(
     let packages = roots
         .iter()
         .map(|root| {
-            wamn_schema_generator::build_record::check_current(root)?;
+            wamn_schema_generator::build_record::require_current(root)?;
             Ok(PackageRoot {
                 path: root.clone(),
                 artifact_digest: Some(

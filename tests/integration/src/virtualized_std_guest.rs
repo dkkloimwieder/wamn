@@ -1,4 +1,4 @@
-//! Live test that the standard guest virtualization stage removes ambient
+//! Live make sure that the standard guest virtualization stage removes ambient
 //! environment access without hiding guest traps from the serving boundary.
 //!
 //! Gate recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting`.
@@ -260,7 +260,7 @@ mod tests {
         let run_json = functions
             .iter()
             .find(|entry| entry.0 == "run-json")
-            .expect("the exact function-name check found run-json");
+            .expect("the exact function-name test found run-json");
         // A query yields its rows as a stream, then one final record (wamn-utci).
         if operation.contains("/query@") {
             let streamed = HANDLER_PARAMETERS_AND_RESULTS.replace(
@@ -275,7 +275,7 @@ mod tests {
             let run = functions
                 .iter()
                 .find(|entry| entry.0 == "run")
-                .expect("the exact function-name check found run");
+                .expect("the exact function-name test found run");
             ensure!(
                 run.2.contains(",input:record{")
                     && run.2.contains(")->(result<tuple<future<record{wal-position:option<string>}>,stream<record{")
@@ -296,7 +296,7 @@ mod tests {
         let run = functions
             .iter()
             .find(|entry| entry.0 == "run")
-            .expect("the exact function-name check found run");
+            .expect("the exact function-name test found run");
         // A read carries no request id (wamn-rst8.1); a write carries one on
         // each request and each outcome.
         let request_id = if run.2.contains(",input:list<record{request-id:string,") {
@@ -420,7 +420,7 @@ mod tests {
         let (_, probe_run) = probe_members
             .into_iter()
             .find(|(name, _)| *name == "run")
-            .expect("the exact probe member check found run");
+            .expect("the exact probe member test found run");
         let ComponentItem::ComponentFunc(probe_run) = &probe_run.ty else {
             anyhow::bail!("virtualized std probe run is not a component function");
         };

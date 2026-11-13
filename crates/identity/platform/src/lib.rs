@@ -508,8 +508,8 @@ pub async fn create_user(
     display_name: &str,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
-    let email = checked_email(email)?;
-    let display_name = checked_display_name(display_name)?;
+    let email = require_email(email)?;
+    let display_name = require_display_name(display_name)?;
     let row = client
         .query_one(INSERT_USER_SQL, &[&subject, &email, &display_name])
         .await
@@ -528,7 +528,7 @@ pub struct UserAccount {
 
 /// Create the user principal of `email`, or reuse the user that has it.
 ///
-/// The email folds as [`checked_email`] folds it, and the folded email is
+/// The email folds as [`require_email`] folds it, and the folded email is
 /// also the subject, admitted by [`canonical_subject`]. A reused user keeps
 /// its display name. A disabled user is refused. The caller binds the actor
 /// in the same transaction.
@@ -537,9 +537,9 @@ pub async fn create_or_reuse_user(
     email: &str,
     display_name: &str,
 ) -> Result<UserAccount, IdentityError> {
-    let email = checked_email(email)?;
+    let email = require_email(email)?;
     let subject = canonical_subject(&email)?;
-    let display_name = checked_display_name(display_name)?;
+    let display_name = require_display_name(display_name)?;
     client
         .execute(
             INSERT_USER_IF_ABSENT_SQL,
@@ -583,7 +583,7 @@ pub async fn create_service(
     drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
-    let display_name = checked_display_name(display_name)?;
+    let display_name = require_display_name(display_name)?;
     let row = client
         .query_one(INSERT_SERVICE_SQL, &[&subject, &display_name])
         .await
@@ -652,8 +652,8 @@ pub async fn issue_pat(
     label: &str,
     ttl: Duration,
 ) -> Result<IssuedPat, IdentityError> {
-    let label = checked_pat_label(label)?;
-    let ttl_seconds = checked_pat_ttl(ttl)?;
+    let label = require_pat_label(label)?;
+    let ttl_seconds = require_pat_ttl(ttl)?;
     let token = PatToken::mint()?;
     let prefix = token.lookup();
     let token_hash = token.digest();
@@ -747,7 +747,7 @@ pub async fn revoke_pat(
     prefix: &str,
     drops: &mut AuthDrops,
 ) -> Result<PatRecord, IdentityError> {
-    let prefix = checked_pat_prefix(prefix)?;
+    let prefix = require_pat_prefix(prefix)?;
     let row = client
         .query_opt(REVOKE_PAT_SQL, &[&prefix])
         .await
@@ -780,7 +780,7 @@ pub async fn assign_project_role(
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = require_scope_segment("org", org)?;
     let service: bool = client.query_one(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
         &[&principal_id.to_string().as_str()],
@@ -789,7 +789,7 @@ pub async fn assign_project_role(
         org::active_member(client, principal_id, &org).await?;
     }
 
-    let project = checked_scope_segment("project", project)?;
+    let project = require_scope_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
     let written = client
         .execute(
@@ -811,8 +811,8 @@ pub async fn project_roles(
     org: &str,
     project: &str,
 ) -> Result<Vec<RoleName>, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
+    let org = require_scope_segment("org", org)?;
+    let project = require_scope_segment("project", project)?;
     let rows = client
         .query(
             SELECT_PROJECT_ROLES_SQL,
@@ -844,8 +844,8 @@ pub async fn grant_project_env_membership(
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = org::active_member(client, principal_id, org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = require_scope_segment("project", project)?;
+    let env = require_scope_segment("env", env)?;
     client
         .execute(
             GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -867,9 +867,9 @@ pub async fn has_project_env_membership(
     project: &str,
     env: &str,
 ) -> Result<bool, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let org = require_scope_segment("org", org)?;
+    let project = require_scope_segment("project", project)?;
+    let env = require_scope_segment("env", env)?;
     client
         .query_one(
             SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -890,10 +890,10 @@ pub async fn revoke_project_env_membership(
     env: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = require_scope_segment("org", org)?;
     org::lock_membership(client, principal_id, &org).await?;
-    let project = checked_scope_segment("project", project)?;
-    let env = checked_scope_segment("env", env)?;
+    let project = require_scope_segment("project", project)?;
+    let env = require_scope_segment("env", env)?;
     let removed = client
         .execute(
             REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -954,8 +954,8 @@ impl PreparedIdentityReads {
             return Ok(None);
         };
         let prefix = parsed.lookup();
-        let org = checked_scope_segment("org", org)?;
-        let project = checked_scope_segment("project", project)?;
+        let org = require_scope_segment("org", org)?;
+        let project = require_scope_segment("project", project)?;
         let roles = accepted_roles
             .iter()
             .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
@@ -1000,7 +1000,7 @@ fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
     })
 }
 
-fn checked_pat_label(value: &str) -> Result<String, IdentityError> {
+fn require_pat_label(value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > MAX_PAT_LABEL_LEN {
         return Err(IdentityError::new(
@@ -1011,7 +1011,7 @@ fn checked_pat_label(value: &str) -> Result<String, IdentityError> {
     Ok(value.to_owned())
 }
 
-fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
+fn require_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
     if ttl.as_secs() == 0 || ttl > MAX_PAT_TTL {
         return Err(IdentityError::new(
             IdentityErrorType::InvalidInput,
@@ -1022,7 +1022,7 @@ fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
     Ok(ttl.as_secs().cast_signed())
 }
 
-fn checked_pat_prefix(value: &str) -> Result<&str, IdentityError> {
+fn require_pat_prefix(value: &str) -> Result<&str, IdentityError> {
     if !PatToken::valid_lookup(value) {
         return Err(IdentityError::new(
             IdentityErrorType::InvalidInput,
@@ -1062,7 +1062,7 @@ fn canonical_subject(value: &str) -> Result<String, IdentityError> {
 /// `a@x.test` as the one address a reader already reads them as. The fold is
 /// Unicode and not ASCII, because `principals_email_check` admits a non-ASCII
 /// address and a narrower fold would split that address in two.
-fn checked_email(value: &str) -> Result<String, IdentityError> {
+fn require_email(value: &str) -> Result<String, IdentityError> {
     let value = value.trim().to_lowercase();
     let Some((local, domain)) = value.split_once('@') else {
         return Err(invalid_email());
@@ -1089,7 +1089,7 @@ fn invalid_email() -> IdentityError {
     )
 }
 
-fn checked_display_name(value: &str) -> Result<String, IdentityError> {
+fn require_display_name(value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > MAX_DISPLAY_NAME_LEN {
         return Err(IdentityError::refused(
@@ -1103,13 +1103,13 @@ fn checked_display_name(value: &str) -> Result<String, IdentityError> {
 
 /// Refuse the email and display name of a user that the identity rules
 /// refuse, before a caller asks identity to create the user.
-pub fn check_user_contact(email: &str, display_name: &str) -> Result<(), IdentityError> {
-    checked_email(email)?;
-    checked_display_name(display_name)?;
+pub fn require_user_contact(email: &str, display_name: &str) -> Result<(), IdentityError> {
+    require_email(email)?;
+    require_display_name(display_name)?;
     Ok(())
 }
 
-fn checked_scope_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
+fn require_scope_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > 40 {
         return Err(IdentityError::refused(
@@ -1214,12 +1214,12 @@ mod tests {
     #[test]
     fn a_user_email_folds_to_one_lowercase_address() {
         assert_eq!(
-            checked_email("  Case.User@Example.Test ").unwrap(),
+            require_email("  Case.User@Example.Test ").unwrap(),
             "case.user@example.test"
         );
         assert_eq!(
-            checked_email("CASE.USER@EXAMPLE.TEST").unwrap(),
-            checked_email("case.user@example.test").unwrap()
+            require_email("CASE.USER@EXAMPLE.TEST").unwrap(),
+            require_email("case.user@example.test").unwrap()
         );
         for invalid in [
             "",
@@ -1231,7 +1231,7 @@ mod tests {
             "one@two@example.test",
         ] {
             assert!(
-                checked_email(invalid).is_err(),
+                require_email(invalid).is_err(),
                 "accepted email {invalid:?}"
             );
         }
@@ -1252,12 +1252,12 @@ mod tests {
 
     #[test]
     fn token_labels_and_lifetimes_fail_closed() {
-        assert_eq!(checked_pat_label("  laptop  ").unwrap(), "laptop");
-        assert!(checked_pat_label("   ").is_err());
-        assert!(checked_pat_label(&"x".repeat(MAX_PAT_LABEL_LEN + 1)).is_err());
-        assert_eq!(checked_pat_ttl(Duration::from_secs(3600)).unwrap(), 3600);
-        assert!(checked_pat_ttl(Duration::ZERO).is_err());
-        assert!(checked_pat_ttl(MAX_PAT_TTL + Duration::from_secs(1)).is_err());
+        assert_eq!(require_pat_label("  laptop  ").unwrap(), "laptop");
+        assert!(require_pat_label("   ").is_err());
+        assert!(require_pat_label(&"x".repeat(MAX_PAT_LABEL_LEN + 1)).is_err());
+        assert_eq!(require_pat_ttl(Duration::from_secs(3600)).unwrap(), 3600);
+        assert!(require_pat_ttl(Duration::ZERO).is_err());
+        assert!(require_pat_ttl(MAX_PAT_TTL + Duration::from_secs(1)).is_err());
         for invalid in [
             "",
             "0123456789ABCDEF",
@@ -1265,7 +1265,7 @@ mod tests {
             "0123456789abcdeg",
         ] {
             assert!(
-                checked_pat_prefix(invalid).is_err(),
+                require_pat_prefix(invalid).is_err(),
                 "accepted prefix {invalid:?}"
             );
         }

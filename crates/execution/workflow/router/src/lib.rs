@@ -45,7 +45,7 @@
 //! }
 //! ```
 
-/// WALK-1..6 as plain `fn check(state)` functions, for a driver to call after
+/// WALK-1..6 as plain `fn require_invariants(state)` functions, for a driver to call after
 /// every `apply`.
 pub mod invariants;
 mod outcome;

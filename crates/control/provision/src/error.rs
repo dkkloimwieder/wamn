@@ -145,7 +145,7 @@ impl fmt::Display for ProvisionError {
 impl std::error::Error for ProvisionError {}
 
 /// Refuse a second declared environment identity for an existing tenant.
-pub fn check_env_key_environment_identity(
+pub fn require_env_key_environment_identity(
     env_key: &str,
     recorded: &Triple,
     presented: &Triple,
@@ -168,14 +168,14 @@ mod tests {
     #[test]
     fn env_key_identity_compares_every_declared_coordinate() {
         let recorded = Triple::new("acme", "widgets", "dev");
-        assert!(check_env_key_environment_identity("tenant-a", &recorded, &recorded).is_ok());
+        assert!(require_env_key_environment_identity("tenant-a", &recorded, &recorded).is_ok());
         for presented in [
             Triple::new("other", "widgets", "dev"),
             Triple::new("acme", "shipping", "dev"),
             Triple::new("acme", "widgets", "prod"),
         ] {
-            let error =
-                check_env_key_environment_identity("tenant-a", &recorded, &presented).unwrap_err();
+            let error = require_env_key_environment_identity("tenant-a", &recorded, &presented)
+                .unwrap_err();
             assert!(matches!(
                 error,
                 ProvisionError::EnvKeyEnvironmentIdentityConflict { .. }

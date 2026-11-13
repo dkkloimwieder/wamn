@@ -221,7 +221,7 @@ fn apply(url: &str, sql: &str) {
 ///
 /// `DROP DATABASE` cannot run inside a transaction and `psql -c` wraps a
 /// multi-statement string in one, so each statement gets its own invocation.
-/// `DROP OWNED BY` before `DROP ROLE`, inside an existence check: a leftover
+/// `DROP OWNED BY` before `DROP ROLE`, inside an existence test: a leftover
 /// healthy role satisfies an `IF NOT EXISTS` guard elsewhere and would mask a
 /// mutated builder.
 ///
@@ -509,7 +509,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     );
     // …and NOTHING on a governed relation is untargeted. An arm widened to
     // PUBLIC still carries `USING (true)`, so it passes every predicate-shaped
-    // check above while handing every tenant's rows to any role holding the
+    // test above while handing every tenant's rows to any role holding the
     // table grant. `polroles = '{0}'` is how PostgreSQL spells PUBLIC.
     let public_arm = psql(
         &db_url,
@@ -1232,16 +1232,16 @@ fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &st
 }
 
 /// A DO block that asserts that `statement` raises `condition` and that
-/// `check` holds in the handler. The handler sees the state after the
+/// `test` holds in the handler. The handler sees the state after the
 /// subtransaction rolls back, and `refused_constraint` names the constraint.
-fn refuses_log_write(statement: &str, condition: &str, check: &str) -> String {
+fn refuses_log_write(statement: &str, condition: &str, assertion: &str) -> String {
     format!(
         "DO $$ DECLARE refused_constraint text; BEGIN\n\
            {statement};\n\
            RAISE EXCEPTION 'the write succeeded: {}';\n\
          EXCEPTION WHEN {condition} THEN\n\
            GET STACKED DIAGNOSTICS refused_constraint = CONSTRAINT_NAME;\n\
-           ASSERT {check}, 'wrong refusal: ' || SQLERRM;\n\
+           ASSERT {assertion}, 'wrong refusal: ' || SQLERRM;\n\
          END $$;\n",
         statement.replace('\'', "''")
     )
@@ -2444,7 +2444,7 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    wamn_schema_generator::build_record::check_current(&wamn_fixture_package::package_root())
+    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
     let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
         &wamn_fixture_package::manifest_bytes(),

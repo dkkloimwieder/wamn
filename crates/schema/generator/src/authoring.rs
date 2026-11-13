@@ -156,7 +156,7 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     // writes the file in canonical JSON, and the compile is indented.
     let compiled: Value = serde_json::from_slice(&bytes).context("parse the compiled manifest")?;
     if path.is_file() {
-        crate::build_record::check_current(package_root)?;
+        crate::build_record::require_current(package_root)?;
     }
     let current = fs::read(&path)
         .ok()

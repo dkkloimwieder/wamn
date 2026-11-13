@@ -9,8 +9,8 @@
 //!
 //! `has_table_privilege`, `has_any_column_privilege`, `aclexplode`, `pg_policy`,
 //! `pg_index`, `pg_get_functiondef` and real SQLSTATEs carried back into Rust.
-//! Never the text of a checked-in statement: this crate EMITS much of that text,
-//! so a text assertion would be a builder checked against itself, and a text
+//! Never the text of a tracked statement: this crate EMITS much of that text,
+//! so a text assertion would be a builder validated against itself, and a text
 //! assertion cannot tell a live declaration from a comment that mentions one.
 //!
 //! # Why a privilege probe alone is not enough
@@ -561,7 +561,7 @@ fn managed_roles() -> Vec<String> {
 /// HERMETIC ON PURPOSE, and it must FAIL on a dirty cluster rather than repair
 /// one quietly: `postgres-init.sql` carries bare `CREATE ROLE`s, so a leftover
 /// HEALTHY role would satisfy an `IF NOT EXISTS` elsewhere and MASK a mutated
-/// builder. `DROP OWNED BY` precedes `DROP ROLE`, inside an existence check, and
+/// builder. `DROP OWNED BY` precedes `DROP ROLE`, inside an existence test, and
 /// the DATABASE goes first — `DROP OWNED BY` reaches only the current database,
 /// and a role still named by a `relacl` cannot be dropped.
 fn reset(admin: &str) {
@@ -1531,7 +1531,7 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
 fn the_platform_group_members_are_exactly_the_derived_families() {
     let fixture = fixture();
 
-    // The pin and the derivation are checked against EACH OTHER first, so a red
+    // The pin and the derivation are validated against EACH OTHER first, so a red
     // below names which of the two moved rather than only that they disagree.
     let derived: Vec<&str> = {
         let mut roles: Vec<&str> = WorkloadRoleFamily::ALL

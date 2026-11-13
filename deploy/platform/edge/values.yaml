@@ -8,7 +8,7 @@ image:
 # Platform provisioning supplies the existing serving certificate.
 tlsSecret: ""
 
-# The identity service, HTTPS. The edge checks its certificate against ca.crt
+# The identity service, HTTPS. The edge tests its certificate against ca.crt
 # in identityCaConfigMap, for the DNS name in the identity URL.
 identity: ""
 identityCaConfigMap: ""

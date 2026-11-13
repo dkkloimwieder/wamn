@@ -192,7 +192,7 @@ fn observation_at_record_plans_a_noop() {
     );
 }
 
-/// Old and new names of the renamed columns or checks of one table.
+/// Old and new names of the renamed columns or CHECK constraints of one table.
 /// A current column still requires its declared CHECK constraint.
 ///
 /// A bare `ADD COLUMN` leaves exactly this observation behind — carrier
@@ -565,7 +565,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 // the `node_runs_error_kind_check` spec, which wamn-0h0g.26.3.1 (204220e8)
 // deleted from `CHECK_SPECS` with the projection it constrained.
 // `drifted_and_missing_checks_plan_exact_repairs` above keeps the
-// drop-then-add repair test on live record checks.
+// drop-then-add repair test on live record CHECK constraints.
 
 #[test]
 fn extra_record_check_is_removed_but_floor_check_is_untouched() {

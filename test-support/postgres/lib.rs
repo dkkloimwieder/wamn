@@ -4,7 +4,7 @@
 //! its test process. [`start`] gives a test a separate server, for example one
 //! with other server settings. The owned runner binary uses the same server to
 //! pass database coordinates to one child command. [`require_prerequisites`]
-//! fails an ignored test that is missing a declared prerequisite.
+//! fails an ignored make sure that is missing a declared prerequisite.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{Read as _, Write as _};
@@ -760,4 +760,4 @@ mod tests {
     }
 }
 
-pub mod run_check;
+pub mod run_result;

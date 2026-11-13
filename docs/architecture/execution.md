@@ -19,10 +19,10 @@ The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platfor
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
 The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation, and nothing derives into it.
-The host checks that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
+The host makes sure that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
 Component membership alone grants no permission to call an operation.
 
-An application host checks the status of its environment for each request, before the auth policy of the route.
+An application host makes sure of the status of its environment for each request, before the auth policy of the route.
 It reads its row of `platform.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
 While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
@@ -106,7 +106,7 @@ Publish refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
 It passes every other delivery to the router delivery bridge.
-The caller must match the attachment, and the route checks its operation grant as any route does.
+The caller must match the attachment, and the route makes sure of its operation grant as any route does.
 A route of authority `Admin` passes only `admin`.
 A route of authority `Granted` passes `admin` and any role that holds the operation of the route as a stored permission row.
 `permission.grant` writes such a row, and `permission.list` marks the operation `grantable`.
@@ -198,7 +198,7 @@ The contracts retain version 0.9.0. `environment.status` and `release.profile` r
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
-The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks the role again.
+The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it makes sure of the role again.
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --admin` also call.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
@@ -337,13 +337,13 @@ Publication composes the pinned HTTP route guest with the application and record
 A deployed entry is recorded as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
 The host joins that path with its `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
 The host records the joined reference by workload id before it calls the runtime's default start handler.
-The runtime pulls, verifies, and compiles the component. The operation binding checks that the recorded reference is the release's entry path under a valid base.
+The runtime pulls, verifies, and compiles the component. The operation binding makes sure that the recorded reference is the release's entry path under a valid base.
 The composed entry uses fresh Stores and calls base operations inside the component.
 The release chart fixes its `poolSize` at zero.
 Its image is the host group's `WAMN_COMPONENT_ARTIFACT_BASE` joined with the release entry path.
 Receiving carries no trusted warm digest or native pool override.
 Host routes and wiring attachments keep the router-delivery import.
-Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader checks its bytes before binding.
+Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader makes sure of its bytes before binding.
 
 No two applications share a store, and wash-runtime links no application to another.
 Applications in one release can use different lifetimes.
@@ -384,7 +384,7 @@ A full pool serves overflow from fresh stores.
 Native idle reclamation and a 1,000-call instance limit bound retention.
 Pools belong to one immutable release or candidate and never cross tenant or environment boundaries.
 A replacement release or deployment trust configuration uses new pools.
-Credential checks retain the exact pinned generation rules above.
+Credential tests retain the exact pinned generation rules above.
 
 Pool capacity does not limit request admission or total memory.
 A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
@@ -413,7 +413,7 @@ A route reports a retryable or rate-limited error as the failure that a wiring r
 The caller decides whether to send a new request.
 
 Typed operation inputs and successful results contain owned lists or records.
-Admission checks the context, node errors, and every nested value.
+Admission tests the context, node errors, and every nested value.
 It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
@@ -541,7 +541,7 @@ Apply assigns a role with those permissions. Repeated applies write no principal
 The executor's database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
 
-The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation check.
+The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation test.
 A missing permission refuses that command.
 
 Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
@@ -561,7 +561,7 @@ It stores one packaging label for each move, keyed by `{packaging_id}/{row_versi
 | --- | --- |
 | `list` | Returns the runs of one tenant and environment, newest first, with a limit. Each row gives the run id, the wiring, the trigger, the status, and whether the run is parked. |
 
-The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain check gains an event arm. `list` shows the run, and `park` and `release` act on it.
+The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain SQL `CHECK` constraint gains an event arm. `list` shows the run, and `park` and `release` act on it.
 
 ### Environment workflows
 
@@ -606,7 +606,7 @@ Every workflow is a graph run by the router and the run queue under a run row. A
 
 A workflow is keyed `(env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `env apply` by workflow and node.
 
-Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's check and its Helm write. Authority lifetime: the enabler's authority is checked at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation check. No author query on every start. Deploying logic that runs on every record change is an admin act; a tenant that wants a narrower publisher makes a role holding the enable operation.
+Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a tenant that wants a narrower publisher makes a role holding the enable operation.
 
 - One invocation function serves both. The route calls it once. The router calls it per node.
 
@@ -680,7 +680,7 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials retain their declared scope and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
-For each new request, the host checks the principal, environment membership, and password login.
+For each new request, the host makes sure of the principal, environment membership, and password login.
 It intersects signed roles with the held roles and their permissions for the active tenant user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
@@ -696,7 +696,7 @@ The host answers the auth facts of a repeated caller from its memory, so they co
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
 The key `<env_key>.<principal>` holds the grants of a principal and whether the tenant has its user row.
 The key `<env_key>.environment` holds the environment status.
-One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission check and the user-row check of the invocation bind.
+One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission test and the user-row test of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
 The control host serves every tenant, so it watches every key.
@@ -709,12 +709,12 @@ An `env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment 
 A host does not keep a token answer when any identity key changed during its read.
 While the watch is broken, the host keeps no fact and opens the bucket again.
 If the stream ends or the NATS client loses its connection, the watch breaks.
-The host checks the connection, because the client reconnects without ending the stream.
+The host makes sure of the connection, because the client reconnects without ending the stream.
 A host without the bucket keeps no fact either, and reads every request from Postgres.
 
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
 Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-[`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and checks the drop it records.
+[`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and makes sure of the drop it records.
 A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the tenant.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
@@ -739,9 +739,9 @@ Unknown roles grant no implicit authority, and an empty permission set returns 4
 A browser presents the session token in the `__Host-wamn-session` cookie instead of the `Authorization` header.
 The host reads that cookie only when the request has no `Authorization` header and the route admits a session.
 A request that carries both refuses with 401, and so does a repeated session cookie.
-The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF check.
+The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF test.
 A cookie token without the `csrf` claim refuses with 401.
-The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
+The CSRF test needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
 A read route (kind `get`, `query` or `projection`) needs no header, because a read changes nothing.
 Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` claim on every route.
 
@@ -844,7 +844,7 @@ The callback escapes all page values and returns no credential material.
 
 Every OAuth type accepts an optional `parameters.auth.token_authority` as an exact `host:port` for HTTPS token requests.
 Without it, token requests use the connection authority and its base path.
-An explicit token authority permits a separate HTTPS origin with the same address checks and pinned transport.
+An explicit token authority permits a separate HTTPS origin with the same address tests and pinned transport.
 The host refuses any other token origin before sending a request.
 This applies to token fetches, refreshes, candidate health, and authorization code exchanges.
 The browser's `authorize_url` stays outside this token boundary.
@@ -902,7 +902,7 @@ An integration delete deletes no key, because it refuses while the integration h
 An integration disable or enable deletes the key of each of its connections, in every environment of the project.
 An `env apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.
-[`connection_drops_live`](../../crates/identity/platform/tests/connection_drops_live.rs) runs each administration writer once and checks the keys it deletes.
+[`connection_drops_live`](../../crates/identity/platform/tests/connection_drops_live.rs) runs each administration writer once and makes sure of the keys it deletes.
 
 ### Control sessions
 
@@ -915,8 +915,8 @@ A revoked role therefore refuses the next request and the next renewal with 401.
 
 ### Consistent session access
 
-Sessions and PATs use the same operation permission check: the caller holds the entry.
-Every user session receives the same current authority checks without operation-specific password prompts.
+Sessions and PATs use the same operation permission condition: the caller holds the entry.
+Every user session receives the same current authority tests without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
 The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
@@ -994,8 +994,8 @@ Successful renewal extends the inactivity deadline by 30 minutes, capped at the 
 The database stores only hashes of random, single-use renewal credentials.
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
-Every login and renewal repeats the current membership, environment instance, tenant-user status, and assigned-role checks.
-Credential rotation and access-token signing share one transaction after those checks.
+Every login and renewal repeats the current membership, environment instance, tenant-user status, and assigned-role tests.
+Credential rotation and access-token signing share one transaction after those tests.
 The service delivers credentials only after that transaction commits.
 Access-token expiry cannot exceed the login's absolute deadline.
 The caller locks the principal before password verification and keeps that lock through login creation.
@@ -1104,7 +1104,7 @@ Every page authenticates again and uses the existing five-attempt login bucket. 
 Discovery returns no session, PAT, application address, or database credential.
 It shares the login throttle and request deadline with session issuance.
 An unavailable authority read fails the whole request instead of returning an incomplete list.
-Session issuance repeats the access checks after selection. A discovery result grants no access.
+Session issuance repeats the access tests after selection. A discovery result grants no access.
 
 The issuer never supplies application addresses.
 
@@ -1114,7 +1114,7 @@ This process ownership adds no external identity provider.
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
 These routes are enabled only when the service has a Resend key and sender.
-The terminal serializes renewal and preserves the original absolute deadline with both wall-clock and monotonic expiry checks.
+The terminal serializes renewal and preserves the original absolute deadline with both wall-clock and monotonic expiry tests.
 It clears credentials before renewal I/O, so failure or cancellation requires another login without retrying a consumed credential.
 Logout clears local credentials even when server revocation cannot be confirmed.
 Unknown and unenrolled accounts perform the same bounded hashing profile as existing accounts.
@@ -1365,7 +1365,7 @@ A head sampler decides whether to export a trace at its start.
 The existing head sampler decides at the request's entry span, the upstream `handle_http_request`.
 The `wamn-host` subscriber (`services/host/src/observability.rs`) then creates no other span in an unsampled trace.
 It wraps the layers that wash-runtime installs. The wrapper refuses a span while the active OpenTelemetry span is a local, unsampled one.
-A refused span reaches no layer, and the tracing registry stores nothing for it. Span call sites, WAMN and upstream, do not check sampling.
+A refused span reaches no layer, and the tracing registry stores nothing for it. Span call sites, WAMN and upstream, do not make sure of sampling.
 An unsampled request therefore creates only its entry span.
 A caller's remote trace context does not stop the entry span, so the sampler still makes the decision.
 Sampled requests retain their span names, fields, levels, and parent links. Log events remain unchanged, but console lines in an unsampled trace name no span below the entry.

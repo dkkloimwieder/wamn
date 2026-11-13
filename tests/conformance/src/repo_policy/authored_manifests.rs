@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::Problems;
 
-pub(super) fn check(root: &Path, problems: &mut Problems) {
+pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     let entries = match std::fs::read_dir(root.join("apps")) {
         Ok(entries) => entries,
         Err(error) => {

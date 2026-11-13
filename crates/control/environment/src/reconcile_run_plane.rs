@@ -135,7 +135,7 @@ impl ReconcileTargetError {
         matches!(self.type_, ReconcileTargetErrorType::RegistryTarget)
     }
 
-    /// Whether the connected database failed the exact target check.
+    /// Whether the connected database failed the exact target test.
     pub const fn is_database_target(&self) -> bool {
         matches!(self.type_, ReconcileTargetErrorType::DatabaseTarget)
     }

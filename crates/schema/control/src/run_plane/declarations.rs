@@ -1,4 +1,4 @@
-//! Declared checks, helper functions, triggers, and grants for the run schema.
+//! Declared SQL CHECK constraints, helper functions, triggers, and grants for the run schema.
 
 use std::borrow::Cow;
 

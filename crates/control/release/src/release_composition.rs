@@ -93,7 +93,7 @@ pub fn select_component_artifacts(
     let mut selected = Vec::with_capacity(packages.len());
     for package in packages {
         let component = plan::selected_component(package)?;
-        wamn_schema_generator::build_record::check_current(&package.root)
+        wamn_schema_generator::build_record::require_current(&package.root)
             .map_err(|source| CompositionError::owner("read the package build", source))?;
         let build_record = wamn_schema_generator::build_record::read(
             &wamn_schema_generator::output_root(&package.root),
@@ -110,7 +110,7 @@ pub fn select_palette_artifacts(
 ) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
     let mut selected = Vec::new();
     for package in packages {
-        wamn_schema_generator::build_record::check_current(&package.root)
+        wamn_schema_generator::build_record::require_current(&package.root)
             .map_err(|source| CompositionError::owner("read the package build", source))?;
         let build_record = wamn_schema_generator::build_record::read(
             &wamn_schema_generator::output_root(&package.root),
@@ -135,7 +135,7 @@ pub fn select_palette_artifacts(
 }
 
 /// The component `component` that `outputs.components` of the package's
-/// `build.json` records, checked against its digest.
+/// `build.json` records, validated against its digest.
 fn built_component(
     package: &PackageInput,
     component: &str,

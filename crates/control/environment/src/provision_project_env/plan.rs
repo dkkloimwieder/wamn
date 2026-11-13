@@ -56,7 +56,7 @@ pub fn role_posture_sql() -> String {
 /// login that `prepare_workload_generation_sql` grants `CONNECT` directly, and
 /// `wamn_app` became the stable NOLOGIN ACL role those generations INHERIT. A
 /// `CONNECT` left on it is therefore not a leftover that merely offends a
-/// checker: measured on PostgreSQL 18, a generation minted for one project-env
+/// validator: measured on PostgreSQL 18, a generation minted for one project-env
 /// database and holding zero direct `CONNECT` grants of its own authenticates
 /// into ANY OTHER project-env database this batch has run against, because
 /// `wamn_app` is cluster-global and the membership inherits. That is what the

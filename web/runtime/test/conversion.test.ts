@@ -1,6 +1,6 @@
 /**
  * The behavior of the conversion pair, which `wamn-lajk.2` emitted and left
- * type checked only.
+ * type validated only.
  *
  * The emitter decides every member name and writes a field map beside each
  * operation. The pair renames the keys a map declares and leaves every other

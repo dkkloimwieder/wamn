@@ -357,7 +357,7 @@ async fn build_with_credentials(
 ///
 /// Read from the template rather than restated here: a copy would drift from
 /// the guest's real parameter contract, and `validate_parameters` in
-/// `wiring_lowering` checks this node's params against exactly these
+/// `wiring_lowering` tests this node's params against exactly these
 /// declarations.
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -405,7 +405,7 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
     }
 }
 
-/// The one manifest the loaded release carries. Both membership checks the released
+/// The one manifest the loaded release carries. Both membership tests the released
 /// closure makes — `manifest.components` in `invoke_node`, `manifest.wirings` in
 /// `validate_wiring_closure` and again in `authorize_release_closure` — read
 /// this document.

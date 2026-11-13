@@ -147,7 +147,7 @@ pub(super) fn host_transaction_exports<T>(
 /// identity and posture are governed on the same push: its imports pass the
 /// tenant allowlist and the capability registry's posture
 /// (`wamn_component_policy::analyze_tenant`), and its declared exports are
-/// checked against the component bytes (`wamn_engine::component_admission`)
+/// validated against the component bytes (`wamn_engine::component_admission`)
 /// before this function runs. This branch only
 /// declines to look for manifest operations that, by construction, it does
 /// not serve; it is not a bypass of admission.
@@ -329,14 +329,14 @@ pub(super) fn insert_expected_operation(
     Ok(())
 }
 
-/// Refuse a declared statement that the parsed check refuses
+/// Refuse a declared statement that the parsed test refuses
 /// ([`declared_sql`]).
-pub(super) fn check_statement_sql(
+pub(super) fn require_statement_sql(
     operation: &str,
     statement: &str,
     sql: &str,
 ) -> Result<(), ComponentProjectionError> {
-    declared_sql::check_declared_statement(sql).map_err(|refusal| {
+    declared_sql::require_declared_statement(sql).map_err(|refusal| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementRefused,
             format!("operation {operation:?} statement {statement:?} is refused: {refusal}"),
@@ -344,16 +344,16 @@ pub(super) fn check_statement_sql(
     })
 }
 
-/// Refuse a stored component whose declared SQL the parsed check refuses.
+/// Refuse a stored component whose declared SQL the parsed test refuses.
 ///
 /// Publish reads the statements from the pushed descriptor, not from the
-/// package files, so it checks them again here.
-pub fn check_admitted_statements(
+/// package files, so it tests them again here.
+pub fn require_admitted_statements(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentProjectionError> {
     for (operation, admitted) in &component.operations {
         for statement in admitted.statements.values() {
-            check_statement_sql(operation, &statement.name, &statement.sql)?;
+            require_statement_sql(operation, &statement.name, &statement.sql)?;
         }
     }
     Ok(())

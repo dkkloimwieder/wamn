@@ -193,7 +193,7 @@ pub fn lower_resolved_wiring(
         executable
             .nodes
             .get_mut(node_id)
-            .expect("the resolution checked that each resolved node belongs to the document")
+            .expect("the resolution validated that each resolved node belongs to the document")
             .component
             .clone_from(&runtime_key);
         for mut operation in project_component_operations(component) {
@@ -220,7 +220,7 @@ pub fn lower_resolved_wiring(
 /// Lower one gated active wiring into the exact graph the router executes.
 ///
 /// The operation-fact scope and exact package version must match the active row.
-/// Every document reference is checked before its authoring-only metadata is
+/// Every document reference is validated before its authoring-only metadata is
 /// lowered. In particular, an absent target port is inferred only for a target
 /// operation declaring exactly one input, then carried by the router edge to
 /// the component invocation while source output ports continue to select

@@ -1,16 +1,16 @@
-use super::{RefusalKind, check_declared_statement};
+use super::{RefusalKind, require_declared_statement};
 
 fn assert_refused(kind: RefusalKind, statements: &[&str]) {
     for sql in statements {
         let refusal =
-            check_declared_statement(sql).expect_err(&format!("admission must refuse {sql:?}"));
+            require_declared_statement(sql).expect_err(&format!("admission must refuse {sql:?}"));
         assert_eq!(refusal.kind(), kind, "{sql:?}: {refusal}");
     }
 }
 
 fn assert_admitted(statements: &[&str]) {
     for sql in statements {
-        if let Err(refusal) = check_declared_statement(sql) {
+        if let Err(refusal) = require_declared_statement(sql) {
             panic!("admission must admit {sql:?}: {refusal}");
         }
     }
@@ -157,7 +157,7 @@ fn refuses_session_writes() {
     );
 }
 
-// l5i9.12.2: the guest wamn.* logical-message forgery guard. The parsed check
+// l5i9.12.2: the guest wamn.* logical-message forgery guard. The parsed test
 // refuses every guest logical message, because a computed prefix hides `wamn.`.
 #[test]
 fn refuses_logical_messages() {

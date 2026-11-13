@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && tsc --noEmit",
+    "lint": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && tsc --noEmit",
     "test": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vitest run",
     "build": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vite build"
   },

@@ -1842,7 +1842,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning)
         ))
         .await?;
-    // The sha256 of the canonical bytes `{}`, which catalog.releases checks.
+    // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
     billing.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
     billing.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;

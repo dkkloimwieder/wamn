@@ -1,4 +1,4 @@
-//! Render-only checks for the release fixtures. No host or cluster starts here.
+//! Render-only tests for the release fixtures. No host or cluster starts here.
 
 use std::path::Path;
 
@@ -232,7 +232,7 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
     kubernetes_documents(&output.stdout)
 }
 
-/// Check named Secret keys and the bindings of every selected host group.
+/// Make sure of named Secret keys and the bindings of every selected host group.
 ///
 /// `secrets` contains emitted Secrets and explicit prerequisite declarations.
 /// A prerequisite declaration uses the same metadata and key shape as a Secret.

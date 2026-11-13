@@ -42,7 +42,7 @@ pub struct RunPlaneObservation {
     pub authoring_effective_table_privileges: BTreeMap<(String, String, String), BTreeSet<String>>,
     /// Effective mutation/reference authority on any column. PostgreSQL keeps
     /// column ACLs separate from table ACLs, so a table-level REVOKE alone is
-    /// not a sufficient boundary check.
+    /// not a sufficient boundary test.
     pub authoring_effective_column_privileges: BTreeMap<(String, String, String), BTreeSet<String>>,
     /// Owner of every managed authoring table, keyed by `(schema, table)`.
     /// Ownership is authority to restore revoked ACLs and therefore must stay

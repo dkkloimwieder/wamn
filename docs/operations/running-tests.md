@@ -33,7 +33,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `tools/check-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
+- Any `Cargo.toml` or `Cargo.lock` also runs `tools/compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
 - Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, `wit/wamn-application-dispatch/`, and materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
@@ -58,7 +58,7 @@ The tool builds the guests that selected suites need.
 A passing workspace test result does not establish compilation of those guest targets.
 If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
-The stage checks the router pin, as the guest build of `wamn build` does.
+The stage makes sure of the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --tier kind` runs no guest build.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
@@ -71,7 +71,7 @@ Path rules add to the selected targets and cases.
 The runner combines feature requirements for targets that both Cargo paths and suites select.
 A target runs through Cargo selection or its suite once for each execution mode: ordinary or ignored.
 These contract targets compile separately from the kind cases.
-Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
+Web changes select repository web lint, runtime tests, and platform UI lint, tests, and build.
 Full-workspace lint is an explicit integration operation:
 
 ```bash
@@ -166,12 +166,12 @@ Other cross-package file readers still need explicit path rules.
 Each required command must report at least one executed passing case and exit successfully.
 Missing packages, targets, and exact test names fail before any test runs.
 The same rule applies to contract-diff, owned delivery, and the upstream release tests.
-`tools/require-test-result` streams child output immediately, keeps a private temporary copy for result checks, and removes the copy after completion.
+`tools/require-test-result` streams child output immediately, keeps a private temporary copy for result tests, and removes the copy after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
-`tools/test-changes` is the broad check before integration, and it runs once per merge.
-Every merge runs the install render checks in the prekind suite.
+`tools/test-changes` is the broad test before integration, and it runs once per merge.
+Every merge runs the install render tests in the prekind suite.
 `tools/test-revision` runs it on a committed revision.
 Implementation work runs only fmt, Clippy and the tests of the packages that it changed before handoff.
 Merges are fast-forward after reviewer acceptance.
@@ -184,7 +184,7 @@ It initializes submodules and reuses `$HOME/.cache/wamn-target/revision` between
 The fixed worktree path keeps compiled source paths valid between runs.
 It stores logs in a temporary directory under `/var/tmp`.
 If the selected suites need web packages, it runs `pnpm install --offline` there.
-Before the test stage, it runs `cargo run --offline -p wamn-submodule-check -- main` with initialized submodules.
+Before the test stage, it runs `cargo run --offline -p wamn-submodule-pins -- main` with initialized submodules.
 It then runs `tools/test-changes run --base BASE` in that worktree.
 It prints a PASS or FAIL table with UTC start and end times for each step.
 After success, it removes the worktree and keeps the logs and Cargo target directory.
@@ -258,9 +258,9 @@ The expected value of the test must not come from the code under test.
 
 - No test compares source text, DDL text, or a generated file to a string.
 - A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
-- A source or repository policy check is a lint in `tools/repo-lint`, not a test.
+- A source or repository policy test is a lint in `tools/repo-lint`, not a test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
-- A new live test must not repeat an existing one. Extend the existing test when a rule has no other check.
+- A new live test must not repeat an existing one. Extend the existing test when a rule has no other test.
 
 ## Local application business tests
 
@@ -272,7 +272,7 @@ Select `receiving-business,wms-local` with the runner described above.
 The Receiving suite runs `route_authentication_live::local_business::*` in its library target.
 The WMS suite runs `local_*` in its library target, including its browser cases.
 The runner prepares application components, the pinned HTTP guest, and the prebuilt NATS executable before either suite.
-These cases need no registry, cluster, check binary, or container image.
+These cases need no registry, cluster, test binary, or container image.
 The WMS browser cases also need Node and Chrome on `PATH`.
 The `sync-bench` step installs web dependencies offline and builds the screen after WMS application generation.
 
@@ -416,7 +416,7 @@ The native host case lives in `wamn-dev-control --test native_host` and takes li
 ## Ignored tests
 
 An ignore reason lists only prerequisites in the fixed form `requires: bin:<program>, env:<VARIABLE>`, with comma-separated entries.
-The test checks every listed program and nonempty environment variable before setup, and missing prerequisites fail the test.
+The test requires every listed program and nonempty environment variable before setup, and missing prerequisites fail the test.
 The tier lives only in `tests/selection.toml`.
 
 To run kind targets in selected packages, use `tools/test-changes --tier kind`.
@@ -527,7 +527,7 @@ A changed test name does not establish a new failure or remove an earlier failur
 ## The live stage
 
 The live stage runs named ignored tests with their inputs set, apart from the full sweep.
-A cluster day or a live check cites the live stage on its bead.
+A cluster day or a live test cites the live stage on its bead.
 Run each named test with its exact filter:
 
 ```bash
@@ -803,7 +803,7 @@ WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
   cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
 ```
 
-Select `same_name_reset_kind` in the same command for reset and CDC checks.
+Select `same_name_reset_kind` in the same command for reset and CDC tests.
 Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_CHART`:
 
 ```bash
@@ -1077,7 +1077,7 @@ cargo test --locked --offline -p wamn-schema-generator --test build_live
 They copy the platform fixture and build it into their own output root.
 A build with an old manifest and obsolete client output must match a build into an empty target.
 Both builds must emit the authored operation bindings and components, with identical bytes and `build.json`.
-The tests also check that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
+The tests also make sure that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
 One test composes Acme over Receiving into a copy of their build output.
 It requires the composed component to embed the exact bytes of the Receiving component.
 The application preparation step supplies both packages.
@@ -1091,10 +1091,10 @@ The compilation test skips with a message only when the workspace `tsc` executab
 ```bash
 cargo test --locked --offline -p wamn-schema-generator --test client_ts_emitter
 ```
-To type-check the bindings for the platform fixture, run:
+To compile the bindings for the platform fixture, run:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example check_client_ts
+cargo run --locked --offline -p wamn-schema-generator --example compile_client_ts
 ```
 
 The command emits the fixture bindings into a temporary directory, writes a strict `tsconfig.json` beside them, and runs `tsc --project` on that directory.
@@ -1116,7 +1116,7 @@ To write them without a web script, run:
 cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
 ```
 
-`pnpm run check` in `apps/platform_ui` type-checks them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
+`pnpm run lint` in `apps/platform_ui` compiles them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
 The repository policy lint refuses a tracked file in a `client-ts` directory outside `apps/`.
 
 ### Web packages
@@ -1139,7 +1139,7 @@ One configuration for each tool is at the repository root: `.prettierrc.json`, `
 To make sure that the code is formatted and has no lint errors, run this at the repository root:
 
 ```bash
-pnpm run check
+pnpm run lint
 ```
 
 The command fails on a lint error but not on a lint warning.
@@ -1148,10 +1148,10 @@ To format the code, run `pnpm run format` at the repository root.
 ### Web runtime
 
 The runtime is hand-written TypeScript, and its own tests run under Node.
-To type-check the runtime and its tests, run:
+To compile the runtime and its tests, run:
 
 ```bash
-cd web/runtime && pnpm run check
+cd web/runtime && pnpm run lint
 ```
 
 To run its tests, run:
@@ -1169,7 +1169,7 @@ If you change the table, run these tests.
 After the workspace install, run these commands from the repository root:
 
 ```bash
-pnpm --filter @wamn/platform-ui check
+pnpm --filter @wamn/platform-ui lint
 pnpm --filter @wamn/platform-ui test
 pnpm --filter @wamn/platform-ui build
 ```
@@ -1295,9 +1295,9 @@ The service log stays at `<results>/receiving-ui-env/control-web.log`.
 
 ### Local Receiving sync
 
-`local_receiving_sync` runs five browser checks against the Receiving sync screens.
+`local_receiving_sync` runs five browser tests against the Receiving sync screens.
 It uses the same build steps, variables, and fixture as [Local Receiving screens](#local-receiving-screens).
-The checks are:
+The tests are:
 
 1. A 30 second network drop: the screens make no page read and no navigation.
 2. A second browser records a receipt, and the first browser shows the new remaining quantity within one poll.
@@ -1315,7 +1315,7 @@ results="$(mktemp -d /var/tmp/wamn-receiving-sync-XXXXXX)/run"
   local_receiving_sync -- --ignored --exact --nocapture
 ```
 
-The test prints "CHECK n PASS" for each check and then "PASS: Receiving sync checks".
+The test prints "CASE n PASS" for each test and then "PASS: Receiving sync tests".
 Failure screenshots go to `<results>/receiving-sync-screenshots/`.
 The service log stays at `<results>/receiving-sync-env/control-web.log`.
 
@@ -1327,24 +1327,24 @@ It covers table, form, repeated group, detail, and delete descriptions.
 Application bindings own requests, validation, and value conversion.
 
 Run `pnpm install --offline` at the repository root first.
-The existing manual check uses the same test code:
+The existing manual test uses the same test code:
 
 ```bash
-TMPDIR=/var/tmp cargo run --offline -p wamn-schema-generator --example check_client_components
+TMPDIR=/var/tmp cargo run --offline -p wamn-schema-generator --example compile_client_components
 ```
 
-The command writes temporary modules and removes them after the check.
-`check_client_ts` checks the unchanged TypeScript bindings separately.
+The command writes temporary modules and removes them after the test.
+`compile_client_ts` makes sure of the unchanged TypeScript bindings separately.
 
 ### Shared Vite tooling and Receiving
 
 `web/shell` keeps the shared Vite helper and the Playwright dependency for browser tests.
 The platform UI owns the application shell and its tests.
-To type-check the helper and the Receiving web application, run:
+To compile the helper and the Receiving web application, run:
 
 ```bash
-pnpm --dir web/shell check
-pnpm --dir apps/wamn_receiving/web check
+pnpm --dir web/shell lint
+pnpm --dir apps/wamn_receiving/web lint
 ```
 
 ## Cleanup

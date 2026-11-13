@@ -256,7 +256,7 @@ pub enum CommandIdempotence {
 /// The row versions that make one command idempotent by state.
 ///
 /// The guard is named, never inferred from a field spelling. A command guarding
-/// two rows with one input field passes an inferred check and emits a test that
+/// two rows with one input field passes an inferred test and emits a test that
 /// cannot say which row it protects. That is a test asserting less than it
 /// appears to.
 ///
@@ -1159,7 +1159,7 @@ fn validate_custom_operation(
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
-        // the generated query, which checks its cursor, limit and envelope.
+        // the generated query, which tests its cursor, limit and envelope.
         if result.class == ResultClass::Page {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -1361,7 +1361,7 @@ fn validate_command_idempotence(
     Ok(())
 }
 
-/// Check that every row version a state-idempotent command relies on is named.
+/// Make sure that every row version a state-idempotent command relies on is named.
 ///
 /// The guarded relation is one the operation already declares, and the version
 /// field is one its input already takes. Both are named here, so the emitted
@@ -1378,7 +1378,7 @@ fn validate_state_guards(
         ));
     }
     for (relation, field) in &state.guards {
-        // An authored manifest states no relation, and generation checks the
+        // An authored manifest states no relation, and generation tests the
         // guard against the relations it derives.
         if !operation.relations.is_empty()
             && !operation

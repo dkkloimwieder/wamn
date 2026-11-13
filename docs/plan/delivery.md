@@ -10,7 +10,7 @@ Source hosting, CI execution, artifact storage, and deployment targets remain in
 Provider configuration will supply triggers, credentials, and job order.
 It will contain no second implementation of WAMN validation or new CI abstraction layer.
 
-Change checks precede integration.
+Change tests precede integration.
 Qualification and publication use a selected integrated revision, initially from `main`.
 A release tag or explicit invocation can also select a candidate.
 A successful review build does not qualify different integrated bytes.

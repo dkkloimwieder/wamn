@@ -221,12 +221,12 @@ it("exposes authored descriptions through TypeScript symbols", () => {
   const ts = require("typescript");
   const file = join(process.env.WAMN_CLIENT_TS_TEST_ROOT, "fixture/widget.ts");
   const program = ts.createProgram([file], {});
-  const checker = program.getTypeChecker();
+  const types = program.getTypeChecker();
   const source = program.getSourceFile(file);
-  const symbols = checker.getExportsOfModule(checker.getSymbolAtLocation(source));
+  const symbols = types.getExportsOfModule(types.getSymbolAtLocation(source));
   const symbol = (name) => symbols.find((symbol) => symbol.name === name);
-  const docs = (symbol) => ts.displayPartsToString(symbol.getDocumentationComment(checker));
-  const member = (name, field) => checker.getDeclaredTypeOfSymbol(symbol(name)).getProperty(field);
+  const docs = (symbol) => ts.displayPartsToString(symbol.getDocumentationComment(types));
+  const member = (name, field) => types.getDeclaredTypeOfSymbol(symbol(name)).getProperty(field);
   expect(docs(symbol("WidgetRecordBatchRequest"))).toBe(
     "Input for `platform-fixture:widget/record-batch@2.1.1`.\n\nOne submission that records several lines at once.",
   );

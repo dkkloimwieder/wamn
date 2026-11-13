@@ -4,7 +4,7 @@
 //! Analysis compiles nothing new and writes nothing. It reads each authority
 //! once (§5): the policy and the environment row in the system database, the
 //! release manifest from OCI, the installed state in the project database, the newest
-//! successful Helm revision and the live set. It then checks the document
+//! successful Helm revision and the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
 pub(super) mod plan;

@@ -334,7 +334,7 @@ SELECT configured.schema_name,
 // Each row is a grant to the `$2` event admission reader beyond its reads: a
 // relation privilege other than SELECT on `$4`, or a column privilege other
 // than SELECT on the `$3` columns of a `$5`-suffixed table. The relation
-// checks below skip the entity map and history tables, so this query is the
+// tests below skip the entity map and history tables, so this query is the
 // one that bounds the reader's grants on them.
 const EXECUTOR_GRANTS_SQL: &str = r"
 WITH reader AS (

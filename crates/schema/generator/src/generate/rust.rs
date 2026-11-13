@@ -788,7 +788,7 @@ pub(super) fn emit_projection(
                     let include_path = if path.starts_with("generated/") {
                         path.strip_prefix("generated/")
                             .map(|path| format!("../{path}"))
-                            .expect("prefix checked")
+                            .expect("prefix validated")
                     } else {
                         format!("../../{path}")
                     };

@@ -516,7 +516,7 @@ impl std::error::Error for ComponentFactError {}
 /// Normalize one byte-verified component declaration for catalog persistence.
 ///
 /// `imports` and `effects` are both derived from the exact bytes by the caller
-/// that audited them; this function re-checks that every effect interface is
+/// that audited them; this function re-tests that every effect interface is
 /// one of those imports, and that declared connections and effect-bearing
 /// imports account for each other in both directions.
 pub fn normalize_component_fact(
@@ -873,7 +873,7 @@ fn is_application_operation_import(name: &str) -> bool {
 
 /// Sort and deduplicate derived effects, pinning them to platform imports.
 ///
-/// Both directions are checked: every interface an effect names is one of
+/// Both directions are validated: every interface an effect names is one of
 /// this component's own platform-capability imports, and every effectful
 /// import is in the projection.
 fn normalize_effects(

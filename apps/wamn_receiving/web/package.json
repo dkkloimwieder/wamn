@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node ../../../web/host-route-clients.mjs && vite",
     "build": "pnpm --workspace-root run wfe:build && node ../../../web/host-route-clients.mjs && vite build",
-    "check": "pnpm --workspace-root run wfe:build && node ../../../web/host-route-clients.mjs && tsc --project tsconfig.json",
+    "lint": "pnpm --workspace-root run wfe:build && node ../../../web/host-route-clients.mjs && tsc --project tsconfig.json",
     "test": "pnpm --workspace-root run wfe:build && node ../../../web/host-route-clients.mjs && vitest run"
   },
   "wamn": {

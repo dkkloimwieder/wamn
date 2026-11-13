@@ -603,7 +603,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
 ///
 /// `DROP OWNED BY` reaches only the CURRENT database (plus the shared-object
 /// grants, which is where this leg's `CONNECT` lives), and it must run before
-/// `DROP ROLE` or the drop is refused. Guarded by an existence check so a leg
+/// `DROP ROLE` or the drop is refused. Guarded by an existence test so a leg
 /// can call it both before and after minting.
 async fn drop_generation_role(su: &Client, role: &str) {
     su.batch_execute(&format!(

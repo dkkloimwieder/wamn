@@ -54,5 +54,5 @@ The 13 baseline failures are filed as `wamn-vv3zm`, `wamn-s76tz`, `wamn-p5msj`, 
 
 ## Follow-up
 
-1. `wamn-azv06`: `deploy/sql/record-history.sql` creates `wamn_db_owner` with a check-then-create race, and run 3 hit it.
+1. `wamn-azv06`: `deploy/sql/record-history.sql` creates `wamn_db_owner` with a test-then-create race, and run 3 hit it.
 2. `wamn-j1md8`: `wamn build` calls a package current after its virtualized components are gone, and run 3 hit it on a fresh target.

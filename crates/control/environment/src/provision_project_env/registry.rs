@@ -283,7 +283,7 @@ pub(super) async fn do_record_project_env(
     // minted one on a first provision and the EXISTING one when this triple was
     // already provisioned — the upsert deliberately never refreshes it, because
     // re-minting would orphan every resource the old suffix named. The registry
-    // is a trust boundary, so the value is re-checked before any name derives
+    // is a trust boundary, so the value is re-validated before any name derives
     // from it.
     let stored: String = row.get(0);
     let stored_disposable: bool = row.get(1);
@@ -373,7 +373,7 @@ pub async fn project_env_key_environment(
         row.try_get::<_, String>(1)?,
         row.try_get::<_, String>(2)?,
     );
-    wamn_control_provision::check_env_key_environment_identity(env_key, &recorded, triple)?;
+    wamn_control_provision::require_env_key_environment_identity(env_key, &recorded, triple)?;
     transaction
         .execute(
             sql::refresh_env_key_environment_sql(),
@@ -406,7 +406,7 @@ pub async fn claim_environment_instance(
             &[&env_key, &instance],
         )
         .await?;
-    wamn_schema_control::check_environment_instance_claim(env_key, affected_rows)?;
+    wamn_schema_control::require_environment_instance_claim(env_key, affected_rows)?;
     transaction.commit().await?;
     Ok(())
 }

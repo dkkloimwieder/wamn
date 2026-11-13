@@ -19,7 +19,7 @@ use tracing::Instrument as _;
 use wamn_catalog::AttachmentAuthPolicy;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
-    RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
+    RouteAuthenticator, RouteCredential, authentication_unavailable, require_csrf,
     required_bearer_token, route_credential, signature_unauthorized, unauthorized,
 };
 use wamn_identity_protocol::ADMIN_ROLE;
@@ -343,7 +343,7 @@ impl PlatformRouteAuthenticator {
     }
 
     /// `cookie_headers` is `Some` only when `token` arrived by the session
-    /// cookie; those requests then pass the CSRF check. Its flag is whether
+    /// cookie; those requests then pass the CSRF test. Its flag is whether
     /// the route requires the CSRF header, which a read route does not.
     async fn authenticate_session(
         &self,
@@ -363,7 +363,7 @@ impl PlatformRouteAuthenticator {
             .await
             .map_err(|_| unauthorized())?;
         if let Some((headers, requires_csrf)) = cookie_headers {
-            check_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
+            require_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
         }
         let principal = session.claims().sub;
         let permissions = authentication
@@ -412,7 +412,7 @@ impl PlatformRouteAuthenticator {
         // If the key evidence expired during that I/O, the same token is
         // verified once more on fresh keys, and a token past its own age still
         // refuses (wamn-co0p).
-        if session.check_admission().is_err() {
+        if session.require_admission().is_err() {
             authentication
                 .verifier
                 .verify(token)
@@ -602,7 +602,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
 /// (docs/architecture/execution.md#control-sessions).
 ///
 /// Only a browser login session of the host's control audience passes. Every
-/// request rechecks, through the `control` login, that the login is live and
+/// request tests again, through the `control` login, that the login is live and
 /// that its principal still holds a control role in the token's org, so a
 /// revoked role takes effect on the next request. The caller holds no
 /// application role and no operation grant.
@@ -644,7 +644,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
             .await
             .map_err(|_| unauthorized())?;
         if let Some(requires_csrf) = csrf {
-            check_csrf(
+            require_csrf(
                 requires_csrf,
                 session.claims().csrf.as_deref(),
                 request.headers,
@@ -666,7 +666,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
         if !active {
             return Err(unauthorized());
         }
-        if session.check_admission().is_err() {
+        if session.require_admission().is_err() {
             self.verifier
                 .verify(token)
                 .await

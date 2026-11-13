@@ -37,7 +37,7 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 /// The effect owner executes this after acquiring [`OPERATION_GRANT_LOCK_SQL`]
 /// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before
 /// [`ENSURE_ADMIN_ROLE_SQL`], all in one transaction.
-pub fn operation_grant_floor_check_sql() -> String {
+pub fn operation_grant_floor_requirements_sql() -> String {
     format!(
         "DO $operation_grant_floor$ BEGIN \
            IF pg_catalog.to_regclass('platform.role') IS NULL \
@@ -150,7 +150,7 @@ pub fn operation_grant_tokens(
 /// The caller owns the surrounding transaction: it acquires
 /// [`OPERATION_GRANT_LOCK_SQL`], applies
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
-/// [`operation_grant_floor_check_sql`], then executes this statement. It
+/// [`operation_grant_floor_requirements_sql`], then executes this statement. It
 /// changes one row or none.
 pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (name) \
      VALUES ('admin') ON CONFLICT (name) DO NOTHING";
@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     fn fixture_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::check_current(&wamn_fixture_package::package_root())
+        wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
             .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::manifest_bytes()
     }

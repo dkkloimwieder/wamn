@@ -3,7 +3,7 @@
 //! This module exists so the RUNTIME can compute a tenant key without linking
 //! the provisioner (`wamn-0h0g.22.6.7`). After `wamn-0h0g.22.6` the guest's
 //! tenant comes from `current_user`, so a resolved guest credential IS a claim
-//! about which tenant it may read — and the host has to be able to check that
+//! about which tenant it may read — and the host has to be able to make sure that
 //! claim before it opens the connection.
 //!
 //! `wamn-control-provision` DELEGATES here for the App family rather than
@@ -63,7 +63,7 @@ mod tests {
     /// A VALUE PIN, because the alternatives are tautologies.
     ///
     /// Every other consumer of this digest — the provisioner's `tenant_key`, the
-    /// runtime's credential check, the role name — DELEGATES here, so they all
+    /// runtime's credential test, the role name — DELEGATES here, so they all
     /// move together and none of them can catch a domain or framing drift. Two
     /// things can: this literal, and the live SQL agreement gate
     /// (`crates/control/provision/tests/tenant_key_live.rs`), which recomputes

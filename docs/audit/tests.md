@@ -1,6 +1,6 @@
 # Audit report G: Tests
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lybom.1, wamn-lybom.2, wamn-lybom.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lybom.1, wamn-lybom.2, wamn-lybom.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report G1, bead wamn-lybom.1 -->
 
@@ -91,7 +91,7 @@ Risk: Replacement must preserve the caller’s required connection parameters. R
 Severity: medium  
 Effort: M  
 Area: test-support, application cluster tests, tests/integration/src/rc  
-Evidence: `checked` repeats at `test-support/infrastructure/workload.rs:875`, `release_chart.rs:602`, `platform.rs:220`, `delivery_cluster.rs:603`, `test-support/harness/src/session_issuer.rs:738`, `apps/wamn_wms/tests/cluster/deployment.rs:313`, `apps/wamn_receiving/tests/route_authentication_live/cluster/resources.rs:270`, `apps/wamn_receiving/tests/examples/delivery_timings.rs:181`, and `tests/integration/src/rc.rs:264`.
+Evidence: `validated` repeats at `test-support/infrastructure/workload.rs:875`, `release_chart.rs:602`, `platform.rs:220`, `delivery_cluster.rs:603`, `test-support/harness/src/session_issuer.rs:738`, `apps/wamn_wms/tests/cluster/deployment.rs:313`, `apps/wamn_receiving/tests/route_authentication_live/cluster/resources.rs:270`, `apps/wamn_receiving/tests/examples/delivery_timings.rs:181`, and `tests/integration/src/rc.rs:264`.
 
 The associated `kubectl` constructors sit at `test-support/infrastructure/workload.rs:862`, `release_chart.rs:590`, `platform.rs:210`, `delivery_cluster.rs:73`, `test-support/harness/src/session_issuer.rs:723`, `apps/wamn_wms/tests/cluster/deployment.rs:303`, `apps/wamn_receiving/tests/route_authentication_live/cluster.rs:658`, and `tests/integration/src/rc.rs:252`. `command_json` repeats at `workload.rs:871`, `release_chart.rs:599`, and `tests/integration/src/rc.rs:283`.
 
@@ -142,11 +142,11 @@ Effort: M
 Area: tests/conformance, tests/system, crate test support  
 Evidence: `TestDirectory` construction, path access, and cleanup repeat at `tests/conformance/tests/cranelift_dev.rs:14`, `contract_diff.rs:66`, `repo_lint.rs:70`, `journey_image_cache.rs:44`, `kind_gate_image_remove.rs:113`, and `kubernetes_gate_runner.rs:119`. Shared directory ownership already exists at `test-support/infrastructure/scratch.rs:9`.
 
-Executable writers repeat at `tests/conformance/tests/cranelift_dev.rs:47`, `wasmcloud_release_check.rs:30`, `contract_diff.rs:99`, `repo_lint.rs:101`, `journey_image_cache.rs:76`, `test_changes.rs:376`, `kind_gate_image_remove.rs:146`, and `kubernetes_gate_runner.rs:152`.
+Executable writers repeat at `tests/conformance/tests/cranelift_dev.rs:47`, `wasmcloud_release_tests.rs:30`, `contract_diff.rs:99`, `repo_lint.rs:101`, `journey_image_cache.rs:76`, `test_changes.rs:376`, `kind_gate_image_remove.rs:146`, and `kubernetes_gate_runner.rs:152`.
 
-Repository-root helpers repeat at `tests/conformance/tests/registry_image_archive.rs:25`, `cranelift_dev.rs:39`, `wasmcloud_release_check.rs:11`, `capability_registry.rs:16`, `contract_diff.rs:91`, `guest_workspace_closure.rs:47`, `repo_lint.rs:93`, `otel_collector.rs:17`, `journey_image_cache.rs:68`, `test_changes.rs:368`, `kind_gate_image_remove.rs:138`, `effect_spans.rs:260`, `palette_declarations.rs:7`, `gate_jobs.rs:9`, `chart_seam_governance.rs:21`, `kubernetes_gate_runner.rs:144`, and `wasmtime_source_identity.rs:49`.
+Repository-root helpers repeat at `tests/conformance/tests/registry_image_archive.rs:25`, `cranelift_dev.rs:39`, `wasmcloud_release_tests.rs:11`, `capability_registry.rs:16`, `contract_diff.rs:91`, `guest_workspace_closure.rs:47`, `repo_lint.rs:93`, `otel_collector.rs:17`, `journey_image_cache.rs:68`, `test_changes.rs:368`, `kind_gate_image_remove.rs:138`, `effect_spans.rs:260`, `palette_declarations.rs:7`, `gate_jobs.rs:9`, `chart_seam_governance.rs:21`, `kubernetes_gate_runner.rs:144`, and `wasmtime_source_identity.rs:49`.
 
-Further root helpers sit at `tests/conformance/src/manifest_dependencies.rs:269`, `ip_name_lookup.rs:40`, `runtime_policy.rs:58`, `tests/system/tests/deployment_declarations.rs:151`, `test-support/fixture-package/src/lib.rs:28`, `test-support/infrastructure/examples/host_values_files.rs:231`, `crates/control/lib/tests/release_chart_render.rs:23`, `package_digest.rs:11`, `edge_bundle.rs:11`, `release_one_digest.rs:41`, `crates/schema/generator/tests/support/client_component_check.rs:78`, `client_ts_check.rs:157`, `apps/wamn_wms/tests/environment.rs:96`, `apps/wamn_receiving/tests/route_authentication_live/environment.rs:119`, and `apps/rest_connector/tests/support.rs:14`.
+Further root helpers sit at `tests/conformance/src/manifest_dependencies.rs:269`, `ip_name_lookup.rs:40`, `runtime_policy.rs:58`, `tests/system/tests/deployment_declarations.rs:151`, `test-support/fixture-package/src/lib.rs:28`, `test-support/infrastructure/examples/host_values_files.rs:231`, `crates/control/lib/tests/release_chart_render.rs:23`, `package_digest.rs:11`, `edge_bundle.rs:11`, `release_one_digest.rs:41`, `crates/schema/generator/tests/support/client_component_compile.rs:78`, `client_ts_compile.rs:157`, `apps/wamn_wms/tests/environment.rs:96`, `apps/wamn_receiving/tests/route_authentication_live/environment.rs:119`, and `apps/rest_connector/tests/support.rs:14`.
 
 Problem: Six directory types repeat ownership and cleanup, while eight functions repeat executable creation. Repository location appears under several names and traversal styles. These helpers maintain filesystem mechanics rather than test behavior.
 
@@ -283,7 +283,7 @@ Severity: medium
 Effort: M  
 Area: `crates/control/provision/tests`, `services/ctl/tests`  
 Evidence: `crates/control/provision/tests/deploy_sql_authority.rs:2587`; `services/ctl/tests/prune_record_history_live.rs:431`; `services/ctl/tests/prune_record_history_live.rs:631`.  
-Problem: `wamn-8vsfz` suppresses history reconstruction, and `wamn-44dr0` suppresses retention behavior and authority checks. Both tests use owned PostgreSQL fixtures rather than external infrastructure. Commit `8b965ac97` records independent failures on main, but this audit does not establish their underlying causes.  
+Problem: `wamn-8vsfz` suppresses history reconstruction, and `wamn-44dr0` suppresses retention behavior and authority tests. Both tests use owned PostgreSQL fixtures rather than external infrastructure. Commit `8b965ac97` records independent failures on main, but this audit does not establish their underlying causes.
 Proposal: Restore default tests against the current history owner. Keep assertions about reconstructed rows, retained positions, and refused identities.  
 Deletes: The two quarantine attributes, obsolete fixture setup, and exact CLI prose assertions at `services/ctl/tests/prune_record_history_live.rs:621`.  
 Risk: Incorrect pruning can remove retained history or preserve expired entries. `prune_removes_only_the_expired_prefix_of_each_row` and `the_history_read_reconstructs_a_row_at_retained_positions_on_postgres` must pass without ignores.
@@ -349,7 +349,7 @@ Effort: S
 Area: `crates/schema/control`, `crates/identity/project-state`, `services/cdc-reader`  
 Evidence: `crates/schema/control/src/run_plane/tests.rs:467`; `crates/identity/project-state/src/lib.rs:400`; `services/cdc-reader/src/lib.rs:2781`; `services/cdc-reader/src/lib.rs:1668`.  
 Problem: Six run-plane tables, thirteen platform tables, and exactly 256 pending publications describe current implementation choices. None of these assertions names a contract that requires its exact number. The CDC reader already enforces the actual semaphore relationship with a compile-time assertion.  
-Proposal: Retain complete relation comparisons, uniqueness checks, reconciliation behavior, and the semaphore bound. Preserve independently specified security sets, such as the platform-grain family set at `crates/control/provision/tests/deploy_sql_authority.rs:139`.  
+Proposal: Retain complete relation comparisons, uniqueness tests, reconciliation behavior, and the semaphore bound. Preserve independently specified security sets, such as the platform-grain family set at `crates/control/provision/tests/deploy_sql_authority.rs:139`.
 Deletes: Redundant absolute inventory counts and `in_flight_bound_is_pinned_under_the_client_semaphore`.  
 Risk: An incomplete inventory can escape a count-only replacement. Preserve `observation_at_record_plans_a_noop`, table uniqueness coverage, and pipeline settlement tests.
 

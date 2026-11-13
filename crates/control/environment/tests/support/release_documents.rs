@@ -612,7 +612,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_test_postgres::run_check::check(
+        let result = wamn_test_postgres::run_result::require_success(
             work,
             "start_workflow",
             &project,
@@ -754,7 +754,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_test_postgres::run_check::check(
+        let result = wamn_test_postgres::run_result::require_success(
             work,
             "admit_workflow",
             &project,
@@ -865,8 +865,8 @@ pub mod workflow {
     /// `wamn-ctl workflow author --schedule '* * * * *'` and `enable`. The admin
     /// first creates `role` with exactly `operations` and grants it to the
     /// `workflow` user and to itself, so the runs execute as the `workflow` user
-    /// with `role`. A passing check report under the graph's hash stands in for the
-    /// check.
+    /// with `role`. A passing test report under the graph's hash stands in for the
+    /// test.
     pub async fn enable_schedule(
         environment: &WorkflowEnvironment<'_>,
         application: &str,

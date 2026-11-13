@@ -111,7 +111,7 @@ where
     }
 
     fn keep_entry(&self, key: String, revision: u64, answer: Option<A>) {
-        // The caller holds the entries during the check, so a fact kept here
+        // The caller holds the entries during the test, so a fact kept here
         // falls to the clear that follows a broken watch.
         let mut entries = self.entries();
         if self.bucket().is_none() {

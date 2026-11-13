@@ -54,7 +54,7 @@ impl PlatformNats {
 }
 
 /// Verifies the server certificate against one fixed name instead of the host
-/// of the URL. The chain and the signatures get the full WebPKI check.
+/// of the URL. The chain and the signatures get the full WebPKI test.
 #[derive(Debug)]
 struct PinnedName {
     inner: Arc<rustls::client::WebPkiServerVerifier>,

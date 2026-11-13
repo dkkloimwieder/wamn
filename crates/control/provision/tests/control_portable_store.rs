@@ -137,7 +137,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
 
     psql_ok(
         &url,
-        "check the installed release record",
+        "test the installed release record",
         r"
 SET ROLE wamn_system;
 SET app.env_key = 'tenant-a';

@@ -264,7 +264,7 @@ pub async fn write(
     Ok(())
 }
 
-/// Remove explicit retired releases after checking ownership, live hosts and pinned work.
+/// Remove explicit retired releases after testing ownership, live hosts and pinned work.
 /// The caller holds the operation grant lock and supplies a fresh host observation.
 pub async fn contract(
     tx: &tokio_postgres::Transaction<'_>,

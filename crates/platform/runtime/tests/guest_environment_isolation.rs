@@ -14,13 +14,13 @@
 //! Tenant admission separately DENIES `wasi:cli/environment` to tenant code —
 //! the closed allowlist in `crates/platform/component-policy`, reached from
 //! `crates/control/package/src/component_admission.rs` through `validate_component_admission`.
-//! That is the first door. This test checks the guarantee that holds for a guest
+//! That is the first door. This test tests the guarantee that holds for a guest
 //! which imports the interface ANYWAY: defence in depth, measured rather than
 //! asserted.
 //!
 //! # Why a behavioural test and not a source scan
 //!
-//! `wamn-mrfr` checked this property by reading the pinned fork checkout as text
+//! `wamn-mrfr` validated this property by reading the pinned fork checkout as text
 //! and grepping for `inherit_env` plus two pinned `WasiCtxBuilder` literals.
 //! `wamn-hopk` R5 retired that whole technique: a scan cannot tell a reference
 //! from a mention, and it passes vacuously the moment upstream spells the same

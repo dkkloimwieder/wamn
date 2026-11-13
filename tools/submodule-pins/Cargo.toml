@@ -1,5 +1,5 @@
 [package]
-name = "wamn-submodule-check"
+name = "wamn-submodule-pins"
 description = "Train guard for declared submodule pin changes"
 version.workspace = true
 edition.workspace = true

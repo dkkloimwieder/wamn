@@ -157,7 +157,7 @@ impl GeneratedFile {
     ///
     /// A `.rs` artifact is formatted here, at the single point every emitter
     /// passes through, so that a generated Rust file is committed formatted and
-    /// the drift check compares the same bytes a write would have placed on
+    /// the drift test compares the same bytes a write would have placed on
     /// disk. JSON, TOML, and SQL bytes are kept exactly as emitted.
     pub(crate) fn new(path: Box<str>, bytes: Box<[u8]>) -> Self {
         let bytes = if path.ends_with(".rs") {
@@ -242,7 +242,7 @@ struct RequiredConstraint {
 /// (docs/architecture/data-access.md#application-declarations). Each relation
 /// comes from the operation's statements over the catalog, and the compiled
 /// manifest that every reader reads carries it. The other authored members keep
-/// their bytes and order. A model's `enum_fields` are checked here: an authored
+/// their bytes and order. A model's `enum_fields` are validated here: an authored
 /// list only narrows a CHECK's value set or names a set that no CHECK carries,
 /// and generation reads the rest from the CHECKs ([`generate`]).
 ///
@@ -491,7 +491,8 @@ fn writable_path(action: CrudAction, field: &str) -> String {
 ///
 /// A constraint over one column that the operation writes guards that field,
 /// so its refusal names the field as the input states it. A constraint over
-/// several columns, a check, or a column the caller does not write names none.
+/// several columns, a CHECK constraint, or a column the caller does not write
+/// names none.
 fn constraint_field(
     constraint: &Constraint,
     action: CrudAction,
@@ -570,8 +571,8 @@ fn operation_error_details(
 /// Constraints the operation can violate.
 ///
 /// An INSERT or an UPDATE can violate a constraint OF ITS OWN TABLE. A hard
-/// DELETE cannot: removing a row breaks no primary key, unique key, check, or
-/// outbound foreign key that the row itself carries. What it breaks is an
+/// DELETE cannot: removing a row breaks no primary key, unique key, CHECK
+/// constraint, or outbound foreign key that the row itself carries. What it breaks is an
 /// INBOUND foreign key, held by another table whose row still references this
 /// one, and PostgreSQL names THAT constraint in its 23503.
 ///

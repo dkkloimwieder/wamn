@@ -11,5 +11,5 @@ interface bound {
 }
 
 interface health {
-  check: func() -> result<_, string>;
+  probe: func() -> result<_, string>;
 }

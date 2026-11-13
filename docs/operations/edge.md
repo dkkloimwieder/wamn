@@ -52,7 +52,7 @@ The `edge-web` image builds `wamn-edge` with the `web` feature. The box binary d
 
 ```bash
 wamn-edge --config <path> web
-wamn-edge --config <path> web-check
+wamn-edge --config <path> web-probe
 ```
 
-`web` serves the bucket files of the releases that the file names. `web-check` requests `/` and `/config.json` from `wamn-edge-web.edge.svc.cluster.local` for each host in the file. It fails if one response is not 200.
+`web` serves the bucket files of the releases that the file names. `web-probe` requests `/` and `/config.json` from `wamn-edge-web.edge.svc.cluster.local` for each host in the file. It fails if one response is not 200.

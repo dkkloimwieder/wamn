@@ -2,9 +2,9 @@
 //!
 //! A package artifact is the one owner of the component facts of its package,
 //! and the OCI registry is the one owner of package facts: no database holds a
-//! package row. `push-package` pushes an artifact only after every check
+//! package row. `push-package` pushes an artifact only after every test
 //! passed, so its existence is the proof. This crate pulls an artifact by its
-//! full digest or by its tag `<package_id>-<version>`, checks the manifest and
+//! full digest or by its tag `<package_id>-<version>`, tests the manifest and
 //! every layer against their digests, and reads the component descriptor
 //! layers. Publish, wiring authorship and the management gate read component
 //! facts through it, so they read them the same way.
@@ -54,8 +54,8 @@ const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// The one reader behind the host's component source
 /// (`ComponentArtifactSourceConfig::with_ca_paths` in `wamn-runtime`), the
 /// package registry client here and the ctl publishers, which build their own
-/// `oci-client` for the same registry. It reads the files and does not check that each bundle is a usable
-/// trust root; the builder above says where that check lives and what
+/// `oci-client` for the same registry. It reads the files and does not make sure that each bundle is a usable
+/// trust root; the builder above says where that test lives and what
 /// `oci-client` does without it.
 pub fn read_ca_bundles(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, ComponentArtifactCaError> {
     paths
@@ -370,7 +370,7 @@ impl Repository {
     }
 
     /// The manifest digest and the layers of the package artifact under the
-    /// reference, or `None` when it does not exist. Each layer is checked
+    /// reference, or `None` when it does not exist. Each layer is validated
     /// against its digest.
     ///
     /// # Errors

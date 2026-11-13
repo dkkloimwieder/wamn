@@ -15,7 +15,7 @@ Run:
 bd prime
 ```
 
-If that prints nothing, check whether the repository has an active Beads workspace:
+If that prints nothing, make sure that the repository has an active Beads workspace:
 
 ```bash
 bd where
@@ -69,7 +69,7 @@ Use Beads for:
 - work that must survive thread reset, compaction, or handoff
 - status that another person or agent should be able to resume
 
-Use agent-local planning tools only for the current turn's execution checklist. Do not treat them as shared project state.
+Use agent-local planning tools only for the current turn's execution plan. Do not treat them as shared project state.
 
 ## Rules
 

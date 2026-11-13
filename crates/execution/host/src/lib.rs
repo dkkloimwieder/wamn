@@ -25,7 +25,7 @@ pub use operation::{
     remote_trace_context,
 };
 pub use readiness::{
-    RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
+    RELEASE_READINESS_INVALIDATED, RELEASE_READINESS_PROBE_FAILED, RouterReadinessProbe,
     RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_kind,
     synchronous_route_count,
 };

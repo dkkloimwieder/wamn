@@ -20,7 +20,7 @@ pub enum AmbientCredentialState {
     Present,
 }
 
-/// The connection whose physical identity is being checked.
+/// The connection whose physical identity is being validated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialConnectionKind {
     Pooled,
@@ -88,7 +88,7 @@ impl CredentialProbeError {
         self.predicate
     }
 
-    /// Return the checked connection class, if a connection was reached.
+    /// Return the validated connection class, if a connection was reached.
     pub fn connection_kind(&self) -> Option<CredentialConnectionKind> {
         self.connection_kind
     }
@@ -172,7 +172,7 @@ pub fn explicit_credential_source(
     })
 }
 
-/// PostgreSQL role relationship checked for the authenticated principal.
+/// PostgreSQL role relationship validated for the authenticated principal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MembershipMode {
     Member,
@@ -208,7 +208,7 @@ impl MembershipExpectation {
     }
 }
 
-/// PostgreSQL object whose effective ACL is checked.
+/// PostgreSQL object whose effective ACL is validated.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AclTarget {
     Database(Box<str>),
@@ -275,7 +275,7 @@ impl ExpectedCredentialIdentity {
 
 /// One explicit credential and the exact connection facts it must produce.
 ///
-/// Both pooled and independently opened listener connections are checked with
+/// Both pooled and independently opened listener connections are validated with
 /// the same immutable expectation. The caller obtains the parsed config from
 /// [`Self::connection_config`] and must probe each new physical connection
 /// before use; enforcing that construction sequence belongs to the trusted

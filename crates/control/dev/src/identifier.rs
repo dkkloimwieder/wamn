@@ -1,4 +1,4 @@
-//! Checked PostgreSQL names for local database operations.
+//! Validated PostgreSQL names for local database operations.
 
 use std::fmt;
 

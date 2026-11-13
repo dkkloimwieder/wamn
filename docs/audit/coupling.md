@@ -1,6 +1,6 @@
 # Audit report B: Coupling and architecture
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-m0c2w.1, wamn-m0c2w.2, wamn-m0c2w.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-m0c2w.1, wamn-m0c2w.2, wamn-m0c2w.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report B1, bead wamn-m0c2w.1 -->
 
@@ -156,7 +156,7 @@ Evidence: `tools/repo-lint-dependencies:87`, `tools/repo-lint-dependencies:110`,
 
 Problem: The existing gate enforces selected edge, engine, and workflow boundaries through normal dependency trees. It does not encode the complete control/build separation or the six development back-edges. Measurements.md section 10 omits dependencies outside native workspace membership and includes optional declarations, so its rows cannot establish production reachability. For example, project-state’s catalog dependency belongs to `test-util`, while native dependencies on application-owned contract libraries disappear from the reduced graph.
 
-Rejected as written (owner review 2026-10-31): no extension of the check to three workspaces, dependency kinds and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
+Rejected as written (owner review 2026-10-31): no extension of the test to three workspaces, dependency kinds and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
 
 The small crates do not justify deletion by size alone. `wamn-pg-core` explicitly began as a cycle-free home for `Sql`, but now also owns identifier and qualified-name contracts. Evidence: `crates/platform/pg-core/src/lib.rs:17`, `crates/platform/pg-core/src/lib.rs:59`, `crates/platform/pg-core/src/lib.rs:171`, `crates/platform/pg-core/src/lib.rs:226`.
 
@@ -195,7 +195,7 @@ Severity: high
 Effort: L  
 Area: `crates/control/provision/src/sql.rs`, `crates/control/lib/src/provision_project_env/grants.rs`, `crates/schema/control/src/run_plane/plan.rs`  
 Evidence: `crates/control/provision/src/sql.rs:208`, `crates/control/provision/src/sql.rs:1068`, `crates/control/lib/src/provision_project_env/grants.rs:48`, `crates/control/lib/src/provision_project_env/grants.rs:456`, `crates/schema/control/src/run_plane/plan.rs:99`. Measurements.md section 9 records 128 commits to provisioning `sql.rs` in 90 days.  
-Problem: Provisioning renders role grants, control/lib defines their expected shape, and schema-control repairs some of the same privileges. Several checks reuse provisioning constants, but family dispatch and privilege construction still span owners. The 1,922-line `sql.rs` includes tests from line 1112, so its total size overstates production code. Its mixed authority responsibilities explain more than its length alone.  
+Problem: Provisioning renders role grants, control/lib defines their expected shape, and schema-control repairs some of the same privileges. Several tests reuse provisioning constants, but family dispatch and privilege construction still span owners. The 1,922-line `sql.rs` includes tests from line 1112, so its total size overstates production code. Its mixed authority responsibilities explain more than its length alone.
 Proposal (owner review 2026-10-31, small, Group 3 Do): with run-plane repair deleted under C1-5, two owners remain. Provisioning renders grants in `sql.rs`, and control/lib keeps its own expected shape in `grants.rs`. One rule: provisioning declares, control/lib compares against that declaration, no copy.  
 Deletes: The independently assembled expected grants and duplicate family dispatch in `control/lib/src/provision_project_env/grants.rs`.  
 Risk: A mistaken consolidation can widen access. The three denial tests stay: `family_surface_grants.rs:444`, `family_surface_grants.rs:730`, and `run_grant_confinement.rs:95`.
@@ -348,9 +348,9 @@ T15. `wamn-client`: Native generated-client transport. Retain its separate packa
 
 T16. `wamn-test-postgres`: Private PostgreSQL processes and prerequisite handling. Retain this small test foundation. Allowed repository dependencies: none.
 
-T17. `wamn-test-support`: Fixture packages, environment setup, schema baselines, and check helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-gate-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
+T17. `wamn-test-support`: Fixture packages, environment setup, schema baselines, and test helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-gate-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
 
-T18. `wamn-test`: Conformance, integration, system, Receiving, and WMS test targets, plus their existing command binaries. It absorbs the four `tests/` packages, two application test packages, `wamn-bench`, `wamn-submodule-check`, and `http-fixture`. Allowed repository dependencies: T01–T17 and guest libraries or artifacts needed by a named test. No production package depends on T18.
+T18. `wamn-test`: Conformance, integration, system, Receiving, and WMS test targets, plus their existing command binaries. It absorbs the four `tests/` packages, two application test packages, `wamn-bench`, `wamn-submodule-pins`, and `http-fixture`. Allowed repository dependencies: T01–T17 and guest libraries or artifacts needed by a named test. No production package depends on T18.
 
 T19. `receiving`: Receiving component, including its former data crate as private modules. Allowed repository dependencies: T01, T02.
 
@@ -426,7 +426,7 @@ Proposal: Use the following dependency order. “Mechanical” means source owne
 
 5. Merge execution host into T08, after A5 (package-artifact stays separate). Then merge the router into T09, while keeping T09 above T08. Mechanical native ownership change. Prove artifact verification with `crates/platform/runtime/tests/release_manifest_source.rs:128`, claim behavior with `crates/platform/runtime/tests/production_claim_live.rs:601`, and wiring behavior with `crates/execution/workflow/tests/wiring_lowering.rs:279`.
 
-6. Move SQLite storage into T12. Keep `wamn-host`, `wamn-scenario-worker` and CDC as separate packages (T13 rejected). Mechanical source change with Cargo feature changes. Prove SQLite recovery at `crates/execution/run-state-sqlite/tests/intent_store.rs:160`. Keep the native and aarch64 edge graph checks at `tools/repo-lint-dependencies:110`. Existing edge route, device, forward, and release suites remain required.
+6. Move SQLite storage into T12. Keep `wamn-host`, `wamn-scenario-worker` and CDC as separate packages (T13 rejected). Mechanical source change with Cargo feature changes. Prove SQLite recovery at `crates/execution/run-state-sqlite/tests/intent_store.rs:160`. Keep the native and aarch64 edge graph tests at `tools/repo-lint-dependencies:110`. Existing edge route, device, forward, and release suites remain required.
 
 7. Control (T11) is deferred to the B1-4 re-read. Whatever shape lands keeps the executable names and stays outside deployed service dependencies. Mechanical ownership change. Existing environment coverage starts at `crates/control/lib/tests/environment_apply_kind.rs:642`. Publication identity coverage starts at `crates/control/lib/tests/release_one_digest.rs:100`.
 
@@ -463,7 +463,7 @@ Effort: M
 Area: apps/platform/no-std, integrations/modbus, standalone test fixtures  
 Evidence: `apps/platform/no-std/Cargo.toml:5`, `apps/platform/no-std/Cargo.toml:15`, `integrations/modbus/Cargo.toml:18`, `integrations/modbus/src/lib.rs:8`, `crates/control/lib/tests/integration_artifact.rs:14`, `tests/conformance/tests/guest_workspace_closure.rs:42`.  
 Problem: The checkout has six first-party workspace roots. Two exist for small test fixtures, and Modbus has its own root despite using the shared `no_std` runtime. However, combining standard and `no_std` guests reintroduces a recorded panic-handler conflict and forbidden WASI imports.  
-Proposal: Retain the native, standard guest, and `no_std` workspaces. Relocate Modbus under the `no_std` root so its dependencies remain inside that workspace. Move `http-fixture` into T18 as a named binary. Replace the tiny checked-in connector fixture package with fixture source literals in its existing scratch-repository builder. The test still builds a real independent connector in scratch space. Keep the vendor package excluded.
+Proposal: Retain the native, standard guest, and `no_std` workspaces. Relocate Modbus under the `no_std` root so its dependencies remain inside that workspace. Move `http-fixture` into T18 as a named binary. Replace the tiny tracked connector fixture package with fixture source literals in its existing scratch-repository builder. The test still builds a real independent connector in scratch space. Keep the vendor package excluded.
 
 Deletes: The Modbus standalone workspace declaration, the `http-fixture` manifest and lockfile, and their standalone build contexts. The connector fixture is struck: main deleted it under wamn-bz2ko. Delete duplicated dependency and lint declarations where workspace inheritance replaces them.  
 Risk: Keep the standalone integration-build property, rather than replacing it with a prebuilt component. Its existing proof is `build_digest_tracks_source_bytes_and_survives_another_checkout` at `crates/control/lib/tests/integration_artifact.rs:57`. Guest closure at `tests/conformance/tests/guest_workspace_closure.rs:256` prevents path escapes. The identity guard at `tests/conformance/src/manifest_dependencies.rs:292` currently scans only native and standard guest workspaces. Extend its existing scan to the retained `no_std` workspace.
@@ -478,7 +478,7 @@ Severity: medium
 Effort: M  
 Area: tests, test-support, application tests, Rust tools  
 Evidence: `tests/orchestrator/src/main.rs:10`, `tests/integration/src/lib.rs:16`, `test-support/harness/Cargo.toml:14`, `test-support/infrastructure/Cargo.toml:34`, `test-support/postgres/Cargo.toml:11`, `crates/catalog/model/Cargo.toml:8`.  
-Problem: The check binary already routes commands into separate test packages. Application tests consume shared integration helpers, while harness and infrastructure both assemble substantial platform environments. Merging their package ownership is possible, but moving test construction authority into production dependencies breaks an existing compile-time restriction.  
+Problem: The test binary already routes commands into separate test packages. Application tests consume shared integration helpers, while harness and infrastructure both assemble substantial platform environments. Merging their package ownership is possible, but moving test construction authority into production dependencies breaks an existing compile-time restriction.
 Proposal: Use T17 for reusable fixtures and T18 for test execution, tool binaries, and named suites. Preserve test tiers as modules and test targets. Keep T16 independent so lower-level tests can start PostgreSQL without importing the full environment harness. Move schema baselines out of T01 while retaining feature-gated constructors for synthetic contract values. Keep application test sources in their application homes through explicit target paths.  
 Deletes: Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners.  
 Risk: Test discovery, executable paths, and feature propagation can change. Preserve manifest inheritance and the constructor restriction through `tests/conformance/src/manifest_dependencies.rs:292` and line 320. Retain suite-selection evidence at `tests/conformance/tests/test_changes.rs:460` and zero-executed-case refusal at line 707. Update the current catalog-specific constructor test at `tests/conformance/src/manifest_dependencies.rs:300` to the new contract owner. A renamed test must retain the production restriction.

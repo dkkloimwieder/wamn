@@ -35,11 +35,11 @@ pub async fn open_bucket(
 
 /// How often identity makes sure that the buckets exist. The NATS keeps the
 /// buckets in memory, so a restart loses them.
-pub const BUCKET_CHECK: Duration = Duration::from_secs(5);
+pub const BUCKET_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Make each memory bucket, or bring its configuration up to date
 /// (docs/plan/alignment.md R7). Identity calls this on start and every
-/// [`BUCKET_CHECK`].
+/// [`BUCKET_POLL_INTERVAL`].
 pub async fn create_buckets(client: &async_nats::Client) -> anyhow::Result<()> {
     for bucket in [
         crate::auth_changes::BUCKET,
@@ -50,13 +50,13 @@ pub async fn create_buckets(client: &async_nats::Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Make each memory bucket on start, and again every [`BUCKET_CHECK`], for as
+/// Make each memory bucket on start, and again every [`BUCKET_POLL_INTERVAL`], for as
 /// long as the task runs.
 pub fn keep_buckets(client: async_nats::Client) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut check = tokio::time::interval(BUCKET_CHECK);
+        let mut poll = tokio::time::interval(BUCKET_POLL_INTERVAL);
         loop {
-            check.tick().await;
+            poll.tick().await;
             if let Err(error) = create_buckets(&client).await {
                 tracing::warn!(
                     error = format!("{error:#}"),

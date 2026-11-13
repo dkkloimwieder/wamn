@@ -24,7 +24,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Schema-format version. Additive-within-major per the `0.1.x` freeze rule
-/// (checked by [`crate::validate`]); this is a store model, not a published
+/// (validated by [`crate::validate`]); this is a store model, not a published
 /// JSON-Schema contract, so there is no generated schema file to keep in sync.
 pub const SCHEMA_VERSION: &str = "0.1";
 
@@ -45,7 +45,7 @@ pub type ProjectId = String;
 /// [`EnvPolicy`]), with `canary` and any others addable as policies. A slug both
 /// names a project-env in the [`Triple`] and resolves its [`EnvPolicy`] (by
 /// name). A serde-transparent `String` newtype (the `OrgId`-style discipline);
-/// well-formedness is checked in [`crate::validate`], not the type.
+/// well-formedness is validated in [`crate::validate`], not the type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Env(String);

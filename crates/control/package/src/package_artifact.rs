@@ -14,7 +14,7 @@
 //! again. Then it pushes each component as its own OCI artifact under its
 //! digest, pushes the package artifact, and reads its manifest back. No
 //! database records the package: the artifact's existence is the proof of its
-//! checks (R11).
+//! tests (R11).
 //!
 //! A package artifact is one OCI image manifest with artifact type
 //! [`PACKAGE_ARTIFACT_TYPE`], the empty config, and these layers in order:
@@ -156,7 +156,7 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
-    wamn_schema_generator::build_record::check_current(root)?;
+    wamn_schema_generator::build_record::require_current(root)?;
     crate::component_admission::physical_schema(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
@@ -469,7 +469,7 @@ struct SourceComponent {
 /// package's `build.json`. A missing build record, a build record whose `inputs.digest`
 /// differs from the tree, a name without an entry, a palette component without
 /// exactly one platform declaration, and a palette component with two store
-/// aliases refuse. The bytes of each entry are checked against its digest when
+/// aliases refuse. The bytes of each entry are validated against its digest when
 /// they are read (§7.2: never by timestamp).
 fn source_components(
     root: &Path,
@@ -663,14 +663,14 @@ struct VerifiedComponent {
     bytes: Vec<u8>,
 }
 
-/// An authored package that passed every check of `push-package`, packed.
+/// An authored package that passed every test of `push-package`, packed.
 #[derive(Debug)]
 struct VerifiedPackage {
     packed: PackedPackage,
     components: Vec<VerifiedComponent>,
 }
 
-/// Every check of `push-package`, before anything is pushed: the policy
+/// Every test of `push-package`, before anything is pushed: the policy
 /// contract is satisfied, the migrations plan, and every component admits.
 fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     ensure!(
@@ -853,14 +853,14 @@ pub struct PushedPackage {
     pub disposition: PackagePushDisposition,
 }
 
-/// Check the package, then push its components and its package artifact
+/// Make sure of the package, then push its components and its package artifact
 /// under `<package_id>-<version>`.
 ///
-/// Every check runs before the first push, and the tag is read before
+/// Every test runs before the first push, and the tag is read before
 /// anything is pushed: a tag that holds another digest refuses and names both
 /// digests, and a tag that holds the same digest is already present, so
 /// nothing is pushed again. Tags are immutable. No database records the
-/// package; the artifact's existence is the proof of its checks (R11).
+/// package; the artifact's existence is the proof of its tests (R11).
 pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<PushedPackage> {
     let verified = verify_package(&request.package)?;
     let packed = &verified.packed;
@@ -1263,7 +1263,7 @@ mod tests {
     }
 
     fn receiving_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::check_current(
+        wamn_schema_generator::build_record::require_current(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         )
         .unwrap();

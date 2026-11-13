@@ -1,4 +1,4 @@
-//! The live test that the Rust and SQL halves of the tenant key AGREE.
+//! The live make sure that the Rust and SQL halves of the tenant key AGREE.
 //!
 //! This is the sharpest failure mode in `wamn-0h0g.22.6`: provisioning mints a
 //! guest login whose name carries the scope digest, and every governed RLS
@@ -121,7 +121,7 @@ fn reset(admin_url: &str, scope: &Scope) -> String {
     // wraps a multi-statement string in ONE transaction, and DROP DATABASE
     // cannot run inside one — so each statement gets its own invocation.
     psql_file(admin_url, &format!("DROP DATABASE IF EXISTS \"{db}\""));
-    // DROP OWNED BY before DROP ROLE, inside an existence check: a leftover
+    // DROP OWNED BY before DROP ROLE, inside an existence test: a leftover
     // healthy role satisfies IF NOT EXISTS and would mask a mutated builder.
     psql_file(
         admin_url,

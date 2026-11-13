@@ -1,6 +1,6 @@
 [package]
 name = "wamn-test-postgres"
-description = "Private PostgreSQL 18 servers, databases, and prerequisite checks for tests."
+description = "Private PostgreSQL 18 servers, databases, and test prerequisites."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

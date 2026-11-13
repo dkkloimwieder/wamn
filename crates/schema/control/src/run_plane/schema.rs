@@ -7,7 +7,7 @@ use postgres_protocol::escape::escape_identifier;
 
 use super::RUN_PLANE_FILES;
 
-/// A checked schema name usable in quoted SQL and bare DDL rewrites.
+/// A validated schema name usable in quoted SQL and bare DDL rewrites.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BareSchemaName(String);
 
@@ -32,7 +32,7 @@ impl fmt::Display for InvalidBareSchemaName {
 impl std::error::Error for InvalidBareSchemaName {}
 
 impl BareSchemaName {
-    /// Check a schema name before it reaches generated SQL.
+    /// Make sure of a schema name before it reaches generated SQL.
     pub fn new(value: impl Into<String>) -> Result<Self, InvalidBareSchemaName> {
         let value = value.into();
         let mut bytes = value.bytes();
@@ -79,7 +79,7 @@ pub(super) fn index_definition_stale(
     live_def: &str,
 ) -> bool {
     // Unit observations intentionally use the schema-of-record statement as
-    // the live definition. PostgreSQL's `pg_indexes` rendering is checked
+    // the live definition. PostgreSQL's `pg_indexes` rendering is validated
     // below; the record itself is already canonical by construction.
     if live_def == record_stmt {
         return false;

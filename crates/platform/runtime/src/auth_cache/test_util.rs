@@ -86,9 +86,9 @@ pub async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
     writer
 }
 
-pub async fn until(what: &str, check: impl Fn() -> bool) {
+pub async fn until(what: &str, is_ready: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !check() {
+    while !is_ready() {
         assert!(Instant::now() < deadline, "{what}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

@@ -1,4 +1,4 @@
-//! Native image, placement, and authority checks shared by application tests.
+//! Native image, placement, and authority tests shared by application tests.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -139,7 +139,7 @@ pub struct HostObservation {
     pub runtime_digest: String,
 }
 
-/// Check the built host image and the same image loaded on all three nodes.
+/// Make sure of the built host image and the same image loaded on all three nodes.
 pub async fn image_ready(
     cluster: &str,
     work: &Path,
@@ -147,7 +147,8 @@ pub async fn image_ready(
     build_profile: &str,
     evidence: &Path,
 ) -> anyhow::Result<String> {
-    let names = checked(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
+    let names =
+        require_success(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
     let node = std::str::from_utf8(&names)?
         .lines()
         .next()
@@ -162,7 +163,7 @@ pub async fn image_ready(
         labels["wamn.dev/build-profile"] == build_profile,
         "the host image does not carry the requested build profile"
     );
-    checked(kubectl(cluster, work).args([
+    require_success(kubectl(cluster, work).args([
         "wait",
         "--for=condition=Ready",
         "nodes",
@@ -173,7 +174,8 @@ pub async fn image_ready(
     let nodes = command_json(kubectl(cluster, work).args(["get", "nodes", "-o", "json"])).await?;
     save(evidence, "nodes.json", &nodes)?;
     validate_nodes(&nodes)?;
-    let names = checked(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
+    let names =
+        require_success(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
     let names = String::from_utf8(names)?
         .lines()
         .map(str::to_owned)
@@ -197,7 +199,7 @@ async fn loaded_image_digest(
 ) -> anyhow::Result<String> {
     let mut inspections = Vec::new();
     for node in names {
-        let bytes = checked(&mut node_image(node, image)).await?;
+        let bytes = require_success(&mut node_image(node, image)).await?;
         fs::write(evidence.join(format!("node-image-{node}.json")), &bytes)?;
         inspections.push((node, bytes));
     }
@@ -207,7 +209,7 @@ async fn loaded_image_digest(
         let observed = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse image {image} on {node}"))?;
         let tuple =
-            image_tuple(&observed).with_context(|| format!("check image {image} on {node}"))?;
+            image_tuple(&observed).with_context(|| format!("test image {image} on {node}"))?;
         if let Some(expected) = &expected {
             ensure!(
                 expected == &tuple,
@@ -222,13 +224,13 @@ async fn loaded_image_digest(
     Ok(expected.context("the host image was observed on a node")?.0)
 }
 
-/// Write what each node actually holds, after an image check failed.
+/// Write what each node actually holds, after an image test failed.
 ///
 /// A kind load reported success and the first node then reported no such
-/// image. The check aborts at that node, so it writes nothing for the node
+/// image. The test aborts at that node, so it writes nothing for the node
 /// that failed and nothing at all for the nodes after it, and the cause stays
 /// unproven. This runs only on the failure path and keeps its own failures out
-/// of the way, because it is evidence and not a check (wamn-y2ml).
+/// of the way, because it is evidence and not a test (wamn-y2ml).
 pub async fn capture_node_images(names: &BTreeSet<String>, evidence: &Path) {
     for node in names {
         for (mut command, file) in [
@@ -253,7 +255,7 @@ pub async fn capture_node_images(names: &BTreeSet<String>, evidence: &Path) {
     }
 }
 
-/// Check the native refusal and exact Event for a foreign environment.
+/// Make sure of the native refusal and exact Event for a foreign environment.
 pub async fn cross_environment_refused(
     cluster: &str,
     work: &Path,
@@ -295,8 +297,8 @@ pub async fn cross_environment_refused(
         .remove("hostId");
     let path = work.join("cross-environment-workload.json");
     fs::write(&path, serde_json::to_vec_pretty(&negative)?)?;
-    checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
-    checked(kubectl(cluster, work).args([
+    require_success(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
+    require_success(kubectl(cluster, work).args([
         "-n",
         namespace,
         "wait",
@@ -389,7 +391,7 @@ pub async fn cross_environment_refused(
     )
 }
 
-/// Check the retained refusal signals after an idle materializer becomes ready.
+/// Make sure of the retained refusal signals after an idle materializer becomes ready.
 pub async fn materializer_idle(
     cluster: &str,
     work: &Path,
@@ -401,8 +403,10 @@ pub async fn materializer_idle(
     for pod in items(&hosts.pods)? {
         let name = text_at(pod, "/metadata/name")?;
         bytes.extend(
-            checked(kubectl(cluster, work).args(["-n", namespace, "logs", name, "-c", "host"]))
-                .await?,
+            require_success(
+                kubectl(cluster, work).args(["-n", namespace, "logs", name, "-c", "host"]),
+            )
+            .await?,
         );
     }
     fs::write(evidence.join("materializer-host.log"), &bytes)?;
@@ -422,11 +426,11 @@ pub async fn materializer_idle(
     save(
         evidence,
         "materializer-idle.json",
-        &json!({"host_logs_checked":items(&hosts.pods)?.len(),"failure_lines":0}),
+        &json!({"host_logs_tested":items(&hosts.pods)?.len(),"failure_lines":0}),
     )
 }
 
-/// Check the service through in-cluster DNS and compare the exact refusal body.
+/// Make sure of the service through in-cluster DNS and compare the exact refusal body.
 pub async fn unknown_route(
     cluster: &str,
     work: &Path,
@@ -453,8 +457,8 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
     }]}}}});
     let path = work.join("flow-http-reachability.json");
     fs::write(&path, serde_json::to_vec_pretty(&job)?)?;
-    checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
-    let completed = checked(kubectl(cluster, work).args([
+    require_success(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
+    let completed = require_success(kubectl(cluster, work).args([
         "-n",
         namespace,
         "wait",
@@ -487,7 +491,7 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
     save(evidence, "flow-http-probe-job.json", &job)?;
     save(evidence, "flow-http-probe-pod.json", &pods)?;
     if let Err(error) = completed {
-        let logs = checked(kubectl(cluster, work).args([
+        let logs = require_success(kubectl(cluster, work).args([
             "-n",
             namespace,
             "logs",
@@ -704,10 +708,10 @@ fn node_image(node: &str, image: &str) -> Command {
     docker(&["exec", node, "crictl", "inspecti", "-o", "json", image])
 }
 async fn command_json(command: &mut Command) -> anyhow::Result<Value> {
-    serde_json::from_slice(&checked(command).await?)
+    serde_json::from_slice(&require_success(command).await?)
         .context("read the observed Kubernetes or image JSON")
 }
-async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
+async fn require_success(command: &mut Command) -> anyhow::Result<Vec<u8>> {
     let output = tokio::time::timeout(
         Duration::from_secs(300),
         command.kill_on_drop(true).output(),

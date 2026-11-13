@@ -1,4 +1,4 @@
-//! Runtime instance policy checks.
+//! Runtime instance policy tests.
 
 #[test]
 fn only_positive_pool_sizes_keep_instances_warm() {

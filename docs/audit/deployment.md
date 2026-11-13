@@ -1,6 +1,6 @@
 # Audit report D: Deployment
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-xm69b.1, wamn-xm69b.2, wamn-xm69b.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-xm69b.1, wamn-xm69b.2, wamn-xm69b.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report D1, bead wamn-xm69b.1 -->
 
@@ -150,11 +150,11 @@ Area: Named manifests and stale executor references
 
 Evidence: `deploy/gcp/cdc-reader-wms.yaml:1`, `docs/history/gcp-install-history.md at 82df826ce:1564`, `docs/operations/gcp.md:718`, `deploy/platform/identity-db.example.yaml:18`, `deploy/infra/prometheus-local.yaml:14`, `crates/platform/runtime/tests/guest_environment_isolation.rs:237`.
 
-Problem: `cdc-reader-wms.yaml` has historical documentation consumers, but current platform installation renders CDC in Rust. `evt-nats-check.yaml` remains an active manual runbook input, so it is not an orphan. Searches found no external consumer for `identity-db.example.yaml` or `prometheus-local.yaml`. The missing `executor.yaml` appears in test prose and failure text, not in a file read.
+Problem: `cdc-reader-wms.yaml` has historical documentation consumers, but current platform installation renders CDC in Rust. `evt-nats-probe.yaml` remains an active manual runbook input, so it is not an orphan. Searches found no external consumer for `identity-db.example.yaml` or `prometheus-local.yaml`. The missing `executor.yaml` appears in test prose and failure text, not in a file read.
 
-Proposal: Delete unused examples and historical CDC carriers. `evt-nats-check.yaml` goes with `evt-nats` under [alignment](../plan/alignment.md) R8. Update the security test’s explanation to cite the current host.
+Proposal: Delete unused examples and historical CDC carriers. `evt-nats-probe.yaml` goes with `evt-nats` under [alignment](../plan/alignment.md) R8. Update the security test’s explanation to cite the current host.
 
-Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-check.yaml` (with `evt-nats`, alignment R8), `deploy/gcp/letsencrypt.yaml` from D1-2 once no installer reads it after the Edge and CDN cutover (wamn-wio2s), and stale executor references. Do not recreate `executor.yaml`.
+Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-probe.yaml` (with `evt-nats`, alignment R8), `deploy/gcp/letsencrypt.yaml` from D1-2 once no installer reads it after the Edge and CDN cutover (wamn-wio2s), and stale executor references. Do not recreate `executor.yaml`.
 
 Risk: Preserve `a_guest_never_sees_the_host_process_environment`. Its behavioral assertion remains valid. Owner answer 2026-10-31: nothing is applied outside repository automation. Delete without confirming external use.
 
@@ -261,7 +261,7 @@ Repetition inside a generated upstream bundle (cert-manager, cnpg, barman) is in
 | `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4` | Both `G/environments/*.json:18` |
 | `wamn-ctl:dev` | `P/audit-retention.example.yaml:52`; `P/run-retention.example.yaml:68` |
 | `wamn-gates:dev` | `deploy/gates/serve-echo.yaml:26`; `deploy/gates/socket-test-job.yaml:27`; `deploy/gates/trace-test-job.yaml:45` |
-| `curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | `C/check.rs:18`; `C/identity.rs:19` |
+| `curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | `C/test.rs:18`; `C/identity.rs:19` |
 | `debian:trixie-slim` | `Dockerfile:109,158,168,182,189,196` |
 
 #### URLs, hosts, and artifact bases
@@ -269,7 +269,7 @@ Repetition inside a generated upstream bundle (cert-manager, cnpg, barman) is in
 | Repeated value | All declaration locations |
 | --- | --- |
 | `https://identity.identity.svc.cluster.local` | `G/host-group-receiving.yaml:56`; `G/host-group-wms.yaml:55`; `G/operator/invite.yaml:43`; `G/operator/mint-pat.yaml:58`; `G/values-host.yaml:86,231,320`; `G/values-identity.yaml:10`; `C/control.rs:192,194`; `C/edge.rs:22`; `C/identity.rs:15,352`; `C/install.rs:341`; `C/invite.rs:131`; `C/steps.rs:184,214`. Certificate DNS repeats the host at `G/identity-certificate.yaml:13`. |
-| `nats://evt-nats.platform.svc.cluster.local:4222` | `G/cdc-reader.yaml:60`; `G/cdc-reader-wms.yaml:42`; `G/evt-nats-check.yaml:20`; `G/host-group-receiving.yaml:30`; `G/host-group-wms.yaml:29`; `G/values-host.yaml:24,169`; `C/broker.rs:20`; `C/cdc.rs:108`; `C/environments.rs:248`; `C/steps.rs:190,259` |
+| `nats://evt-nats.platform.svc.cluster.local:4222` | `G/cdc-reader.yaml:60`; `G/cdc-reader-wms.yaml:42`; `G/evt-nats-probe.yaml:20`; `G/host-group-receiving.yaml:30`; `G/host-group-wms.yaml:29`; `G/values-host.yaml:24,169`; `C/broker.rs:20`; `C/cdc.rs:108`; `C/environments.rs:248`; `C/steps.rs:190,259` |
 | `nats://evt-nats.wamn-system.svc.cluster.local:4222` | `G/values-host-base.yaml:29`; `P/values-host-default.yaml:170`; `P/values-host-receiving-pat.yaml:57`; `P/values-host-wms-pat.yaml:58` |
 | `nats://nats.platform.svc.cluster.local:4222` | `G/host-group-receiving.yaml:14,15`; `G/host-group-wms.yaml:13,14`; `G/values-host-base.yaml:133,134`; `G/values-identity.yaml:18`; `C/control.rs:182,183`; `C/identity.rs:254`; `C/job.rs:125`; `C/steps.rs:157` |
 | `nats://nats.wamn-system.svc.cluster.local:4222` | `P/values-host-default.yaml:77,78` |
@@ -287,7 +287,7 @@ Repetition inside a generated upstream bundle (cert-manager, cnpg, barman) is in
 | `receiving.wamn.dev` | `G/environments/dkk--receiving--dev.k:9`; matching JSON `:17`; `G/flow-http.yaml:33` |
 | `wms.wamn.dev` | `G/environments/dkk--wms--dev.k:9`; matching JSON `:17`; `G/wms-flow-http.yaml:33` |
 | `control.wamn.dev` | `G/cluster.k:13`; `G/control-service.yaml:37`; HTTPS invitation URL at `G/values-identity.yaml:16` |
-| `https://{host}{path}` | Rendering expressions at `C/check.rs:150,246` |
+| `https://{host}{path}` | Rendering expressions in lane C, lines 150 and 246 |
 
 #### Namespaces
 
@@ -296,7 +296,7 @@ The following are explicit namespace declarations and namespace lists in manifes
 | Namespace | Manifest locations |
 | --- | --- |
 | `hosts` | `G/cdc-reader-wms.yaml:10`; `G/cdc-reader.yaml:20,28`; `G/control-service.yaml:7,20`; `G/flow-http.yaml:5,20`; `G/materializer.yaml:5`; `G/registry-helper.yaml:11`; `G/values-host-base.yaml:8`; `G/values-host.yaml:3,148,293`; `G/values-operator.yaml:6,8`; `G/wms-flow-http.yaml:5,20`; `G/wms-materializer.yaml:5` |
-| `platform` | `G/auth-nats-clients.yaml:29`; `G/cnpg-cluster.yaml:25`; both environment JSON files `:6`; `G/evt-nats-check.yaml:10`; `G/nats-jetstream.yaml:11,41,61,77` |
+| `platform` | `G/auth-nats-clients.yaml:29`; `G/cnpg-cluster.yaml:25`; both environment JSON files `:6`; `G/evt-nats-probe.yaml:10`; `G/nats-jetstream.yaml:11,41,61,77` |
 | `identity` | `G/auth-nats-clients.yaml:11`; `G/identity-certificate.yaml:9`; `G/identity-operator-ca.yaml:11,19,32,41`; `G/operator/invite.yaml:22`; `G/operator/mint-pat.yaml:25` |
 | `__ENVIRONMENT_NAMESPACE__` | `P/host-environment-certs.example.yaml:79,102`; `P/runtime-operator-events-rbac.example.yaml:19,29` |
 | `wamn-system` | `deploy/gates/serve-echo.yaml:15,39`; socket Job `:17`; trace Job `:26`; `I/cnpg-cluster.yaml:25`; `I/minio.yaml:22,39,85,102`; `I/nats-jetstream.yaml:32,74,97,113`; `I/otel-collector.yaml:8,46,95`; `I/prometheus.yaml:12,35,76`; `I/values-wamn.yaml:169,181`; `P/audit-retention-db.example.yaml:38`; audit CronJob `:29`; `P/event-reader-rbac.yaml:19`; host database example `:32`; HTTP example `:12,28`; identity database example `:13`; materializer example `:41`; `P/postgres.yaml:21,91,114`; registry credentials example `:39,50,60,70`; `P/registry.yaml:119,137,186,198,279`; run-retention database example `:54`; run-retention CronJob `:42`; operator event RBAC `:37`; scenario worker `:133,215`; host default values `:116`; Receiving PAT values `:33`; WMS PAT values `:36`; `P/wamn-sysdb.yaml:36` |
@@ -305,10 +305,10 @@ Current Rust namespace reads and writes repeat:
 
 | Namespace | Rendering and operation locations |
 | --- | --- |
-| `hosts` | `C/packages.rs:127`; `C/environments.rs:287,358,425`; `C/steps.rs:202,208,253`; `C/control.rs:99,152,159,181,269,288,299,320,364`; `C/install.rs:376,530,602`; `C/manifests.rs:38`; `C/cdc.rs:31,52,69,84`; `C/edge.rs:216,219`; `C/web.rs:55,102,109,166`; `C/check.rs:67`; `C/identity.rs:138,214`; `C/broker.rs:319,325`; `D/control.rs:86` |
-| `platform` | `C/packages.rs:111,160`; `C/pools.rs:70,97,110`; `C/environments.rs:27,38,240,348,426`; `C/steps.rs:202`; `C/install.rs:48,398,530,553,627,653,667,674,681,695,747,961,985,1006`; `C/manifests.rs:45`; `C/job.rs:686,936,940,1039`; `C/edge.rs:293`; `C/check.rs:92,179`; `C/identity.rs:113,177,339`; `C/broker.rs:105,160,321`; `C/invite.rs:56,97` |
+| `hosts` | `C/packages.rs:127`; `C/environments.rs:287,358,425`; `C/steps.rs:202,208,253`; `C/control.rs:99,152,159,181,269,288,299,320,364`; `C/install.rs:376,530,602`; `C/manifests.rs:38`; `C/cdc.rs:31,52,69,84`; `C/edge.rs:216,219`; `C/web.rs:55,102,109,166`; `C/test.rs:67`; `C/identity.rs:138,214`; `C/broker.rs:319,325`; `D/control.rs:86` |
+| `platform` | `C/packages.rs:111,160`; `C/pools.rs:70,97,110`; `C/environments.rs:27,38,240,348,426`; `C/steps.rs:202`; `C/install.rs:48,398,530,553,627,653,667,674,681,695,747,961,985,1006`; `C/manifests.rs:45`; `C/job.rs:686,936,940,1039`; `C/edge.rs:293`; `C/test.rs:92,179`; `C/identity.rs:113,177,339`; `C/broker.rs:105,160,321`; `C/invite.rs:56,97` |
 | `identity` | `C/control.rs:123,158`; `C/install.rs:345,422,436,530`; `C/identity.rs:72,91,99,108,177,188,275,294,296,314,317,379,455`; `C/invite.rs:143` |
-| `edge` | `C/install.rs:376,518`; `C/edge.rs:60,70,87,106,119,192,209,221,222,223,226,233,259,293,308`; `C/check.rs:47,78,257` |
+| `edge` | `C/install.rs:376,518`; `C/edge.rs:60,70,87,106,119,192,209,221,222,223,226,233,259,293,308`; `C/test.rs:47,78,257` |
 | `wamn-system` | Namespace translation at `C/manifests.rs:44` |
 
 WIT namespaces also repeat across the workload representations:
@@ -491,7 +491,7 @@ Area: tools/*gate-run; tools/*journey-run; tests/integration/src/rc/Dockerfile
 Evidence: `tests/integration/src/rc/Dockerfile:17`, `Dockerfile:68`, `tools/rc-gate-run:12`, `tools/receiving-cluster-journey-run:17`, `tools/wms-cluster-journey-run:19`, `tools/identity-jwks-journey-run:183`, `tools/kind-gate-build:93`; measurements.md section 7 records 78 duplicated lines between the application runners.  
 Problem: RC builds debug host and gate images through a separate Dockerfile, while platform publication builds release images. The identity journey rebuilds another pair of images directly. Receiving and WMS correctly consume candidate images, but duplicate cluster, image-loading, broker, and cleanup mechanics. These paths maintain different recipes for proving the deployed system.  
 Proposal: Make release qualification consume only the canonical published artifacts. Keep debug builds for development. Put disposable infrastructure ownership in one shared test fixture, while applications retain their assertions.  
-Deletes: The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6.  
+Deletes: The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node test-image cleanup when disposable clusters replace retained test clusters. Merged with D3-6.
 Risk: Preserve negative-effect proofs, resource ownership, and teardown evidence. RC, Receiving, WMS, JWKS/session, and `tools/kind-cluster-delete-test` must retain their existing assertions.
 
 ## Finding D2-8: The train cannot establish release build cost or commit-to-running time

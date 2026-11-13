@@ -90,7 +90,7 @@ async fn read_package(
     let migrations = read_package_migrations(tx, env_key, package_id).await?;
     Ok(Some(AppliedPackage {
         coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
-            .expect("stored package coordinates passed database checks"),
+            .expect("stored package coordinates passed database constraints"),
         artifact_digest: package.get(0),
         baseline_fingerprint: package.get(3),
         physical_schema_fingerprint: package.get(2),
@@ -194,7 +194,7 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     // A hand-written source manifest does not consume package build output.
     if manifest_path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
-        wamn_schema_generator::build_record::check_current(root)?;
+        wamn_schema_generator::build_record::require_current(root)?;
     }
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;

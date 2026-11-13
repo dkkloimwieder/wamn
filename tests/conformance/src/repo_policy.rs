@@ -11,11 +11,11 @@ mod version_identity;
 use std::path::Path;
 
 /// Every policy violation under `root`, one line each.
-pub fn check(root: &Path) -> Vec<String> {
+pub fn diagnostics(root: &Path) -> Vec<String> {
     let mut problems = Problems::default();
-    authored_manifests::check(root, &mut problems);
-    generated_clients::check(root, &mut problems);
-    version_identity::check(root, &mut problems);
+    authored_manifests::report_problems(root, &mut problems);
+    generated_clients::report_problems(root, &mut problems);
+    version_identity::report_problems(root, &mut problems);
     problems.0
 }
 

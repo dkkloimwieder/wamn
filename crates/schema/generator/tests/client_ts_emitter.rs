@@ -6,7 +6,7 @@ use wamn_schema_generator::client_ts::{
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
-#[path = "support/client_ts_check.rs"]
+#[path = "support/client_ts_compile.rs"]
 mod typescript;
 
 fn release() -> ClientContractIr {
@@ -128,7 +128,7 @@ fn invalid_client_names_refuse_before_emission() {
 
     {
         let ir = release();
-        let mut checked = 0;
+        let mut observed = 0;
         for model in &ir.models {
             assert_eq!(to_snake(&to_camel(&model.name)), model.name);
             for operation in &model.operations {
@@ -155,12 +155,15 @@ fn invalid_client_names_refuse_before_emission() {
                             field.path,
                             field.type_name
                         );
-                        checked += 1;
+                        observed += 1;
                     }
                 }
             }
         }
-        assert!(checked > 20, "the fixture declares enough names: {checked}");
+        assert!(
+            observed > 20,
+            "the fixture declares enough names: {observed}"
+        );
     }
 
     {
@@ -360,6 +363,6 @@ fn no_module_exports_a_changes_route() {
 }
 
 #[test]
-fn emitted_client_type_checks_with_workspace_tsc() {
-    typescript::type_check(&release()).expect("the emitted client satisfies strict TypeScript");
+fn emitted_client_compiles_with_workspace_tsc() {
+    typescript::compile_types(&release()).expect("the emitted client satisfies strict TypeScript");
 }

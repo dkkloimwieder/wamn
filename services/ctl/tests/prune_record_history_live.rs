@@ -317,7 +317,7 @@ fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 9] {
 
 /// Run the verb and require the identity refusal.
 async fn assert_refused(url: &str, env_key: &str, label: &str) {
-    ctl_process::run_ops_checked(prune_argv(url, env_key))
+    ctl_process::require_ops_success(prune_argv(url, env_key))
         .await
         .expect_err(label);
 }
@@ -592,7 +592,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     assert_authority(&admin, &credential_url).await;
 
-    ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY))
+    ctl_process::require_ops_success(prune_argv(&credential_url, ENV_KEY))
         .await
         .expect("prune record history through wamn-ctl-ops");
 

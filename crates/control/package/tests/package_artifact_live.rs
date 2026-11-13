@@ -219,7 +219,7 @@ async fn push_repeat_fetch_and_refusals() {
     assert!(!unpacked.exists(), "the unpacked package is removed");
 
     let descriptor = fixture.pulled_descriptor(&first.tag, "receiving").await;
-    wamn_schema_generator::build_record::check_current(&package).unwrap();
+    wamn_schema_generator::build_record::require_current(&package).unwrap();
     let built = std::fs::read(apps().join("target/wamn/wamn_receiving/components/receiving.wasm"))
         .expect("read the built receiving component");
     assert_eq!(
@@ -394,7 +394,7 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
         use wamn_schema_generator::build_record;
         let output = copy.join("target/wamn/wamn_receiving");
         std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-        build_record::check_current(&apps().join("wamn_receiving")).unwrap();
+        build_record::require_current(&apps().join("wamn_receiving")).unwrap();
         let copied = Command::new("cp")
             .arg("-r")
             .arg(apps().join("target/wamn/wamn_receiving"))

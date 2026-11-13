@@ -4,7 +4,7 @@
 //! Layer 0 of a package artifact is the canonical `wamn.json` of the package.
 //! Both verbs take a full package artifact digest or the tag
 //! `<package_id>-<version>` and pull the artifact from the registry only,
-//! through `wamn-package-artifact`, so each layer is checked against its
+//! through `wamn-package-artifact`, so each layer is validated against its
 //! digest. No prefix is resolved and no database is read.
 
 use std::fmt::Write as _;

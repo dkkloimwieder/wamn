@@ -51,7 +51,7 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
 /// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
 /// collapses every env onto its pool. (The live routing through the DB is
-/// checked by the in-cluster gate; here we pin the pure derivation the
+/// validated by the in-cluster gate; here we pin the pure derivation the
 /// subcommand calls.)
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {

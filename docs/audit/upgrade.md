@@ -1,6 +1,6 @@
 # Audit report C: Update and upgrade
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-16jwe.1, wamn-16jwe.2, wamn-16jwe.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-16jwe.1, wamn-16jwe.2, wamn-16jwe.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report C1, bead wamn-16jwe.1 -->
 
@@ -32,7 +32,7 @@ Evidence: `crates/control/lib/src/platform/install.rs:309`, `crates/control/lib/
 
 Problem: `wamn-bj2kn` and `wamn-sdrnq` share one cause: newer code reaches older schemas after step 4.7 skips the completed bootstrap. Their reported symptoms differ: a missing connection-reader function and a missing `env_key` column. `wamn-zeg0z` exposes the opposite cache rule: a changed image reruns first apply with `release = none`, which requests removal of the serving release. These failures share an installer that models completed steps without a database upgrade lifecycle.
 
-Proposal (owner review 2026-10-31): the three failures (`wamn-bj2kn`, `wamn-sdrnq`, `wamn-zeg0z`) are real, and the original proposal is not. The baseline SQL carries a content hash. Install records it. Apply compares the installed hash with the candidate's hash and refuses with "schema changed, reset the environment database" when they differ. No pending-work record. Because there is one baseline, the hash check runs first, before analysis (C1-3 closes into this finding).
+Proposal (owner review 2026-10-31): the three failures (`wamn-bj2kn`, `wamn-sdrnq`, `wamn-zeg0z`) are real, and the original proposal is not. The baseline SQL carries a content hash. Install records it. Apply compares the installed hash with the candidate's hash and refuses with "schema changed, reset the environment database" when they differ. No pending-work record. Because there is one baseline, the hash test runs first, before analysis (C1-3 closes into this finding).
 
 Deletes: The installed-environment replay of first apply with `release = none` and completion-marker decisions about schema readiness (shared with C2-1). From C1-3, widened: every project migration call, not only the duplicates in substrate ensure and package staging.
 
@@ -51,7 +51,7 @@ Evidence: `crates/control/lib/src/environment/mod.rs:276`, `crates/control/lib/s
 
 Problem: Environment apply reads installed packages during analysis before it reaches either project migration call. Those reads already require columns such as `env_key`. Restoring migration files alone cannot repair a predecessor database when analysis fails before the applier runs.
 
-Closed into C1-2 (owner review 2026-10-31). With one baseline there is nothing to advance before analysis. The hash check of C1-2 runs first. The Deletes stay, widened: every project migration call, not only the duplicates. They are listed under C1-2.
+Closed into C1-2 (owner review 2026-10-31). With one baseline there is nothing to advance before analysis. The hash test of C1-2 runs first. The Deletes stay, widened: every project migration call, not only the duplicates. They are listed under C1-2.
 
 ## Finding C1-4: A failed control bootstrap can leave an installation that refuses every retry
 
@@ -200,7 +200,7 @@ Effort: M
 Area: `crates/control/lib/src/upgrade_environment.rs`  
 Evidence: `crates/control/lib/src/upgrade_environment.rs:294`, `crates/control/lib/src/upgrade_environment.rs:320`, `crates/control/lib/src/upgrade_environment.rs:535`, `crates/control/lib/src/upgrade_environment.rs:917`, `crates/control/provision/src/schema_migrations.rs:49`.
 
-Problem: The command checks out and builds the requested commit, but schema application calls the launching process’s linked library. Package application and deployment also call that process’s implementations, while release qualification invokes the newly built binary. The resulting run mixes executor versions despite its commit-addressed identity.
+Problem: The command retrieves and builds the requested commit, but schema application calls the launching process’s linked library. Package application and deployment also call that process’s implementations, while release qualification invokes the newly built binary. The resulting run mixes executor versions despite its commit-addressed identity.
 
 Closed by C3-3 (owner review 2026-10-31): the commit-build coordinator `upgrade_environment.rs` is deleted, so no executor mix remains.
 
@@ -372,7 +372,7 @@ Risk: Upgrades interrupt service, and large transactional migrations can exceed 
 
 The following exported open beads lose their current implementation premise:
 
-- `wamn-qpgq`: historical cutovers no longer need migration ports because the initial installation replaces existing state. Its acceptance is the baseline hash check of C1-2, because C3-2 is rejected. Evidence: `.beads/issues.jsonl:3469`.
+- `wamn-qpgq`: historical cutovers no longer need migration ports because the initial installation replaces existing state. Its acceptance is the baseline hash test of C1-2, because C3-2 is rejected. Evidence: `.beads/issues.jsonl:3469`.
 - `wamn-eycl`: the separate `environment.upgrade` saga disappears. There is no package upgrade in development. A release change is an `environment.k` apply, and the UI submits that document. Evidence: `.beads/issues.jsonl:3458`.
 - `wamn-ev5g6`: its equal-deadline premise already disappears in current source. `platform/job.rs:15` allows 900 seconds around the 600-second readiness budget. Evidence: `.beads/issues.jsonl:1919`.
 

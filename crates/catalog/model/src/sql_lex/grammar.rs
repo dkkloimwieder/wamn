@@ -21,7 +21,7 @@ use proptest::option;
 use proptest::sample::select;
 use proptest::strategy::{BoxedStrategy, Just, Strategy};
 
-/// The relation catalog every generated statement is checked against.
+/// The relation catalog every generated statement is validated against.
 ///
 /// `id` is shared so unqualified references stay ambiguous across relations,
 /// and every other column belongs to exactly one relation.

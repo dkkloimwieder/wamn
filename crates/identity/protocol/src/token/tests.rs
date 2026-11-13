@@ -271,7 +271,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
 }
 
 #[tokio::test]
-async fn age_rules_cover_exact_boundaries_and_checked_arithmetic() {
+async fn age_rules_cover_exact_boundaries_and_overflow() {
     let (pair, key, header, mut claims) = fixture();
     for (iat, exp, now) in [
         (1000, 1900, 1000),

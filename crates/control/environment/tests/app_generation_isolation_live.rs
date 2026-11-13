@@ -5,7 +5,7 @@
 //! reads `pg_database.datacl` through `aclexplode` and shows which databases
 //! carry a direct `CONNECT` entry for a role. That is a read of what the server
 //! was configured to hand out. It is not a refusal, and it runs on a superuser
-//! connection, which passes every ACL check and so hides a role defect
+//! connection, which passes every ACL test and so hides a role defect
 //! completely.
 //!
 //! This gate asks the other question. It opens a REAL session as the minted
@@ -24,7 +24,7 @@
 //! against the same credential, in the same test.
 //!
 //! The SQLSTATE is MEASURED and asserted as a code, never as a message string.
-//! PostgreSQL 18 checks database `CONNECT` while it initializes the backend and
+//! PostgreSQL 18 tests database `CONNECT` while it initializes the backend and
 //! reports the failure as `42501`.
 //!
 //! The test runs on the PostgreSQL server of its own test process and holds the

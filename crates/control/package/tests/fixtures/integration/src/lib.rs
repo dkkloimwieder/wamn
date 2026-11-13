@@ -19,13 +19,13 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 mod component {
     use alloc::string::String;
     wit_bindgen::generate!({
-        inline: "package test:fixture; world client { export wamn:integration/health@0.1.0; } package wamn:integration@0.1.0 { interface health { check: func() -> result<_, string>; } }",
+        inline: "package test:fixture; world client { export wamn:integration/health@0.1.0; } package wamn:integration@0.1.0 { interface health { probe: func() -> result<_, string>; } }",
         world: "test:fixture/client",
         std_feature,
     });
     struct Fixture;
     impl exports::wamn::integration::health::Guest for Fixture {
-        fn check() -> Result<(), String> {
+        fn probe() -> Result<(), String> {
             Ok(())
         }
     }

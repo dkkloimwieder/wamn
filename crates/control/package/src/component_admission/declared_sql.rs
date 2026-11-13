@@ -1,10 +1,10 @@
-//! The parsed check on the SQL a package declares for its guests.
+//! The parsed test on the SQL a package declares for its guests.
 //!
 //! An application guest runs only statements declared at build: the host
 //! resolves a statement path in the admitted set and runs those exact bytes
 //! (`wamn:postgres/statements`). So admission, not the host, is the authority
 //! on what that SQL may do (docs/architecture/data-access.md#actors). This
-//! check parses each statement with PostgreSQL's own grammar (`pg_query`) and
+//! test parses each statement with PostgreSQL's own grammar (`pg_query`) and
 //! walks the whole parse tree, so a name in a subquery, a CTE, a default or a
 //! cast is seen, and quoting, schema qualification, case and comments change
 //! nothing.
@@ -104,8 +104,8 @@ const WRITE_NODES: [(&str, &str); 6] = [
     ("TruncateStmt", "relations"),
 ];
 
-/// Refuse `sql` unless it is one statement that passes every check above.
-pub(super) fn check_declared_statement(sql: &str) -> Result<(), DeclaredStatementRefusal> {
+/// Refuse `sql` unless it is one statement that passes every test above.
+pub(super) fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatementRefusal> {
     let unparsed = |error: pg_query::Error| {
         DeclaredStatementRefusal::new(RefusalKind::Unparsed, error.to_string())
     };
@@ -130,23 +130,23 @@ pub(super) fn check_declared_statement(sql: &str) -> Result<(), DeclaredStatemen
     }
     let tree = serde_json::to_value(&parsed.protobuf)
         .map_err(|error| DeclaredStatementRefusal::new(RefusalKind::Unparsed, error.to_string()))?;
-    check_value(&tree)
+    require_value(&tree)
 }
 
 /// Walk every object, array and string of the parse tree.
-fn check_value(value: &Value) -> Result<(), DeclaredStatementRefusal> {
+fn require_value(value: &Value) -> Result<(), DeclaredStatementRefusal> {
     match value {
-        Value::String(text) => check_text(text),
-        Value::Array(items) => items.iter().try_for_each(check_value),
+        Value::String(text) => require_text(text),
+        Value::Array(items) => items.iter().try_for_each(require_value),
         Value::Object(fields) => {
             for (key, field) in fields {
                 if let Some((node, kind)) = REFUSED_NODES.iter().find(|(node, _)| node == key) {
                     return Err(DeclaredStatementRefusal::new(*kind, format!("a {node}")));
                 }
                 if let Some((node, relation)) = WRITE_NODES.iter().find(|(node, _)| node == key) {
-                    check_write(node, field.get(*relation))?;
+                    require_write(node, field.get(*relation))?;
                 }
-                check_value(field)?;
+                require_value(field)?;
             }
             Ok(())
         }
@@ -155,7 +155,7 @@ fn check_value(value: &Value) -> Result<(), DeclaredStatementRefusal> {
 }
 
 /// Refuse a write whose target relation is in the `platform` schema.
-fn check_write(node: &str, relation: Option<&Value>) -> Result<(), DeclaredStatementRefusal> {
+fn require_write(node: &str, relation: Option<&Value>) -> Result<(), DeclaredStatementRefusal> {
     let mut targets = Vec::new();
     match relation {
         Some(Value::Array(items)) => targets.extend(
@@ -179,7 +179,7 @@ fn check_write(node: &str, relation: Option<&Value>) -> Result<(), DeclaredState
 }
 
 /// Refuse one identifier or string constant that names a refused function.
-fn check_text(text: &str) -> Result<(), DeclaredStatementRefusal> {
+fn require_text(text: &str) -> Result<(), DeclaredStatementRefusal> {
     let lower = text.to_ascii_lowercase();
     let refused = [
         (&COUNTER_FUNCTIONS[..], false, RefusalKind::CounterFunction),

@@ -625,7 +625,7 @@ impl ProductionDevStageRunner {
         let packages = self
             .packages
             .as_ref()
-            .expect("package_inputs checked state");
+            .expect("package_inputs validated state");
         for base in packages.base_packages() {
             let artifact = self
                 .artifacts
@@ -1432,7 +1432,7 @@ impl DevStageRunner for ProductionDevStageRunner {
 
     #[expect(
         clippy::unused_async_trait_impl,
-        reason = "the `DevStageRunner` seam declares `async fn`; this stage check \
+        reason = "the `DevStageRunner` seam declares `async fn`; this stage condition \
                   reads build.json synchronously"
     )]
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
@@ -1522,10 +1522,10 @@ impl DevStageRunner for ProductionDevStageRunner {
         self.target_lease
             .as_ref()
             .expect("lease acquired")
-            .check()
+            .require_current_lease()
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("check local session lease", source.into())
+                ProductionDevStageError::owner("require local session lease", source.into())
             })?;
         // Build in disposable databases before comparing the selected physical SQL.
         self.prepare_generation().await?;
@@ -2247,7 +2247,7 @@ mod tests {
                 "pub fn changed() {}",
             )
             .unwrap();
-            assert!(build_record::check_current(&package.root).is_err());
+            assert!(build_record::require_current(&package.root).is_err());
             assert_eq!(generation_inputs, build_inputs(&fixture.packages).unwrap());
             let current = current_package_builds(&fixture.packages);
             assert!(current.values().all(Option::is_some));
@@ -2283,7 +2283,7 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                    build_record::check_current(&package.root).unwrap();
+                    build_record::require_current(&package.root).unwrap();
                 }
             }
             for (index, package) in fixture.packages.iter().enumerate() {

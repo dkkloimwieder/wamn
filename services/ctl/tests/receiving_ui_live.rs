@@ -43,7 +43,7 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
     .await
 }
 
-/// The five sync checks of the open receipt lines screen: a 30 s drop, another
+/// The five sync tests of the open receipt lines screen: a 30 s drop, another
 /// browser, a reopen during an outage, a flapping replay, and a refusal.
 #[tokio::test]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, bin:node, bin:pnpm, bin:google-chrome, env:WAMN_PLATFORM_UI_DIST, env:WAMN_TIMINGS_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST"]
@@ -56,12 +56,12 @@ async fn local_receiving_sync() -> anyhow::Result<()> {
         script: "apps/wamn_receiving/web/test/sync-browser.mjs",
         environment: "receiving-sync-env",
         screenshots: "receiving-sync-screenshots",
-        passed: "PASS: Receiving sync checks",
+        passed: "PASS: Receiving sync tests",
     })
     .await
 }
 
-/// The five offline profile checks of the open receipt lines screen: a session
+/// The five offline profile tests of the open receipt lines screen: a session
 /// reopen after and before the login expires, expired entries, sign-out
 /// clearing, and a local_first reopen.
 #[tokio::test]
@@ -75,7 +75,7 @@ async fn local_receiving_offline() -> anyhow::Result<()> {
         script: "apps/wamn_receiving/web/test/offline-browser.mjs",
         environment: "receiving-offline-env",
         screenshots: "receiving-offline-screenshots",
-        passed: "PASS: Receiving offline profile checks",
+        passed: "PASS: Receiving offline profile tests",
     })
     .await
 }

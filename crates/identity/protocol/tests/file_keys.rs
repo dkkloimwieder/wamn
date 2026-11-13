@@ -92,7 +92,7 @@ async fn a_token_signed_by_a_file_key_verifies() {
             .parse::<wamn_identity_protocol::RoleName>()
             .unwrap()]
     );
-    session.check_admission().expect("a file key stays fresh");
+    session.require_admission().expect("a file key stays fresh");
 }
 
 #[tokio::test]

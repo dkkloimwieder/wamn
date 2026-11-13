@@ -362,7 +362,7 @@ pub async fn record_event_reader(
 }
 
 /// Stop this environment's CDC publication before acquiring reset exclusion.
-/// A reader checks this registration while holding the shared lifecycle key.
+/// A reader tests this registration while holding the shared lifecycle key.
 pub async fn pause_event_reader(system_url: &str, triple: &Triple) -> anyhow::Result<()> {
     let mut client = wamn_package_control::database::connect(system_url).await?;
     let tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;

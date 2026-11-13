@@ -2,7 +2,7 @@
 //! lookup and outgoing-edge routing.
 //!
 //! A wiring is **data** — the active version comes from the env-hot store and is
-//! cached by version by the caller. [`Wiring::compile`] indexes one and checks
+//! cached by version by the caller. [`Wiring::compile`] indexes one and tests
 //! only the structural preconditions the walk relies on; gating a wiring against
 //! the palette is upstream of the router, not its job.
 
@@ -100,7 +100,7 @@ pub struct Wiring {
 }
 
 impl Wiring {
-    /// Index a resolved wiring, checking the preconditions the walk relies on:
+    /// Index a resolved wiring, testing the preconditions the walk relies on:
     /// unique node ids, an entry that resolves, and edge endpoints that resolve.
     pub fn compile(
         entry: impl Into<String>,

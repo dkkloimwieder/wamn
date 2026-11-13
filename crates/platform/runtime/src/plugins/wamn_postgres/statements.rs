@@ -1,4 +1,4 @@
-//! Host-owned resolution and contract checks for verified SQL statements.
+//! Host-owned resolution and contract tests for verified SQL statements.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

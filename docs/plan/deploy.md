@@ -274,7 +274,7 @@ Marked files have no atomicity or exactly-once guarantee.
 `catalog.package_migrations` keeps migration checksums and outcomes across code versions.
 Explicit data migrations admit `UPDATE`, `INSERT`, and `DELETE` on schema-qualified tables that the package owns.
 Existing refusals of role switches, grants, and role operations remain.
-Publication and apply share migration validation. Target database checks stay at apply.
+Publication and apply share migration validation. Target database tests stay at apply.
 
 ## 5. Concrete deployment and upgrade use cases
 
@@ -550,7 +550,7 @@ They do not establish final acceptance or a before-and-after performance improve
 |---|---|
 | `build.log` | UI build: 1.693s. Input hashes: 1.694s. Input lookups: 1.560s. Cloud submission: 2638.115s. |
 | `build.log` | Copy ctl: 2.249s. Copy edge-web: 2.151s. Copy host: 2.162s. Copy identity: 2.082s. |
-| `build.log` | HTTP reuse check: 1.738s. Materializer reuse check: 1.484s. Both layers differ from 0.1.141. |
+| `build.log` | HTTP reuse test: 1.738s. Materializer reuse test: 1.484s. Both layers differ from 0.1.141. |
 | `build.log` | Registry reads: 8.938s. Stamp: 0.011s. Output: the prepared `chart` directory. |
 | `apply-pools.log` | Cluster creation: 7m49s. Node pool creation: main 1m22s, bench 1m33s, pg 1m42s. Apply adds 4 resources. |
 | `apply-full.log` | Address creation: 12s. Certificate map: 11s. Certificate: 11s. Backend service: 32s. Forwarding rule: 22s. Apply adds 10 resources. |

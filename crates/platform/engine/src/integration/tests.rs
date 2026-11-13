@@ -120,7 +120,7 @@ fn integration_byte_admission_refuses_missing_health_and_wrong_signature() -> an
         "wrong.wit",
         r"
         package wamn:integration@0.1.0;
-        interface health { check: func(request: string) -> u32; }
+        interface health { probe: func(request: string) -> u32; }
         world integration { export health; }
     ",
     )?;

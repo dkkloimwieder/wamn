@@ -253,7 +253,7 @@ pub fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAc
     read_presented_packages(&roots).map(PreparedLocalDataAccess)
 }
 
-/// Recheck live schema and grants using the already parsed local source inputs.
+/// Test again live schema and grants using the already parsed local source inputs.
 pub async fn reconcile_local(
     prepared: &PreparedLocalDataAccess,
     database_url: &str,

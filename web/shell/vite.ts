@@ -106,7 +106,7 @@ function solidVersion(application: string): Plugin {
 
 /**
  * The policy of every Solid application: the Solid compiler, the browser
- * resolution with one copy of Solid, the Solid version check and the test
+ * resolution with one copy of Solid, the Solid version test and the test
  * environment. `dedupe` names further packages that must resolve once.
  */
 export function solidApplication(

@@ -168,7 +168,7 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
     assert_eq!(control_plane_tables(&application).await, 0);
 }
 
-/// Effective PostgreSQL privilege checks include inherited roles and PUBLIC.
+/// Effective PostgreSQL privilege tests include inherited roles and PUBLIC.
 #[tokio::test]
 async fn credentials_are_inaccessible_to_application_roles() {
     let _lock = wamn_test_postgres::lock();

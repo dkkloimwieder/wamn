@@ -74,7 +74,7 @@ pub fn resolve_key(prefix: &str, author_key: &str) -> Result<String, KeyRefusal>
     if author_key.chars().any(char::is_control) {
         return Err(KeyRefusal::ControlCharacter);
     }
-    // Reject `..` as a whole SEGMENT. A substring check would also refuse the
+    // Reject `..` as a whole SEGMENT. A substring test would also refuse the
     // legitimate key `report..2026.zpl`, and a containment rule that refuses
     // valid names teaches authors to work around it.
     if author_key.split('/').any(|segment| segment == "..") {

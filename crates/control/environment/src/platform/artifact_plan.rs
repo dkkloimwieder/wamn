@@ -102,7 +102,7 @@ impl SelectedChart {
             UpgradeTarget::Control | UpgradeTarget::Identity => {
                 let platform = installed
                     .as_object_mut()
-                    .expect("checked object")
+                    .expect("validated object")
                     .entry("platform")
                     .or_insert_with(|| serde_json::json!({}));
                 ensure!(

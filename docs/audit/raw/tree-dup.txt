@@ -1538,7 +1538,7 @@ getrandom v0.4.3
 │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
 │   [dev-dependencies]
 │   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
-│   └── wamn-submodule-check v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/submodule-check)
+│   └── wamn-submodule-pins v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/submodule-pins)
 └── uuid v1.27.0
     ├── moka v0.12.16
     │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)

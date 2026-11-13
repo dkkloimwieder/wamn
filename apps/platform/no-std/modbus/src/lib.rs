@@ -86,7 +86,7 @@ mod component {
     }
 
     impl exports::wamn::integration::health::Guest for Modbus {
-        fn check() -> Result<(), String> {
+        fn probe() -> Result<(), String> {
             exchange(None)
                 .map(|_| ())
                 .map_err(|error| format!("{error:?}"))

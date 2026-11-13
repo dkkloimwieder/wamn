@@ -2,7 +2,7 @@
 //!
 //! Each model with generated operations gets `generated/data/<model>.rs`, with
 //! one `pub async fn` for each operation. A function takes the request values
-//! the operation's codec already checked, parses each into its one spelling,
+//! the operation's codec already validated, parses each into its one spelling,
 //! runs the generated statement, and answers the contract's row or refusal.
 //! The package gets one refusal type, `generated/data/error.rs`, whose detail
 //! members are the ones the error contracts declare, and one
@@ -682,7 +682,7 @@ fn emit_query(
          }}\n\n\
          /// `{model_name}.query`: one keyset page in the requested sort.\n\
          ///\n/// The contract's order holds: the sort and the cursor first, then the\n\
-         /// statement. The codec checked the limit.\n\
+         /// statement. The codec validated the limit.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{row_type}>, Error> {{\n\
          let sort = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {{\n\
@@ -1063,7 +1063,7 @@ fn emit_error(
     };
     let mut constructors = String::new();
     // invalid_input names the refused field, and a data function reports no
-    // bound: the codec checked every bound.
+    // bound: the codec validated every bound.
     let bounds = [
         OperationErrorDetailKey::Minimum,
         OperationErrorDetailKey::Maximum,

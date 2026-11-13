@@ -5,12 +5,12 @@
 //! each admitted component with [`publish_and_verify`] and pulls it back.
 
 pub(super) mod plan;
-pub use plan::check_admitted_statements;
 pub(crate) use plan::portable_requirement;
+pub use plan::require_admitted_statements;
 use plan::{
-    bind_signed_file_results, check_statement_sql, ensure_component_package_matches,
-    expected_operation_contracts, host_transaction_exports,
-    validate_component_operation_assignment, validate_generated_statement_shape,
+    bind_signed_file_results, ensure_component_package_matches, expected_operation_contracts,
+    host_transaction_exports, require_statement_sql, validate_component_operation_assignment,
+    validate_generated_statement_shape,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -359,7 +359,7 @@ fn load_package_statements(
     manifest: &wamn_catalog::manifest::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
-    wamn_schema_generator::build_record::check_current(package_root).map_err(|error| {
+    wamn_schema_generator::build_record::require_current(package_root).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
             format!("{error:#}"),
@@ -476,7 +476,7 @@ fn load_operation_statements(
                     ),
                 )
             })?;
-        check_statement_sql(operation, &statement.name, &sql)?;
+        require_statement_sql(operation, &statement.name, &sql)?;
         let fact = ComponentSqlStatement {
             name: statement.name,
             path: statement.path.clone(),
@@ -905,10 +905,10 @@ mod tests {
         std::fs::remove_dir_all(&package_root).expect("remove the package root");
     }
 
-    /// Every statement the shipped packages declare passes the parsed check.
+    /// Every statement the shipped packages declare passes the parsed test.
     /// It reads the build output of `wamn build` (`tools/lane-start`).
     #[test]
-    fn shipped_package_statements_pass_the_parsed_check() {
+    fn shipped_package_statements_pass_parsed_admission() {
         let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
         let mut roots = Vec::new();
         for parent in [apps.clone(), apps.join("platform")] {
@@ -925,7 +925,7 @@ mod tests {
         roots.sort();
         let mut statements = 0;
         for root in &roots {
-            wamn_schema_generator::build_record::check_current(root).unwrap();
+            wamn_schema_generator::build_record::require_current(root).unwrap();
             let manifest_path = wamn_schema_generator::package_manifest_path(root);
             let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
                 panic!(

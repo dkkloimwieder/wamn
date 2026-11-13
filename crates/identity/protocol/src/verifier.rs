@@ -1,6 +1,6 @@
 //! Session verification binds signed claims to a configured issuer and scope.
 //!
-//! The host resolves tenant permissions from the verified roles, then checks
+//! The host resolves tenant permissions from the verified roles, then tests
 //! admission immediately before creating its caller. Key and token deadlines
 //! govern new admission only, never work that the host already admitted.
 
@@ -40,7 +40,7 @@ pub trait KeyEvidence: Send + Sync {
     /// Public-only JWK. Possession does not by itself authorize admission.
     fn public_key(&self) -> &PublicSessionKey;
 
-    /// Recheck immediately at final admission.
+    /// Test again immediately at final admission.
     fn is_fresh(&self) -> bool;
 }
 
@@ -97,7 +97,7 @@ impl<K: KeySource> SessionVerifier<K> {
             evidence,
             clock: self.clock.clone(),
         };
-        session.check_admission()?;
+        session.require_admission()?;
         Ok(session)
     }
 
@@ -135,7 +135,7 @@ impl<E: KeyEvidence> VerifiedSession<E> {
     ///
     /// Call immediately before admitting a new request, after its last await.
     /// Do not call for nested operations within an already-admitted request.
-    pub fn check_admission(&self) -> Result<(), SessionVerificationError> {
+    pub fn require_admission(&self) -> Result<(), SessionVerificationError> {
         if !self.evidence.is_fresh() {
             return Err(SessionVerificationError::new("issuer key evidence expired"));
         }

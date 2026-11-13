@@ -1,4 +1,4 @@
-//! Checks of the release chart that `wamn-ctl env apply` writes, on a kind
+//! Tests of the release chart that `wamn-ctl env apply` writes, on a kind
 //! cluster (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The environment release is `deploy/platform/release`, in the operator
@@ -30,7 +30,7 @@ const OWNED_KINDS: [&str; 7] = [
     "configmaps",
 ];
 
-/// One environment release on one cluster, and where its checks write.
+/// One environment release on one cluster, and where its tests write.
 #[derive(Debug, Clone, Copy)]
 pub struct Release<'a> {
     pub cluster: &'a str,
@@ -93,7 +93,7 @@ pub async fn helm_release(release: &Release<'_>) -> anyhow::Result<Option<Value>
     Ok(named.into_iter().next())
 }
 
-/// Check the release, its host Deployment and pods, and the Host objects of its group.
+/// Make sure of the release, its host Deployment and pods, and the Host objects of its group.
 pub async fn hosts_ready(
     release: &Release<'_>,
     image: &str,
@@ -229,7 +229,7 @@ fn validate_hosts(hosts: &Value, release: &Release<'_>, replicas: u32) -> anyhow
     Ok(())
 }
 
-/// Check that role `role` is placed, and only on hosts of this release.
+/// Make sure that role `role` is placed, and only on hosts of this release.
 ///
 /// For `http`, the role Service's route EndpointSlices point only at this
 /// group's pods.
@@ -248,7 +248,7 @@ pub async fn role_placed(
         ..
     } = *release;
     let deployment_name = format!("{name}-{role}");
-    checked(kubectl(cluster, work).args([
+    require_success(kubectl(cluster, work).args([
         "-n",
         namespace,
         "wait",
@@ -377,7 +377,7 @@ pub async fn a1_probe(release: &Release<'_>) -> anyhow::Result<Value> {
         "metadata":{"name":name,"namespace":release.namespace},"spec":spec});
     let path = release.work.join("a1-probe.json");
     fs::write(&path, serde_json::to_vec_pretty(&probe)?)?;
-    checked(
+    require_success(
         kubectl(release.cluster, release.work)
             .args(["apply", "-f"])
             .arg(&path),
@@ -394,7 +394,7 @@ pub async fn a1_probe(release: &Release<'_>) -> anyhow::Result<Value> {
     let observed = json!({"selector":spec["template"]["spec"]["hostSelector"],
         "deployment":deployment,"replicasets":sets,"workloads":workloads});
     save(release.evidence, "a1-probe.json", &observed)?;
-    checked(kubectl(release.cluster, release.work).args([
+    require_success(kubectl(release.cluster, release.work).args([
         "-n",
         release.namespace,
         "delete",
@@ -456,9 +456,10 @@ pub async fn environments_isolated(
     let mut owned_names = BTreeMap::<&str, Vec<String>>::new();
     let mut shared = Vec::new();
     for kind in OWNED_KINDS {
-        let names =
-            checked(kubectl(cluster, work).args(["-n", namespace, "get", kind, "-o", "name"]))
-                .await?;
+        let names = require_success(
+            kubectl(cluster, work).args(["-n", namespace, "get", kind, "-o", "name"]),
+        )
+        .await?;
         for object in String::from_utf8(names)?.lines() {
             let owners: Vec<&Environment> = environments
                 .iter()
@@ -597,17 +598,17 @@ fn kubectl(cluster: &str, work: &Path) -> Command {
     command
 }
 async fn command_json(command: &mut Command) -> anyhow::Result<Value> {
-    serde_json::from_slice(&checked(command).await?).context("read the observed JSON")
+    serde_json::from_slice(&require_success(command).await?).context("read the observed JSON")
 }
-async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
+async fn require_success(command: &mut Command) -> anyhow::Result<Vec<u8>> {
     let output = command
         .kill_on_drop(true)
         .output()
         .await
-        .context("run the release chart check")?;
+        .context("run the release chart test")?;
     ensure!(
         output.status.success(),
-        "release chart check command failed ({}): {}",
+        "release chart test command failed ({}): {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

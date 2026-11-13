@@ -40,7 +40,7 @@ WAMN_DEV_ENV_SYSTEM_DATABASE_URL="$SYSTEM_DATABASE_URL" \
   --package "$PWD/apps/wamn_receiving" --overlay-root "$PWD/apps/wamn_receiving"
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
   --overlay-root "$PWD/apps/wamn_receiving" --watch --hold
-"$CARGO_TARGET_DIR/debug/wamn" dev clean-check --repository "$PWD" \
+"$CARGO_TARGET_DIR/debug/wamn" dev clean-test --repository "$PWD" \
   --package receiving \
   --case operation::tests::envelope_requires_all_request_ids_before_item_processing \
   --result "$CHANGE_RESULT"
@@ -48,7 +48,7 @@ WAMN_DEV_ENV_SYSTEM_DATABASE_URL="$SYSTEM_DATABASE_URL" \
 
 The loop ran in two processes with the same configuration.
 The first process served its first run, and then the edit.
-`wamn dev clean-check` ran between the two processes, with the edit applied.
+`wamn dev clean-test` ran between the two processes, with the edit applied.
 The second process served a restart with unchanged source.
 It then served a restore edit that put back the original message.
 
@@ -56,7 +56,7 @@ It then served a restore edit that put back the original message.
 
 A loop time starts at the process start or at the file save.
 It ends at the `run served` line of that run.
-The `wamn dev up` and `wamn dev clean-check` times are the whole command.
+The `wamn dev up` and `wamn dev clean-test` times are the whole command.
 
 The restart row comes from a later test run at source `dbfdd492bac0da4518ee7ad021b5c23cb65ee379`, from a clean worktree.
 At that source, Generate compares each generated file with the file on disk and writes only the files that differ.
@@ -72,7 +72,7 @@ A second process then served the restart with unchanged source.
 | Warm edit | 22.323 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
 | Restart with unchanged source | 19.869 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
 | Restore edit | 17.660 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
-| `wamn dev clean-check` | 0.763 | not a loop run | not a loop run | not used |
+| `wamn dev clean-test` | 0.763 | not a loop run | not a loop run | not used |
 
 The loop printed these stage times, in the order of the loop rows above:
 
@@ -85,7 +85,7 @@ watch stage-ms: prepare=4ms migrate=0ms introspect=0ms generate=490ms build=4286
 
 A skipped stage reports the time that the loop used to find its inputs unchanged.
 The loop executed 0 tests.
-`wamn dev clean-check` executed 1 test, and it passed.
+`wamn dev clean-test` executed 1 test, and it passed.
 
 ## Target database
 
@@ -128,7 +128,7 @@ The covering case tests the message.
 
 ## Covering case
 
-`wamn dev clean-check` built the library tests of `receiving` in the apps workspace.
+`wamn dev clean-test` built the library tests of `receiving` in the apps workspace.
 It ran `operation::tests::envelope_requires_all_request_ids_before_item_processing` with the edit applied.
 The result records source `8934079994519c5d89e21a65f6514d6c378e8daf` with uncommitted changes, and it passed.
 A second run of the same test binary printed `1 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out`.
@@ -175,7 +175,7 @@ This run predates `wamn build`. Generated files and SQLx metadata now lie in the
 
 A loop time starts at the process start or at the file save.
 It ends at the `run served` line of that run.
-The `wamn dev up` and `wamn dev clean-check` times are the whole command.
+The `wamn dev up` and `wamn dev clean-test` times are the whole command.
 
 | Step | Seconds | Stages that ran | Stages skipped | Target oid |
 | --- | ---: | --- | --- | ---: |
@@ -183,7 +183,7 @@ The `wamn dev up` and `wamn dev clean-check` times are the whole command.
 | First run | 29.535 | all ten | none | 18239 |
 | Column save | 27.310 | all ten | none | 18239 |
 | Restart with unchanged source | 47.311 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
-| `wamn dev clean-check` | 10.074 | not a loop run | not a loop run | not used |
+| `wamn dev clean-test` | 10.074 | not a loop run | not a loop run | not used |
 
 The loop printed these stage times, in the order of the loop rows above:
 
@@ -225,8 +225,8 @@ The restart served the same row and the same text.
 
 ### Covering case
 
-`wamn dev clean-check` ran `operation::tests::bounded_projection_rows_preserve_the_declared_wire_scalars`.
-The result records source `dd7fe6479962edb20a6c16ac3556f834546e2a3a` with uncommitted changes, and all four checks passed.
+`wamn dev clean-test` ran `operation::tests::bounded_projection_rows_preserve_the_declared_wire_scalars`.
+The result records source `dd7fe6479962edb20a6c16ac3556f834546e2a3a` with uncommitted changes, and all four tests passed.
 After the run, every authored file, generated file, and `tests/.sqlx` entry went back to the committed bytes, and `git status` listed no change.
 
 ### One refusal and its fix

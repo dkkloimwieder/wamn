@@ -198,7 +198,7 @@ impl BoundContainer {
     ///
     /// # Errors
     ///
-    /// Confinement or backend failure. The drain checks that the body is
+    /// Confinement or backend failure. The drain tests that the body is
     /// complete before it reaches here.
     pub async fn put(&self, author_key: &str, body: Vec<u8>) -> Result<(), StoreError> {
         self.permit_connection("put").await?;

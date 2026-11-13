@@ -4,16 +4,16 @@
 //! Both verbs take the environment's lifecycle lock
 //! ([`LifecycleLock`], shared with `env apply`). While another verb holds it,
 //! they refuse with "apply in progress", and the caller retries. The lock does
-//! not queue, so no workflow becomes enabled between an apply's check and its
+//! not queue, so no workflow becomes enabled between an apply's test and its
 //! Helm write.
 //!
 //! Enable runs in one project transaction. It reads the version, gates its
-//! graph against the release the environment serves now, checks the enabler,
+//! graph against the release the environment serves now, tests the enabler,
 //! then disables the enabled version of the same workflow and enables this
 //! one. `catalog.workflows_one_enabled` keeps one enabled version, and the
 //! transaction makes the switch atomic. For `execution_type = 'role'` the
 //! enabler holds the execution role or `admin`, and the `workflow` user holds
-//! the execution role. `invoker` on a manual trigger needs no check.
+//! the execution role. `invoker` on a manual trigger needs no test.
 //! `invoker` on an event or schedule trigger runs as the `workflow` user with `admin`
 //! active, so it is assigning `admin`: the enabler holds `admin`, and the
 //! `workflow` user holds `admin`.
@@ -169,7 +169,7 @@ impl std::error::Error for WorkflowLifecycleError {
 
 pub use plan::WorkflowVersion;
 
-/// Enable `workflow` under the lifecycle lock of `triple`, checked against
+/// Enable `workflow` under the lifecycle lock of `triple`, validated against
 /// the release `manifest_digest` the environment serves and the authority of
 /// `enabler` (the text of its `platform."user"` id). The graph gates within
 /// the packages `declared` names for the workflow's application first.
@@ -192,7 +192,7 @@ pub async fn enable_workflow(
     declared: &wamn_catalog::EnvironmentApplications,
     events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
-    // Enable adds no declaration check: an application the environment does
+    // Enable adds no declaration condition: an application the environment does
     // not declare gates with no package of its own.
     let packages = declared
         .get(workflow.application)

@@ -1,4 +1,4 @@
-//! Live test that the executor-platform, event-materializer, and callable-HTTP
+//! Live make sure that the executor-platform, event-materializer, and callable-HTTP
 //! admitter families
 //! hold EXACTLY their measured production surfaces (`wamn-0h0g.22.37`).
 //!
@@ -6,7 +6,7 @@
 //! `pg_attribute.attacl`, `pg_namespace.nspacl` and `pg_proc.proacl`, plus
 //! `has_schema_privilege` / `has_table_privilege` / `has_function_privilege` —
 //! never the text of a statement. This crate EMITS that text, so a text
-//! assertion would be a builder checked against itself. The byte-exact string
+//! assertion would be a builder validated against itself. The byte-exact string
 //! pins live beside the builders in `src/sql.rs`, where they belong: a mutant
 //! that dies only here ships green in the ordinary sweep.
 //!
@@ -154,7 +154,7 @@ fn role_url(admin_url: &str, role: &str, password: &str) -> String {
 /// Rebuild the two schemas and every cluster-global role they and the families
 /// name, so nothing this gate measures survives from a previous run.
 ///
-/// `DROP OWNED BY` before `DROP ROLE`, inside an existence check: a leftover
+/// `DROP OWNED BY` before `DROP ROLE`, inside an existence test: a leftover
 /// HEALTHY role satisfies `ensure_workload_acl_role_sql`'s `IF NOT EXISTS` and
 /// would mask a mutated builder — which is the exact failure the mutant arms of
 /// this bead depend on being impossible.

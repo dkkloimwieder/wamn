@@ -220,7 +220,7 @@ pub(super) fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String
         .collect()
 }
 
-/// Check the reader's two column-scoped reads and no other direct grants.
+/// Make sure of the reader's two column-scoped reads and no other direct grants.
 pub(in super::super) fn verify_session_role_reader_grants(
     role: &str,
     database: &str,
@@ -263,7 +263,7 @@ pub(in super::super) fn verify_session_role_reader_grants(
 /// THE EXECUTOR-PLATFORM DENIAL MATRIX (`wamn-0h0g.22.37`).
 ///
 /// EQUALITY against the server's own `aclexplode` answer, never containment: a
-/// containment check passes a role that has ALSO acquired `INSERT` on `runs`,
+/// containment test passes a role that has ALSO acquired `INSERT` on `runs`,
 /// and this family's credentials match the permissive `TO wamn_platform` floor
 /// arm, so any privilege it holds it holds over EVERY tenant's rows.
 ///

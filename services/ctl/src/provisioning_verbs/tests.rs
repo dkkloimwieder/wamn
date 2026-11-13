@@ -108,7 +108,7 @@ fn clap_guards_the_three_infallible_provisioning_identity_accesses() {
     }
 
     // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
-    // function-name markers stood here. Deleted; the clap arms above check
+    // function-name markers stood here. Deleted; the clap arms above test
     // the parser contract by invoking the parser.
 }
 
@@ -136,7 +136,7 @@ fn clap_guards_the_workload_identity_accesses_in_every_action_mode() {
     }
 
     // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
-    // function-name markers stood here. Deleted; the clap arms above check
+    // function-name markers stood here. Deleted; the clap arms above test
     // the parser contract by invoking the parser.
 }
 
@@ -464,9 +464,9 @@ fn every_action_flag() -> Vec<String> {
 /// SIXTEEN hand-written clap exclusion arrays named every family's three
 /// flag ids, so admitting a family meant remembering to append to all
 /// sixteen. A closed enum that must be appended to by hand in sixteen
-/// places is not closed; it is a checklist.
+/// places is not closed; it is a task list.
 ///
-/// The count is now ZERO, and this checks the stronger property the
+/// The count is now ZERO, and this tests the stronger property the
 /// acceptance actually asks for: NO family's flag or id is SPELLED anywhere
 /// in the implementation. A list cannot name a family it never mentions, so
 /// admitting a family cannot require an edit to any list.
@@ -543,7 +543,7 @@ fn every_family_gets_its_flags_from_the_one_derivation() {
         "the action group is three verbs per family and nothing else"
     );
     // `multiple(false)` is not readable off a `&ArgGroup`, so the
-    // one-action rule is checked where it bites, by parsing: see
+    // one-action rule is validated where it bites, by parsing: see
     // `one_action_group_excludes_every_pair_across_every_family`.
     let secrets = group(WORKLOAD_SECRET_GROUP);
     assert_eq!(
@@ -574,7 +574,7 @@ fn every_family_gets_its_flags_from_the_one_derivation() {
 }
 
 /// One action per invocation, for EVERY pair across EVERY family — the
-/// generalization of a nine-flag hand-written check that could only ever
+/// generalization of a nine-flag hand-written make sure that could only ever
 /// cover the families someone remembered to list.
 #[test]
 fn one_action_group_excludes_every_pair_across_every_family() {

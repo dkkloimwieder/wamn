@@ -93,9 +93,9 @@ pub(super) fn workload_expires_at(now: DateTime<Utc>) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "the booleans mirror the `pg_roles` attribute columns and the exactness checks \
+    reason = "the booleans mirror the `pg_roles` attribute columns and the exactness tests \
               beside them one for one; PostgreSQL reports each as its own boolean, and a \
-              faithful copy of what the server says is what makes the drift check auditable"
+              faithful copy of what the server says is what makes the drift test auditable"
 )]
 pub(super) struct WorkloadRoleState {
     pub(super) login: bool,

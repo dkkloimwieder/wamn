@@ -9,7 +9,7 @@ use wamn_run_state::queue::{
 
 // ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
 //
-// `wamn_run_state::invariants::check` runs after every step that leaves a queue
+// `wamn_run_state::invariants::require_invariants` runs after every step that leaves a queue
 // state behind, so a decision that passes its own assertion while breaking
 // RUN-2, RUN-3, RUN-4 or RUN-7 still fails here. The invariants module doc
 // records which RUN-* need D2's seeded scheduler instead.
@@ -28,7 +28,7 @@ fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&ClaimPlan, usize)>, n
         grace: GRACE,
         now,
     };
-    if let Err(violation) = invariants::check(&state) {
+    if let Err(violation) = invariants::require_invariants(&state) {
         panic!("{violation}");
     }
 }

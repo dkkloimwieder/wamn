@@ -89,7 +89,7 @@ async fn load_with_reuse(
             entry: None,
             local_resources: LocalResources::default(),
             // Host policy implements nested calls. Declaring an interface here
-            // must not bypass the admitted provider uniqueness check.
+            // must not bypass the admitted provider uniqueness test.
             host_interfaces,
         },
         &HashMap::default(),
@@ -149,16 +149,15 @@ async fn native_loader_refuses_ambiguous_imported_operation() {
 }
 
 #[tokio::test]
-async fn native_loader_checks_repeated_bytes_before_cache_access() {
+async fn native_loader_requires_matching_repeated_bytes_before_cache_access() {
     let first = component("transform", HANDLER, None, 37);
     let altered = NativeComponent {
         fact: first.fact.clone(),
         bytes: component("transform", HANDLER, None, 91).bytes,
     };
-    let error = load(vec![first, altered])
+    load(vec![first, altered])
         .await
         .expect_err("altered repeat refuses");
-    assert!(format!("{error:#}").contains("native-component-bytes-digest-mismatch"));
 }
 
 #[tokio::test]

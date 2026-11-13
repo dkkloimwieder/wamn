@@ -5,7 +5,7 @@
 //! retention source. The retention verb reads it to find the history tables to
 //! prune. apply-package reads it to grant [`AUDIT_RETENTION_ROLE`] exactly the
 //! privileges that the verb needs, and the provisioning verifier reads it to
-//! check those grants.
+//! test those grants.
 //! The same job prunes successful write-log claims after 30 days and keeps
 //! uncertain claims. The write log provides idempotency protection.
 

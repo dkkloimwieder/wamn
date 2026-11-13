@@ -31,7 +31,7 @@ Inference: wamn added `evt-nats` when the bundled NATS lacked durable JetStream.
 
 ## One NATS: rulings
 
-Each ruling names the check that shows it holds.
+Each ruling names the test that shows it holds.
 
 | # | Ruling | Invariant |
 | --- | --- | --- |
@@ -40,7 +40,7 @@ Each ruling names the check that shows it holds.
 | R3 | cert-manager owns the CA and renews it. It issues the Secrets the chart names (NATS server, operator, runtime, data). The chart runs with `global.certificates.generate: false`. | The operator release renders no Secret; each of those Secrets has an owning cert-manager `Certificate` |
 | R4 | Every client authenticates by a client certificate that the server maps to a NATS user (`verify_and_map`): the operator, the host scheduler and data connections, identity, `wamn-ctl`, the CDC reader, the provisioning Jobs, and each environment. No client uses a password. | A client with no certificate is refused; the authorization file has no `password` entry |
 | R5 | Each environment has one client certificate: a cert-manager `Certificate` whose name maps to that environment's NATS user. The user publishes `evt.<org>.<project>.<env>.>`, reads its streams by `$JS.API.STREAM.INFO`, and reaches every consumer of its own event stream by wildcard: `$JS.API.CONSUMER.INFO.<stream>.*`, `$JS.API.CONSUMER.MSG.NEXT.<stream>.*` and `$JS.ACK.<stream>.>`. It holds no stream or consumer create, update or delete: only the provisioning client (wamn-ctl) holds them, as `capabilities.md` requires. The one exception is the filtered KV watch consumers on the environment's own prefix (R7). It adds `$KV.wamn-auth.<env_key>.>`, read-only watch on $KV.wamn-auth.=identity.> (PAT and session drops), $JS.API.STREAM.INFO.KV\_wamn-auth (bucket metadata), direct gets keyed by that prefix, and the consumer-create subject A7 verifies. It adds the same set for the connection memory bucket `wamn-connection` on `$KV.wamn-connection.<env_key>.>`, with no identity prefix. Each release sets `global.certificates.dataCertSecretName` to that Secret, so the host's data connection is the environment user. The binding leaves out `servers` and inherits `tls-*` from that connection. Host-owned code acting for that environment uses the same connection. The scheduler connection keeps the runtime certificate. | Environment A's certificate is refused on an environment B subject, stream, consumer and key, and on consumer create on its own event stream (workspace test with two environments) |
-| R6 | The materializer's binding is declared in the release chart: host group `plugins` entry `wasmcloud-nats`, binding `events`, grants within R5's scope, `workloadConfig: deny`. | `--materializer-nats-binding-file` does not exist; a render test checks every grant is inside its environment's prefix |
+| R6 | The materializer's binding is declared in the release chart: host group `plugins` entry `wasmcloud-nats`, binding `events`, grants within R5's scope, `workloadConfig: deny`. | `--materializer-nats-binding-file` does not exist; a render test makes sure of every grant is inside its environment's prefix |
 | R7 | The auth memory bucket `wamn-auth` lives on the one NATS: memory storage, the same keys, the same 60 s bound, the same revision-guarded put. The connection memory bucket `wamn-connection` follows the same rules. Identity creates both buckets on start, and creates them again after a NATS restart. Hosts open them with a get. When a bucket is absent, a host caches nothing and reads Postgres, as [execution](../architecture/execution.md) specifies. The control host's user covers every environment of its org. Identity, wamn-ctl and the control host may publish deletes on $KV.wamn-auth.=identity.> and on the environment prefixes of their org. | `auth_cache` tests pass unchanged against the one-NATS fixture |
 | R8 | Everything reaches NATS by the data URL. `WAMN_EVT_NATS_URL`, the `evt-nats` Service and the password authorization file are deleted. | No source or chart names `WAMN_EVT_NATS_URL` or `evt-nats` |
 | R9 | The operator, its CRDs, the release chart's `WorkloadDeployment`s and the subchart host Deployment stay as they are. | `deploy/platform/release/templates/workloads.yaml` keeps its kinds; only `plugins` and NATS values change |
@@ -83,7 +83,7 @@ Each ruling names the check that shows it holds.
 
 ## One NATS: assumptions
 
-The first issue checks every assumption and stops on a false one.
+The first issue makes sure of every assumption and stops on a false one.
 
 | # | Assumption | How to verify | If false |
 | --- | --- | --- | --- |
@@ -125,7 +125,7 @@ One epic is scoped at a time. The next is scoped after the previous closes and i
 
 **One NATS** (scoped, epic `wamn-j1r05`)
 
-1. A1 to A7: check each assumption with kind and workspace tests, and record the result (`wamn-j1r05.1`).
+1. A1 to A7: test each assumption with kind and workspace tests, and record the result (`wamn-j1r05.1`).
 2. R1 to R4: one NATS with TLS, the cert-manager CA and the chart Secrets, certificate users, and the operator values (`wamn-j1r05.2`).
 3. R5, R7, R8, R10: environment certificates, the auth memory and the clients on the data URL, the config reloader, and the `evt-nats` deletions (`wamn-j1r05.3`).
 4. R6, R9: the materializer binding from the release chart `plugins` entry (`wamn-j1r05.4`).

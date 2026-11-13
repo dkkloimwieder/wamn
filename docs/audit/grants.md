@@ -38,7 +38,7 @@ Test-cluster runs 2 to 7 of `platform_apply_kind` found these epic 6 regressions
 - The local install did not run as the database owner and failed on `permission denied for schema wamn_authority`. Commits `47b9984d6` and `581db9578` fix it.
 - The local owner lacked `wamn_platform`, so the package stage failed on the `catalog.releases` row security policy. Commit `0decdb998` fixes it.
 - The package Job created the CDC maps as `postgres`, so the second env apply failed on `permission denied for table wamn_cdc_exclusions`. Commit `777ce6a0f` gives each map to its schema owner and adds a live test of both creation orders.
-- The first-admin check refused the owner's own invitation after `provision-org` made the owner an org admin. Commit `a8729323a` fixes it, and `invite_live` covers it.
+- The first-admin test refused the owner's own invitation after `provision-org` made the owner an org admin. Commit `a8729323a` fixes it, and `invite_live` covers it.
 
 ## Test results
 

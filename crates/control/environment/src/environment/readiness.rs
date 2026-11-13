@@ -4,8 +4,8 @@
 //! `helm upgrade --wait` returned when the host Deployment was ready. The verb
 //! then waits on each role WorkloadDeployment of the release to report
 //! `Ready`, with what remains of the readiness budget: the budget bounds the
-//! rollout, not each wait in turn. The manifest names no check route, so
-//! readiness is the check. A failed wait carries the host pod report.
+//! rollout, not each wait in turn. The manifest names no test route, so
+//! readiness is the test. A failed wait carries the host pod report.
 
 use std::time::Instant;
 

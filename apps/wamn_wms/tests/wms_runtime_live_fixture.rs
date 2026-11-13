@@ -128,7 +128,7 @@ fn move_body(
     }])
 }
 
-/// The single request element of an array envelope, checked to carry the request id it
+/// The single request element of an array envelope, validated to carry the request id it
 /// was asked with.
 fn request_element<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
     let request_elements = answer

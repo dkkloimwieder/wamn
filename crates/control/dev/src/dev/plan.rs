@@ -208,7 +208,7 @@ impl DevRunResult {
 
     /// Wall time spent preparing the target before the first stage.
     ///
-    /// Includes checking the retained lease and recreating an invalidated target.
+    /// Includes testing the retained lease and recreating an invalidated target.
     pub const fn prepared(&self) -> Duration {
         self.prepared
     }

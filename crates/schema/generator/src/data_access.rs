@@ -833,7 +833,7 @@ pub(crate) fn generated_relation_access(
         CrudAction::Delete => match model.delete_mode {
             // Both delete statements open with the same locking read of
             // the id and the revision, so both need the read and the
-            // lock that an update needs. `FOR UPDATE` is checked as the
+            // lock that an update needs. `FOR UPDATE` is validated as the
             // UPDATE privilege, which the revision column supplies for a
             // hard delete and the marker pair supplies for a tombstone.
             Some(DeleteMode::Hard) => {

@@ -52,6 +52,6 @@ mod tests {
         });
     }
 
-    // wamn-hopk R5 removed three checks of timeout names.
-    // The epoch interruption test above checks that the deadline fires.
+    // wamn-hopk R5 removed three tests of timeout names.
+    // The epoch interruption test above tests that the deadline fires.
 }

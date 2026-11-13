@@ -38,7 +38,7 @@ use crate::{FailType, RunStatus};
 /// releases coexist, FIFO is per release and a draining host claims only its
 /// own backlog (docs/architecture/execution.md#process-lifecycle). A candidate run carries no pin, so
 /// only a host with no release selects it: candidate selection keeps its own
-/// path. [`grant_production_claim_sql`] rechecks the pin.
+/// path. [`grant_production_claim_sql`] tests again the pin.
 pub fn select_production_claim_sql() -> String {
     "WITH candidate AS MATERIALIZED ( \
              SELECT q.env_key, q.run_id, \

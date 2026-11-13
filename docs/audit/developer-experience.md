@@ -1,6 +1,6 @@
 # Audit report F: Developer experience
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-rk4wz.1, wamn-rk4wz.2, wamn-rk4wz.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-rk4wz.1, wamn-rk4wz.2, wamn-rk4wz.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report F1, bead wamn-rk4wz.1 -->
 
@@ -326,7 +326,7 @@ Effort: S
 Area: docs/operations/building.md  
 Evidence: `.cargo/config.toml:1`, `rust-toolchain.toml:3`, `crates/control/lib/src/dev/coordinator.rs:522`, `crates/control/lib/src/delivery/sqlx.rs:33`, `tools/install-kcl:13`, `docs/operations/building.md:5`
 
-Problem: The build documentation names generic compiler tools, but Cargo specifically selects `clang` and `mold`. SQL packages also require SQLx CLI 0.9.0, which the loop checks during Generate. The pinned installers require Linux x86_64, while cold setup and cached `--offline` commands appear in different places. A developer can discover these requirements after expensive preparation.
+Problem: The build documentation names generic compiler tools, but Cargo specifically selects `clang` and `mold`. SQL packages also require SQLx CLI 0.9.0, which the loop tests during Generate. The pinned installers require Linux x86_64, while cold setup and cached `--offline` commands appear in different places. A developer can discover these requirements after expensive preparation.
 
 Proposal: State one supported local host contract and test its executable versions before preparation. Separate initial dependency fetching from later offline operation. Keep KCL automatic, and leave wash, Helm, and OpenTofu outside the minimum app loop unless a selected command needs them.
 
@@ -543,7 +543,7 @@ Evidence: `crates/control/lib/src/delivery/qualification.rs:119` selects cases t
 
 Problem: Qualification supports WMS, Receiving, and Receiving with Acme. A correctly built hello application cannot pass that selection. Adding one more hello-specific branch preserves the same blocker for the next author.
 
-Proposal: Replace package-name selection with a platform qualification suite driven by declared capabilities and frozen release contracts. Run installation, component admission, authorization, route invocation, readiness, and applicable event checks against the exact candidate artifacts.
+Proposal: Replace package-name selection with a platform qualification suite driven by declared capabilities and frozen release contracts. Run installation, component admission, authorization, route invocation, readiness, and applicable event tests against the exact candidate artifacts.
 
 Keep application business suites separate from platform qualification. Preserve qualification identity through the release digest, platform image set, and suite identity.
 

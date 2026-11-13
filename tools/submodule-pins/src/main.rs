@@ -10,7 +10,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("submodule-check: {error:#}");
+            eprintln!("submodule-pins: {error:#}");
             ExitCode::FAILURE
         }
     }
@@ -21,16 +21,16 @@ fn run() -> Result<()> {
     let main = args.next().unwrap_or_else(|| "main".into());
     ensure!(
         args.next().is_none(),
-        "usage: wamn-submodule-check [main-ref]"
+        "usage: wamn-submodule-pins [main-ref]"
     );
     let root = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
-    let problems = check(Path::new(root.trim()), &main)?;
+    let problems = diagnostics(Path::new(root.trim()), &main)?;
     ensure!(problems.is_empty(), "{}", problems.join("\n"));
-    println!("submodule-check: PASS against {main}");
+    println!("submodule-pins: PASS against {main}");
     Ok(())
 }
 
-fn check(root: &Path, main: &str) -> Result<Vec<String>> {
+fn diagnostics(root: &Path, main: &str) -> Result<Vec<String>> {
     let main = git(
         root,
         &["rev-parse", "--verify", &format!("{main}^{{commit}}")],

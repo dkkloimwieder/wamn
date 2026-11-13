@@ -6,7 +6,7 @@ interface operation {
   use wamn:postgres/types@0.4.0.{pg-error};
   use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
 
-  /// The existing operation id text, checked against the loaded release.
+  /// The existing operation id text, validated against the loaded release.
   type sealed-operation-id = string;
 
   variant refusal {
@@ -35,7 +35,7 @@ interface operation {
   /// End an authorized read and record its delivery outcome without SQL.
   finish-read: async func() -> result<_, refusal>;
 
-  /// Check the host-issued caller and its grant, mint the delivery id, and
+  /// Make sure of the host-issued caller and its grant, mint the delivery id, and
   /// claim the key inside a new transaction. The host stores the request
   /// hash unchanged. Reads refuse with reads-claim-nothing.
   /// Only one operation can be open per Store.

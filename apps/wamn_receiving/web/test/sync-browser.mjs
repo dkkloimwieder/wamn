@@ -1,4 +1,4 @@
-// The five sync checks of the open receipt lines screen. The Rust fixture starts the real local services.
+// The five sync tests of the open receipt lines screen. The Rust fixture starts the real local services.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -20,9 +20,9 @@ const OPEN = "Open receipt lines";
 const LOCATION_ID = "00000000-0000-0000-0000-000000000201";
 // The collection polls every 10 s. One poll and the time the write takes to land.
 const ONE_POLL = 13_000;
-// WAMN_SYNC_CHECK=<1-5> runs one check alone. Each check works on its own order.
-const only = process.env.WAMN_SYNC_CHECK;
-const runs = (check) => !only || only === String(check);
+// WAMN_SYNC_CASE=<1-5> runs one test alone. Each test works on its own order.
+const only = process.env.WAMN_SYNC_CASE;
+const runs = (caseNumber) => !only || only === String(caseNumber);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const errors = [];
 let page;
@@ -103,7 +103,7 @@ try {
   await page.evaluate(() => navigator.serviceWorker.ready);
 
   if (runs(1)) {
-    step = "check-1";
+    step = "case-1";
     let navigations = 0;
     page.on("framenavigated", (frame) => {
       if (frame === page.mainFrame()) navigations += 1;
@@ -115,7 +115,7 @@ try {
     await record(page, "PO-BROWSER-01", "SYNC-DROP", "1");
     assert.ok(await tentative(page, "PO-BROWSER-01"), "the receipt recorded during the drop shows tentative");
     assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
-    await capture(page, "check-1-drop");
+    await capture(page, "case-1-drop");
     while (Date.now() - dropped < 30_000) {
       assert.equal(await table(page).locator("tbody > tr[data-row]").count(), 25, "rows keep rendering");
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -129,14 +129,14 @@ try {
     assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
     assert.equal(navigations, 0, "the screen never navigates");
     assert.deepEqual(pageReads.slice(readsBefore), [], "the screen never reads its page");
-    await capture(page, "check-1-landed");
+    await capture(page, "case-1-landed");
     console.log(
-      `CHECK 1 PASS: 30 s drop, rows kept, receipt tentative then landed, ${feedCalls.length} feed calls, 0 page reads`,
+      `CASE 1 PASS: 30 s drop, rows kept, receipt tentative then landed, ${feedCalls.length} feed calls, 0 page reads`,
     );
   }
 
   if (runs(2)) {
-    step = "check-2";
+    step = "case-2";
     const second = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     const other = await second.newPage();
     watch(other);
@@ -153,13 +153,13 @@ try {
       async () => (await remaining(page, "PO-BROWSER-02")) === 3,
       ONE_POLL,
     );
-    console.log(`CHECK 2 PASS: another browser's receipt shown after ${Date.now() - landed} ms, remaining 5 -> 3`);
-    await capture(page, "check-2-other");
+    console.log(`CASE 2 PASS: another browser's receipt shown after ${Date.now() - landed} ms, remaining 5 -> 3`);
+    await capture(page, "case-2-other");
     await second.close();
   }
 
   if (runs(3)) {
-    step = "check-3";
+    step = "case-3";
     await first.setOffline(true);
     await record(page, "PO-BROWSER-03", "SYNC-REOPEN", "1");
     assert.ok(await tentative(page, "PO-BROWSER-03"));
@@ -172,7 +172,7 @@ try {
     await until("the pending receipt shows", () => tentative(page, "PO-BROWSER-03"), 10_000);
     assert.match(await pending(page), /Offline, sign in to upload\./);
     assert.match(await pending(page), /Pending: 1\./);
-    await capture(page, "check-3-reopened");
+    await capture(page, "case-3-reopened");
     await first.setOffline(false);
     await until(
       "replay runs on return",
@@ -181,11 +181,11 @@ try {
     );
     assert.equal(await remaining(page, "PO-BROWSER-03"), 4);
     assert.doesNotMatch(await pending(page), /Offline/);
-    console.log("CHECK 3 PASS: reopened offline, saved rows and pending receipt shown, replayed on return");
+    console.log("CASE 3 PASS: reopened offline, saved rows and pending receipt shown, replayed on return");
   }
 
   if (runs(4)) {
-    step = "check-4";
+    step = "case-4";
     await first.setOffline(true);
     await record(page, "PO-BROWSER-04", "SYNC-FLAP-1", "1");
     await record(page, "PO-BROWSER-05", "SYNC-FLAP-2", "1");
@@ -205,11 +205,11 @@ try {
       async () => (await remaining(page, "PO-BROWSER-04")) === 3 && (await remaining(page, "PO-BROWSER-05")) === 4,
       ONE_POLL,
     );
-    console.log("CHECK 4 PASS: 8 flaps during replay, 3 receipts landed once each, outbox empty");
+    console.log("CASE 4 PASS: 8 flaps during replay, 3 receipts landed once each, outbox empty");
   }
 
   if (runs(5)) {
-    step = "check-5";
+    step = "case-5";
     const before = await remaining(page, "PO-BROWSER-01");
     await record(page, "PO-BROWSER-01", "SYNC-REFUSED", "99");
     const refused = page.getByRole("region", { name: "Not uploaded", exact: true }).locator("article");
@@ -217,7 +217,7 @@ try {
     assert.equal(await refused.count(), 1);
     assert.match(await pending(page), /Refused: 1\./);
     assert.equal(await remaining(page, "PO-BROWSER-01"), before, "the refused receipt moves nothing");
-    await capture(page, "check-5-refused");
+    await capture(page, "case-5-refused");
     const corrected = refused.getByLabel("Corrected request", { exact: false });
     const request = JSON.parse(await corrected.inputValue());
     const lower = (value) => {
@@ -236,12 +236,12 @@ try {
       30_000,
     );
     await until("remaining moves", async () => (await remaining(page, "PO-BROWSER-01")) === before - 1, ONE_POLL);
-    await capture(page, "check-5-corrected");
-    console.log("CHECK 5 PASS: refused receipt in the not uploaded panel, corrected receipt with the same id landed");
+    await capture(page, "case-5-corrected");
+    console.log("CASE 5 PASS: refused receipt in the not uploaded panel, corrected receipt with the same id landed");
   }
 
   console.log(`page errors: ${JSON.stringify(errors)}`);
-  console.log("PASS: Receiving sync checks");
+  console.log("PASS: Receiving sync tests");
 } catch (error) {
   console.log(`page errors: ${JSON.stringify(errors)}`);
   if (page)

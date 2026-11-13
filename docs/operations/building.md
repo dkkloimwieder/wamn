@@ -497,7 +497,7 @@ A digest prefix is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.
 Both commands pull from the registry only, by full digest or tag, because no database holds a package row.
-They check each layer against its digest.
+They test each layer against its digest.
 They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 
 ```bash
@@ -538,7 +538,7 @@ The name `wamn_control` selects the application route client, and `wamn_control_
 A consuming package imports the copy from `src/generated/<name>`, which Git ignores.
 
 The web scripts write the clients before they read them.
-`pnpm -r build`, `pnpm run check`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:
+`pnpm -r build`, `pnpm run lint`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:
 
 ```bash
 cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client

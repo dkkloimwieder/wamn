@@ -71,7 +71,7 @@ impl PatToken {
             random_hex::<32>()?
         ))))
     }
-    /// Check a public lookup prefix without accepting a secret.
+    /// Make sure of a public lookup prefix without accepting a secret.
     pub fn valid_lookup(value: &str) -> bool {
         value.len() == 16 && is_lower_hex(value)
     }

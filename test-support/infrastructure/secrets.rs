@@ -1,4 +1,4 @@
-//! Read and check the credential files selected by an application test.
+//! Read and test the credential files selected by an application test.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -51,7 +51,7 @@ pub struct HostSecretsInput {
     pub database_host: String,
 }
 
-/// A checked credential file reference, without its credential contents.
+/// A validated credential file reference, without its credential contents.
 #[derive(Debug, Clone)]
 pub struct HostSecret {
     pub family: WorkloadRoleFamily,
@@ -59,7 +59,7 @@ pub struct HostSecret {
     pub name: String,
 }
 
-/// Check the declared credential files and each Secret's namespace and endpoint.
+/// Make sure of the declared credential files and each Secret's namespace and endpoint.
 ///
 /// A credential file is named `<family>.json` for a workload role family. The
 /// directory may hold other files beside the Secrets, and they are not read. A

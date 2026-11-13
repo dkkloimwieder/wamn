@@ -1220,7 +1220,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             row.get("privilege_type"),
         )
     };
-    let mut credential_checks = Vec::new();
+    let mut credential_tests = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
         .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
     {
@@ -1277,7 +1277,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .into_iter()
             .map(grant)
             .collect::<BTreeSet<_>>();
-        credential_checks.push((credential_url, family, grants));
+        credential_tests.push((credential_url, family, grants));
     }
     assert!(
         sql::reset::initialize(&platform, &document, system.url())
@@ -1316,7 +1316,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     sql::reset::initialize(&platform, &document, system.url()).await?;
     // SQL restoration uses the installed substrate image. Credential grants
     // belong to reconnect and cannot depend on that image's control code.
-    for (url, _, _) in &credential_checks {
+    for (url, _, _) in &credential_tests {
         let error = connect(url)
             .await
             .err()
@@ -1330,7 +1330,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     }
     ensure::restore_project_database_access(&platform, &document, project_admin_url.as_str())
         .await?;
-    for (url, family, expected_grants) in &credential_checks {
+    for (url, family, expected_grants) in &credential_tests {
         let workload = connect(url).await?;
         assert!(
             !workload

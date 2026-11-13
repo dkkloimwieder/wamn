@@ -1068,7 +1068,9 @@ where
         Err(object_store::Error::NotFound { .. }) => {
             return Ok((DailyCounter::default(), object_store::PutMode::Create));
         }
-        Err(_) => anyhow::bail!("read gs://{bucket}/{path}; check the agent's storage access"),
+        Err(_) => {
+            anyhow::bail!("read gs://{bucket}/{path}; make sure of the agent's storage access")
+        }
     };
     let mode = object_store::PutMode::Update(object_store::UpdateVersion {
         e_tag: object.meta.e_tag.clone(),

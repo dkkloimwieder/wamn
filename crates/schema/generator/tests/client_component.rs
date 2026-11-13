@@ -6,7 +6,7 @@ use wamn_schema_generator::client_plan::{ClientPlan, Role};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
-#[path = "support/client_component_check.rs"]
+#[path = "support/client_component_compile.rs"]
 mod typescript;
 
 fn emit(ir: &ClientContractIr) -> Vec<GeneratedFile> {
@@ -410,8 +410,8 @@ fn declared_group_labels_reach_published_response_groups() {
 }
 
 #[test]
-fn emitted_descriptions_type_check_against_wfe() {
-    typescript::check_descriptions(&fixture::client_release())
+fn emitted_descriptions_compile_against_wfe() {
+    typescript::compile_descriptions(&fixture::client_release())
         .expect("the emitted descriptions satisfy the pinned wfe types");
 }
 

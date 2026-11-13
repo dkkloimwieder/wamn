@@ -1,4 +1,4 @@
-//! Minimal SQL tokenization for package-corpus qualification checks.
+//! Minimal SQL tokenization for package-corpus qualification tests.
 //!
 //! This is intentionally not a migration parser. It distinguishes identifiers
 //! from comments and string bodies so the corpus loader can validate the
@@ -68,7 +68,7 @@ pub fn parameter_count(sql: &[u8]) -> u32 {
 /// relation references, and explicit row-lock clauses. Bind and result shapes
 /// remain owned by the two-sibling verifier; this pass joins the verified SQL
 /// to the manifest's relation authority declaration. [`delete_targets`] also
-/// reports deletions for the manifest to check the model's delete mode.
+/// reports deletions for the manifest to test the model's delete mode.
 pub fn relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
@@ -497,7 +497,7 @@ fn parse_update(
     if assignments == 0 {
         return Err("UPDATE must use simple column assignments");
     }
-    // PostgreSQL checks SELECT on columns read through the proposed row too.
+    // PostgreSQL tests SELECT on columns read through the proposed row too.
     if let Some(insert) = insert {
         for index in insert..end.saturating_sub(2) {
             if identifier(&tokens[index]) == Some("excluded")

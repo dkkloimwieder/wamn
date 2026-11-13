@@ -215,7 +215,7 @@ pub struct HostArgs {
     ///
     /// Prefer this to `--allow-insecure-registries`, which does not relax
     /// verification but replaces it: that flag switches every registry to plain
-    /// HTTP, so credentials travel in the clear and no certificate is checked.
+    /// HTTP, so credentials travel in the clear and no certificate is validated.
     ///
     /// Named to match what the chart renders (`hostGroups[].ociCaPaths` →
     /// `--oci-ca-path`, charts/runtime-operator/templates/runtime/deployment.yaml).
@@ -2369,7 +2369,7 @@ async fn load_local_workload(
         .components
         .into_iter()
         .next()
-        .expect("one component was checked");
+        .expect("one component was validated");
     anyhow::ensure!(
         component.name == "flow-http",
         "local flow-http must name its explicit component file"
@@ -3287,7 +3287,7 @@ host:
     ///
     /// Driven through [`host_credentials`], the same call `run` makes, so the
     /// ROUTING is what is pinned rather than a re-statement of it. Every class is
-    /// checked, not just the ones that matter: naming the wrong class moves BOTH
+    /// validated, not just the ones that matter: naming the wrong class moves BOTH
     /// the class that gained a cut-over url and the one that lost it, and a
     /// two-class assertion could miss the second half.
     #[test]

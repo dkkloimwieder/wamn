@@ -1,7 +1,7 @@
 //! Structural validation of an [`EventRegistration`] against its package model
 //! keys.
 //!
-//! Checks that a registration is well-formed and *consumable*: the schema
+//! Tests that a registration is well-formed and *consumable*: the schema
 //! version is compatible, it targets the catalog it was validated against, its
 //! entity resolves **by id** (the stable key, so a registration can only
 //! bind to a real catalog entity), its op set is non-empty and duplicate-free,
@@ -124,7 +124,7 @@ pub fn validate(
     // Expressions must PARSE as JMESPath (syntax only — the materializer owns
     // evaluation). An empty/whitespace expression is a authoring mistake, not a
     // valid "match everything" (that is `None`), so reject it distinctly.
-    check_expr(&mut issues, "condition", reg.condition.as_deref());
+    report_expr_issues(&mut issues, "condition", reg.condition.as_deref());
 
     if issues.is_empty() {
         Ok(())
@@ -134,7 +134,7 @@ pub fn validate(
 }
 
 /// Reject an empty expression and one that does not compile as JMESPath.
-fn check_expr(issues: &mut Vec<RegistrationIssue>, path: &'static str, expr: Option<&str>) {
+fn report_expr_issues(issues: &mut Vec<RegistrationIssue>, path: &'static str, expr: Option<&str>) {
     let Some(expr) = expr else { return };
     if expr.trim().is_empty() {
         issues.push(error(

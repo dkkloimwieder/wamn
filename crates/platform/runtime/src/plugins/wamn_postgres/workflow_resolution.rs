@@ -5,7 +5,7 @@
 //! The host reads the enabled version of a workflow when `workflow.start`
 //! admits a run, and the queue resolves a claimed run from its row: the graph
 //! from `catalog.workflows` under the run's workflow id and version, and each
-//! node from the component digest admission froze on the run, checked against
+//! node from the component digest admission froze on the run, validated against
 //! the descriptors of the release the run pins. Nodes come from that release
 //! only in this epic.
 //!

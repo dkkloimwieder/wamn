@@ -35,7 +35,7 @@ fn sql_paths(value: &Value, paths: &mut BTreeSet<String>) {
 }
 
 async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
-    wamn_schema_generator::build_record::check_current(package)?;
+    wamn_schema_generator::build_record::require_current(package)?;
     let manifest_path = wamn_schema_generator::package_manifest_path(package);
     let manifest_bytes = std::fs::read(&manifest_path)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;

@@ -110,9 +110,9 @@ pub(crate) async fn introspect_with_manifest(
 ///
 /// The verdict is the SERVER'S. Nothing here reads SQL text.
 ///
-/// Planning also checks authority. Every statement plans as `wamn_app` under
+/// Planning also tests authority. Every statement plans as `wamn_app` under
 /// exactly the grants that the package declaration derives, in one transaction
-/// that rolls back. PostgreSQL checks column privileges at plan time. A
+/// that rolls back. PostgreSQL tests column privileges at plan time. A
 /// statement that reads a column outside those grants therefore fails here,
 /// and so does every whole-row reference that the grants do not cover. The
 /// error lists each refused statement with its path, SQLSTATE, and message.
@@ -125,7 +125,7 @@ pub(crate) async fn classify_statements(
     let transaction = client
         .transaction()
         .await
-        .context("begin the statement check transaction")?;
+        .context("begin the statement admission test transaction")?;
     transaction
         .batch_execute(&application_role_sql(schemas, grants))
         .await
@@ -148,9 +148,9 @@ pub async fn classify_statements_with_existing_grants_in_transaction(
     schema: &str,
 ) -> Result<StatementTransactionality> {
     let savepoint = transaction
-        .savepoint("upgrade_statement_check")
+        .savepoint("upgrade_statement_admission")
         .await
-        .context("begin the statement check savepoint")?;
+        .context("begin the statement admission test savepoint")?;
     classify_with_existing_grants(savepoint, corpus, schema).await
 }
 
@@ -185,7 +185,7 @@ async fn classify_statements_in_transaction(
         let sql =
             std::str::from_utf8(bytes).with_context(|| format!("statement {path} is not UTF-8"))?;
         let statement = transaction
-            .savepoint("statement_check")
+            .savepoint("statement_admission")
             .await
             .with_context(|| format!("open a savepoint for statement {path}"))?;
         // simple_query, NOT query_one: the statement carries $1..$n, and the
@@ -233,7 +233,7 @@ async fn classify_statements_in_transaction(
     transaction
         .rollback()
         .await
-        .context("roll back the statement check transaction")?;
+        .context("roll back the statement admission test transaction")?;
     ensure!(
         refusals.is_empty(),
         "PostgreSQL refused these statements as {DATA_ACCESS_ROLE} under {grant_context}:\n{}",

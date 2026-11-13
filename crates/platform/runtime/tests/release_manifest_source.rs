@@ -85,7 +85,7 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
     );
     assert_eq!(blobs.config.media_type, RELEASE_MANIFEST_CONFIG_MEDIA_TYPE);
     verify_release_manifest_artifact_layout(&manifest, &digest, Some(bytes.len()))
-        .expect("the publisher's own size check still passes");
+        .expect("the publisher's own size test still passes");
     assert_eq!(
         verify_release_manifest_artifact_layout(&manifest, &digest, Some(bytes.len() + 1))
             .expect_err("a declared size the layer contradicts refuses")
@@ -256,7 +256,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
             .expect("the pulled bytes load the release");
 
     // The identity comes out of the transferred content, and it agrees with
-    // the name the pod template gave — the check the mount carrier cannot
+    // the name the pod template gave — the test the mount carrier cannot
     // make, made here against a third party that stored the bytes.
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
@@ -409,9 +409,9 @@ async fn a_conforming_stub_returns_the_exact_published_bytes() {
 async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
     let canonical = br#"{"format-version":1}"#;
     let (digest, mut wire) = published_artifact(canonical);
-    // The layer digest still names the exact bytes served, so the layout check
+    // The layer digest still names the exact bytes served, so the layout test
     // and `oci-client`'s own digest verification both pass. Only the declared
-    // length is a lie — and nothing upstream of this module checks it.
+    // length is a lie — and nothing upstream of this module tests it.
     wire["layers"][0]["size"] = serde_json::json!(canonical.len() + 1);
 
     let registry = lying_registry(
@@ -451,14 +451,14 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 /// unreachable registry, and an operator is paged accordingly. What is *not*
 /// shown here is the source's own digest comparison in
 /// `verify_transferred_body`: it stays unreachable by construction, defense in
-/// depth against the transport dropping its check, and it is held by a direct
+/// depth against the transport dropping its test, and it is held by a direct
 /// call in
 /// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
 #[tokio::test]
 async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
     let canonical = br#"{"format-version":1}"#;
     let (digest, wire) = published_artifact(canonical);
-    // Same length, different content, so the size check cannot be what fires.
+    // Same length, different content, so the size test cannot be what fires.
     let mut lied = canonical.to_vec();
     lied[1] = b'F';
     assert_eq!(lied.len(), canonical.len());
@@ -488,8 +488,8 @@ async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
 /// A manifest the registry serves but `oci-client` cannot parse is a contradiction.
 ///
 /// `oci-client` 0.17 refuses a manifest body with schema version 1 before the
-/// layout check sees it. `pull_verified` classifies that transport error as
-/// `Mismatched`, the same class the layout check gives a wrong envelope, and
+/// layout test sees it. `pull_verified` classifies that transport error as
+/// `Mismatched`, the same class the layout test gives a wrong envelope, and
 /// not as an unreachable registry (`wamn-0h0g.19.18`).
 #[tokio::test]
 async fn a_manifest_the_registry_cannot_parse_refuses_as_a_contradiction() {

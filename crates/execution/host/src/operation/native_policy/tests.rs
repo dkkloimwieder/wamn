@@ -1108,7 +1108,7 @@ async fn run_case(case: Case) {
                     .iter()
                     .any(|event| event.phase == phase)
             });
-            // The last budget attempt stands, and the checks below report it.
+            // The last budget attempt stands, and the tests below report it.
             if looped || budget >= 64 * BUDGET {
                 break (deadline, result);
             }

@@ -1,7 +1,7 @@
 //! The per-call authority of the edge application.
 //!
 //! An edge application imports `wamn:node/types` only, so a call needs no
-//! capability binding. Activation checks the deadline, that the operation is
+//! capability binding. Activation tests the deadline, that the operation is
 //! admitted and released, and the released-operation grant under the caller.
 
 use std::collections::{BTreeMap, HashSet};
@@ -88,7 +88,7 @@ impl EdgePolicy {
         })
     }
 
-    /// Check one call: the deadline, the admitted and released operation, and
+    /// Make sure of one call: the deadline, the admitted and released operation, and
     /// the released-operation grant under the caller.
     fn authorize(
         &self,

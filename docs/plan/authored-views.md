@@ -21,8 +21,8 @@ Materialized views stay refused.
 | Term | Meaning |
 | --- | --- |
 | base table | A table that a view reads. |
-| owner rights | PostgreSQL checks a view's base table privileges against the view owner, not the caller. |
-| invoker rights | PostgreSQL checks them against the caller, through the view option `security_invoker`. |
+| owner rights | PostgreSQL tests a view's base table privileges against the view owner, not the caller. |
+| invoker rights | PostgreSQL tests them against the caller, through the view option `security_invoker`. |
 | linking column | A view column that holds a stored foreign key value, which names a row of another table. |
 | root | The table whose id keys each row of a feeding view. |
 | column origin | The base table and column that a plain view column reads. |

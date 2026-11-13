@@ -367,7 +367,7 @@ pub struct ReleaseIdentity {
     /// The serving manifest's digest — `runs.manifest_digest`. The
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
-    /// hand-rolled shape check on this path.
+    /// hand-rolled shape test on this path.
     manifest_digest: ManifestDigest,
 }
 
@@ -653,7 +653,7 @@ pub struct ConnectionEffectSnapshot {
 /// mounted release proves the route. No run, plan, frame, or effect row
 /// participates. The selected workflow version stays valid for the delivery
 /// even if the environment selects another version. The mounted release is
-/// checked separately by `ConnectionHttp`, because its canonical bytes are not
+/// validated separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 ///
 /// The origin and executing component facts are the descriptors of the
@@ -821,7 +821,7 @@ enum EffectRead {
 /// It runs on the raw `wamn:postgres/client` surface, which only platform
 /// components import, and on every verified statement. Admission also parses
 /// declared SQL and refuses these constructs on the parse tree; this guard
-/// still covers a release admitted before that check, or a forged descriptor.
+/// still covers a release admitted before that test, or a forged descriptor.
 ///
 /// # The env_key axis is structurally closed, and this is no longer what holds it
 ///
@@ -1532,7 +1532,7 @@ impl WamnPostgres {
     ///
     /// The digest arrives as [`ManifestDigest`], so its shape is already validated.
     ///
-    /// # Why effect authority needs no equality check against this record
+    /// # Why effect authority needs no equality test against this record
     ///
     /// The digest comes from the same loaded object every reader resolves
     /// against, so a run leased under it runs the manifest the pod loaded —
@@ -1672,10 +1672,10 @@ impl WamnPostgres {
     /// keeps the answer. A request element that begins its own transaction
     /// binds twice, and its second bind is
     /// [`bind_request_element_session_claims`](Self::bind_request_element_session_claims),
-    /// which does not check again.
+    /// which does not test again.
     ///
     /// On a host that watches the auth bucket, a user row deleted after the
-    /// check stays accepted until a change message clears the memory, or
+    /// test stays accepted until a change message clears the memory, or
     /// until the memory's TTL ends if the message is lost. A host without
     /// the bucket keeps no answer and reads the row on every bind.
     ///
@@ -1816,7 +1816,7 @@ impl WamnPostgres {
     /// The read uses the env_key's own guest login, for two reasons. It is the
     /// only authority class every composition root names, because the platform
     /// classes are unnamed when their generation is absent. And it is the
-    /// credential that already holds `SELECT` on this table, so the check
+    /// credential that already holds `SELECT` on this table, so the test
     /// needs no new grant. The database is the org boundary.
     ///
     /// A read that cannot run refuses the bind with its own error rather than
@@ -1837,7 +1837,7 @@ impl WamnPostgres {
                 .await
                 .map_err(|source| ClaimError {
                     kind: ClaimErrorKind::Infrastructure,
-                    context: "check out the env_key connection that reads platform.\"user\"",
+                    context: "acquire the env_key connection that reads platform.\"user\"",
                     source: source.into(),
                 })?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
@@ -2044,7 +2044,7 @@ impl WamnPostgres {
     /// Load every host-derived HTTP authorization input in one read-only
     /// transaction under the component's injected env_key.
     ///
-    /// # Why the caller's env_key is checked against the registry (wamn-0h0g.17.7)
+    /// # Why the caller's env_key is validated against the registry (wamn-0h0g.17.7)
     ///
     /// `env_key` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
     /// when its store was constructed
@@ -2058,7 +2058,7 @@ impl WamnPostgres {
     ///
     /// This plugin's registry is the authority on a component id's env_key, so a
     /// caller-supplied env_key that DISAGREES with it is refused rather than
-    /// honored. The check is a denial, not a correction: silently substituting
+    /// honored. The test is a denial, not a correction: silently substituting
     /// the registered env_key would hide the divergence it exists to catch.
     ///
     /// An UNBOUND component id is refused outright (wamn-0h0g.17.11), not
@@ -2386,7 +2386,7 @@ impl WamnPostgres {
     /// The user row, roles and permissions of one principal, from the host's
     /// memory or, on a miss, from one read under the callable-HTTP authority
     /// with no session claims. The read also answers the provisioned-principal
-    /// check of the claim bind.
+    /// test of the claim bind.
     pub async fn principal_grants(
         &self,
         project: &str,

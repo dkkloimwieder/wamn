@@ -267,10 +267,10 @@ gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --l
   --member serviceAccount:$NSA --role roles/artifactregistry.reader
 ```
 
-Make the firewall rule for the load balancer health checks (owner input 14):
+Make the firewall rule for the load balancer health tests (owner input 14):
 
 ```bash
-gcloud compute firewall-rules create wamn-edge-health-check --project wamn-dev --network wamn --direction INGRESS \
+gcloud compute firewall-rules create wamn-edge-health-probe --project wamn-dev --network wamn --direction INGRESS \
   --allow tcp:8443 --source-ranges 35.191.0.0/16,130.211.0.0/22
 ```
 
@@ -373,7 +373,7 @@ Keep the cluster running until this step finishes because OpenTofu reads its net
 The rendered `main.tf.json` names the resources below.
 The CDN backend is `google_compute_backend_service.edge_https` with `enable_cdn = true`.
 OpenTofu orders the deletes from their references.
-It removes the forwarding rule before its proxy and address, then the URL map, backend, and health check.
+It removes the forwarding rule before its proxy and address, then the URL map, backend, and health test.
 It removes the certificate map entry before the map and certificate, then the DNS authorization.
 
 ```bash

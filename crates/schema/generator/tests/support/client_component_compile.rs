@@ -1,4 +1,4 @@
-//! The existing description check, shared by the example and integration test.
+//! The existing description compile, shared by the example and integration test.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8,18 +8,19 @@ use serde_json::json;
 use wamn_schema_generator::client_component::emit_ts_components;
 use wamn_schema_generator::client_plan::ClientPlan;
 
-pub fn check_descriptions(
+pub fn compile_descriptions(
     release: &wamn_schema_generator::client_ir::ClientContractIr,
 ) -> Result<()> {
     let repository = repository_root()?;
-    let root = std::env::temp_dir().join(format!("wamn-check-descriptions-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("wamn-compile-descriptions-{}", std::process::id()));
     std::fs::create_dir(&root)?;
-    let result = check(&repository, &root, release);
-    std::fs::remove_dir_all(&root).context("remove generated description check files")?;
+    let result = compile(&repository, &root, release);
+    std::fs::remove_dir_all(&root).context("remove generated description compile files")?;
     result
 }
 
-fn check(
+fn compile(
     repository: &Path,
     root: &Path,
     release: &wamn_schema_generator::client_ir::ClientContractIr,
@@ -64,12 +65,12 @@ fn check(
         .args(["exec", "tsc", "--project"])
         .arg(root)
         .status()
-        .context("run the existing TypeScript check")?;
+        .context("run the existing TypeScript compile")?;
     if !status.success() {
         bail!("wfe refused the emitted descriptions: {status}");
     }
     println!(
-        "{} generated modules type-check against @wfe/generator",
+        "{} generated modules type-compile against @wfe/generator",
         files.len()
     );
     Ok(())

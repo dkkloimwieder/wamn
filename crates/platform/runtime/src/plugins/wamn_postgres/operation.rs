@@ -733,7 +733,7 @@ async fn begin(
         ..facts.claims.clone()
     };
     if authorize_only {
-        // The host-issued caller already passed authentication and grant checks.
+        // The host-issued caller already passed authentication and grant tests.
         postgres
             .bind_request_element_session_claims(&open.scope, &claims)
             .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;

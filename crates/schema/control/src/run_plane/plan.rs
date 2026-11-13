@@ -189,7 +189,7 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 /// `docs/architecture/data-access.md#schema-and-definition-ownership` and keeps
 /// `current_user` an honest RLS input. `wamn-0h0g.12.178`: this predicate was
 /// authored against the `SET TRUE` grant of `f0d18024`; `358f6792` tightened the
-/// provisioner's grant, its state probe, and its own violation check to `SET
+/// provisioner's grant, its state probe, and its own violation test to `SET
 /// FALSE` without reaching here, leaving the reconciler demanding the LOOSER
 /// shape and refusing every environment `provision-project-env --prepare`
 /// actually mints. `provisioner_minted_generation_leg` is the arm that meets
@@ -517,7 +517,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
 
     // 2b. Exact CHECK convergence. AddColumn carries its own inline CHECK, so
     // skip that spec when its column is absent in the observation. Table-level
-    // checks run after AddColumn and therefore may safely name newly-added
+    // CHECK constraints are added after AddColumn and may name newly-added
     // columns. PostgreSQL validates every ADD against existing rows; a stored
     // row that violates the canonical contract aborts reconciliation rather
     // than being rewritten or deleted.

@@ -95,7 +95,7 @@ pub enum TlsIdentity {
     Ip(IpAddr),
 }
 
-/// A checked endpoint whose address must be used by the connector as-is.
+/// A validated endpoint whose address must be used by the connector as-is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedEndpoint {
     pub address: SocketAddr,

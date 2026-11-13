@@ -1,4 +1,4 @@
-//! Production route authentication and shared test-document checks.
+//! Production route authentication and shared test-document tests.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1167,7 +1167,7 @@ async fn production_operator_authentication(root: &Path) {
         &mut admin_admissions,
     )
     .await
-    .expect("the admin project role passes the identity check");
+    .expect("the admin project role passes the identity condition");
     assert_eq!(admin_admissions, 1);
     disable_principal(admin.as_ref(), principal.id(), &mut AuthDrops::default())
         .await

@@ -123,7 +123,7 @@ struct Forwarder {
     credential_bound: u32,
 }
 
-/// Check `config`, read the PAT, and forward the samples of `samples` until
+/// Make sure of `config`, read the PAT, and forward the samples of `samples` until
 /// `stopped` turns true.
 pub fn start(
     config: &ForwardConfig,

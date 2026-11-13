@@ -1,7 +1,7 @@
 //! The list of every administration writer of a fact that the host keeps in
 //! its connection memory (docs/architecture/execution.md#connection-memory).
 //! Each writer runs once on real PostgreSQL, its caller deletes the drops it
-//! recorded from a private bucket, and the test checks the keys that went.
+//! recorded from a private bucket, and the test tests the keys that went.
 
 use std::collections::BTreeSet;
 use std::sync::Mutex;

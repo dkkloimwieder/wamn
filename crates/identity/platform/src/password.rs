@@ -443,7 +443,7 @@ fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
 
 /// Establish a user's first password using a correctly bound invitation.
 ///
-/// Expensive hashing precedes the principal lock. The transaction rechecks
+/// Expensive hashing precedes the principal lock. The transaction tests again
 /// the invitation and active, unenrolled principal after acquiring that lock.
 pub async fn enroll_password(
     client: &mut Client,
@@ -530,7 +530,7 @@ async fn store_password(
 
 /// Authenticate a password without establishing environment membership or roles.
 ///
-/// The service still owns source/account throttling and all admission checks.
+/// The service still owns source/account throttling and all admission tests.
 /// Unknown, disabled, and unenrolled accounts perform the same bounded hash work.
 pub async fn authenticate_password(
     client: &(impl GenericClient + Sync),

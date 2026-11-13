@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every package of a Cargo workspace compiles on its own.
+"""Make sure that every package of a Cargo workspace compiles on its own.
 
 Cargo unifies dependency features across the packages of one build. A package
 can then compile in the workspace build while it uses a dependency feature
@@ -31,7 +31,7 @@ def members(manifest):
 
 def main(arguments):
     if len(arguments) > 1:
-        print("usage: tools/check-packages-alone [MANIFEST]", file=sys.stderr)
+        print("usage: tools/compile-packages-alone [MANIFEST]", file=sys.stderr)
         return 64
     manifest = arguments[0] if arguments else ROOT_MANIFEST
     failed = []
@@ -44,7 +44,7 @@ def main(arguments):
             failed.append(name)
     if failed:
         print(
-            "check-packages-alone: these packages do not compile on their own: " + ", ".join(failed),
+            "compile-packages-alone: these packages do not compile on their own: " + ", ".join(failed),
             file=sys.stderr,
         )
         return 1

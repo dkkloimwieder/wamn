@@ -65,8 +65,8 @@
 --       onto prod is an INTENTIONAL `recovery-domain: {shared-with: prod}` policy,
 --       and `canary` isolated (T4) is `recovery-domain: own` (→ <org>-canary).
 --
--- id/name WELL-FORMEDNESS: crates/control/registry validate() (check_id/check_env/
--- check_name) is the PRIMARY guard, and it runs on the in-memory `from_json`
+-- id/name WELL-FORMEDNESS: crates/control/registry validate() (report_id_issues/report_env_issues/
+-- report_name_issues) is the PRIMARY guard, and it runs on the in-memory `from_json`
 -- import path a direct control-plane writer (e.g. wamn-2ib) uses. But a writer
 -- that skips BOTH provision-org AND Registry::validate() would land a malformed
 -- id straight into K8s object names + WAL paths with no guard, so the stored
@@ -226,7 +226,7 @@ END $meta$;
 -- Structural CHECKs: `pooled ⟺ pool_cluster present` (a pooled org names its
 -- shared pool; a dedicated org's clusters are derived, so pool is NULL) plus a
 -- defensive charset/length backstop (cjv.20) on `id` and `pool_cluster` mirroring
--- crates/control/registry validate() (check_id / check_name) — `id` must be a
+-- crates/control/registry validate() (report_id_issues / report_name_issues) — `id` must be a
 -- lowercase slug `[a-z0-9-]` (start/end alnum, NO consecutive hyphens — wamn-R27,
 -- since `--` is the `wamn-db-<org>--<project>--<env>` component separator, so a
 -- `--` run would let two triples collide onto one name), ≤ 40 bytes, and not under
@@ -302,7 +302,7 @@ CREATE TABLE registry.env_policies (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, name),
-    -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
+    -- cjv.20 charset backstop: `name` IS the env slug (report_env_issues mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
     CONSTRAINT env_policies_name_charset_check
         CHECK (name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
@@ -325,7 +325,7 @@ CREATE TABLE registry.projects (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, id),
-    -- cjv.20 charset backstop: project `id` is a check_id mirror (lowercase slug
+    -- cjv.20 charset backstop: project `id` is a report_id_issues mirror (lowercase slug
     -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
     CONSTRAINT projects_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
@@ -705,7 +705,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- satisfies it). The policy FK is deliberately NOT a CASCADE: a policy in use
 -- by a provisioned env cannot be dropped (a cascade would silently erase the
 -- record of a real provisioned database). It is DEFERRABLE INITIALLY IMMEDIATE
--- — inserts are checked immediately; `SET CONSTRAINTS ... DEFERRED` inside a
+-- — inserts are validated immediately; `SET CONSTRAINTS ... DEFERRED` inside a
 -- transaction is the order-independent escape hatch for bulk teardown (the
 -- env_policies org-FK ordering note below makes plain single-statement org
 -- DELETEs cascade cleanly on a fresh apply).

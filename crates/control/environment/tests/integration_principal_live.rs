@@ -38,7 +38,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             "example.invalid",
         )?)
         .await?;
-    // Simulate the old service check and exercise the actual schema transition.
+    // Simulate the old service CHECK constraint and exercise the actual schema transition.
     admin
         .batch_execute(
             "ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_service_principal_check;

@@ -9,7 +9,7 @@ use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Read the same base builds that component composition uses. The build record
-/// records each manifest’s digest. Release resolution checks the package
+/// records each manifest’s digest. Release resolution tests the package
 /// artifact pin.
 pub(crate) fn load_base_manifests(
     package_root: &Path,

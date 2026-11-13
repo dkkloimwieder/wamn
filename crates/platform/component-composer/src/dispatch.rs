@@ -62,7 +62,7 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
             }}", parameters[0], parameters[1])?;
         names.push(name.clone());
     }
-    // Only reconstruct the admitted JSON seam. Composition checks its types
+    // Only reconstruct the admitted JSON seam. Composition tests its types
     // against the application's exports; named SQL imports never enter Resolve.
     for (package, source) in packages {
         resolve.push_str("operations.wit", &format!("package {package}; {source}"))?;

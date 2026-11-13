@@ -479,7 +479,7 @@ impl AuthenticatedCaller {
         self.active_role.as_deref()
     }
 
-    /// Check one sealed registered-operation token of the serving release.
+    /// Make sure of one sealed registered-operation token of the serving release.
     ///
     /// `admin` holds every operation the release serves. Any other caller holds
     /// the operation when it holds the token's stable reference, the token
@@ -1119,11 +1119,11 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
 #[derive(Clone, Copy)]
 pub enum RouteCredential<'a> {
     /// A session token. `csrf` is `Some` when the token came by the session
-    /// cookie: the request then passes the CSRF check, and the flag says
+    /// cookie: the request then passes the CSRF test, and the flag says
     /// whether the route requires the header, which a read route does not.
     Session { token: &'a str, csrf: Option<bool> },
     /// A PAT. The authenticator reads it with [`required_bearer_token`] once
-    /// it has a mechanism to check one.
+    /// it has a mechanism to test one.
     Pat,
 }
 
@@ -1253,11 +1253,11 @@ fn route_type(
         .map(|route| route.type_)
 }
 
-/// Check the signed double-submit of a cookie session.
+/// Make sure of the signed double-submit of a cookie session.
 ///
 /// A cookie token must carry the `csrf` claim. When the route requires it, one
 /// `x-wamn-csrf` header must hash to that claim.
-pub fn check_csrf(
+pub fn require_csrf(
     requires_csrf: bool,
     claims_csrf: Option<&str>,
     headers: &[Header],
@@ -2477,7 +2477,7 @@ mod tests {
     fn csrf_requires_the_claim_and_one_header_that_hashes_to_it() {
         let token = "csrf-token-value";
         let claim = hex::encode(Sha256::digest(token.as_bytes()));
-        check_csrf(true, Some(&claim), &[header("X-Wamn-Csrf", token)])
+        require_csrf(true, Some(&claim), &[header("X-Wamn-Csrf", token)])
             .expect("a matching header passes");
         for (claims_csrf, headers) in [
             (Some(claim.as_str()), vec![]),
@@ -2489,7 +2489,7 @@ mod tests {
             (None, vec![header("x-wamn-csrf", token)]),
         ] {
             assert_unauthorized(
-                &check_csrf(true, claims_csrf, &headers).expect_err("the CSRF check refuses"),
+                &require_csrf(true, claims_csrf, &headers).expect_err("the CSRF condition refuses"),
             );
         }
     }
@@ -2497,9 +2497,9 @@ mod tests {
     #[test]
     fn csrf_not_required_skips_the_header_but_still_needs_the_claim() {
         let claim = hex::encode(Sha256::digest(b"csrf-token-value"));
-        check_csrf(false, Some(&claim), &[]).expect("no header is needed");
+        require_csrf(false, Some(&claim), &[]).expect("no header is needed");
         assert_unauthorized(
-            &check_csrf(false, None, &[]).expect_err("a cookie token without the claim refuses"),
+            &require_csrf(false, None, &[]).expect_err("a cookie token without the claim refuses"),
         );
     }
 

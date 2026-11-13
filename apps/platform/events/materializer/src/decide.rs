@@ -36,7 +36,7 @@ pub fn verified_source_event_id(
 
 /// Accept exactly one host-scoped `Nats-Msg-Id` matching a derived record.
 ///
-/// Scope equality is checked before identity derivation, so bytes claiming a
+/// Scope equality is validated before identity derivation, so bytes claiming a
 /// foreign tenant/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
     env_key: &str,

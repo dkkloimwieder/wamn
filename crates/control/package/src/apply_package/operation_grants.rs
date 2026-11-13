@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use tokio_postgres::Transaction;
 use wamn_control_provision::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
-    operation_grant_floor_check_sql,
+    operation_grant_floor_requirements_sql,
 };
 
 /// Create the tenant's built-in `admin` role when it is absent, and return
@@ -18,7 +18,7 @@ pub(super) async fn ensure_admin_role(
     tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
         .await
         .context("disable row filtering for the admin role write")?;
-    tx.batch_execute(&operation_grant_floor_check_sql())
+    tx.batch_execute(&operation_grant_floor_requirements_sql())
         .await
         .context("verify the application authorization floor")?;
     let written = tx

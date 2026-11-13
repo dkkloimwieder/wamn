@@ -4,7 +4,7 @@
 //!
 //! The test runs the `wamn-edge` binary as a child with a configuration file,
 //! a pseudo-terminal as its device, and an HTTPS platform in the test that
-//! checks the device PAT and applies each key once. It uses the
+//! tests the device PAT and applies each key once. It uses the
 //! `apps/edge_device` bundle that the support module builds, as the route tests
 //! do. The live test sends
 //! to a real platform route instead, and needs its address, PAT and authority.

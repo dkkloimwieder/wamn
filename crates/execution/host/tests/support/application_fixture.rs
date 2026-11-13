@@ -239,7 +239,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
 }
 
 /// A host that serves the application set of the fixture release to session
-/// callers, with the identity reader for the covering check. Its database
+/// callers, with the identity reader for the covering test. Its database
 /// holds the two fixture users, and `first` holds `admin`.
 pub(super) struct ApplicationHost {
     pub(super) admin: Client,

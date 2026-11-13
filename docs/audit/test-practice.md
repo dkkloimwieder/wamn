@@ -2,7 +2,7 @@
 
 Epic `wamn-inmae`, issues `.2` and `.4`. This is a report. It changes no test and ran no test, build or cluster. The owner rules on each proposal before any test is deleted.
 
-The audit baseline is `788cdadb4` ([measurements](measurements.md) line 3). Source citations are at main `c6233b962`. Read-only Codex gpt-6.1-sol lanes measured the files, and root checked the citations against source.
+The audit baseline is `788cdadb4` ([measurements](measurements.md) line 3). Source citations are at main `c6233b962`. Read-only Codex gpt-6.1-sol lanes measured the files, and root validated the citations against source.
 
 The review applies the standing testing rulings:
 
@@ -18,9 +18,9 @@ Line ranges include both ends. A "keep" block proves a contract that no lower ti
 
 ### crates/control/lib/tests/platform_apply_kind.rs
 
-The file has 2,819 lines today and 2,213 at the audit. The diff since the audit adds 1,929 lines and removes 1,323 (3,252 changed, 606 net). Commit `003eccd57` (a failed cluster resumes at a named step) changed 3,259 of those lines. It moved existing checks into named step blocks, and it added the resume orchestration at lines 65-141, 198-275 and 537-551.
+The file has 2,819 lines today and 2,213 at the audit. The diff since the audit adds 1,929 lines and removes 1,323 (3,252 changed, 606 net). Commit `003eccd57` (a failed cluster resumes at a named step) changed 3,259 of those lines. It moved existing tests into named step blocks, and it added the resume orchestration at lines 65-141, 198-275 and 537-551.
 
-The blocks that prove deployed contracts stay. Examples are database and NATS readiness (644-668), the anonymous NATS refusal (710-740), one NATS (782-803), certificate issuance by cert-manager (804-823), the unqualified-apply refusal (881-899, 936-962), the deployed release digest (1139-1156), the unchanged-state blocks of the rerun (1441-1524), the HTTPS probes (2192-2393) and the log privacy checks (1668-1730, 2442-2503).
+The blocks that prove deployed contracts stay. Examples are database and NATS readiness (644-668), the anonymous NATS refusal (710-740), one NATS (782-803), certificate issuance by cert-manager (804-823), the unqualified-apply refusal (881-899, 936-962), the deployed release digest (1139-1156), the unchanged-state blocks of the rerun (1441-1524), the HTTPS probes (2192-2393) and the log privacy tests (1668-1730, 2442-2503).
 
 The cuts below remove rendered shape, progress narration and log prose. They total 506 lines.
 
@@ -30,9 +30,9 @@ The cuts below remove rendered shape, progress narration and log prose. They tot
 | 583-591, 639-641 | 12 | Web artifact build and push in a case with no web bucket | `crates/control/lib/src/web_artifact.rs:1036`, `:1342`, `crates/control/lib/src/environment/clients.rs:117` |
 | 669-709 | 41 | A list of installed objects with no behavior | `crates/control/lib/tests/platform_render.rs:344` |
 | 741-781 | 41 | NATS authorization text | `crates/control/lib/src/platform/install.rs:1532`, `crates/control/lib/src/platform/broker.rs:483` |
-| 833-843 | 11 | The release digest found in log prose | The completion check at 844-861 |
+| 833-843 | 11 | The release digest found in log prose | The completion test at 844-861 |
 | 901-924 | 24 | Qualification refusal prose | `crates/control/lib/tests/release_qualification_live.rs:48`, `crates/control/lib/src/platform/environments.rs:529` |
-| 967-981 | 15 | Connection behavior read from `done` and `skipped` prose | The Secret check at 982-993, `crates/control/lib/tests/platform_render.rs:1280` |
+| 967-981 | 15 | Connection behavior read from `done` and `skipped` prose | The Secret test at 982-993, `crates/control/lib/tests/platform_render.rs:1280` |
 | 998-1010 | 13 | Publication output format | 844-861 and 1011-1022 |
 | 1117-1138 | 22 | Progress titles of the qualified apply | The deployed-state blocks at 1139-1249 |
 | 1157-1168, 1821-1889 | 81 | Number sequence, and its helper `number_sequence_pattern` | `crates/control/lib/tests/run_plane_live/platform_configuration.rs:212` |
@@ -53,31 +53,31 @@ The cuts total 31 lines.
 | Lines | Count | What it pins | Owner that keeps the contract |
 | --- | ---: | --- | --- |
 | 286-304 | 19 | `pin_web_clients`, which builds real web artifacts for a cluster with no web bucket | The web artifact tests named above |
-| 572 (the `rows.len() == 4 &&` part), 573-575 | 3 | Fixture sizes (four rows, five bindings) | The per-handle scope check at 576-593, `crates/control/lib/tests/environment_render.rs:573` |
-| 1154-1162 | 9 | A repeated preload shape check | `crates/control/lib/tests/environment_render.rs:487` |
+| 572 (the `rows.len() == 4 &&` part), 573-575 | 3 | Fixture sizes (four rows, five bindings) | The per-handle scope test at 576-593, `crates/control/lib/tests/environment_render.rs:573` |
+| 1154-1162 | 9 | A repeated preload shape test | `crates/control/lib/tests/environment_render.rs:487` |
 
 ### crates/control/lib/tests/platform_render.rs
 
-The file is new since the audit and has 1,777 lines. It is a contract-tier target (`tests/selection.toml:78`). Most of it is a set of test-side checkers. Each checker reads the rendered install documents and checks one relationship: service accounts, Secret and ConfigMap inputs, Role verbs, command inputs, Service selectors, script output, connections and package owners. Each checker came with tests that feed it a fabricated broken document and pin its exact diagnostic text.
+The file is new since the audit and has 1,777 lines. It is a contract-tier target (`tests/selection.toml:78`). Most of it is a set of test-side validators. Each validator reads the rendered install documents and tests one relationship: service accounts, Secret and ConfigMap inputs, Role verbs, command inputs, Service selectors, script output, connections and package owners. Each validator came with tests that feed it a fabricated broken document and pin its exact diagnostic text.
 
-The positive checks stay, because the renderer's unit test (`crates/control/lib/src/platform/render.rs:736-786`) checks only order and presence. The journey propagation tests at 1434-1777 stay, because they change an input and compare both consumers.
+The positive tests stay, because the renderer's unit test (`crates/control/lib/src/platform/render.rs:736-786`) tests only order and presence. The journey propagation tests at 1434-1777 stay, because they change an input and compare both consumers.
 
-The cuts below remove the tests of the checkers, the fixture-count smoke test and one dead helper. They total 383 lines.
+The cuts below remove the tests of the validators, the fixture-count smoke test and one dead helper. They total 383 lines.
 
 | Lines | Count | What it pins | Owner that keeps the contract |
 | --- | ---: | --- | --- |
 | 59-83 | 25 | `prekind_install_renders`: fixture counts and empty web maps | `crates/control/lib/src/platform/render.rs:736`, `crates/control/lib/src/environment/write.rs:261`, `crates/control/lib/tests/release_chart_render.rs:298` |
-| 161-180 | 20 | A checker diagnostic for a missing service account | The positive test at 155 |
-| 351-367 | 17 | A checker diagnostic for a missing Secret key | The positive test at 344 |
-| 462-509 | 48 | Checker diagnostics for a missing verb and an unknown command | The positive test at 456 |
-| 751-805 | 55 | Checker diagnostics for a missing input and an unbacked export | The positive test at 744 |
-| 892-924 | 33 | Checker diagnostics for selectors | The positive test at 886 |
-| 989-1043 | 55 | Checker diagnostics for discarded script output | The positive test at 983, `crates/control/lib/src/platform/invite.rs:221`, `:233` |
+| 161-180 | 20 | A validator diagnostic for a missing service account | The positive test at 155 |
+| 351-367 | 17 | A validator diagnostic for a missing Secret key | The positive test at 344 |
+| 462-509 | 48 | Validator diagnostics for a missing verb and an unknown command | The positive test at 456 |
+| 751-805 | 55 | Validator diagnostics for a missing input and an unbacked export | The positive test at 744 |
+| 892-924 | 33 | Validator diagnostics for selectors | The positive test at 886 |
+| 989-1043 | 55 | Validator diagnostics for discarded script output | The positive test at 983, `crates/control/lib/src/platform/invite.rs:221`, `:233` |
 | 1240-1278 | 39 | `replace_job_document`, dead after the next two cuts | None needed |
-| 1287-1310 | 24 | A checker diagnostic for a binding | The positive test at 1280 |
+| 1287-1310 | 24 | A validator diagnostic for a binding | The positive test at 1280 |
 | 1367-1433 | 67 | Three package-owner cases that copy the same WMS setup | `crates/catalog/model/src/environment_application.rs:45`, `crates/control/lib/src/environment/analyse.rs:887`, `:896` |
 
-A stricter reading of ruling 1 deletes the checkers too. Lines 84-1432 (1,349 lines) interpret rendered Kubernetes documents inside a test. Under that reading, the file goes to 428 lines. The renderer's own unit tests must then assert each relationship that the owner wants to keep. The owner decides.
+A stricter reading of ruling 1 deletes the validators too. Lines 84-1432 (1,349 lines) interpret rendered Kubernetes documents inside a test. Under that reading, the file goes to 428 lines. The renderer's own unit tests must then assert each relationship that the owner wants to keep. The owner decides.
 
 ### crates/platform/runtime/src/plugins/connection_http/tests/oauth2_tests.rs
 
@@ -90,8 +90,8 @@ The cuts total 68 lines.
 | Lines | Count | What it pins | Owner that keeps the contract |
 | --- | ---: | --- | --- |
 | 646 | 1 | The total request count, when the next assertions name both requests | The same test at 638 |
-| 727, 734 | 2 | Internal cache sizes | The key checks of the same test at 705 |
-| 1263 | 1 | A request total that 1262 already checks | `jwt_ps256_locked_fetch_and_401_retry` at 1516 |
+| 727, 734 | 2 | Internal cache sizes | The key tests of the same test at 705 |
+| 1263 | 1 | A request total that 1262 already tests | `jwt_ps256_locked_fetch_and_401_retry` at 1516 |
 | 1378-1382 | 5 | The no-row refusal, repeated | 1153-1157 |
 | 1397-1403 | 7 | The decoded state size | `crates/platform/runtime/src/oauth_authorization.rs:434` |
 | 1520-1556 | 37 | The ES256 and RS256 host-path copies and the malformed-key matrix | `crates/platform/runtime/src/plugins/connection_http/jwt/tests.rs:88`, `:139` |
@@ -138,11 +138,11 @@ The ten removals since the audit are all right. Seven are the owner's Group 3 ru
 
 Each practice below caused growth that Part A or B cuts.
 
-1. Kind tests re-prove rendered shape. `bc6ba8627` added NATS authorization text to the kind case, and the edge image, account, selector and Role checks repeat `edge.rs:460`. These checks fail only at the end of a kind run, for defects that a unit test finds.
+1. Kind tests re-prove rendered shape. `bc6ba8627` added NATS authorization text to the kind case, and the edge image, account, selector and Role tests repeat `edge.rs:460`. These tests fail only at the end of a kind run, for defects that a unit test finds.
 2. Progress and log prose are used as evidence. The step titles, skip messages, the invitation message (`eaf2f66b0`) and the qualification prose are change detectors. `3b599687a` shows the cost: an acceptance run failed on obsolete step titles and a removed Secret, and the fix only updated the expected list.
-3. Tests of test checkers. Eight commits (`879bdd9bf`, `7f7d604d2`, `36f16245b`, `0c3552b93`, `0b237b6dc`, `eaf2f66b0`, `5864497f9`, `b2f110efd`) each added a checker of rendered documents plus fabricated-failure tests that pin its diagnostic text.
+3. Tests of test validators. Eight commits (`879bdd9bf`, `7f7d604d2`, `36f16245b`, `0c3552b93`, `0b237b6dc`, `eaf2f66b0`, `5864497f9`, `b2f110efd`) each added a validator of rendered documents plus fabricated-failure tests that pin its diagnostic text.
 4. One contract at several tiers. `024f8ab9a` repeated the JWT algorithm matrix through the database host path, after `jwt/tests.rs` already owned it and `environment_apply_kind` covered ES256 at kind.
-5. Ignores added without a tier check. Feature commits added ignored live regressions in targets whose tier already supplies PostgreSQL. The reason-format pass (`cc773720c`) fixed the syntax but did not check the tier.
+5. Ignores added without a tier test. Feature commits added ignored live regressions in targets whose tier already supplies PostgreSQL. The reason-format pass (`cc773720c`) fixed the syntax but did not make sure of the tier.
 
 Two further growths came from setup. `be8439e22` (this session's web split) added a real web artifact build to a kind case with no web bucket. `003eccd57` built resume orchestration into the kind test itself. A copied fixture caused little growth. The only copies are three `ConnectionFacts` constructions in `oauth2_tests.rs` (353-365, 383-396, 463-475) and the three package-owner cases in `platform_render.rs`.
 
@@ -150,7 +150,7 @@ The owner can adopt or strike each rule below on its own. Each rule prevents the
 
 1. Test a contract once, at the lowest tier that can observe it, and let a kind or live test assert only the state that its cluster or server alone shows.
 2. Assert text, a count or a whole document only when that text, count or document is itself the contract.
-3. Do not test a test helper: a checker of rendered output gets no fabricated-failure cases, and nobody pins its diagnostics.
+3. Do not test a test helper: a validator of rendered output gets no fabricated-failure cases, and nobody pins its diagnostics.
 4. Add an `#[ignore]` only for a prerequisite that the target's tier does not supply, and put a target in the tier of its strongest resource.
 5. Answer a failed acceptance run with a product fix and the test that catches the defect, never with only an updated expected list, title or message.
 
@@ -242,7 +242,7 @@ The columns are `.clone()` (C), `.to_owned()` (O), `.to_string()` on a `str` or 
 | wamn-pg-core | crates/platform/pg-core | 89 | 0 | 0 | 0/0 | 0 | 0 | 0 | 0.00 |
 | wamn-project-state | crates/identity/project-state | 194 | 0 | 0 | 0/0 | 0 | 0 | 0 | 0.00 |
 | wamn-record-history | apps/platform/data/record-history | 326 | 0 | 2 | 0/0 | 0 | 0 | 0 | 0.00 |
-| wamn-submodule-check | tools/submodule-check | 191 | 0 | 5 | 0/0 | 0 | 0 | 0 | 0.00 |
+| wamn-submodule-pins | tools/submodule-pins | 191 | 0 | 5 | 0/0 | 0 | 0 | 0 | 0.00 |
 | Total | Three workspaces | 165806 | 1786 | 1259 | 410/772 | 96 | 230 | 0 | 10.77 |
 
 `wamn-control` holds 661 of the 1,786 calls. `wamn-host`, `wamn-workflow`, `wamn-router` and the WMS component have the highest density.

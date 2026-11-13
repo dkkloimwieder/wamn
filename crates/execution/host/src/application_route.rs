@@ -1,7 +1,7 @@
 //! The application administration routes of every application audience
 //! (docs/architecture/execution.md#host-run-routes).
 //!
-//! Every route but `permission.mine` needs `admin`, which the router checks
+//! Every route but `permission.mine` needs `admin`, which the router tests
 //! before the handler runs. A route runs in one host-owned transaction under
 //! the environment's `wamn_administration` login, which binds `app.user_id`
 //! to the caller and `app.operation` to the route's sealed operation id. A
@@ -52,7 +52,7 @@ pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) changes: &'a Publisher,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
-    /// fact of `user.list` and the covering check of an `admin` revoke.
+    /// fact of `user.list` and the covering test of an `admin` revoke.
     pub(crate) identity: Option<(&'a Client, &'a str)>,
 }
 
@@ -497,7 +497,7 @@ impl ApplicationRoutes<'_> {
     fn identity_reader(&self) -> Result<(&Client, &str), Refusal> {
         self.identity.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
-                "the covering check of admin needs the identity reader of the host"
+                "the covering condition of admin needs the identity reader of the host"
             ))
         })
     }

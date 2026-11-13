@@ -27,11 +27,11 @@ pub fn behavior(releases: &[(&str, ClientContractIr)]) -> Result<()> {
     })
 }
 
-pub fn type_check(release: &ClientContractIr) -> Result<()> {
+pub fn compile_types(release: &ClientContractIr) -> Result<()> {
     let repository = repository_root();
     if !repository.join("node_modules/.bin/tsc").exists() {
         eprintln!(
-            "SKIP emitted_client_type_checks_with_workspace_tsc: workspace tsc is absent. Run `pnpm install --offline` at the repository root."
+            "SKIP emitted_client_compiles_with_workspace_tsc: workspace tsc is absent. Run `pnpm install --offline` at the repository root."
         );
         return Ok(());
     }

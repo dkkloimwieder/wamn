@@ -1,6 +1,6 @@
 //! A manual run of an environment-authored workflow, live
 //! (docs/architecture/execution.md#environment-workflows), and its negative
-//! checks.
+//! tests.
 //!
 //! The fixture release carries one application, `orders`, with one read
 //! operation (a WAT component that answers fixed rows and writes nothing) and
@@ -13,7 +13,7 @@
 //! The real queue service of the release drains it through the router, under
 //! the scoped executor, application and admitter logins.
 //!
-//! The checks that `workflow_lifecycle_live.rs` already proves stay there:
+//! The tests that `workflow_lifecycle_live.rs` already proves stay there:
 //! changed bytes under an authored version (1), an enabler without the role
 //! (4), a workflow user without the role (5), two enabled versions (6) and a
 //! held lifecycle lock (11).
@@ -174,7 +174,7 @@ fn jsonata_declaration() -> Value {
 }
 
 fn jsonata_bytes() -> Vec<u8> {
-    wamn_schema_generator::build_record::check_current(
+    wamn_schema_generator::build_record::require_current(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
@@ -826,7 +826,7 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
     );
 }
 
-/// Check 2: an application the environment does not declare and a stored row
+/// Test 2: an application the environment does not declare and a stored row
 /// whose hash is not its graph's refuse at `workflow.start`, and a run whose hash is not the stored row's refuses at
 /// `resolve_workflow`: the queue fails it.
 #[tokio::test(flavor = "multi_thread")]
@@ -923,7 +923,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
     );
 }
 
-/// Check 3: an operation the release does not serve refuses at author, and a
+/// Test 3: an operation the release does not serve refuses at author, and a
 /// workflow enabled against a release refuses at admission once the serving
 /// release no longer carries its operation.
 #[tokio::test(flavor = "multi_thread")]
@@ -963,7 +963,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
     assert_eq!(runs, 0, "a refused start admits no run");
 }
 
-/// Check 7: a user whose one role lacks the read starts the workflow, and the
+/// Test 7: a user whose one role lacks the read starts the workflow, and the
 /// run fails at its first node with `permission_denied`.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
@@ -992,7 +992,7 @@ async fn a_start_by_a_role_without_the_read_fails_at_the_first_node() {
     assert_eq!(role, "clerk");
 }
 
-/// Check 8: the role's grant on the read is revoked between enable and
+/// Test 8: the role's grant on the read is revoked between enable and
 /// start, and the run fails at its first node with `permission_denied`.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
@@ -1018,7 +1018,7 @@ async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
     fixture.assert_permission_denied(&run).await;
 }
 
-/// Check 9: a queue service of another release leaves the run queued, and
+/// Test 9: a queue service of another release leaves the run queued, and
 /// the service of the run's release takes it.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
@@ -1066,7 +1066,7 @@ async fn a_host_of_another_release_cannot_claim_the_run() {
     assert_eq!(fixture.outcome(&run).await.0, "completed");
 }
 
-/// Check 10: author, enable and start change neither the release row nor
+/// Test 10: author, enable and start change neither the release row nor
 /// the environment row nor its policy.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]

@@ -8,7 +8,7 @@
 //!
 //! The validator admits schema-qualified views and additive table DDL: ordinary
 //! `CREATE TABLE`, plain indexes on tables created earlier in the package's migrations,
-//! one additive client column, or one named client check
+//! one additive client column, or one named client CHECK
 //! constraint. An added column is either nullable with a modeled type and no
 //! default, or one of the two demanded non-null default forms; every shape that
 //! rewrites existing rows stays refused. Explicit `UPDATE`, `INSERT`, and `DELETE`
@@ -787,7 +787,7 @@ fn validate_create_index(
         })
         && package_created_table(previous, earlier, schema, table)
     {
-        // The earlier CREATE TABLE carries the package's ownership check.
+        // The earlier CREATE TABLE carries the package's ownership test.
         // Catalog introspection owns index names, columns, and key ordering.
         return Ok(());
     }

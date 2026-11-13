@@ -21,7 +21,7 @@ where
 }
 
 /// Run `wamn-ctl-ops` and require a successful exit status.
-pub async fn run_ops_checked<I, S>(args: I) -> anyhow::Result<Output>
+pub async fn require_ops_success<I, S>(args: I) -> anyhow::Result<Output>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -43,7 +43,7 @@ where
 }
 
 /// Run `wamn-ctl` and require a successful exit status.
-pub async fn run_checked<I, S>(args: I) -> anyhow::Result<Output>
+pub async fn run_resulted<I, S>(args: I) -> anyhow::Result<Output>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

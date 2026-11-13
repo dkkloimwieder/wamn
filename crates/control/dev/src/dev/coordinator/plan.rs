@@ -61,7 +61,7 @@ pub(super) fn require_wiring_store_alias(
     {
         if wired != store_alias {
             return Err(ProductionDevStageError::invalid(
-                "check store alias",
+                "require store alias",
                 format!(
                     "the binding selections give {}::{} store alias {store_alias:?}, but the build input gives {wired:?}",
                     artifact.package_id, artifact.component,

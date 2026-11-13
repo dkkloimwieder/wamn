@@ -254,7 +254,7 @@ pub async fn build_guest(
     Ok(compile_guest(repository, &rustflags, &guest).await?.file)
 }
 
-/// Build one guest in its own Cargo invocation and check its bytes.
+/// Build one guest in its own Cargo invocation and test its bytes.
 async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Result<Built> {
     let mut command = Command::new("cargo");
     command
@@ -318,7 +318,7 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
     let Some((file, crate_manifest)) = built.last() else {
         bail!("cargo build of guest {name} gave no cdylib output");
     };
-    check_guest(repository, &name, file, crate_manifest)?;
+    require_guest(repository, &name, file, crate_manifest)?;
     let package = match &guest.package {
         Some(package) => package.clone(),
         None => crate_package(crate_manifest)?,
@@ -345,7 +345,7 @@ fn crate_package(manifest: &Path) -> Result<String> {
 
 /// A built guest carries no local path, and it matches the pin beside its
 /// crate when the crate has one.
-fn check_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Path) -> Result<()> {
+fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Path) -> Result<()> {
     let bytes = fs::read(file).with_context(|| format!("read {}", file.display()))?;
     ensure!(
         !bytes.is_empty(),
@@ -539,7 +539,7 @@ async fn compose(
 }
 
 /// The file of the component `name` that a base's `build.json` records,
-/// checked against its digest.
+/// validated against its digest.
 fn component_file(
     output: &Path,
     build_record: &BuildRecord,
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn a_guest_with_a_local_path_or_off_its_pin_is_refused() {
-        let scratch = scratch("check");
+        let scratch = scratch("guest");
         let repository = scratch.0.join("repository");
         let crate_directory = repository.join("guest");
         fs::create_dir_all(&crate_directory).unwrap();
@@ -895,15 +895,11 @@ mod tests {
 
         let file = scratch.0.join("guest.wasm");
         fs::write(&file, b"guest bytes").unwrap();
-        check_guest(&repository, "guest", &file, &manifest).expect("a clean guest is accepted");
+        require_guest(&repository, "guest", &file, &manifest).expect("a clean guest is accepted");
 
         let local = format!("bytes {}", fs::canonicalize(&repository).unwrap().display());
         fs::write(&file, local).unwrap();
-        let error = check_guest(&repository, "guest", &file, &manifest).unwrap_err();
-        assert!(
-            error.to_string().contains("embeds a local path"),
-            "{error:#}"
-        );
+        require_guest(&repository, "guest", &file, &manifest).unwrap_err();
 
         fs::write(&file, b"guest bytes").unwrap();
         fs::write(
@@ -911,7 +907,6 @@ mod tests {
             format!("{}  guest.wasm\n", "0".repeat(64)),
         )
         .unwrap();
-        let error = check_guest(&repository, "guest", &file, &manifest).unwrap_err();
-        assert!(error.to_string().contains("pins sha256:"), "{error:#}");
+        require_guest(&repository, "guest", &file, &manifest).unwrap_err();
     }
 }

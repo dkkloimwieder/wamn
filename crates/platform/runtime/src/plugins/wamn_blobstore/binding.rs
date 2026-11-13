@@ -173,7 +173,7 @@ pub fn resolve_coordinates(
         cdn_host: if definition.get("cdn_host").is_some() {
             // Use the catalog validator so binding and declaration accept the same origins.
             wamn_catalog::RequirementType::Blobstore
-                .check_definition(definition)
+                .require_definition(definition)
                 .map_err(|_| BindingError::MissingCoordinate { field: "cdn_host" })?;
             Some(coordinate(definition, "cdn_host")?)
         } else {
@@ -317,7 +317,7 @@ mod tests {
 
     /// The snapshot's type and contract must be blobstore's. An HTTP binding
     /// must not resolve as a blobstore one — this is the same discrimination
-    /// the parameterized authorizer checks, exercised from the other side.
+    /// the parameterized authorizer tests, exercised from the other side.
     #[test]
     fn an_http_binding_does_not_resolve_as_blobstore() {
         let http = ConnectionTypeDescriptor::http_v1();

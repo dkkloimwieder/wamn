@@ -224,7 +224,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
             lock.release().await;
             Ok(json!({"adopted":adopted,"sql_executed":false,"live_verified":false}))
         }
-        _ => unreachable!("operation was checked before execution"),
+        _ => unreachable!("operation was validated before execution"),
     }
 }
 

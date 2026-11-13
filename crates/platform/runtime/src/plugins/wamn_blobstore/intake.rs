@@ -229,7 +229,7 @@ mod tests {
 
     /// The type makes the rule structural rather than advisory: bytes are
     /// reachable ONLY through `commit`, and `abort` consumes the intake, so a
-    /// truncated body cannot be written by forgetting a check.
+    /// truncated body cannot be written by forgetting a test.
     #[test]
     fn the_only_route_to_the_bytes_is_commit() {
         let mut intake = Intake::new();

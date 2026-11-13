@@ -213,7 +213,7 @@ In order, it does these steps:
 The `Database` resource keeps `databaseReclaimPolicy: retain`, so the database stays on the cluster.
 With `--data`, the verb drops the database and the instance roles. It reads the coordinate again from a terminal first.
 
-The platform UI reads status through a control operation with a read-only ServiceAccount over Pods, Deployments and WorkloadDeployments in the release namespace `hosts`: the digest from the host Deployment's pod-template annotations, the rollout from its status, the workload conditions, the live set. Who selected and who approved are not there: they are in the Helm revision (§11.3), read with `helm history`, not by the UI. Current state only; no history of checks; no Secrets; no verb runs from a browser. The project screen that reads the saga today reads this instead.
+The platform UI reads status through a control operation with a read-only ServiceAccount over Pods, Deployments and WorkloadDeployments in the release namespace `hosts`: the digest from the host Deployment's pod-template annotations, the rollout from its status, the workload conditions, the live set. Who selected and who approved are not there: they are in the Helm revision (§11.3), read with `helm history`, not by the UI. Current state only; no history of tests; no Secrets; no verb runs from a browser. The project screen that reads the saga today reads this instead.
 
 - Every step is safe to run twice. A missing object is a finished step, not a refusal.
 

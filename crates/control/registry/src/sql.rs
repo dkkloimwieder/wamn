@@ -13,7 +13,7 @@
 /// clusters are derived, D18 [`cluster_of`](crate::cluster_of)).
 ///
 /// The placement-kind CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
-/// enforced by the schema, not re-checked here — a bad row is rejected by the DB.
+/// enforced by the schema, not re-validated here — a bad row is rejected by the DB.
 pub fn upsert_org_sql() -> &'static str {
     "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
      VALUES ($1, $2, $3) \

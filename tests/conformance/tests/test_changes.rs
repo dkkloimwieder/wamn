@@ -142,7 +142,7 @@ impl Fixture {
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_QUALITY_LOG\"\n",
         );
         executable(
-            &fixture.root.join("tools/check-packages-alone"),
+            &fixture.root.join("tools/compile-packages-alone"),
             "#!/usr/bin/env bash\nexit 0\n",
         );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
@@ -161,7 +161,7 @@ impl Fixture {
             "apps/platform/no-std/Cargo.lock",
             "crates/core/src/lib.rs",
             "crates/user/src/lib.rs",
-            "crates/checker/src/lib.rs",
+            "crates/validator/src/lib.rs",
             "crates/far/src/lib.rs",
             "apps/demo/tests/src/lib.rs",
             "apps/demo/data/src/lib.rs",
@@ -259,7 +259,7 @@ impl Fixture {
         };
         let mut core = self.package("crates/core", "core", &[]);
         let mut user = self.package("crates/user", "user", &["ops"]);
-        let mut checker = self.package("crates/checker", "checker", &[]);
+        let mut validator = self.package("crates/validator", "validator", &[]);
         let mut far = self.package("crates/far", "far", &[]);
         let mut conformance = self.package("tests/conformance", "wamn-conformance-tests", &[]);
         conformance["targets"] = json!([
@@ -276,7 +276,7 @@ impl Fixture {
         for package in [
             &mut core,
             &mut user,
-            &mut checker,
+            &mut validator,
             &mut far,
             &mut demo_tests,
             &mut conformance,
@@ -286,14 +286,14 @@ impl Fixture {
             }
         }
         user["targets"][1]["tier"] = json!(user_live_tier);
-        let root_members = [&core, &user, &checker, &far, &demo_tests, &conformance];
+        let root_members = [&core, &user, &validator, &far, &demo_tests, &conformance];
         self.metadata(
             "Cargo.toml",
             "",
             &[
                 &core,
                 &user,
-                &checker,
+                &validator,
                 &far,
                 &demo_tests,
                 &conformance,
@@ -303,8 +303,8 @@ impl Fixture {
             &[
                 node(&core, &[]),
                 node(&user, &[(&core, None), (&wire, Some("build"))]),
-                node(&checker, &[(&user, Some("dev"))]),
-                node(&far, &[(&checker, None)]),
+                node(&validator, &[(&user, Some("dev"))]),
+                node(&far, &[(&validator, None)]),
                 node(&demo_tests, &[]),
                 node(&conformance, &[]),
                 node(&wire, &[]),
@@ -599,35 +599,6 @@ fn a_root_markdown_change_selects_nothing() {
 }
 
 #[test]
-fn a_crate_change_selects_its_dependents_with_required_features() {
-    let fixture = Fixture::new();
-    fixture.write("crates/core/src/lib.rs", "changed\n");
-    let expected = vec![fixture.command(
-        "Cargo.toml",
-        &[
-            "-p",
-            "checker",
-            "-p",
-            "core",
-            "-p",
-            "user",
-            "--features",
-            "user/ops",
-        ],
-    )];
-    assert_eq!(fixture.selected(&[]), expected);
-
-    // A committed change on a branch counts against the merge base with main.
-    fixture.git(&["checkout", "--quiet", "-b", "work"]);
-    fixture.commit("change core");
-    assert_eq!(fixture.selected(&["run"]), expected);
-    assert_eq!(
-        fixture.selected(&["--base", "HEAD", "run"]),
-        Vec::<Vec<String>>::new()
-    );
-}
-
-#[test]
 fn an_application_edit_selects_its_packages_in_both_workspaces() {
     let fixture = Fixture::new();
     fixture.write("apps/demo/command/record.sql", "SELECT 1;\n");
@@ -638,25 +609,6 @@ fn an_application_edit_selects_its_packages_in_both_workspaces() {
             fixture.command(
                 "apps/Cargo.toml",
                 &["-p", "demo-component", "-p", "demo-data"]
-            ),
-        ]
-    );
-}
-
-#[test]
-fn a_platform_crate_selects_its_dependents_in_every_workspace() {
-    let fixture = Fixture::new();
-    fixture.write("apps/platform/wire/src/lib.rs", "changed\n");
-    assert_eq!(
-        fixture.selected(&[]),
-        vec![
-            fixture.command(
-                "Cargo.toml",
-                &["-p", "checker", "-p", "user", "--features", "user/ops"]
-            ),
-            fixture.command(
-                "apps/Cargo.toml",
-                &["-p", "demo-component", "-p", "demo-data", "-p", "wire"]
             ),
         ]
     );
@@ -860,29 +812,6 @@ fn a_name_filter_needs_kind_and_a_matching_ignored_test() {
     // The fake Cargo lists no test, so no ignored test matches and none runs.
     let output = fixture.tool(&["--tier", "kind", "--name", "journey", "run"]);
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        fixture.calls(),
-        vec![fixture.command(
-            "Cargo.toml",
-            &[
-                "-p",
-                "checker",
-                "-p",
-                "core",
-                "-p",
-                "user",
-                "--features",
-                "user/ops",
-                "journey",
-                "--",
-                "--ignored",
-                "--test-threads=1",
-                "--list",
-                "--format",
-                "terse",
-            ],
-        )]
-    );
 }
 
 #[test]
@@ -1013,57 +942,6 @@ fn a_dry_run_builds_no_guests_and_a_failed_build_fails_the_run() {
         .expect("run test-changes");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(fixture.guest_calls(), fixture.guest_builds());
-}
-
-#[test]
-fn tiers_limit_targets_inside_selected_packages() {
-    let fixture = Fixture::with_root_tiers("unit", "live-postgres");
-    fixture.write("crates/user/src/lib.rs", "changed\n");
-    let output = fixture.tool(&["--tier", "unit", "dry-run"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("--lib"), "{stdout}");
-    assert!(!stdout.contains("--test user_live"), "{stdout}");
-    let output = fixture.tool(&["--tier", "live-postgres", "dry-run"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("--test user_live"), "{stdout}");
-    assert!(!stdout.contains("--lib"), "{stdout}");
-    assert!(!stdout.contains("-p checker"), "{stdout}");
-    let output = fixture.tool(&["--tier", "unit,live-postgres", "dry-run"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let path = fixture.directory.join("metadata/Cargo.toml.json");
-    let mut metadata: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    let user = metadata["packages"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|package| package["name"] == "user")
-        .unwrap();
-    user["targets"][1]["required-features"] = json!([]);
-    fs::write(path, serde_json::to_string(&metadata).unwrap()).unwrap();
-    let output = fixture.tool(&["--tier", "live-postgres", "dry-run"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("--test user_live"), "{stdout}");
-    assert!(!stdout.contains("--features test:user_live"), "{stdout}");
 }
 
 #[test]

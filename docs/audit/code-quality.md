@@ -1,6 +1,6 @@
 # Audit report A: Code quality
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-v3cpv.1, wamn-v3cpv.2, wamn-v3cpv.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-v3cpv.1, wamn-v3cpv.2, wamn-v3cpv.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report A1, bead wamn-v3cpv.1 -->
 
@@ -142,9 +142,9 @@ Deletes: 48 dependency lines, plus stale comments. Lockfile reductions require a
 
 Risk: Dependency removal can expose reliance on combined Cargo features. Compile each affected package independently with all targets and repeat feature analysis. A workspace-only build can hide that reliance.
 
-Owner review 2026-10-31: delete all 48, Group 4 Do, in the same per-crate commits. The check is `cargo check --all-targets` per affected package. No feature-tree output exists and none is supplied (question 4).
+Owner review 2026-10-31: delete all 48, Group 4 Do, in the same per-crate commits. The test is `cargo check --all-targets` per affected package. No feature-tree output exists and none is supplied (question 4).
 
-Owner review 2026-10-31 against origin/main 64dcf04: wamn-9xp7e makes every member inherit `wit-component` and `wit-parser` =0.254.2. The ctl entries for those two are re-checked before deletion, because inherited workspace declarations are not unused.
+Owner review 2026-10-31 against origin/main 64dcf04: wamn-9xp7e makes every member inherit `wit-component` and `wit-parser` =0.254.2. The ctl entries for those two are re-validated before deletion, because inherited workspace declarations are not unused.
 
 ## Finding A1-7: Generator convenience methods have no callers
 
@@ -299,7 +299,7 @@ All four questions were answered on 2026-10-31.
 1. No. Startup-burst measurement is not required. Delete it.
 2. No. Wiring caching is not a requirement. Delete it.
 3. No external consumer uses these APIs. Delete them.
-4. No. No feature-tree output exists and none is supplied. `cargo check --all-targets` per affected package is the check.
+4. No. No feature-tree output exists and none is supplied. `cargo check --all-targets` per affected package is the test.
 
 <!-- report A2, bead wamn-v3cpv.2 -->
 
@@ -535,7 +535,7 @@ Severity: low
 Effort: S  
 Area: tests across workspaces
 
-Evidence: `test-support/fixture-package/src/lib.rs:28`; `tests/conformance/tests/repo_lint.rs:93`; `apps/wamn_wms/tests/environment.rs:96`; `apps/wamn_receiving/tests/route_authentication_live/environment.rs:119`; `crates/schema/generator/tests/support/client_ts_check.rs:157`.
+Evidence: `test-support/fixture-package/src/lib.rs:28`; `tests/conformance/tests/repo_lint.rs:93`; `apps/wamn_wms/tests/environment.rs:96`; `apps/wamn_receiving/tests/route_authentication_live/environment.rs:119`; `crates/schema/generator/tests/support/client_ts_compile.rs:157`.
 
 Problem: The 31 named definitions include production accessors and discovery logic, so they are not 31 duplicate test functions. Twenty-five definitions occur under test paths. These encode directory depth repeatedly, with inconsistent canonicalization and error handling.
 
@@ -551,9 +551,9 @@ Owner review 2026-10-31: In passing.
 
 Severity: low  
 Effort: S  
-Area: `tools/test-changes`, `tools/contract-diff`, `tools/repo-lint`, `tools/wasmcloud-release-check`
+Area: `tools/test-changes`, `tools/contract-diff`, `tools/repo-lint`, `tools/wasmcloud-release-tests`
 
-Evidence: `tools/test-changes:6`; `tools/contract-diff:6`; `tools/repo-lint:6`; `tools/wasmcloud-release-check:9`.
+Evidence: `tools/test-changes:6`; `tools/contract-diff:6`; `tools/repo-lint:6`; `tools/wasmcloud-release-tests:9`.
 
 Problem: Four tools repeat the same failure and usage functions with a different diagnostic prefix. Nearby checkout discovery also repeats. `train-run` has a fifth, smaller helper with another signature, so it is not an exact fifth copy (`tools/train-run:5`).
 

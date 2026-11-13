@@ -456,7 +456,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 ///
 /// # Errors
 /// Returns an error naming the host and path if a response is not successful.
-pub async fn check(path: &Path) -> anyhow::Result<()> {
+pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let _: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
     let releases = Releases::in_cluster()?;
     let client: Client<HttpConnector, Empty<Bytes>> =
@@ -475,14 +475,14 @@ pub async fn check(path: &Path) -> anyhow::Result<()> {
                 let response = client.request(request).await?;
                 ensure!(
                     response.status() == StatusCode::OK,
-                    "web check {host}{path}: {}",
+                    "web probe {host}{path}: {}",
                     response.status()
                 );
                 response.into_body().collect().await?;
                 Ok::<_, anyhow::Error>(())
             })
             .await
-            .with_context(|| format!("web check {host}{path} timed out"))??;
+            .with_context(|| format!("web probe {host}{path} timed out"))??;
         }
     }
     Ok(())

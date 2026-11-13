@@ -543,7 +543,7 @@ impl TargetSpec {
             )
         })?;
         // The parse-time guard in `config` already refuses these. Repeating the
-        // check here keeps the drop safe for any caller that reaches this module
+        // require_current_lease here keeps the drop safe for any caller that reaches this module
         // by another path.
         if POSTGRES_SYSTEM_DATABASES.contains(&database) {
             return Err(TargetDatabaseError::new(
@@ -663,7 +663,7 @@ impl Drop for TargetLease {
 
 impl TargetLease {
     /// Verify the retained maintenance connection before serving another candidate.
-    pub async fn check(&self) -> Result<(), TargetDatabaseError> {
+    pub async fn require_current_lease(&self) -> Result<(), TargetDatabaseError> {
         self.client
             .simple_query("SELECT 1")
             .await
@@ -684,7 +684,7 @@ impl TargetLease {
         apply: bool,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
-        self.check().await?;
+        self.require_current_lease().await?;
         anyhow::ensure!(
             prepared.database == self.spec.database,
             "prepared privileges name another local target"
@@ -794,7 +794,7 @@ impl TargetLease {
                 "the target configuration must name the database held by this session",
             ));
         }
-        self.check().await?;
+        self.require_current_lease().await?;
         let template =
             Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
                 TargetDatabaseError::new(
@@ -984,7 +984,7 @@ async fn validate_template(
     fingerprint: &str,
 ) -> Result<(), TargetDatabaseError> {
     // A missing template is a stale standup and not a lifecycle failure. It is
-    // checked before the drop, so a run that cannot restore the database never
+    // validated before the drop, so a run that cannot restore the database never
     // destroys it.
     let present: bool = client
         .query_one(
@@ -1005,7 +1005,7 @@ async fn validate_template(
     }
 
     // The template is pristine only for the standup it was taken from. Both
-    // checks run BEFORE the drop, so a run that cannot restore the database
+    // tests run BEFORE the drop, so a run that cannot restore the database
     // never destroys it.
     let stamped: Option<String> = client
         .query_one(
@@ -1374,7 +1374,7 @@ mod tests {
         target
             .batch_execute("INSERT INTO saved_data VALUES ('retained');")
             .await?;
-        lease.check().await?;
+        lease.require_current_lease().await?;
         assert_eq!(
             target
                 .query_one("SELECT value FROM saved_data", &[])

@@ -602,7 +602,7 @@ fn connection_http_guest() -> String {
 #[tokio::test]
 async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
-    // Empty is deny-all, but the refusal lands upstream of the egress check.
+    // Empty is deny-all, but the refusal lands upstream of the egress test.
     let allowed_hosts: Arc<[AllowedHost]> = Vec::new().into();
     let effect = Arc::new(ConnectionHttp::new(
         Arc::clone(&postgres),

@@ -5,7 +5,7 @@
 //! caller, the route's operation and the application as claims, so the
 //! engine write log records it by its request id and the counter row's
 //! `updated_by` names the caller. The set resolves the sequence by the
-//! application that the host route checked against the release and the
+//! application that the host route validated against the release and the
 //! sequence name, never by the `app.application` claim, and passes its id to
 //! `platform.set_counter`. That function writes the value under the counter
 //! row's lock, so a set waits for a concurrent next number and a next number

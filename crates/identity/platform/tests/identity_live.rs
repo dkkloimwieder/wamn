@@ -63,7 +63,7 @@ async fn platform_identity_round_trip_on_postgres() {
         )
         .await
         .expect("seed registered project");
-    platform_principal_check_refuses_other_rows(&client).await;
+    platform_principal_constraint_refuses_other_rows(&client).await;
 
     let user = create_user(
         &client,
@@ -198,7 +198,7 @@ async fn platform_identity_round_trip_on_postgres() {
 }
 
 /// Two spellings of one address are one address (`wamn-0h0g.9.18`).
-/// `checked_email` folds the case in full, and `UNIQUE (email)` then
+/// `require_email` folds the case in full, and `UNIQUE (email)` then
 /// refuses the second user. The two users carry different subjects, so only
 /// the email constraint can refuse the second one.
 async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
@@ -722,8 +722,8 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
 ///
 /// The last two rows pin `principals_email_check` instead (`wamn-0h0g.9.18`):
 /// a user needs an email, and no other kind carries one. Every other row here
-/// gets a valid email, so it still fails on the platform check alone.
-async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Client) {
+/// gets a valid email, so it still fails on the platform test alone.
+async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgres::Client) {
     const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
     const ADDRESS: Option<&str> = Some("refused@example.invalid");
     let provisioning = PlatformComponent::Provisioning;

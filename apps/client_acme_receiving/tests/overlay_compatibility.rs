@@ -1,4 +1,4 @@
-//! Shared fixture and its local checks.
+//! Shared fixture and its local tests.
 
 include!("overlay_compatibility_fixture.rs");
 #[test]
@@ -37,7 +37,7 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
     );
 }
 
-/// Narrow seam check; the paired journey remains the fresh-install test.
+/// Narrow seam test; the paired journey remains the fresh-install test.
 #[tokio::test]
 async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
@@ -84,12 +84,12 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
             "receiving.purchase_order.status",
         ),
         (
-            "consumed-check",
+            "consumed-constraint",
             "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved', 'rejected'))",
             "receiving.quality_inspection.quality_inspection_status_check",
         ),
         (
-            "unvalidated-check",
+            "unvalidated-constraint",
             "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved')) NOT VALID",
             "receiving.quality_inspection.quality_inspection_status_check",
         ),

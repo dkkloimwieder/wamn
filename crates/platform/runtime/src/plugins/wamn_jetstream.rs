@@ -2,7 +2,7 @@
 //!
 //! Native `wasmcloud:nats` owns materializer attachment, delivery and settlement.
 //! This module selects enabled event workflows, retains durable drift
-//! checks, and host-only derived-event publication. Broker advisories replace
+//! tests, and host-only derived-event publication. Broker advisories replace
 //! the payload DLQ.
 
 use std::collections::{HashMap, HashSet};
@@ -142,7 +142,7 @@ impl std::fmt::Display for DerivedPublishError {
 
 impl std::error::Error for DerivedPublishError {}
 
-/// Link host-owned registration checks directly.
+/// Link host-owned registration tests directly.
 /// The host path calls this from [`HostPlugin::on_workload_item_bind`];
 /// a Service (the materializer, l5i9.17) or a hand-built store links it the same
 /// way `wamn:postgres` is linked.
@@ -525,7 +525,7 @@ impl WamnJetstream {
     /// Bind the exact trusted scope used by native derived publication.
     ///
     /// The production driver calls this at instance checkout and revokes it at
-    /// check-in. No scope operand exists on [`DerivedPublishRequest`], so a
+    /// release. No scope operand exists on [`DerivedPublishRequest`], so a
     /// guest or wiring payload has nothing it can echo or redirect.
     pub fn bind_derived_scope(
         &self,
@@ -555,7 +555,7 @@ impl WamnJetstream {
         Ok(())
     }
 
-    /// Revoke a native derived-publication claim at instance check-in.
+    /// Revoke a native derived-publication claim at instance release.
     pub fn revoke_derived_scope(&self, component_id: &str) {
         self.claims
             .write()

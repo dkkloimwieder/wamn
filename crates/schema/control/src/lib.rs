@@ -17,7 +17,7 @@ pub mod sql;
 
 pub use environment::{
     ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceClaimError,
-    check_environment_instance_claim, claim_environment_instance_sql,
+    claim_environment_instance_sql, require_environment_instance_claim,
 };
 pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route};
 pub use model::{SqlStatement, Value};

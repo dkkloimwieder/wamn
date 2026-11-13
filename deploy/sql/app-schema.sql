@@ -595,7 +595,7 @@ END $platform_configuration_history$;
 -- per= counter. Neither reads an application table: a set that gives a
 -- number a record already carries is caught by that model's UQ.
 --
--- The database is the org boundary, so no function checks a tenant. No
+-- The database is the org boundary, so no function tests a tenant. No
 -- function reads the app.application claim, which guest SQL can rewrite.
 -- Each takes a sequence id and refuses an id that is not a sequence with
 -- undefined_object. The renderer of the wamn:postgres plugin resolves the

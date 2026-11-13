@@ -32,7 +32,7 @@ pub fn valid_env_key(env_key: &str) -> bool {
 ///
 /// This cap is a per-component ceiling inside that shared budget, not the exact
 /// bound. Three components at the cap still overflow 63 bytes, so provisioning
-/// also checks the assembled name in `validate_project_env`. The registry holds
+/// also tests the assembled name in `validate_project_env`. The registry holds
 /// the ceiling so an id the registry accepts is an id provisioning can shape.
 pub const MAX_PROJECT_ID_LEN: usize = 40;
 

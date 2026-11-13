@@ -16,7 +16,7 @@ The generator writes the bindings, and this directory holds what the bindings ca
 The package is TypeScript source and it compiles nothing.
 A bundler reads it directly, and plain Node does not.
 
-To type check it, run:
+To type test it, run:
 
 ```bash
 cd web/runtime && tsc --project tsconfig.json
@@ -24,5 +24,5 @@ cd web/runtime && tsc --project tsconfig.json
 
 The generated bindings import this package by name.
 An application resolves that name through its own configuration.
-The generator's own check maps the name to this directory.
+The generator's own test maps the name to this directory.
 See [running tests](../docs/operations/running-tests.md) for that command.

@@ -36,7 +36,7 @@ pub fn public_connect_databases_sql() -> &'static str {
 /// that it cannot alter and that already has the floor. A role that is not
 /// the owner only gets a warning from `REVOKE`, so a database that still
 /// grants PUBLIC `CONNECT` stays in [`public_connect_databases_sql`], and the
-/// check that follows the revoke fails with its name (owner ruling of
+/// make sure that follows the revoke fails with its name (owner ruling of
 /// 2026-10-03 on `wamn-zua8.3`).
 pub fn revoke_public_connect_floor_sql() -> &'static str {
     "DO $$ DECLARE database_name text; BEGIN \
@@ -49,7 +49,7 @@ pub fn revoke_public_connect_floor_sql() -> &'static str {
      END $$;"
 }
 
-/// Check PUBLIC's effective `TEMPORARY` privilege on the target.
+/// Make sure of PUBLIC's effective `TEMPORARY` privilege on the target.
 ///
 /// The caller connects to the already-validated exact project database. Unlike
 /// the cluster-wide `CONNECT` floor, `TEMPORARY` is deliberately confined only
@@ -61,7 +61,7 @@ pub fn public_temporary_on_current_database_sql() -> &'static str {
         AND acl.privilege_type = 'TEMPORARY')"
 }
 
-/// All non-template databases available for exact cross-database ACL checks.
+/// All non-template databases available for exact cross-database ACL tests.
 ///
 /// This one keeps the `NOT datistemplate` filter on purpose, unlike
 /// [`public_connect_databases_sql`] / [`revoke_public_connect_floor_sql`]: the

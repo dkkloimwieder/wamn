@@ -21,7 +21,7 @@
 //! - [`component_artifact`]: the wire contract for digest-addressed component
 //!   artifacts.
 //! - [`artifact_source`]: the [`ArtifactSource`](artifact_source::ArtifactSource)
-//!   trait that supplies verified component bytes, its digest checks, and the
+//!   trait that supplies verified component bytes, its digest tests, and the
 //!   local file source. The OCI registry source lives in `wamn-runtime`.
 //! - [`release_manifest`]: a release manifest loaded once for the process.
 //! - [`invocation_trace`]: restores host-captured tracing context when native

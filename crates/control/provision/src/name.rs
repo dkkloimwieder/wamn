@@ -293,13 +293,13 @@ pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> Str
 /// the database one — the two are not related by a fixed offset, and the
 /// namespace-per-environment mapping must not rest on a coincidence.
 ///
-/// The database check runs first because its `wamn-db-` prefix is three bytes
+/// The database test runs first because its `wamn-db-` prefix is three bytes
 /// longer than the namespace's `wamn-` prefix: after both spend the separator
 /// plus eight-byte suffix, the database leaves 41 component bytes and the
-/// namespace leaves 44. The namespace check remains explicit so each
+/// namespace leaves 44. The namespace test remains explicit so each
 /// physical-name formula owns its bound.
 ///
-/// Every component is slug-checked (wamn-R27): the org and env — not only the
+/// Every component is slug-validated (wamn-R27): the org and env — not only the
 /// project — separate on `--`/`__` into the derived database and CDC object
 /// names, so a malformed component (a consecutive-hyphen run above all) is an
 /// identity-collision vector, not merely the registry's concern. The project
@@ -600,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_project_env_slug_checks_and_bounds_the_name() {
+    fn validate_project_env_slug_requires_a_bounded_name() {
         assert!(validate_project_env("acme", "billing", "prod").is_ok());
         // A bad project id is rejected (the reason flows from validate_project_id).
         assert!(matches!(
@@ -611,7 +611,7 @@ mod tests {
             validate_project_env("acme", "wamn-x", "dev"),
             Err(ProvisionError::ReservedProjectId { .. })
         ));
-        // wamn-R27: the org and env are slug-checked too (not only the project).
+        // wamn-R27: the org and env are slug-validated too (not only the project).
         assert!(matches!(
             validate_project_env("Bad_Org", "billing", "dev"),
             Err(ProvisionError::InvalidComponent {

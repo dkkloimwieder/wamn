@@ -12,7 +12,7 @@
 //!
 //! The last section is the D1 walk simulator (`wamn-54b0.1`): the same builders
 //! and the same fake clock, driven from a `proptest` seed instead of a hand-written
-//! fixture, checking WALK-1..6 after every `apply`.
+//! fixture, testing WALK-1..6 after every `apply`.
 
 use std::cell::Cell;
 
@@ -839,7 +839,7 @@ fn route_drives_a_wiring_to_a_terminal_outcome() {
 // A random wiring and a random outcome script from one `proptest` seed, driven
 // through the same `next`/`apply` loop the cases above use, with the same fake
 // clock: it moves only when this harness moves it, on a `Wait`, and never on its
-// own. WALK-1..6 (`wamn_router::invariants`) are checked after every `apply`.
+// own. WALK-1..6 (`wamn_router::invariants`) are validated after every `apply`.
 // A failure shrinks to the smallest wiring and script that still breaks an
 // invariant, and `proptest` prints the seed to replay it.
 
@@ -992,7 +992,7 @@ fn sim_outcome(spec: &OutcomeSpec) -> NodeOutcome {
     }
 }
 
-/// Walk one scenario to a terminal status, checking WALK-1..6 after every
+/// Walk one scenario to a terminal status, testing WALK-1..6 after every
 /// `apply`. The clock starts at 0 and advances only to a `Wait` deadline.
 fn simulate(scenario: &Scenario) -> Result<(), TestCaseError> {
     let w = sim_wiring(scenario);
@@ -1010,7 +1010,7 @@ fn simulate(scenario: &Scenario) -> Result<(), TestCaseError> {
         trace.stepped(status_before, &step, clock);
         match step {
             Step::Done(_) => {
-                return check_invariants(&w, &walk, &trace);
+                return require_invariants(&w, &walk, &trace);
             }
             Step::Wait { until_ms, .. } => clock = until_ms, // virtual sleep
             Step::Invoke(call) => {
@@ -1022,7 +1022,7 @@ fn simulate(scenario: &Scenario) -> Result<(), TestCaseError> {
                 w.apply(&mut walk, &call, outcome.clone(), clock)
                     .map_err(|refused| TestCaseError::fail(refused.to_string()))?;
                 trace.applied(&w, &call, &outcome);
-                check_invariants(&w, &walk, &trace)?;
+                require_invariants(&w, &walk, &trace)?;
             }
         }
     }
@@ -1031,8 +1031,8 @@ fn simulate(scenario: &Scenario) -> Result<(), TestCaseError> {
     ))
 }
 
-fn check_invariants(w: &Wiring, walk: &Walk, trace: &WalkTrace) -> Result<(), TestCaseError> {
-    invariants::check(&WalkState {
+fn require_invariants(w: &Wiring, walk: &Walk, trace: &WalkTrace) -> Result<(), TestCaseError> {
+    invariants::require_invariants(&WalkState {
         wiring: w,
         walk,
         trace,

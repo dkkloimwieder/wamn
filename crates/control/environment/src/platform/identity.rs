@@ -178,12 +178,12 @@ pub async fn initialize(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let (mut check, files) = endpoint_job(&secret_text(&ca, "ca.crt")?);
+    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?);
     let hosts = Target {
         namespace: "hosts".into(),
         ..identity
     };
-    let result = job::run(&hosts, directory, &mut check, &mut [files]).await?;
+    let result = job::run(&hosts, directory, &mut probe, &mut [files]).await?;
     let jwks: Value = serde_json::from_str(&result).context("decode identity public keys")?;
     ensure!(
         jwks["keys"].as_array().is_some_and(|keys| keys
@@ -577,7 +577,7 @@ async fn keys(
 
 fn endpoint_job(ca: &str) -> (Value, Secret) {
     let mut job = job::manifest(
-        "platform-identity-check",
+        "platform-identity-probe",
         CURL_IMAGE,
         &["curl"],
         &[

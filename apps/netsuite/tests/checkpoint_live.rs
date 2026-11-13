@@ -131,7 +131,7 @@ pub async fn invoke(
     super::consumer_live::execution_role(&database, "netsuite-pull-without-record", &[]).await?;
     let caller =
         super::consumer_live::run_caller(&admin, &workflow_host, &run, "netsuite-pull").await?;
-    // The router's check before the `record` node: the node's registered
+    // The router's test before the `record` node: the node's registered
     // operation against the grants the run's role holds now. A role without
     // the consumer command refuses the node.
     let record = &wiring.nodes["record"];

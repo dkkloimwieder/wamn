@@ -698,7 +698,7 @@ function declaredPath(pointer: string): string | null {
 }
 
 /**
- * The member path that a checked input refuses, in the contract's spelling.
+ * The member path that a validated input refuses, in the contract's spelling.
  *
  * A schema names its path in TypeScript member spelling, with a number for
  * each element of a repeated group. A control states the path the contract
@@ -706,7 +706,7 @@ function declaredPath(pointer: string): string | null {
  * the other. `refusalMarks` then reads the answer exactly as it reads a
  * refusal that the release sent.
  */
-export function checkedMember(path: readonly (string | number)[] | undefined, fields: FieldMap): string | null {
+export function refusedInputMember(path: readonly (string | number)[] | undefined, fields: FieldMap): string | null {
   if (path === undefined || path.length === 0) {
     return null;
   }

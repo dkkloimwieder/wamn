@@ -1,4 +1,4 @@
-//! Shared fixture and its local checks.
+//! Shared fixture and its local tests.
 
 include!("wms_runtime_live_fixture.rs");
 #[cfg(test)]

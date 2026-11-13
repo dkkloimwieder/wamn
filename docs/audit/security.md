@@ -1,6 +1,6 @@
 # Audit report E: Security
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-hgdta.1, wamn-hgdta.2, wamn-hgdta.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-hgdta.1, wamn-hgdta.2, wamn-hgdta.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report E1, bead wamn-hgdta.1 -->
 
@@ -264,7 +264,7 @@ Proposal: Pin the two infrastructure images (NATS, CNPG postgres) by digest in t
 Deletes: Tag-only references for the two infrastructure images.  
 Risk: Image updates become deliberate changes to two manifests. Deployment qualification exercises each replacement digest.
 
-Owner review 2026-10-31: low, In passing, narrowed. The manifest check and the base-image digest pins are rejected. The Rust base follows `rust-toolchain.toml`, and a digest pin is churn on every toolchain bump.
+Owner review 2026-10-31: low, In passing, narrowed. The manifest test and the base-image digest pins are rejected. The Rust base follows `rust-toolchain.toml`, and a digest pin is churn on every toolchain bump.
 
 ## Open questions for the owner
 
@@ -292,8 +292,8 @@ Severity: high
 Effort: S  
 Area: `crates/catalog/package-artifact`, `crates/platform/engine`  
 Evidence: `crates/catalog/package-artifact/src/lib.rs:5`, `crates/control/lib/src/publish_release.rs:1621`, `crates/catalog/model/src/component_facts.rs:460`, `crates/platform/engine/src/operation/native_workload.rs:254`, `crates/platform/engine/src/engine.rs:654`  
-Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor claims, while runtime loading checks the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.  
-Proposal (final, owner 2026-10-31): The host links application components against their declared world and nothing else. An undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison and no `wasmparser` check. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.  
+Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor claims, while runtime loading makes sure of the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.
+Proposal (final, owner 2026-10-31): The host links application components against their declared world and nothing else. An undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison and no `wasmparser` test. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.
 Deletes: The unconditional `wasi:sockets` implementation for application components.  
 Risk: Packages with undeclared imports refuse. A crafted package test must hide a socket import and prove refusal at instantiation.
 
@@ -303,7 +303,7 @@ Owner review 2026-10-31: split. The rejected half is deriving admission facts fr
 
 Owner review 2026-10-31 against origin/main 64dcf04: WASI version match closed on main (wamn-cqbb0; `component-policy` carries `WASI_FAMILY` and a build-derived `WASI_CEILING`). The runtime `wasi:sockets` refusal waits on nothing.
 
-Owner review 2026-10-31 (developer-experience walk): final. The host links application components against their declared world and nothing else, and an undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison, no `wasmparser` check. Group 3 Do, small, unchanged.
+Owner review 2026-10-31 (developer-experience walk): final. The host links application components against their declared world and nothing else, and an undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison, no `wasmparser` test. Group 3 Do, small, unchanged.
 
 ## Finding E3-2: The native lockfile contains reported security vulnerabilities
 
@@ -390,7 +390,7 @@ Proposal: Remove the confirmed unused runtime declarations for `percent-encoding
 Deletes: The two unused dependency declarations.  
 Risk: None beyond a rebuild of the runtime crate.
 
-Owner review 2026-10-31: the advisory-refresh check and the release block are rejected. No owner and no refresh interval exist. Whoever plans the next bump runs `cargo audit` then. `vendor/pg-walstream` stays until upstream has the typed keepalive API. Low, In passing with A1-6.
+Owner review 2026-10-31: the advisory-refresh test and the release block are rejected. No owner and no refresh interval exist. Whoever plans the next bump runs `cargo audit` then. `vendor/pg-walstream` stays until upstream has the typed keepalive API. Low, In passing with A1-6.
 
 Owner review 2026-10-31 against origin/main 64dcf04: the adapter-digest answer is verified against wamn-cqbb0.2 at filing. If the constant is gone, the row closes.
 

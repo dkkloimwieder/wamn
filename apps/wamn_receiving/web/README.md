@@ -50,7 +50,7 @@ The notes of Beads `wamn-78or.6` hold the commands that create the account in a 
 It is a demo credential in a disposable local environment.
 
 Receiving declares no operation that creates an item, a location or a purchase order, so a table shows rows only after you apply a dataset.
-The by-hand checks run at 1000:
+The by-hand tests run at 1000:
 
 ```bash
 psql "$TARGET_DATABASE_URL" -v scale=1000 -f ../tests/fixtures/receiving-seed.sql

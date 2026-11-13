@@ -152,7 +152,7 @@ impl EnvironmentDocument {
         })
     }
 
-    /// Read a document from its JSON form and check every field.
+    /// Read a document from its JSON form and require_valid every field.
     ///
     /// # Errors
     ///
@@ -160,11 +160,11 @@ impl EnvironmentDocument {
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
         let document: Self =
             serde_json::from_slice(bytes).context("decode the environment JSON")?;
-        document.check()?;
+        document.require_valid()?;
         Ok(document)
     }
 
-    fn check(&self) -> anyhow::Result<()> {
+    fn require_valid(&self) -> anyhow::Result<()> {
         wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
         ensure!(!self.policy.is_empty(), "policy is empty");

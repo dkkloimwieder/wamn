@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/identity", "services/ctl", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
+members = ["crates/platform/digest", "crates/platform/scalar", "services/host", "services/edge", "services/identity", "services/ctl", "services/cdc-reader", "tools/bench", "tools/submodule-pins", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/protocol", "crates/kubernetes", "crates/broker"]
 default-members = [
   "crates/catalog/model",
   "crates/execution/host",
@@ -97,7 +97,7 @@ missing_panics_doc = "allow"      #  72. Library-API doc contract, as above.
 multiple_crate_versions = "allow" #  46. Duplicate transitive versions we do not control;
                                   #      the wasmtime/async-nats pins are upstream-governed.
 return_self_not_must_use = "allow"#   8. Library-API concern, as above.
-# Rust 1.99 adds this assertion style rule. Existing empty checks already assert
+# Rust 1.99 adds this assertion style rule. Existing empty tests already assert
 # the required property; rewriting them adds no coverage.
 assert_is_empty = "allow"
 

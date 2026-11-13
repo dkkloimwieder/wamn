@@ -825,7 +825,7 @@ pub fn postgres_type(postgres_name: &str) -> Result<SqlValueType, IrError> {
     }
 }
 
-/// Exact typed server expressions shared by defaults and staged expression checks.
+/// Exact typed server expressions shared by defaults and staged expression tests.
 pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(SqlValueType, &str, ColumnDefault)] = &[
     (
         SqlValueType::Uuid,

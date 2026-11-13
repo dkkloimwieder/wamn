@@ -48,7 +48,7 @@ fn success(url: &str, script: &str) -> String {
 
 /// The generation login the fenced transitions actually run as.
 ///
-/// The runtime checks executor membership before these statements run.
+/// The runtime tests executor membership before these statements run.
 /// This test exercises SQL locks and fences with the production executor grants.
 /// The host-injected tenant still selects each statement's queue rows.
 ///
@@ -184,7 +184,7 @@ fn run_state_live() {
     // The mirrored role blocks above are create-only — unlike builder-owned `wamn_app`
     // they have no `ELSE ALTER` arms — and roles are CLUSTER-WIDE, so a role left behind by an
     // earlier database is silently kept with whatever attributes it already carries.
-    // This is the leg that makes the drift contract checkable rather than aspirational:
+    // This is the leg that makes the drift contract testable rather than aspirational:
     // it reds both when a block above stops matching the production attribute set and
     // when the cluster this suite was pointed at is not the throwaway it is documented
     // to be.
@@ -210,7 +210,7 @@ fn run_state_live() {
     // transition below while showing nothing about the tenant floor, and would do it
     // SILENTLY — there is no leg here whose failure would name it. The membership edge is
     // asserted with the same force: these legs must reach their privileges by INHERITING
-    // the stable role, which is what the runtime's connection probe checks, not by holding
+    // the stable role, which is what the runtime's connection probe tests, not by holding
     // them directly.
     success(
         &url,

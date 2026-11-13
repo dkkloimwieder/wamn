@@ -10,7 +10,7 @@ Every pin below refers to that branch head, `9d4523796`.
 | --- | --- | --- | --- |
 | `.1` One selection policy | G3-2 | `17000c6bc` | `tests/selection.toml` replaces `tools/test-changes-suites.json` and the shell branches. An unknown path selects every applicable suite. A documentation-only change selects nothing. |
 | `.2` Five tiers | G3-1, G3-6 | `3893d800c` | Every executable target has one row and one tier: unit, contract, live-postgres, live-nats or kind. `--tier kind` replaces `--cluster`. Kind targets hold only ignored kind cases. |
-| `.3` Ignore hygiene | G3-4, G2-8 | `cc773720c` | Every ignore reason has the form `requires: bin:<program>, env:<VARIABLE>`. One parser reads it, and each ignored case checks it before setup. The SQLite child helper is the `intent-store-child` binary. |
+| `.3` Ignore hygiene | G3-4, G2-8 | `cc773720c` | Every ignore reason has the form `requires: bin:<program>, env:<VARIABLE>`. One parser reads it, and each ignored case makes sure of it before setup. The SQLite child helper is the `intent-store-child` binary. |
 | `.4` Isolated contract compilation | G3-5 | `c1944bb36` | No root workspace target reads `apps/target` at compile time. One compatibility test, `wamn-client` `test:generated_schema`, reads the generated schema at run time. |
 | `.5` One preparation path | F2-10 | `192e3204b` | `tools/test-changes` prepares every input of the selected suites from `[[preparation]]` rows. A set variable is used as is. `WAMN_POSTGRES_BIN_DIR` overrides the PostgreSQL binary directory. |
 

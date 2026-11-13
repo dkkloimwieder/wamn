@@ -216,7 +216,7 @@ impl PackageRoot {
                 source,
             )
         })?;
-        wamn_schema_generator::build_record::check_current(&root).map_err(|source| {
+        wamn_schema_generator::build_record::require_current(&root).map_err(|source| {
             FilesystemInvalidationError {
                 source: Some(source.into()),
                 ..FilesystemInvalidationError::new(

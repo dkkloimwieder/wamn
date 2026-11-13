@@ -2335,7 +2335,7 @@
         }
       },
       "format": "rust",
-      "fragment": "}\n\nasync fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {\n    wamn_schema_generator::receipt::check_current(package)?;\n    let manifest_path = wamn_schema_generator::package_manifest_path(package);\n    let manifest_bytes = std::fs::read(&manifest_path)?;\n    let manifest: Value = serde_json::from_slice(&manifest_bytes)?;\n    let catalog = introspect_package(url, package).await?;\n    let mut paths = BTreeSet::new();\n    sql_paths(&manifest, &mut paths);\n    let sources = paths\n        .into_iter()\n        .map(|path| {\n            let bytes = std::fs::read(package.join(&path))?;\n            Ok((path, bytes))\n        })\n        .collect::<anyhow::Result<Vec<_>>>()?;\n    let authored = sources\n        .iter()\n        .map(|(path, bytes)| AuthoredSql::new(path, bytes))\n        .collect::<Vec<_>>();\n    let generated = generate(&GenerationInput::new(\n        &catalog,\n        &manifest_bytes,\n        &authored,\n        &StatementTransactionality::unclassified(),\n    ))?;",
+      "fragment": "}\n\nasync fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {\n    wamn_schema_generator::receipt::require_current(package)?;\n    let manifest_path = wamn_schema_generator::package_manifest_path(package);\n    let manifest_bytes = std::fs::read(&manifest_path)?;\n    let manifest: Value = serde_json::from_slice(&manifest_bytes)?;\n    let catalog = introspect_package(url, package).await?;\n    let mut paths = BTreeSet::new();\n    sql_paths(&manifest, &mut paths);\n    let sources = paths\n        .into_iter()\n        .map(|path| {\n            let bytes = std::fs::read(package.join(&path))?;\n            Ok((path, bytes))\n        })\n        .collect::<anyhow::Result<Vec<_>>>()?;\n    let authored = sources\n        .iter()\n        .map(|(path, bytes)| AuthoredSql::new(path, bytes))\n        .collect::<Vec<_>>();\n    let generated = generate(&GenerationInput::new(\n        &catalog,\n        &manifest_bytes,\n        &authored,\n        &StatementTransactionality::unclassified(),\n    ))?;",
       "isNew": false,
       "kind": "exact",
       "lines": 27,
@@ -4501,7 +4501,7 @@
         }
       },
       "format": "javascript",
-      "fragment": "  console.log(\"PASS: Receiving offline profile checks\");\n} catch (error) {\n  console.log(`page errors: ${JSON.stringify(errors)}`);\n  if (page)\n    await page\n      .screenshot({ path: join(fixture.reportDirectory, `${step}-failure.png`), fullPage: false })\n      .catch((captureError) => console.error(`Failed to capture ${step}:`, captureError));\n  throw error;\n} finally {\n  await browser.close();\n}",
+      "fragment": "  console.log(\"PASS: Receiving offline profile tests\");\n} catch (error) {\n  console.log(`page errors: ${JSON.stringify(errors)}`);\n  if (page)\n    await page\n      .screenshot({ path: join(fixture.reportDirectory, `${step}-failure.png`), fullPage: false })\n      .catch((captureError) => console.error(`Failed to capture ${step}:`, captureError));\n  throw error;\n} finally {\n  await browser.close();\n}",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -7237,7 +7237,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    for path in package_manifests {\n        if let Some(root) = wamn_schema_generator::manifest_package_root(path) {\n            wamn_schema_generator::receipt::check_current(root).map_err(|error| {\n                PublishManifestError {\n                    source: Some(error.into()),\n                    ..PublishManifestError::new(\n                        PublishManifestErrorType::PackageManifest,\n                        format!(\"read current package build {}\", path.display()),\n                    )\n                }\n            })?;\n        }\n        let bytes = std::fs::read(path).map_err(|error| {\n            PublishManifestError::with_source(\n                PublishManifestErrorType::PackageManifest,\n                format!(\"read package manifest {}\", path.display()),\n                error,\n            )\n        })?;\n        let package =",
+      "fragment": "    for path in package_manifests {\n        if let Some(root) = wamn_schema_generator::manifest_package_root(path) {\n            wamn_schema_generator::receipt::require_current(root).map_err(|error| {\n                PublishManifestError {\n                    source: Some(error.into()),\n                    ..PublishManifestError::new(\n                        PublishManifestErrorType::PackageManifest,\n                        format!(\"read current package build {}\", path.display()),\n                    )\n                }\n            })?;\n        }\n        let bytes = std::fs::read(path).map_err(|error| {\n            PublishManifestError::with_source(\n                PublishManifestErrorType::PackageManifest,\n                format!(\"read package manifest {}\", path.display()),\n                error,\n            )\n        })?;\n        let package =",
       "isNew": false,
       "kind": "exact",
       "lines": 20,
@@ -7503,7 +7503,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        wamn_schema_generator::receipt::check_current(&package.root)\n            .map_err(|source| CompositionError::owner(\"read the package build\", source))?;\n        let receipt = wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(\n            &package.root,\n        ))\n        .map_err(|source| CompositionError::owner(\"read the package build\", source))?;",
+      "fragment": "        wamn_schema_generator::receipt::require_current(&package.root)\n            .map_err(|source| CompositionError::owner(\"read the package build\", source))?;\n        let receipt = wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(\n            &package.root,\n        ))\n        .map_err(|source| CompositionError::owner(\"read the package build\", source))?;",
       "isNew": false,
       "kind": "exact",
       "lines": 6,
@@ -8339,7 +8339,7 @@
         }
       },
       "format": "rust",
-      "fragment": "pub async fn start_workflow(\n    work: &Path,\n    environment: &WorkflowEnvironment<'_>,\n    application: &str,\n    workflow_id: &str,\n    input: &Value,\n    key: &str,\n) -> anyhow::Result<String> {\n    let (project, task) = connect_owned(environment.project_url).await?;\n    let result = wamn_gate_harness::run_check::check(\n        work,",
+      "fragment": "pub async fn start_workflow(\n    work: &Path,\n    environment: &WorkflowEnvironment<'_>,\n    application: &str,\n    workflow_id: &str,\n    input: &Value,\n    key: &str,\n) -> anyhow::Result<String> {\n    let (project, task) = connect_owned(environment.project_url).await?;\n    let result = wamn_gate_harness::run_result::require_success(\n        work,",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -12633,7 +12633,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let project = checked_scope_segment(\"project\", project)?;\n    let env = checked_scope_segment(\"env\", env)?;\n    let found: bool = client\n        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])\n        .await\n        .map_err(|error| database_error(&error))?\n        .get(0);\n    if !found {\n        return Err(IdentityError::refused(\n            IdentityErrorType::NotFound,\n            IdentityRefusal::EnvironmentNotFound,\n            format!(\"environment {project}/{env} is not an environment of org {org}\"),\n        ));\n    }",
+      "fragment": "    let project = require_scope_segment(\"project\", project)?;\n    let env = require_scope_segment(\"env\", env)?;\n    let found: bool = client\n        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])\n        .await\n        .map_err(|error| database_error(&error))?\n        .get(0);\n    if !found {\n        return Err(IdentityError::refused(\n            IdentityErrorType::NotFound,\n            IdentityRefusal::EnvironmentNotFound,\n            format!(\"environment {project}/{env} is not an environment of org {org}\"),\n        ));\n    }",
       "isNew": false,
       "kind": "exact",
       "lines": 14,
@@ -16880,7 +16880,7 @@
           "line": 113,
           "position": 4253
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator/examples/check_client_ts.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator/examples/compile_client_ts.rs",
         "start": 100,
         "startLoc": {
           "column": 49,
@@ -16900,7 +16900,7 @@
           "line": 128,
           "position": 4844
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator/tests/support/client_ts_check.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator/tests/support/client_ts_compile.rs",
         "start": 115,
         "startLoc": {
           "column": 49,
@@ -17687,7 +17687,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        json!([\"created_at\", \"created_by\", \"updated_at\", \"updated_by\"]);\n    let mut command = support::projection_operation();\n    command[\"type\"] = json!(\"command\");\n    command[\"permission\"] = json!(\"quality.check_gadget\");\n    command[\"idempotent_by\"] = json!(\"claim\");\n    command[\"input\"][\"fields\"]\n        .as_array_mut()\n        .unwrap()\n        .push(json!({\"path\": \"idempotency_key\", \"type\": \"text\", \"nullable\": false}));\n    command[\"transaction\"] = json!(\"explicit_per_input\");\n    command[\"automatic_retry\"] = json!(false);\n    command[\"relations\"][0][\"update_fields\"] = json!([\"updated_by\"]);",
+      "fragment": "        json!([\"created_at\", \"created_by\", \"updated_at\", \"updated_by\"]);\n    let mut command = support::projection_operation();\n    command[\"type\"] = json!(\"command\");\n    command[\"permission\"] = json!(\"quality.inspect_gadget\");\n    command[\"idempotent_by\"] = json!(\"claim\");\n    command[\"input\"][\"fields\"]\n        .as_array_mut()\n        .unwrap()\n        .push(json!({\"path\": \"idempotency_key\", \"type\": \"text\", \"nullable\": false}));\n    command[\"transaction\"] = json!(\"explicit_per_input\");\n    command[\"automatic_retry\"] = json!(false);\n    command[\"relations\"][0][\"update_fields\"] = json!([\"updated_by\"]);",
       "isNew": false,
       "kind": "exact",
       "lines": 12,
@@ -19587,7 +19587,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .with_context(|| format!(\"write private file {}\", path.display()))\n}\n\nasync fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {\n    let program = command\n        .as_std()\n        .get_program()\n        .to_string_lossy()\n        .into_owned();\n    let output = command\n        .stdin(Stdio::null())\n        .kill_on_drop(true)\n        .output()\n        .await\n        .with_context(|| format!(\"start {program}\"))?;",
+      "fragment": "        .with_context(|| format!(\"write private file {}\", path.display()))\n}\n\nasync fn require_success(command: &mut Command) -> anyhow::Result<Vec<u8>> {\n    let program = command\n        .as_std()\n        .get_program()\n        .to_string_lossy()\n        .into_owned();\n    let output = command\n        .stdin(Stdio::null())\n        .kill_on_drop(true)\n        .output()\n        .await\n        .with_context(|| format!(\"start {program}\"))?;",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -19739,7 +19739,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            .any(|condition| condition[\"type\"] == name && condition[\"status\"] == value)\n    })\n}\nfn items(value: &Value) -> anyhow::Result<&Vec<Value>> {\n    array_at(value, \"/items\")\n}\nfn array_at<'a>(value: &'a Value, pointer: &str) -> anyhow::Result<&'a Vec<Value>> {\n    value\n        .pointer(pointer)\n        .and_then(Value::as_array)\n        .with_context(|| format!(\"observed object requires array {pointer}\"))\n}\nfn text_at<'a>(value: &'a Value, pointer: &str) -> anyhow::Result<&'a str> {\n    value\n        .pointer(pointer)\n        .and_then(Value::as_str)\n        .with_context(|| format!(\"observed object requires text {pointer}\"))\n}\nfn save(directory: &Path, name: &str, value: &Value) -> anyhow::Result<()> {\n    fs::write(directory.join(name), serde_json::to_vec_pretty(value)?)\n        .with_context(|| format!(\"write observed {name}\"))\n}\nfn kubectl(cluster: &str, work: &Path) -> Command {\n    let mut command = Command::new(\"kubectl\");\n    command\n        .arg(\"--kubeconfig\")\n        .arg(work.join(\"kubeconfig\"))\n        .arg(\"--context\")\n        .arg(format!(\"kind-{cluster}\"));\n    command\n}\nasync fn command_json(command: &mut Command) -> anyhow::Result<Value> {\n    serde_json::from_slice(&checked(command).await?).context(\"read the observed JSON\")",
+      "fragment": "            .any(|condition| condition[\"type\"] == name && condition[\"status\"] == value)\n    })\n}\nfn items(value: &Value) -> anyhow::Result<&Vec<Value>> {\n    array_at(value, \"/items\")\n}\nfn array_at<'a>(value: &'a Value, pointer: &str) -> anyhow::Result<&'a Vec<Value>> {\n    value\n        .pointer(pointer)\n        .and_then(Value::as_array)\n        .with_context(|| format!(\"observed object requires array {pointer}\"))\n}\nfn text_at<'a>(value: &'a Value, pointer: &str) -> anyhow::Result<&'a str> {\n    value\n        .pointer(pointer)\n        .and_then(Value::as_str)\n        .with_context(|| format!(\"observed object requires text {pointer}\"))\n}\nfn save(directory: &Path, name: &str, value: &Value) -> anyhow::Result<()> {\n    fs::write(directory.join(name), serde_json::to_vec_pretty(value)?)\n        .with_context(|| format!(\"write observed {name}\"))\n}\nfn kubectl(cluster: &str, work: &Path) -> Command {\n    let mut command = Command::new(\"kubectl\");\n    command\n        .arg(\"--kubeconfig\")\n        .arg(work.join(\"kubeconfig\"))\n        .arg(\"--context\")\n        .arg(format!(\"kind-{cluster}\"));\n    command\n}\nasync fn command_json(command: &mut Command) -> anyhow::Result<Value> {\n    serde_json::from_slice(&require_success(command).await?).context(\"read the observed JSON\")",
       "isNew": false,
       "kind": "exact",
       "lines": 33,
@@ -21764,7 +21764,7 @@
           "line": 29,
           "position": 744
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/wasmcloud-release-check",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/wasmcloud-release-tests",
         "start": 12,
         "startLoc": {
           "column": 41,
@@ -21992,7 +21992,7 @@
           "line": 29,
           "position": 773
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/wasmcloud-release-check",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/wasmcloud-release-tests",
         "start": 16,
         "startLoc": {
           "column": 17,

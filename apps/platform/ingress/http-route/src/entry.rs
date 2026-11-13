@@ -177,7 +177,7 @@ async fn execute(
     for request_element in request_elements.iter() {
         let request_id = request_element["request_id"]
             .as_str()
-            .expect("request id checked");
+            .expect("request id validated");
         if remaining_ms(deadline) == 0 {
             answers.push(
                 json!({"request_id": request_id, "error": {
@@ -189,7 +189,7 @@ async fn execute(
         }
         let key = field(request_element, key_field)
             .and_then(Value::as_str)
-            .expect("key checked");
+            .expect("key validated");
         let mut hashed = request_element.clone();
         remove(&mut hashed, &["request_id"]);
         remove(&mut hashed, &key_field.split('.').collect::<Vec<_>>());

@@ -13,7 +13,7 @@ use wamn_identity_protocol::RoleName;
 
 use crate::release::{EdgeReleaseError, EdgeReleaseErrorType};
 
-/// The permissions of each role, checked against one release.
+/// The permissions of each role, validated against one release.
 #[derive(Clone, Debug)]
 pub struct Grants {
     roles: BTreeMap<String, BTreeSet<String>>,

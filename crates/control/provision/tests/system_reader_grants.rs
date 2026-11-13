@@ -1,11 +1,11 @@
-//! Live test that the T1 control-database readers hold EXACTLY their own
+//! Live make sure that the T1 control-database readers hold EXACTLY their own
 //! grant set (`wamn-0h0g.12.116`).
 //!
 //! The test reads the SERVER'S OWN ANSWER, never the text of a statement:
 //! `has_schema_privilege`, `has_table_privilege`, `pg_roles` attributes,
 //! `aclexplode`, and the real SQLSTATE a refused statement raises. Pinning DDL
 //! text would show nothing here — this crate emits the DDL, so a text
-//! assertion would be checking a builder against itself, and it cannot tell a
+//! assertion would be testing a builder against itself, and it cannot tell a
 //! declaration from a comment mentioning one.
 //!
 //! Every denial is measured from a session authenticated AS the reader
@@ -98,7 +98,7 @@ fn generation_role(
 /// the builder's `IF NOT EXISTS` and mask a mutated one.
 ///
 /// Roles are CLUSTER-wide, so re-creating the schemas does not reach them.
-/// `DROP OWNED BY` precedes `DROP ROLE` inside an existence check: a privilege
+/// `DROP OWNED BY` precedes `DROP ROLE` inside an existence test: a privilege
 /// left behind in this database would otherwise refuse the drop outright.
 fn reset_roles(admin_url: &str, database: &str) {
     let mut roles = Vec::new();
@@ -337,7 +337,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     let reader_url = role_url(&admin_url, &role, READER_PW);
     run_admin(
         &reader_url,
-        "the reader session's own self-check",
+        "the reader session's own self-test",
         "DO $self$ BEGIN \
            ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles \
                         WHERE rolname = current_user), \
@@ -396,7 +396,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
 }
 
 /// THE FORGERY PRIMITIVE, CLOSED AND MEASURED (`wamn-0h0g.12.67`), and the
-/// DISJOINTNESS checked live with BOTH readers provisioned at once.
+/// DISJOINTNESS validated live with BOTH readers provisioned at once.
 ///
 /// `wamn-system-db` authenticated as `wamn_system`, the owner of `identity.pats`
 /// and `identity.project_roles`, and `identity.*` has no row-level security. The
@@ -586,7 +586,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     for (reader, url, _) in &reader_url {
         run_admin(
             url,
-            "a reader session's own self-check",
+            "a reader session's own self-test",
             "DO $self$ BEGIN \
                ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles \
                             WHERE rolname = current_user), \

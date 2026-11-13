@@ -1017,15 +1017,17 @@ fn descriptor_components(
                     package.package_version()
                 )
             })?;
-            wamn_package_control::component_admission::check_admitted_statements(&facts.component)
-                .with_context(|| {
-                    format!(
-                        "component {:?} of package {}@{} carries refused SQL",
-                        facts.component.component,
-                        package.package_id(),
-                        package.package_version()
-                    )
-                })?;
+            wamn_package_control::component_admission::require_admitted_statements(
+                &facts.component,
+            )
+            .with_context(|| {
+                format!(
+                    "component {:?} of package {}@{} carries refused SQL",
+                    facts.component.component,
+                    package.package_id(),
+                    package.package_version()
+                )
+            })?;
             components.insert(
                 facts.component,
                 facts.connections,
@@ -2317,7 +2319,7 @@ mod manifest_push {
         pub release: ServingRelease,
     }
 
-    /// Push canonical format-1 bytes or check that their exact artifact already exists.
+    /// Push canonical format-1 bytes or make sure that their exact artifact already exists.
     pub async fn push_manifest_bytes(
         canonical_bytes: &[u8],
         artifact_base: &str,

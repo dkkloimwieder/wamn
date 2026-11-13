@@ -11,7 +11,7 @@ The branch is `worktree-docs`, rebased onto main `779cbf125`.
 | `.2` One reference owner | H2-1, H2-4 | `82df826ce`, `fe812ec01` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
 | `.3` Links and evidence | H2-5, H2-6, H2-7 | `93926c34b` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `82df826ce`. |
 | `.4` Navigation | H2-8 | `7821b47d8` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
-| `.5` Auth cache ignores | `wamn-kov6v.6` part | `31d54aa71` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and check it before setup. Their exclusion rows are removed. |
+| `.5` Auth cache ignores | `wamn-kov6v.6` part | `31d54aa71` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and test it before setup. Their exclusion rows are removed. |
 
 The branch deletes 15 files and changes 118 files, with 718 lines added and 6,842 lines removed.
 
@@ -21,7 +21,7 @@ Root took these decisions inside the brief.
 
 1. `platform-deploy.md` was deleted in issue 2 and not in issue 1, because its standing rules had to move first.
 2. The first cut of the mixed plans removed rules that no reference page stated. Root sent the lane back, and the lane restored each rule word for word. Issue 2 then moved the rules of built work to their owners.
-3. The ten deleted plans held 193 rules that no reference page stated. A word-for-word check after issue 2 found 67 in owner pages. The lane resolved the other 126 against the source: 11 copied to owners, 19 already stated with other words, 66 contradicted by current code or a later ruling, and 31 undecided. The table is [raw/docs-ownership-rules.md](raw/docs-ownership-rules.md).
+3. The ten deleted plans held 193 rules that no reference page stated. A word-for-word test after issue 2 found 67 in owner pages. The lane resolved the other 126 against the source: 11 copied to owners, 19 already stated with other words, 66 contradicted by current code or a later ruling, and 31 undecided. The table is [raw/docs-ownership-rules.md](raw/docs-ownership-rules.md).
 4. The dated audit reports under `docs/audit/` keep the retired tool names and line pins. They are records, like quotations in `docs/history`. Root reverted the lane's renames there.
 5. Comment-only edits in the `web/wfe` submodule were reverted. That repository is outside this epic.
 6. `docs/plan/platform-ui-app.md` keeps server paging as written. Its bead `wamn-n8q9m.20` is closed (2026-10-23), but the brief names it as kept.

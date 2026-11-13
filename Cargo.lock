@@ -6760,7 +6760,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-submodule-check"
+name = "wamn-submodule-pins"
 version = "0.1.0"
 dependencies = [
  "anyhow",

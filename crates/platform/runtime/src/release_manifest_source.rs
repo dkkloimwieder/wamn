@@ -7,7 +7,7 @@
 //! pod template names, and this module returns only bytes whose SHA-256 is that
 //! exact digest.
 //!
-//! # Why the name check that the mount could not make lives here
+//! # Why the name make sure that the mount could not make lives here
 //!
 //! A projected ConfigMap carries no usable binding between the bytes and the
 //! name the template asked for — the name inside the container is placed by the
@@ -15,7 +15,7 @@
 //! against itself (see [`wamn_engine::release_manifest`]). A registry is a third
 //! party: the digest travels in the pod template, the bytes come from the
 //! registry, and this module refuses unless they agree. Nothing about the
-//! release's identity is derived here. This module only checks it.
+//! release's identity is derived here. This module only tests it.
 //!
 //! This module owns artifact transfer alone. Document admission — canonicality,
 //! format version, the release pair — stays with
@@ -314,7 +314,7 @@ impl ReleaseManifestSource {
         .await
         .map_err(|source| {
             if transport_is_mismatched(&source) {
-                // Reuses the layout check's literal: the registry contradicts the envelope.
+                // Reuses the layout test's literal: the registry contradicts the envelope.
                 ReleaseManifestFetchError::mismatched(
                     &named,
                     "release-manifest-artifact-envelope-mismatch",
@@ -327,7 +327,7 @@ impl ReleaseManifestSource {
             }
         })?;
         // The config blob is the frozen empty document and its digest is pinned
-        // by the layout check, so there is nothing a second round trip could
+        // by the layout test, so there is nothing a second round trip could
         // learn. Only the layer carries content.
         let blobs = verify_release_manifest_artifact_layout(&manifest, manifest_digest, None)
             .map_err(|refusal| ReleaseManifestFetchError::mismatched(&named, refusal.refusal()))?;
@@ -420,7 +420,7 @@ fn manifest_byte_ceiling() -> i64 {
 /// [`verify_release_manifest_artifact_layout`] has already pinned that
 /// descriptor to the digest the pod template named, so on the `Ok` path the two
 /// are equal by construction and no served body can reach this comparison
-/// unequal. It is kept as defense in depth against that upstream check being
+/// unequal. It is kept as defense in depth against that upstream test being
 /// dropped, and a direct call is the only instrument that can hold it.
 fn verify_transferred_body(
     canonical_bytes: &[u8],
@@ -436,7 +436,7 @@ fn verify_transferred_body(
     }
     // `component_digest` is a plain `sha256:<hex>` over bytes; a serving
     // manifest's identity is that same function over its canonical encoding, so
-    // this checks the transferred body against the pod template's name rather
+    // this tests the transferred body against the pod template's name rather
     // than against the registry's own bookkeeping.
     if bytes_sha256(canonical_bytes) != expected_digest {
         return Err(ReleaseManifestFetchError::mismatched(

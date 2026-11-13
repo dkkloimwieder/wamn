@@ -172,7 +172,7 @@ pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "platform"];
 /// Every relation that the callable-HTTP admitter reads, as `(schema, relation)`.
 ///
 /// [`grant_http_admitter_surface_sql`] grants `SELECT` on each, and the setup
-/// check expects exactly these grants, so the two cannot drift.
+/// test expects exactly these grants, so the two cannot drift.
 pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static str)> {
     HTTP_ADMITTER_CATALOG_RELATIONS
         .iter()
@@ -411,7 +411,7 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
 ///
 /// * NOT `USAGE` on `wamn_authority`. An index expression is a stored, already
 ///   resolved node tree, so no name resolution happens at insert time and only
-///   the function's EXECUTE ACL is checked. Measured: EXECUTE alone, with
+///   the function's EXECUTE ACL is validated. Measured: EXECUTE alone, with
 ///   `has_schema_privilege(role, 'wamn_authority', 'USAGE') = false`, inserts.
 /// * NOT `current_tenant_key()`. That derivation is called only by the tenant
 ///   floor policy, which `wamn-0h0g.22.17` narrowed `TO wamn_app`; a non-guest
@@ -637,11 +637,11 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   an UPDATE requires. Four of the six `runs` writes change `status`, which
 ///   participates in the partial-index predicates on `runs`, so those updates
 ///   can never take the HOT path that would skip index maintenance: the
-///   evaluation — and therefore the EXECUTE check — is unconditional for them,
+///   evaluation — and therefore the EXECUTE test — is unconditional for them,
 ///   exactly as it is for the management admitter's INSERT (`wamn-0h0g.22.28`).
 ///   Schema `USAGE` on `wamn_authority` is NOT granted and is NOT needed: an
 ///   index expression is a stored, already-resolved node tree, so no name
-///   resolution happens and only the function's EXECUTE ACL is checked.
+///   resolution happens and only the function's EXECUTE ACL is validated.
 ///
 /// Blanket revocation over BOTH schemas precedes every grant, so a replay
 /// NARROWS as well as grants. A table-level `REVOKE` carries that table's
@@ -787,7 +787,7 @@ pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"
 /// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
 /// reads `project_roles`; user routes require `project_env_memberships`
 /// (all in `crates/identity/platform/src/lib.rs`).
-/// PostgreSQL checks privileges on every relation a statement references, so all
+/// PostgreSQL tests privileges on every relation a statement references, so all
 /// relations are required, including password login revocation state.
 pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
     "pats",
@@ -798,7 +798,7 @@ pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
 ];
 
 /// The columns the identity reader reads beside [`IDENTITY_READER_RELATIONS`]:
-/// session admission checks the active org membership (`wamn-ms1sn.2`).
+/// session admission tests the active org membership (`wamn-ms1sn.2`).
 pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
     [("org_memberships", &["principal_id", "org", "status"])];
 

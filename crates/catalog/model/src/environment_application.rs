@@ -2,7 +2,7 @@
 //! (docs/architecture/execution.md#workflows).
 //!
 //! `environment.k` names each application and the packages of the release
-//! that belong to it. `wamn-ctl env apply` checks the map against the
+//! that belong to it. `wamn-ctl env apply` tests the map against the
 //! release, renders it for the host beside the tenant and environment, and
 //! keeps it with the Helm revision. A workflow belongs to one declared
 //! application, by name.

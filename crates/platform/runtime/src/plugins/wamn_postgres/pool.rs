@@ -405,9 +405,9 @@ impl CredentialProvider for StaticCredentialProvider {
     /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
     /// credential's login role carries the tenant key as its scope digest, and
     /// the same key is what every governed predicate computes — so the binding
-    /// is checked from the credential itself rather than declared beside it,
+    /// is validated from the credential itself rather than declared beside it,
     /// and a credential minted for another tenant is REFUSED instead of
-    /// silently borrowed. Selection happens FIRST and the check runs on the
+    /// silently borrowed. Selection happens FIRST and the test runs on the
     /// selected credential, so it fires on exactly the credential that would be
     /// handed back — never on a different class's login.
     fn resolve(
@@ -538,7 +538,7 @@ pub(super) struct SessionSettings {
     pub(super) runner: Option<String>,
 }
 
-/// Connection lifecycle whose pool owns a checked-out PostgreSQL session.
+/// Connection lifecycle whose pool owns a acquired PostgreSQL session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PoolLifecycle {
     Guest,
@@ -609,7 +609,7 @@ fn standard_conforming_strings_ok(setting: &str) -> bool {
 /// Wired as a `post_create` hook, the same place the R18
 /// `standard_conforming_strings` assertion lives, because that is where a NEW
 /// PHYSICAL CONNECTION exists and has not yet been used. deadpool PUSHES
-/// post-create hooks rather than replacing them, so both checks run.
+/// post-create hooks rather than replacing them, so both tests run.
 ///
 /// This is what closes the loop that split B opened. B keys the pool on
 /// (project, class, generation) taken from the resolved url; the url is a
@@ -663,7 +663,7 @@ pub(super) fn credential_exactness_hook(
         project,
         vec![expected_class_membership(class)],
         // ACL expectations are the per-family denial matrix and need a live
-        // server to be meaningful; membership is the arm that is checkable on
+        // server to be meaningful; membership is the arm that is testable on
         // every connection.
         Vec::new(),
     );
@@ -904,13 +904,13 @@ mod tests {
 
     /// *** THE `wamn-0h0g.22.6.7` REFUSAL, ON THE SELECTED CREDENTIAL. ***
     ///
-    /// The check must read the credential the GUEST would actually connect with,
+    /// The test must read the credential the GUEST would actually connect with,
     /// not whatever url the project happens to carry for some other authority.
     /// This project's platform login carries `acme`'s tenant key and its
-    /// guest login carries `evil`'s, so a check that read the wrong credential
+    /// guest login carries `evil`'s, so a test that read the wrong credential
     /// would ADMIT a cross-tenant guest read. Both directions are asserted.
     #[test]
-    fn the_guest_env_key_check_reads_the_credential_the_guest_would_connect_with() {
+    fn the_guest_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a:pw@db/billing",
             app_scope_hash("acme", "billing")
@@ -944,7 +944,7 @@ mod tests {
             provider
                 .resolve("billing", AuthorityClass::GuestSql, None)
                 .is_err(),
-            "guest resolution without a tenant has no authority to check"
+            "guest resolution without a tenant has no authority to validate"
         );
         // The platform class is project-environment scoped: no tenant binding.
         assert!(
@@ -1105,7 +1105,7 @@ mod tests {
     }
 
     /// Every authority can be probed, and each expects ITS OWN acl role. The
-    /// role strings are the arm that makes the probe a per-family check rather
+    /// role strings are the arm that makes the probe a per-family test rather
     /// than a generic connection test.
     #[test]
     fn every_authority_probes_for_its_own_acl_role() {
@@ -1114,7 +1114,7 @@ mod tests {
         // four `acl_role()` values differ — a claim about the enum, not about
         // the probe — so a hook that expected one fixed role for every class
         // passed it. The literals below are the second document the expectation
-        // is checked against, and they are what makes the arm per-family.
+        // is validated against, and they are what makes the arm per-family.
         let expected: [(AuthorityClass, &str); 5] = [
             (AuthorityClass::GuestSql, "wamn_app"),
             (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
@@ -1194,10 +1194,10 @@ mod tests {
         );
     }
 
-    // R18 — the connect-time check logic. A negative is hard to produce on stock
+    // R18 — the connect-time test logic. A negative is hard to produce on stock
     // PG18 (the setting defaults on), so the fail-closed branch is asserted here.
     #[test]
-    fn standard_conforming_strings_check() {
+    fn standard_conforming_strings_required() {
         assert!(standard_conforming_strings_ok("on"));
         assert!(!standard_conforming_strings_ok("off"));
         assert!(!standard_conforming_strings_ok(""));

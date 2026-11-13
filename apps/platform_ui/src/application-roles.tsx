@@ -139,15 +139,15 @@ export function RolePermissions(props: ScreenProps) {
     if (active) setTrouble(String(error));
   });
   const selected = (op: Operation) => !!list()?.admin || op.selected;
-  const setSelected = (operation: string, checked: boolean) =>
+  const setSelected = (operation: string, enabled: boolean) =>
     setList(
       (previous) =>
         previous && {
           ...previous,
-          operations: previous.operations.map((op) => (op.operation === operation ? { ...op, selected: checked } : op)),
+          operations: previous.operations.map((op) => (op.operation === operation ? { ...op, selected: enabled } : op)),
         },
     );
-  const change = async (op: Operation, checked: boolean) => {
+  const change = async (op: Operation, enabled: boolean) => {
     const previous = selected(op);
     if (
       list()?.admin ||
@@ -155,20 +155,20 @@ export function RolePermissions(props: ScreenProps) {
       op.adminOnly ||
       !op.grantable ||
       pending().has(op.operation) ||
-      previous === checked
+      previous === enabled
     )
       return;
     setPending((keys) => new Set([...keys, op.operation]));
     setTrouble(undefined);
     setResult(undefined);
-    setSelected(op.operation, checked);
+    setSelected(op.operation, enabled);
     try {
       value(
-        await (checked ? permission.grant : permission.revoke)(props.transport, [
+        await (enabled ? permission.grant : permission.revoke)(props.transport, [
           { requestId: crypto.randomUUID(), value: { role: name, operation: op.operation } },
         ]),
       );
-      if (active) setResult(`${checked ? "Granted" : "Revoked"} ${op.operation} ${checked ? "to" : "from"} ${name}.`);
+      if (active) setResult(`${enabled ? "Granted" : "Revoked"} ${op.operation} ${enabled ? "to" : "from"} ${name}.`);
     } catch (error) {
       if (active) {
         setSelected(op.operation, previous);
@@ -199,7 +199,7 @@ export function RolePermissions(props: ScreenProps) {
                 checked={selected(cell.row)}
                 readOnly={name === "admin" || list()?.admin}
                 disabled={cell.row.adminOnly || !cell.row.grantable || pending().has(cell.row.operation)}
-                onChange={(checked) => void change(cell.row, checked)}
+                onChange={(selected) => void change(cell.row, selected)}
               >
                 <Checkbox.Input aria-label={`${cell.row.operation} ${name}`} />
                 <Checkbox.Control>

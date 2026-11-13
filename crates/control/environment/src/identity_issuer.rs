@@ -514,17 +514,17 @@ async fn prepare(
         anyhow::ensure!(active(&prepared) && prepared.get::<_, Option<String>>("valid_until").as_deref() == Some(expires_at.as_str()),
             "prepared identity credential has an unexpected state");
         exact_grants(admin, &role, Grants::Generation).await?;
-        let mut url = Url::parse(&args.system_database_url).expect("administrator URL was checked before I/O");
+        let mut url = Url::parse(&args.system_database_url).expect("administrator URL was validated before I/O");
         url.set_username(&role).map_err(|()| anyhow::anyhow!("cannot encode identity credential user"))?;
         url.set_password(Some(&password)).map_err(|()| anyhow::anyhow!("cannot encode identity credential password"))?;
         url.set_host(args.db_host.as_deref()).context("cannot encode identity credential host")?;
         url.set_port(Some(args.db_port)).map_err(|()| anyhow::anyhow!("cannot encode identity credential port"))?;
-        let checked = parse_identity_issuer_url(url.as_str(), &args.issuer)?;
+        let issuer = parse_identity_issuer_url(url.as_str(), &args.issuer)?;
         let document = json!({
             "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
             "metadata": {"name": args.secret_name, "namespace": args.namespace,
                 "labels": {"app.kubernetes.io/name": "wamn-identity", "app.kubernetes.io/managed-by": "wamn"}},
-            "stringData": {"url": checked.url()}
+            "stringData": {"url": issuer.url()}
         });
         crate::provision_project_env::write_secret_json(args.emit_secret.as_deref().context("--emit-secret is required")?, &document)
     }.await;

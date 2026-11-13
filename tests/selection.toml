@@ -35,7 +35,7 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:repo_lint", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_changes", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:wasmcloud_release_check", tier="contract" },
+  { workspace="root", package="wamn-conformance-tests", target="test:wasmcloud_release_tests", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:wasmtime_source_identity", tier="contract" },
   { workspace="root", package="wamn-package-control", target="lib:wamn_package_control", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="lib:wamn_release_control", tier="live-postgres" },
@@ -202,7 +202,7 @@ targets = [
   { workspace="root", package="wamn-schema-generator", target="test:manifest_authoring", tier="contract" },
   { workspace="root", package="wamn-schema-generator", target="test:numbering", tier="live-postgres" },
   { workspace="root", package="wamn-schema-generator", target="test:platform_generation", tier="contract" },
-  { workspace="root", package="wamn-schema-generator", target="test:statement_check_live", tier="live-postgres" },
+  { workspace="root", package="wamn-schema-generator", target="test:statement_admission_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="lib:wamn_schema_introspection", tier="contract" },
   { workspace="root", package="wamn-schema-introspection", target="test:file_reference_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:ir", tier="contract" },
@@ -210,7 +210,7 @@ targets = [
   { workspace="root", package="wamn-schema-introspection", target="test:postgres_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:provenance_live", tier="live-postgres" },
   { workspace="root", package="wamn-identity-protocol", target="test:file_keys", tier="contract" },
-  { workspace="root", package="wamn-submodule-check", target="bin:wamn-submodule-check", tier="contract" },
+  { workspace="root", package="wamn-submodule-pins", target="bin:wamn-submodule-pins", tier="contract" },
   { workspace="root", package="wamn-test-infrastructure", target="bin:wamn-test-postgres", tier="live-postgres" },
   { workspace="root", package="wamn-test-infrastructure", target="lib:wamn_test_infrastructure", tier="live-postgres" },
   { workspace="root", package="wamn-test-postgres", target="lib:wamn_test_postgres", tier="live-postgres" },
@@ -656,7 +656,7 @@ prerequisites = []
 inputs = ["(^|/)Cargo\\.(toml|lock)$"]
 execution = "commands"
 mode = "local"
-commands = [["packages alone", "tools/check-packages-alone"]]
+commands = [["packages alone", "tools/compile-packages-alone"]]
 resource_lock = ""
 
 [[suites]]
@@ -763,10 +763,10 @@ inputs = ["^(web/|apps/[^/]+/web/|apps/platform_ui/|package.json$|pnpm-)"]
 execution = "commands"
 mode = "local"
 commands = [
-  ["web lint", "pnpm", "run", "check"],
-  ["@wamn/web-runtime check", "pnpm", "--filter", "@wamn/web-runtime", "check"],
+  ["web lint", "pnpm", "run", "lint"],
+  ["@wamn/web-runtime lint", "pnpm", "--filter", "@wamn/web-runtime", "lint"],
   ["@wamn/web-runtime test", "pnpm", "--filter", "@wamn/web-runtime", "test"],
-  ["@wamn/platform-ui check", "pnpm", "--filter", "@wamn/platform-ui", "check"],
+  ["@wamn/platform-ui lint", "pnpm", "--filter", "@wamn/platform-ui", "lint"],
   ["@wamn/platform-ui test", "pnpm", "--filter", "@wamn/platform-ui", "test"],
   ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"],
 ]

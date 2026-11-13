@@ -251,7 +251,7 @@ pub(super) async fn load_native_workload(
     let mut facts_by_name = BTreeMap::new();
     let mut components = Vec::new();
     for input in spec.components {
-        // Native trusts a supplied digest even on a cache hit. Check every
+        // Native trusts a supplied digest even on a cache hit. Make sure of every
         // input, including repeats, before any digest reaches that cache.
         anyhow::ensure!(
             bytes_sha256(&input.bytes) == input.fact.component_digest,

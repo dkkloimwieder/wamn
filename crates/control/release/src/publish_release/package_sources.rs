@@ -184,7 +184,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             error,
         )
     };
-    wamn_schema_generator::build_record::check_current(root).map_err(|error| {
+    wamn_schema_generator::build_record::require_current(root).map_err(|error| {
         PublishManifestError {
             source: Some(error.into()),
             ..PublishManifestError::new(

@@ -136,7 +136,7 @@ if tool == 'kubectl':
         name = args[1].removeprefix('job/')
         if name == 'platform-session-key-state':
             print(json.dumps({'active':state['active']}))
-        elif name == 'platform-identity-check':
+        elif name == 'platform-identity-probe':
             print(json.dumps({'keys':[state['active']]}))
         elif name.startswith('platform-owner-state-') and name == 'platform-owner-state-' + state['org']:
             print('t')

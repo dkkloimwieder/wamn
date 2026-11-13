@@ -42,7 +42,7 @@ See [the current build contract](../operations/building.md#wamn-build).
 
 ## 6. Out of scope
 
-- Epic 2, constraints the JSON vocabulary cannot state. Goal: cross-field checks at compile time (a `revision` input names a `Ref` input; a `writable_field` exists on the model; a `relation` names a table some statement touches). Boundary: compile-time refusals only; no new compiled vocabulary.
+- Epic 2, constraints the JSON vocabulary cannot state. Goal: cross-field tests at compile time (a `revision` input names a `Ref` input; a `writable_field` exists on the model; a `relation` names a table some statement touches). Boundary: compile-time refusals only; no new compiled vocabulary.
 - Any change to the Retain/Derive table, to `relations`/`statements` authoring, or to the canonical JSON.
 - Language-level import of a base into an overlay.
 - Authoring of `deploy/` files, chart values or publication attachments in KCL.

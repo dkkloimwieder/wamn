@@ -1,4 +1,4 @@
-// The five offline profile checks of the open receipt lines screen. The Rust fixture starts the real local services.
+// The five offline profile tests of the open receipt lines screen. The Rust fixture starts the real local services.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -20,9 +20,9 @@ const OPEN = "Open receipt lines";
 const LOCATION_ID = "00000000-0000-0000-0000-000000000201";
 // The collection polls every 10 s. One poll and the time the write takes to land.
 const ONE_POLL = 13_000;
-// WAMN_OFFLINE_CHECK=<1-5> runs one check alone. Each check has its own browser context and orders.
-const only = process.env.WAMN_OFFLINE_CHECK;
-const runs = (check) => !only || only === String(check);
+// WAMN_OFFLINE_CASE=<1-5> runs one test alone. Each test has its own browser context and orders.
+const only = process.env.WAMN_OFFLINE_CASE;
+const runs = (caseNumber) => !only || only === String(caseNumber);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const errors = [];
 let page;
@@ -123,7 +123,7 @@ const rowsSaved = (on) =>
   });
 
 /**
- * A signed-in page in a fresh context, so no check sees another check's
+ * A signed-in page in a fresh context, so no test sees another test's
  * storage or clock. It is tall enough that every row renders below the
  * panels, and it waits until the rows are saved.
  */
@@ -147,7 +147,7 @@ async function reopen(context) {
 
 try {
   if (runs(1)) {
-    step = "check-1";
+    step = "case-1";
     const context = await freshPage();
     const { user } = await savedUser(page);
     assert.ok(user.loginExpiresAt > Date.now() / 1000, "the saved login has not expired yet");
@@ -157,13 +157,13 @@ try {
     await reopen(context);
     await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     assert.equal(await table(page).count(), 0, "no rows paint after the login expired");
-    await capture(page, "check-1-sign-in");
-    console.log("CHECK 1 PASS: session reopen after loginExpiresAt shows the sign-in form");
+    await capture(page, "case-1-sign-in");
+    console.log("CASE 1 PASS: session reopen after loginExpiresAt shows the sign-in form");
     await context.close();
   }
 
   if (runs(2)) {
-    step = "check-2";
+    step = "case-2";
     const context = await freshPage();
     const before = await remaining(page, "PO-BROWSER-06");
     await context.setOffline(true);
@@ -175,19 +175,19 @@ try {
     assert.ok(await tentative(page, "PO-BROWSER-06"));
     assert.equal(await remaining(page, "PO-BROWSER-06"), before - 1);
     assert.match(await status(page), /Pending: 1\./);
-    await capture(page, "check-2-reopened");
+    await capture(page, "case-2-reopened");
     await context.setOffline(false);
     await until(
       "the receipt lands",
       async () => !(await tentative(page, "PO-BROWSER-06")) && /Pending: 0\./.test(await status(page)),
       30_000,
     );
-    console.log("CHECK 2 PASS: session reopen before loginExpiresAt painted the saved rows and recorded");
+    console.log("CASE 2 PASS: session reopen before loginExpiresAt painted the saved rows and recorded");
     await context.close();
   }
 
   if (runs(3)) {
-    step = "check-3";
+    step = "case-3";
     const context = await freshPage();
     const sent = [];
     context.on("request", (request) => {
@@ -212,7 +212,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, ONE_POLL));
     assert.deepEqual(sent, [], "no expired entry is sent");
     assert.ok(await tentative(page, "PO-BROWSER-07"), "an expired entry keeps its tentative row");
-    await capture(page, "check-3-expired");
+    await capture(page, "case-3-expired");
     // The entries list in recorded order, so the first is the receipt for PO-BROWSER-07.
     await expired.first().getByRole("button", { name: "Resubmit", exact: true }).click();
     await until(
@@ -237,13 +237,13 @@ try {
       10_000,
     );
     assert.equal(sent.length, 1, "the discarded entry is never sent");
-    await capture(page, "check-3-cleared");
-    console.log("CHECK 3 PASS: expired entries not sent, resubmit sent once, discard removed the row");
+    await capture(page, "case-3-cleared");
+    console.log("CASE 3 PASS: expired entries not sent, resubmit sent once, discard removed the row");
     await context.close();
   }
 
   if (runs(4)) {
-    step = "check-4";
+    step = "case-4";
     const context = await freshPage();
     const { key, user } = await savedUser(page);
     const [, application, environment] = key.split(":");
@@ -268,13 +268,13 @@ try {
       10_000,
     );
     assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null, "the saved user goes");
-    await capture(page, "check-4-signed-out");
-    console.log("CHECK 4 PASS: sign-out with clear_on_sign_out deleted the saved user, rows and outbox");
+    await capture(page, "case-4-signed-out");
+    console.log("CASE 4 PASS: sign-out with clear_on_sign_out deleted the saved user, rows and outbox");
     await context.close();
   }
 
   if (runs(5)) {
-    step = "check-5";
+    step = "case-5";
     const context = await freshPage();
     const before = await remaining(page, "PO-BROWSER-10");
     await saveSettings(page, { profile: "local_first", clearOnSignOut: false });
@@ -289,14 +289,14 @@ try {
     assert.ok(await tentative(page, "PO-BROWSER-10"));
     assert.equal(await remaining(page, "PO-BROWSER-10"), before - 1);
     assert.match(await status(page), /Pending: 1\./);
-    await capture(page, "check-5-local-first");
-    console.log("CHECK 5 PASS: local_first reopened and recorded with no session");
+    await capture(page, "case-5-local-first");
+    console.log("CASE 5 PASS: local_first reopened and recorded with no session");
     await context.close();
   }
 
   console.log(`page errors: ${JSON.stringify(errors)}`);
   assert.deepEqual(errors, []);
-  console.log("PASS: Receiving offline profile checks");
+  console.log("PASS: Receiving offline profile tests");
 } catch (error) {
   console.log(`page errors: ${JSON.stringify(errors)}`);
   if (page)

@@ -39,13 +39,13 @@ The owner confirmed five root decisions on 2026-11-02.
 Root decided these details inside the brief.
 
 - The verb finds a package directory through the build owner's `build_record::source_root`, so no package list exists in code. `qualify-release` runs from a checkout.
-- The Docker runner, the temporary results and the case checks move to `services/ctl/src/qualification.rs`. The payload, tags, push, lookup and registry verification stay in `crates/control/lib/src/delivery/qualification_artifact.rs`. `platform_apply_kind` runs the `wamn-ctl qualify-release` binary.
+- The Docker runner, the temporary results and the case tests move to `services/ctl/src/qualification.rs`. The payload, tags, push, lookup and registry verification stay in `crates/control/lib/src/delivery/qualification_artifact.rs`. `platform_apply_kind` runs the `wamn-ctl qualify-release` binary.
 - Binding errors have two categories. An insufficient-privilege refusal of the principal read is authorization. A checkout, connection, prepare or query failure is infrastructure. The other binding steps make no database call and stay authorization.
 - If the name of an input contains URL, PASSWORD, TOKEN, SECRET, KEY, PAT or CREDENTIAL, the input is secret-bearing. Names of file paths are not. The three existing PAT path hides on main stay. No argument was removed, because no mounted credential file supplies the same input.
 
 ## Regressions found and fixed on the branch
 
-- Two packages compiled only through features that the removed generator edge turned on. `wamn-platform-identity` reads `serde_json::Value` through tokio-postgres without `with-serde_json-1`. `wamn-execution-host` uses `wash_runtime::washlet` without `washlet`, which also broke `wamn-workflow`. The workspace build and clippy passed. A check of each of the 45 packages alone found them, and `ca82acc13` declares both features. `wamn-bcplj` holds the check that keeps this class out.
+- Two packages compiled only through features that the removed generator edge turned on. `wamn-platform-identity` reads `serde_json::Value` through tokio-postgres without `with-serde_json-1`. `wamn-execution-host` uses `wash_runtime::washlet` without `washlet`, which also broke `wamn-workflow`. The workspace build and clippy passed. A test of each of the 45 packages alone found them, and `ca82acc13` declares both features. `wamn-bcplj` holds the test that keeps this class out.
 - Main `229f7377e` added two uses of the old manifest path, in `ensure_project_database` and `install_sequence_live.rs`. `ca82acc13` moves them to `wamn_catalog`.
 
 ## Test results
@@ -66,11 +66,11 @@ The logs are in `/var/tmp/wamn-genedge-log`. The runs used no kind and built no 
 These tests need tier rows from the tiers epic `wamn-kov6v`.
 
 - `help_env_tests::help_hides_environment_values` in five binaries: `wamn-ctl`, `wamn`, `wamn-ctl-ops`, `wamn-cdc-reader` and `wamn-scenario-worker`. The shared source is `services/cli_help_tests.rs`.
-- The declaration tests in `services/ctl/src/qualification/declarations.rs`, and the runner and case-check tests that moved from `control/lib` to `services/ctl/src/qualification.rs`.
+- The declaration tests in `services/ctl/src/qualification/declarations.rs`, and the runner and case-test tests that moved from `control/lib` to `services/ctl/src/qualification.rs`.
 - In `wamn-runtime`: `plugins::wamn_postgres::operation::tests::unavailable_principal_database_returns_connection_unavailable`, `missing_principal_returns_permission_denied` and `refused_statement_authority_returns_unknown_statement`.
 - `captured_entities_get_consumers_without_registrations` in `wamn-control-provision` now takes pairs.
 
 ## Open items
 
-- `wamn-bcplj` adds the check that compiles each workspace package alone. It changes the test selection files, so integration-schema takes it after `wamn-kov6v` lands.
+- `wamn-bcplj` adds the test that compiles each workspace package alone. It changes the test selection files, so integration-schema takes it after `wamn-kov6v` lands.
 - `qualify-release` now reads declarations from the checkout that runs it, and it no longer runs without one. The evidence payload records the case names that ran.

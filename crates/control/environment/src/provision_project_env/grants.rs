@@ -1,4 +1,4 @@
-//! Observed database privileges and exact workload role grant checks.
+//! Observed database privileges and exact workload role grant tests.
 
 pub(super) mod plan;
 pub(super) use plan::stable_grant_set;

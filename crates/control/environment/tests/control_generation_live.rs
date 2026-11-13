@@ -200,12 +200,12 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
     assert!(
         control_session_is_active(&control, &claims(&login))
             .await
-            .expect("check the live login")
+            .expect("test the live login")
     );
     assert!(
         !control_session_is_active(&control, &claims("00000000-0000-0000-0000-000000000000"))
             .await
-            .expect("check an unknown login")
+            .expect("test an unknown login")
     );
 
     for statement in [

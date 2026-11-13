@@ -12,7 +12,7 @@ pub fn claim_environment_instance_sql() -> &'static str {
 }
 
 /// Refuse a claim that did not update a projected tenant.
-pub fn check_environment_instance_claim(
+pub fn require_environment_instance_claim(
     env_key: &str,
     affected_rows: u64,
 ) -> Result<(), EnvironmentInstanceClaimError> {
@@ -49,12 +49,12 @@ mod tests {
 
     #[test]
     fn an_existing_projection_accepts_its_instance_claim() {
-        assert!(check_environment_instance_claim("tenant-a", 1).is_ok());
+        assert!(require_environment_instance_claim("tenant-a", 1).is_ok());
     }
 
     #[test]
     fn an_absent_projection_keeps_the_refusal_and_remedy() {
-        let error = check_environment_instance_claim("tenant-a", 0).unwrap_err();
+        let error = require_environment_instance_claim("tenant-a", 0).unwrap_err();
         assert_eq!(
             error.to_string(),
             "environment-instance-claim-without-projection: env_key=tenant-a: name the tenant when provisioning the project-env, so the control store carries its environment identity"

@@ -17,7 +17,7 @@
 //!
 //! # Two object-store semantics decided here, not inherited
 //!
-//! **`..` is refused as a SEGMENT, never as a substring.** A substring check
+//! **`..` is refused as a SEGMENT, never as a substring.** A substring test
 //! would also refuse the legitimate key `report..2026.zpl`, and a containment
 //! rule that refuses valid names teaches authors to work around it.
 //!

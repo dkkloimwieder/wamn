@@ -124,18 +124,18 @@ impl ClusterDocument {
             .with_context(|| format!("{} is not a valid cluster", file.display()))
     }
 
-    /// Read a document from its JSON form and check every field.
+    /// Read a document from its JSON form and require_valid every field.
     ///
     /// # Errors
     ///
     /// When a field is unknown or missing, or a value is refused.
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
         let document: Self = serde_json::from_slice(bytes).context("decode the cluster JSON")?;
-        document.check()?;
+        document.require_valid()?;
         Ok(document)
     }
 
-    fn check(&self) -> anyhow::Result<()> {
+    fn require_valid(&self) -> anyhow::Result<()> {
         ensure!(
             self.build_cloud_cap_usd.is_finite() && self.build_cloud_cap_usd >= 0.0,
             "build_cloud_cap_usd must be a finite, nonnegative amount"

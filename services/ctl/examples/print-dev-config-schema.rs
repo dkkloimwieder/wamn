@@ -1,4 +1,4 @@
-//! Regenerate the checked-in `wamn dev` configuration schema:
+//! Regenerate the tracked `wamn dev` configuration schema:
 //!
 //! ```sh
 //! cargo run --locked --offline -p wamn-ctl --example print-dev-config-schema \

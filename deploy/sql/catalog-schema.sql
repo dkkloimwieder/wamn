@@ -358,7 +358,7 @@ CREATE TRIGGER workflows_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 -- Tenant floors are one mechanism applied to the complete current relation
--- set. The server catalog, rather than checked-in SQL text, shows the result.
+-- set. The server catalog, rather than tracked SQL text, shows the result.
 DO $tenant_floors$
 DECLARE
     relation_name text;

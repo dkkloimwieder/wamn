@@ -36,7 +36,7 @@ pub enum HostRouteHandlers {
         postgres: Arc<WamnPostgres>,
         project: String,
         /// The identity reader of `wamn_system` and the org of the host, for
-        /// the covering check of an `admin` revoke. A host without an
+        /// the covering test of an `admin` revoke. A host without an
         /// authenticated route has none.
         identity: Option<(Arc<tokio_postgres::Client>, String)>,
         /// Publishes each role or permission change.

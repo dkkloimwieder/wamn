@@ -726,7 +726,7 @@ try {
     .and(permissions.locator("input:not(:disabled)"))
     .first();
   const permissionName = await permissionCell.getAttribute("aria-label");
-  // The wfe check control covers the visually hidden input, so a user clicks the control.
+  // The wfe test control covers the visually hidden input, so a user clicks the control.
   await permissionCell.locator("xpath=..").locator(".ui-check-control").click();
   await receiving.getByRole("status").filter({ hasText: "Granted" }).waitFor();
   assert.equal(await permissionCell.isChecked(), true);

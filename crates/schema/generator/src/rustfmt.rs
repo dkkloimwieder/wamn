@@ -3,8 +3,8 @@
 //! Emitters write source by hand, so their line breaks and indentation are
 //! whatever the emitting code happened to spell. Running `rustfmt` over the
 //! bytes before they become a [`crate::GeneratedFile`] makes the committed
-//! artifacts equal what `cargo fmt` produces, and makes writing and checking
-//! agree: the drift check compares the same formatted bytes the write would
+//! artifacts equal what `cargo fmt` produces, and makes writing and testing
+//! agree: the drift test compares the same formatted bytes the write would
 //! have placed on disk.
 
 use std::io::Write as _;

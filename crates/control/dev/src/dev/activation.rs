@@ -548,7 +548,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         ))
     })?;
     let component_bytes = std::fs::read(entry_path).map_err(stage_error)?;
-    let checked = (|| -> anyhow::Result<()> {
+    let result = (|| -> anyhow::Result<()> {
         let engine = wamn_engine::engine::build_engine(&[])?;
         let component =
             wash_runtime::wasmtime::component::Component::new(engine.inner(), &component_bytes)?;
@@ -562,7 +562,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         );
         Ok(())
     })();
-    checked.map_err(|source| {
+    result.map_err(|source| {
         DevActivationError::with_source(
             DevActivationErrorType::InvalidInput,
             "local-flow-http",
@@ -1428,7 +1428,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../deploy/platform/http-route-workload.example.yaml"),
         )
-        .expect("the workload template is checked in beside the platform manifests");
+        .expect("the workload template is validated in beside the platform manifests");
 
         let mut declared: Vec<&str> = template
             .lines()

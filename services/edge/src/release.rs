@@ -37,7 +37,7 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_compon
 use crate::grants::Grants;
 
 /// A release, its component facts, its grants and its composed entry, each
-/// checked against the pinned bundle digest.
+/// validated against the pinned bundle digest.
 pub struct EdgeRelease {
     bundle_digest: String,
     release: Arc<LoadedRelease>,
@@ -97,7 +97,7 @@ impl EdgeRelease {
                     "{COMPONENTS_FILE_NAME} is not a component fact list: {error}"
                 ))
             })?;
-        check_one_fact_per_component(&release, &components)?;
+        require_one_fact_per_component(&release, &components)?;
         let source = LocalComponentSource::new(directory.to_path_buf());
         let mut bodies = Vec::with_capacity(components.len());
         for component in &components {
@@ -160,7 +160,7 @@ impl EdgeRelease {
 
 /// Require exactly one admitted fact for each manifest component, each one
 /// carried by the release.
-fn check_one_fact_per_component(
+fn require_one_fact_per_component(
     release: &LoadedRelease,
     components: &[AdmittedComponent],
 ) -> Result<(), EdgeReleaseError> {

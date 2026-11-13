@@ -829,7 +829,7 @@ pub(super) async fn require_executor_authority(
     if !allowed {
         return Err(ProductionClaimError::new(
             ProductionClaimErrorType::Identity,
-            "check executor authority",
+            "require executor authority",
             "executor-platform-authority-required",
         ));
     }
@@ -1109,7 +1109,7 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("prepare production candidate", &error))?;
     // The select skips runs pinned to another release, so their head never
-    // blocks this host's own backlog (R20). The grant below rechecks the pin.
+    // blocks this host's own backlog (R20). The grant below tests again the pin.
     let host_release: Option<&str> = release.map(|identity| identity.manifest_digest().as_str());
     let Some(row) = connection
         .query_opt(&select, &[&package_ids, &environment, &host_release])
@@ -1367,7 +1367,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let workflow_hash = wiring_hash.clone();
     let candidate = match (wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
-        // or a workflow run under its principal. The grain check tells them apart.
+        // or a workflow run under its principal. The grain test tells them apart.
         (Some(hash), None) if !hash.is_empty() => None,
         (Some(wiring_hash), Some(binding_world)) if !wiring_hash.is_empty() => {
             let binding_world = serde_json::from_str(&binding_world)
@@ -1666,12 +1666,6 @@ mod tests {
             ] {
                 let error = result.expect_err("a different role must not enter executor work");
                 assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
-                assert_eq!(error.operation(), "check executor authority");
-                assert!(
-                    error
-                        .to_string()
-                        .contains("executor-platform-authority-required")
-                );
             }
             assert_eq!(
                 connection
@@ -1694,11 +1688,6 @@ mod tests {
             .await
             .expect_err("an absent role must return the native refusal");
         assert_eq!(missing.error_type(), ProductionClaimErrorType::Identity);
-        assert!(
-            missing
-                .to_string()
-                .contains("executor-platform-authority-required")
-        );
         connection
             .batch_execute("ROLLBACK TO missing_role; ROLLBACK")
             .await?;

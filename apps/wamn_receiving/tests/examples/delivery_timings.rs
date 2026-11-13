@@ -68,7 +68,7 @@ impl Compose {
     }
 
     async fn port(&self, service: &str, port: &str) -> anyhow::Result<String> {
-        let address = checked(self.command().args(["port", service, port])).await?;
+        let address = require_success(self.command().args(["port", service, port])).await?;
         let address = String::from_utf8(address)?.trim().to_owned();
         let (host, port) = address
             .rsplit_once(':')
@@ -81,14 +81,14 @@ impl Compose {
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
-        checked(
+        require_success(
             self.command()
                 .args(["down", "--volumes", "--remove-orphans"]),
         )
         .await
         .context("stop the owned timing services")?;
         ensure!(
-            checked(self.command().args(["ps", "--all", "--quiet"]))
+            require_success(self.command().args(["ps", "--all", "--quiet"]))
                 .await?
                 .is_empty(),
             "the owned timing project still has containers after shutdown"
@@ -127,7 +127,7 @@ fn application_manifests(
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::build_record::check_current(
+            wamn_schema_generator::build_record::require_current(
                 &repository.join("apps").join(package),
             )?;
             let path = wamn_schema_generator::package_manifest_path(
@@ -179,7 +179,7 @@ fn private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
+async fn require_success(command: &mut Command) -> anyhow::Result<Vec<u8>> {
     let output = command.kill_on_drop(true).output().await?;
     ensure!(
         output.status.success(),
@@ -295,9 +295,10 @@ async fn main() -> anyhow::Result<()> {
             "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
         }}}))?,
     )?;
-    checked(Command::new(repository.join("tools/dev-collector")).arg(&compose.environment)).await?;
+    require_success(Command::new(repository.join("tools/dev-collector")).arg(&compose.environment))
+        .await?;
     ensure!(
-        checked(compose.command().args(["ps", "--all", "--quiet"]))
+        require_success(compose.command().args(["ps", "--all", "--quiet"]))
             .await?
             .is_empty(),
         "timing project already owns containers"
@@ -306,7 +307,7 @@ async fn main() -> anyhow::Result<()> {
     if wms {
         services.push("receiving-dev-minio");
     }
-    checked(
+    require_success(
         compose
             .command()
             .args(["up", "--detach", "--wait", "--wait-timeout", "90"])
@@ -387,7 +388,7 @@ async fn main() -> anyhow::Result<()> {
         ] {
             tokio::time::timeout(
                 Duration::from_secs(90),
-                checked(
+                require_success(
                     compose
                         .command()
                         .args(["run", "--rm", "--no-deps", "receiving-dev-minio-client"])

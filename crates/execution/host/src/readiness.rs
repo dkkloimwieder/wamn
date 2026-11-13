@@ -100,7 +100,7 @@ pub fn synchronous_request_kind(kind: AttachmentType) -> bool {
 }
 
 /// Stable redacted probe refusal for any store, registry, integrity or capacity failure.
-pub const RELEASE_READINESS_CHECK_FAILED: &str = "release-readiness-check-failed";
+pub const RELEASE_READINESS_PROBE_FAILED: &str = "release-readiness-probe-failed";
 
 /// Stable probe refusal after an activation invalidates the resident closure.
 pub const RELEASE_READINESS_INVALIDATED: &str = "release-readiness-invalidated";
@@ -265,7 +265,7 @@ impl RouterReadinessProbe {
                     error = %rendered,
                     "release readiness evaluation failed"
                 );
-                state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED));
+                state.finish(generation, Err(RELEASE_READINESS_PROBE_FAILED));
             }
         }
         state.snapshot.clone()
@@ -305,10 +305,10 @@ mod tests {
     fn failure_stays_not_ready_and_success_advances_the_same_generation() {
         let mut state = ReadinessState::new();
         let generation = state.begin().expect("initial evaluation runs");
-        state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED));
+        state.finish(generation, Err(RELEASE_READINESS_PROBE_FAILED));
         assert_eq!(state.snapshot.status, RouterReadinessStatus::NotReady);
         assert_eq!(state.snapshot.attempts, 1);
-        assert_eq!(state.snapshot.refusal, Some(RELEASE_READINESS_CHECK_FAILED));
+        assert_eq!(state.snapshot.refusal, Some(RELEASE_READINESS_PROBE_FAILED));
 
         let generation = state.begin().expect("a failed generation retries");
         state.finish(generation, Ok(prepared()));

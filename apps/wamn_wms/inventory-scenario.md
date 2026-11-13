@@ -13,7 +13,7 @@ The packaging row provides the common lock and `row_version` for competing comma
 Quantities belong to their product and status rows.
 `inventory_transaction` records each quantity change as one row with a from side and a to side.
 A side names a packaging and a status. A receipt has no from side, and a removal has no to side.
-`packaging_quantity` is the balance, and [the balance check](tests/inventory_balance.sql) returns each balance that differs from the sum of its transactions.
+`packaging_quantity` is the balance, and [the balance test](tests/inventory_balance.sql) returns each balance that differs from the sum of its transactions.
 A balance row at zero is deleted.
 WMS names the unit packaging. A pallet is a `type` value (`pallet`, `tote`, `bin`, `case`, or `loose`), never a table, a column or an operation.
 The platform stamp trigger records who created and changed each `packaging` row and when, and who created each `inventory_transaction` row and when.

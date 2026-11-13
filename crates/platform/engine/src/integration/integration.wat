@@ -17,7 +17,7 @@
   (import "wasi:sockets/tcp@0.2.12" "[resource-drop]tcp-socket" (func $drop-socket (param i32)))
   (import "wasi:sockets/network@0.2.12" "[resource-drop]network" (func $drop-network (param i32)))
   (memory (export "memory") 1)
-  (func (export "wamn:integration/health@0.1.0#check") (result i32)
+  (func (export "wamn:integration/health@0.1.0#probe") (result i32)
     i32.const 256 i32.const 0 i32.store8 i32.const 256)
   (data (i32.const 1024) "\47\45\54\20\2f\73\61\6d\70\6c\65\20\48\54\54\50\2f\31\2e\31\0d\0a\48\6f\73\74\3a\20\66\69\78\74\75\72\65\0d\0a\41\75\74\68\6f\72\69\7a\61\74\69\6f\6e\3a\20\42\65\61\72\65\72\20")
   (data (i32.const 1200) "\0d\0a\43\6f\6e\6e\65\63\74\69\6f\6e\3a\20\63\6c\6f\73\65\0d\0a\0d\0a")

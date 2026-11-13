@@ -28,14 +28,14 @@ mod tests {
     fn package_search_path_preserves_other_connection_options() {
         let manifest = manifest();
         let database_url = wamn_schema_generator::package_database_url(
-            "postgresql://user:password@127.0.0.1:5432/test?application_name=local%2Bcheck&options=-cstatement_timeout%3D2500%20-csearch_path%3Dold&connect_timeout=5",
+            "postgresql://user:password@127.0.0.1:5432/test?application_name=local%2Bprobe&options=-cstatement_timeout%3D2500%20-csearch_path%3Dold&connect_timeout=5",
             &manifest,
         ).expect("scope SQLx to the package schemas");
         let connection = database_url
             .parse::<tokio_postgres::Config>()
             .expect("the scoped URL remains a PostgreSQL connection");
         assert_eq!(connection.get_dbname(), Some("test"));
-        assert_eq!(connection.get_application_name(), Some("local+check"));
+        assert_eq!(connection.get_application_name(), Some("local+probe"));
         assert_eq!(
             connection.get_connect_timeout(),
             Some(&std::time::Duration::from_secs(5))

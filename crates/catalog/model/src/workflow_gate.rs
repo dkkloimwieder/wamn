@@ -10,7 +10,7 @@
 //! first, then within any package of the release. An application is a name
 //! the environment declares with its packages
 //! ([`crate::EnvironmentApplications`]), never a package. A node whose operation has a registered
-//! operation needs that permission in the run's role, checked per node like
+//! operation needs that permission in the run's role, validated per node like
 //! every other call.
 //!
 //! Authoring, enable and the host's `workflow.start` admission all gate

@@ -12,7 +12,7 @@ use super::*;
 /// `<package>/../Cargo.lock`, so the copy takes it too. Without it the copy's
 /// tree differs from its `build.json` and push-package refuses it as stale.
 pub(super) fn copy_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
-    wamn_schema_generator::build_record::check_current(source)?;
+    wamn_schema_generator::build_record::require_current(source)?;
     copy_package_tree(source, destination)?;
     let lock = |root: &Path| root.parent().map(|parent| parent.join("Cargo.lock"));
     if let (Some(from), Some(to)) = (lock(source), lock(destination))

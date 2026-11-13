@@ -1,6 +1,6 @@
 //! The list of every writer of a fact that the host keeps in its auth memory
 //! (docs/architecture/execution.md#auth-memory). Each writer runs once on
-//! real PostgreSQL, and the test checks the drop it records. A new writer
+//! real PostgreSQL, and the test tests the drop it records. A new writer
 //! takes an `AuthDrops`, so it does not compile until it joins this list.
 
 use std::time::Duration;

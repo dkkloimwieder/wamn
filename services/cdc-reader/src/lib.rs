@@ -198,7 +198,7 @@ enum SessionFate {
     Reopen,
 }
 
-/// Classify a pg_walstream error. Invalidation keywords are checked across
+/// Classify a pg_walstream error. Invalidation keywords are validated across
 /// ALL variants (the server message may surface as a connection error).
 fn classify(e: &ReplicationError) -> SessionFate {
     let msg = e.to_string().to_ascii_lowercase();
@@ -586,7 +586,7 @@ async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<tokio_postgres
 
 /// Refuse a registration that names another stream, is disabled, or names no
 /// schema.
-fn check_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
+fn require_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
     let expected_stream = stream_name(&args.org, &args.project, &args.env);
     if reg.stream != expected_stream {
         bail!(
@@ -686,7 +686,7 @@ async fn wait_out_gap(
             () = tokio::time::sleep(GAP_POLL) => {}
         }
         let reg = read_registration(args).await?;
-        check_registration(args, &reg)?;
+        require_registration(args, &reg)?;
         if capture_gap(args, &reg).await?.is_none() {
             tracing::info!(
                 target: "wamn::event_reader",
@@ -744,7 +744,7 @@ async fn preflight(
     let schema = reg
         .schema
         .as_deref()
-        .context("check_registration refuses a registration with no schema")?;
+        .context("require_registration refuses a registration with no schema")?;
     preflight_publication(&client, &reg.publication, schema).await?;
     preflight_slot(&client, &reg.slot).await
 }
@@ -1083,7 +1083,7 @@ pub async fn run_with_shutdown(
         None,
     )?;
     let mut reg = read_registration(&args).await?;
-    check_registration(&args, &reg)?;
+    require_registration(&args, &reg)?;
     tracing::info!(
         publication = reg.publication,
         slot = reg.slot,
@@ -1146,10 +1146,10 @@ pub async fn run_with_shutdown(
             }
             continue;
         }
-        check_registration(&args, &observed)?;
+        require_registration(&args, &observed)?;
         reg = observed;
         // An open gap row or an absent/invalidated slot = the capture-gap
-        // incident, a drifted publication or slot = refusal — checked before
+        // incident, a drifted publication or slot = refusal — validated before
         // EVERY session, so a substrate changed mid-life is caught on the
         // re-open path too.
         if let Some(gap) = capture_gap(&args, &reg).await? {
@@ -1816,7 +1816,7 @@ enum SlotHealth {
 /// Map a slot's `wal_status` + `safe_wal_size` to a health level. A NULL/unknown
 /// status is treated conservatively as `HeadroomLow` (surfaced, never silently
 /// healthy). `safe_wal_size` is NULL once the status is not `reserved`, so the
-/// floor check only applies on the `reserved` branch.
+/// floor test only applies on the `reserved` branch.
 fn classify_slot_health(
     wal_status: &str,
     safe_wal_size: Option<i64>,
@@ -2284,7 +2284,7 @@ mod tests {
         };
         let refusal = error
             .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
-            .expect("the refusal is the pure scope check, not a connection failure");
+            .expect("the refusal is the pure scope condition, not a connection failure");
         assert_eq!(
             refusal.error_type(),
             wamn_control_provision::SystemReaderUrlErrorType::Role

@@ -661,7 +661,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     assert_eq!(system_state(&client).await.unwrap(), SystemState::Absent);
 
     // Fail the final apply grant after both schema batches and baseline insertion.
-    // This is a server-side SQL failure, not a replacement bootstrap or checker.
+    // This is a server-side SQL failure, not a replacement bootstrap or validator.
     client.batch_execute(r"
         CREATE FUNCTION public.reject_final_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$
         DECLARE granted boolean;

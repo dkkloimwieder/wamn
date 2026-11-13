@@ -43,10 +43,10 @@ pub async fn watch_liveness(
     silence_budget: Duration,
 ) -> anyhow::Error {
     let started = tokio::time::Instant::now();
-    let mut check = tokio::time::interval(Duration::from_millis(100));
-    check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut poll = tokio::time::interval(Duration::from_millis(100));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        check.tick().await;
+        poll.tick().await;
         match liveness_progress(liveness.silence(), started.elapsed(), silence_budget) {
             Ok(true) => {
                 if let Some(probes) = probes {

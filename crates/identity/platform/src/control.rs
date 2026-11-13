@@ -164,7 +164,7 @@ pub async fn is_project_admin(
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    let project = crate::checked_scope_segment("project", project)?;
+    let project = crate::require_scope_segment("project", project)?;
     client
         .query_one(
             PROJECT_ADMIN_SQL,
@@ -256,7 +256,7 @@ pub async fn control_orgs_page(
         .collect())
 }
 
-/// Check, without caching an approval, that a verified control session
+/// Make sure of, without caching an approval, that a verified control session
 /// still has its authority: a live password login for this exact issuer and
 /// audience, and a current control role in the token's org.
 ///

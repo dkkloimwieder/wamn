@@ -1595,7 +1595,7 @@ mod tests {
     }
     #[test]
     fn every_cookie_session_mutation_requires_csrf() {
-        use wamn_engine::flow_http_routing::{RouteCredential, check_csrf, route_credential};
+        use wamn_engine::flow_http_routing::{RouteCredential, require_csrf, route_credential};
         let release = release();
         for action in ["put", "delete", "expose"] {
             let id = format!("wamn-control-file-{action}-http");
@@ -1621,7 +1621,7 @@ mod tests {
                     ..
                 }
             ));
-            assert!(check_csrf(true, Some("signed-value"), &headers).is_err());
+            assert!(require_csrf(true, Some("signed-value"), &headers).is_err());
         }
     }
 

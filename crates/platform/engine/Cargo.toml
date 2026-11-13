@@ -26,7 +26,7 @@ wamn-identity-protocol = { workspace = true }
 # A route request's credential kind reads the PAT prefix. The crate is pure.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-# Route input schemas. A pure schema check with no I/O.
+# Route input schemas. A pure schema test with no I/O.
 boon = { workspace = true }
 # The `wamn.release` label value: the manifest digest as lowercase base32.
 data-encoding = { workspace = true }

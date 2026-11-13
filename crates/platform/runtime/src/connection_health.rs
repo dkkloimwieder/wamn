@@ -42,7 +42,7 @@ impl ConnectionHealth {
     }
 
     /// Link candidate values and return only non-secret health diagnostics.
-    pub async fn check(
+    pub async fn probe(
         &self,
         integration_type: &str,
         runtime: &str,

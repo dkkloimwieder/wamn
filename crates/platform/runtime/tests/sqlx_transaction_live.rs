@@ -128,7 +128,7 @@ async fn fixture_is_clean(admin: &Client, role: &str) -> anyhow::Result<bool> {
             &[&role, &SCHEMA],
         )
         .await
-        .context("check the SQLx transaction fixture is fresh")?
+        .context("make sure the SQLx transaction fixture is fresh")?
         .get(0))
 }
 

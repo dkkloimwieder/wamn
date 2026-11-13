@@ -162,7 +162,7 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
 }
 
 /// Validate the complete migration policy before reconstructing a database.
-/// Refusals deferred for application ownership checks also prevent reconstruction.
+/// Refusals deferred for application ownership tests also prevent reconstruction.
 pub fn validate_package_migration_policy(
     root: &Path,
     directory: &PackageDirectory,

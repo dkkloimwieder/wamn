@@ -477,12 +477,12 @@ pub fn workload_role_scope_hash(
         });
     }
     // The App family delegates to `wamn-run-state`, which is the leaf the
-    // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime check that
+    // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime make sure that
     // a resolved guest credential belongs to the tenant it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
         let WorkloadRoleScope::EnvKey { env_key, database } = scope else {
-            unreachable!("scope kind was checked above")
+            unreachable!("scope kind was validated above")
         };
         return Ok(app_scope_hash(env_key, database));
     }
@@ -907,7 +907,7 @@ mod tests {
     /// convenient reuse — re-pointing either consumer's credential at the
     /// already-existing `ServiceReader` — would encode a scope lie in a variant
     /// that means `ProjectEnvironment`. It cannot be reintroduced quietly: the
-    /// grain check refuses before any role name exists, so the reuse fails here
+    /// grain test refuses before any role name exists, so the reuse fails here
     /// rather than minting a plausible-looking login under the wrong plane.
     #[test]
     fn the_control_readers_cannot_be_reissued_as_the_project_environment_service_reader() {

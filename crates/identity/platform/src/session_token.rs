@@ -127,7 +127,7 @@ fn refused() -> IdentityError {
     IdentityError::new(IdentityErrorType::InvalidInput, "session token refused")
 }
 
-/// Check current session authority and membership without caching an approval.
+/// Make sure of current session authority and membership without caching an approval.
 ///
 /// Signature and exact audience verification must precede this read. The caller
 /// supplies project and environment from the loaded release, never the request.

@@ -1,4 +1,4 @@
-//! Ownership checks for an explicitly unpublished local application.
+//! Ownership tests for an explicitly unpublished local application.
 
 use crate::plugins::wamn_postgres::CandidateConnectionBinding;
 use anyhow::Context as _;
@@ -38,7 +38,7 @@ pub struct LocalBindingFacts {
     pub selection: CandidateConnectionBinding,
 }
 
-/// A checked local definition closure bound to one physical disposable target.
+/// A validated local definition closure bound to one physical disposable target.
 #[derive(Clone, Debug)]
 pub struct LocalApplication {
     pub(crate) manifest: ServingManifest,
@@ -457,7 +457,7 @@ pub fn read_local_release(directory: &Path) -> anyhow::Result<LocalRelease> {
     serde_json::from_slice(&bytes).context("parse local release facts")
 }
 
-/// Load and check a local fact closure against its canonical manifest.
+/// Load and test a local fact closure against its canonical manifest.
 pub fn load_local_facts(
     directory: &Path,
     manifest: &ServingManifest,
@@ -650,9 +650,9 @@ pub fn parse_local_target_comment(comment: &str) -> anyhow::Result<LocalTargetCo
     Ok(parsed)
 }
 
-/// Check the marker through the selected runtime connection before local loading.
+/// Make sure of the marker through the selected runtime connection before local loading.
 ///
-/// The normal runtime credential and capability checks remain mandatory.
+/// The normal runtime credential and capability tests remain mandatory.
 pub async fn require_local_target(
     database_url: &str,
     env_key: &str,
@@ -663,7 +663,7 @@ pub async fn require_local_target(
         .map(|_| ())
 }
 
-/// Read the comment of the connected local target after checking its marker.
+/// Read the comment of the connected local target after testing its marker.
 pub async fn read_local_target_comment(
     client: &impl tokio_postgres::GenericClient,
     env_key: &str,

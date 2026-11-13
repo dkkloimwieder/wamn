@@ -1,4 +1,4 @@
-//! HTTPS lifecycle checks share the exchange suite's owned database and TLS fixtures.
+//! HTTPS lifecycle tests share the exchange suite's owned database and TLS fixtures.
 
 use super::*;
 use sha2::{Digest as _, Sha256};
@@ -764,7 +764,7 @@ fn set_cookies(response: &reqwest::Response) -> Vec<String> {
         .collect()
 }
 
-/// Checks the exact reply of a cookie session and returns the session, CSRF and renewal values.
+/// Tests the exact reply of a cookie session and returns the session, CSRF and renewal values.
 async fn cookie_body(response: reqwest::Response, started: i64) -> (Value, [String; 3]) {
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "no-store");

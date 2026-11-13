@@ -179,13 +179,13 @@ impl WamnPostgres {
         statuses
     }
 
-    /// Check out a raw connection from the default project and report its state
+    /// acquire a raw connection from the default project and report its state
     /// *before* any claim injection. Gate verification only.
     pub async fn probe_checkout(&self, env_key: &str) -> anyhow::Result<CheckoutProbe> {
         self.probe_checkout_of(DEFAULT_PROJECT, env_key).await
     }
 
-    /// Check out a raw connection from a project's (lazily built) pool and
+    /// acquire a raw connection from a project's (lazily built) pool and
     /// report its state *before* any claim injection. Gate verification only —
     /// not reachable from guests and not a platform work path. It deliberately
     /// observes the guest lifecycle that the conformance gate is proving.
@@ -243,7 +243,7 @@ impl WamnPostgres {
         .await
     }
 
-    /// Check out a connection reserved for guest-visible `wamn:postgres` calls.
+    /// acquire a connection reserved for guest-visible `wamn:postgres` calls.
     ///
     /// Takes no class parameter BY DESIGN: guest-visible work is
     /// [`AuthorityClass::GuestSql`] and nothing else, so there is no call site
@@ -262,7 +262,7 @@ impl WamnPostgres {
             .await
     }
 
-    /// Check out the credential selected by the host-owned workload binding.
+    /// acquire the credential selected by the host-owned workload binding.
     /// Absence is exactly the existing guest path; only the closed
     /// event-materializer binding selects a platform credential.
     pub(in super::super) async fn checkout_workload(
@@ -284,7 +284,7 @@ impl WamnPostgres {
         Ok((connection, pool, class))
     }
 
-    /// Check out a connection reserved for host-owned platform work.
+    /// acquire a connection reserved for host-owned platform work.
     ///
     /// The class is REQUIRED because the platform lifecycle serves three
     /// distinct authorities (`wamn-0h0g.22.14`). Making the caller name which
@@ -301,7 +301,7 @@ impl WamnPostgres {
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         // A HARD refusal, not a debug_assert: a debug_assert compiles out of
         // release, so the one build where this matters would be the build
-        // without the check. Guest-sql is not a platform authority, and a
+        // without the test. Guest-sql is not a platform authority, and a
         // caller asking for platform work under it is a bug that must fail
         // closed rather than quietly draw a guest credential for host work.
         if matches!(class, AuthorityClass::GuestSql) {

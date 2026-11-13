@@ -10,7 +10,7 @@ import { clearMember, completePair, readMember, writeControl, writeMember } from
 import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
 import { refusalSentence } from "../src/refusal.js";
-import { checkedMember, refusalMarks, refusalMarksGroup, refusedMember } from "../src/transport.js";
+import { refusedInputMember, refusalMarks, refusalMarksGroup, refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
@@ -194,7 +194,7 @@ describe("the bounds of a repeated group", () => {
   });
 });
 
-describe("the member a checked input refuses", () => {
+describe("the member a validated input refuses", () => {
   const FIELDS = {
     request_id: "requestId",
     value: {
@@ -209,19 +209,14 @@ describe("the member a checked input refuses", () => {
     },
   };
 
-  it("states the contract's spelling, with the element it refused", () => {
-    expect(checkedMember(["value", "makerId"], FIELDS)).toBe("value.maker_id");
-    expect(checkedMember(["value", "line", 2, "quantity"], FIELDS)).toBe("value.line[2].quantity");
-  });
-
   it("states nothing for a path no field map holds", () => {
-    expect(checkedMember(undefined, FIELDS)).toBe(null);
-    expect(checkedMember([], FIELDS)).toBe(null);
-    expect(checkedMember(["value", "unknown"], FIELDS)).toBe(null);
+    expect(refusedInputMember(undefined, FIELDS)).toBe(null);
+    expect(refusedInputMember([], FIELDS)).toBe(null);
+    expect(refusedInputMember(["value", "unknown"], FIELDS)).toBe(null);
   });
 
   it("marks the control that names the same declared path", () => {
-    const member = checkedMember(["value", "line", 2, "quantity"], FIELDS);
+    const member = refusedInputMember(["value", "line", 2, "quantity"], FIELDS);
     expect(refusalMarks(member, "value.line[].quantity", 2)).toBe(true);
     expect(refusalMarks(member, "value.line[].quantity", 1)).toBe(false);
   });

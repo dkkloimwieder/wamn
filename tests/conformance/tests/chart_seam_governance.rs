@@ -1,7 +1,7 @@
 //! Render the host chart and inspect its native controls and namespace permissions.
 
-#[path = "../../../crates/control/environment/tests/support/render_check.rs"]
-pub mod render_check;
+#[path = "../../../crates/control/environment/tests/support/render_fixture.rs"]
+pub mod render_fixture;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -140,7 +140,7 @@ fn rendered_object<'a>(
 
 fn render_host_objects(root: &Path) -> (Vec<Value>, String) {
     use wamn_test_infrastructure::rendering::{EventIdentity, HostValuesInput};
-    let values = render_check::host_values(
+    let values = render_fixture::host_values(
         &HostValuesInput {
             namespace: "platform".into(),
             host_tag: "dev".into(),

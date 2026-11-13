@@ -174,7 +174,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
 /// Idempotent by construction (`CREATE OR REPLACE`, `IF NOT EXISTS`), which is
 /// what lets it converge on `wamn-0h0g.11.49`'s path for existing databases
 /// while `wamn_catalog::CATALOG_SCHEMA_SQL` carries fresh installs. Idempotence is not the
-/// check, though: the converge arm asserts POST-STATE — the definition digest,
+/// test, though: the converge arm asserts POST-STATE — the definition digest,
 /// the volatility and parallel-safety flags read from `pg_proc`, and exact
 /// grants.
 ///
@@ -252,7 +252,7 @@ mod tests {
     }
 
     /// THE RUNTIME COMPUTES THIS DIGEST TOO, from `wamn-run-state`, because it
-    /// must check that a resolved guest credential belongs to the tenant it is
+    /// must make sure that a resolved guest credential belongs to the tenant it is
     /// about to serve and the shipped runtime links no provisioner
     /// (`wamn-0h0g.22.6.7`).
     ///

@@ -178,7 +178,7 @@ impl Application {
     async fn load(reader: Arc<IntegrationImports>) -> anyhow::Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let package = repository.join("apps/modbus_reader");
-        wamn_schema_generator::build_record::check_current(&package)?;
+        wamn_schema_generator::build_record::require_current(&package)?;
         let bytes = std::fs::read(
             repository.join("apps/target/wamn/modbus_reader/components/modbus_reader.wasm"),
         )?;

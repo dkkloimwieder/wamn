@@ -54,7 +54,7 @@ impl DeviceLoop {
     }
 }
 
-/// Check the device of `config` against the release, open its port, and run
+/// Make sure of the device of `config` against the release, open its port, and run
 /// the loop until `stopped` turns true.
 ///
 /// Refuses an attachment that the role cannot call, a wiring target, a route

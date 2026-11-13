@@ -14,7 +14,7 @@
 //! through its `ON DELETE CASCADE`, which needs no privilege of its own.
 //! Repeated calls are safe.
 //!
-//! The verb checks the tenant identity. `--tenant` used to be a free argument
+//! The verb tests the tenant identity. `--tenant` used to be a free argument
 //! that reached the statement as an `app.env_key` GUC, which fails in two
 //! directions at once: an unset claim makes the predicate NULL, so the delete
 //! removes nothing and the verb still prints a success line; and a claim naming
@@ -130,7 +130,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// run(s)` with exit 0.
 ///
 /// The database is read from the SERVER (`current_database()`), never parsed out
-/// of the URL: the URL is operator input, and checking a digest against the same
+/// of the URL: the URL is operator input, and testing a digest against the same
 /// input that chose it establishes nothing.
 async fn verify_retention_identity(
     client: &tokio_postgres::Client,

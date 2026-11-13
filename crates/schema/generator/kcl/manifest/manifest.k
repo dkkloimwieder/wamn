@@ -14,7 +14,7 @@ the generator derives each custom operation's relations from its statements
 and writes them into generated/wamn.json. A command's envelope bounds and
 input bounds are defaults, written only to change them, and the detail of
 idempotency_conflict is derived with the other platform error details. The
-schema owns column checks and stamps: a model's enum_fields come from its
+schema owns column constraints and stamps: a model's enum_fields come from its
 CHECK col IN ('a', ...) constraints, and its stamp columns are server-owned
 without being listed. A model states enum_fields only to narrow a CHECK's set
 or to name a set that no CHECK carries. A model query that one table answers
@@ -366,8 +366,8 @@ schema Package:
 
     check:
         all name in connections { regex.match(name, "^[a-z][a-z0-9-]{0,62}$") }, "connection name must match ^[a-z][a-z0-9-]{0,62}$"
-        # A model checks nothing here: an operation assigned with = replaces
-        # the model's fill only after the model's own checks run.
+        # A model tests nothing here: an operation assigned with = replaces
+        # the model's fill only after the model's own tests run.
         all _, model in models {
             all op in ["get", "query", "create", "update", "delete"] {
                 not model.operations[op] or model.operations[op].permission

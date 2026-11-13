@@ -2,7 +2,7 @@
 //!
 //! Clone one cache per configured issuer. A key ID only selects within that
 //! issuer's complete set; it never discovers an issuer or grants trust. This
-//! module does not verify tokens. Callers must check the returned evidence's
+//! module does not verify tokens. Callers must test the returned evidence's
 //! freshness again at their final admission boundary.
 
 use std::backtrace::Backtrace;
@@ -19,7 +19,7 @@ const MAX_AGE: Duration = Duration::from_secs(300);
 // Owner ruling of 2026-09-23 (wamn-co0p): a token the issuer signed is never
 // refused because this cache expired. A hit inside this window refreshes
 // ahead of expiry. The window covers the fetch timeout and the five-second
-// session check that run before final admission.
+// session make sure that run before final admission.
 const REFRESH_BEFORE: Duration = Duration::from_secs(30);
 const ATTEMPT_INTERVAL: Duration = Duration::from_secs(1);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -359,7 +359,7 @@ impl KeyEvidence {
         self.deadline
     }
 
-    /// Recheck immediately at final admission; equality is expired.
+    /// Test again immediately at final admission; equality is expired.
     pub fn is_fresh(&self) -> bool {
         self.clock.now() < self.deadline
     }

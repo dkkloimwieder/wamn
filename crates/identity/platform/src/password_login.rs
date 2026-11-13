@@ -1,6 +1,6 @@
 //! Revocable password logins and single-use renewal credentials.
 //!
-//! Callers bind their actor in the transaction and check current environment
+//! Callers bind their actor in the transaction and test current environment
 //! authority before issuance or rotation. Lock the principal before verifying
 //! a password, then create the login in that same transaction. Commit a refused
 //! rotation: consumed-credential replay revokes the family as part of refusal.
@@ -151,7 +151,7 @@ async fn lookup(
 /// Authenticate a renewal credential and bind its user actor under the principal lock.
 ///
 /// Commit a refused result: replay revokes its family. This does not establish
-/// current environment authority; the service checks that before issuing tokens.
+/// current environment authority; the service tests that before issuing tokens.
 pub async fn authenticate_renewal(
     tx: &Transaction<'_>,
     issuer: &str,

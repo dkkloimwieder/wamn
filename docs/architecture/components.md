@@ -39,7 +39,7 @@ The [capability rules](capabilities.md) govern imported authority, and [naming](
 The receipt operation uses typed WIT calls between Acme and Receiving.
 Receiving and Acme each expose a typed purchase-order update interface in their own package.
 The application model generates these WIT contracts, Rust bindings, and JSON conversion code.
-Receipt and update share generation for envelope bounds, correlation checks, exact integer encoding, and declared error details.
+Receipt and update share generation for envelope bounds, correlation tests, exact integer encoding, and declared error details.
 Update inputs distinguish an omitted field, explicit null, and a value.
 The application still decides whether a field accepts null.
 Receiving permits `supplier_id`; Acme permits `acme_inspection_required` and `acme_quality_status`.
@@ -59,7 +59,7 @@ Admission reads the instantiation graph and refuses the component unless each im
 Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.
 Publish writes each member's own statement set into the served component, keyed by import name: the overlay's from the component's own operations, and each base's from its admitted descriptor.
 The host binds each import from that served set only, and it refuses to load a composition whose release has no set for it.
-Base membership alone does not authorize an operation. The [execution rules](execution.md) check the entry's own grant.
+Base membership alone does not authorize an operation. The [execution rules](execution.md) test the entry's own grant.
 
 The serving manifest reads each export from its component descriptor.
 It stores no second operation map.
@@ -117,7 +117,7 @@ The catalog refuses an absolute or tagged entry reference.
 The record carries no entry byte digest.
 Each member retains its package, component name, and original digest for SQL authority and dependency pins.
 Publication admits and composes the bytes. The host records each start reference before the runtime pulls, verifies, and compiles the component.
-The binding callback checks that the reference is the release's entry path under a valid component artifact base. It does not hash the entry.
+The binding callback makes sure that the reference is the release's entry path under a valid component artifact base. It does not hash the entry.
 Local publication names an absolute `file:` reference to its existing digest-named artifact file.
 Local loading retains the file loader's byte verification. Entry binding uses the same reference comparison as deployed binding.
 Owner ruling, 2026-10-26: format 11 retains the required `composed-entry.application` field.

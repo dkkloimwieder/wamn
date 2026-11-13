@@ -8,7 +8,7 @@
 //! `{"$ref": "generated/routes/<model>/<action>.json"}`, relative to the package
 //! root (wamn-4omo).
 //!
-//! Every reader that serves or checks a schema resolves the reference first:
+//! Every reader that serves or tests a schema resolves the reference first:
 //! publication, component admission and the client generator. A reference that
 //! reaches the router unresolved cannot compile, so the route refuses every
 //! call rather than admitting any body.
@@ -131,7 +131,7 @@ pub fn reference(schema: &Value) -> Option<&str> {
     clippy::case_sensitive_file_extension_comparisons,
     reason = "a reference names an exact generated path"
 )]
-fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
+fn require_reference(reference: &str) -> Result<&str, RouteSchemaError> {
     let inside = reference
         .strip_prefix(GENERATED_ROUTES)
         .is_some_and(|rest| {
@@ -159,13 +159,13 @@ pub struct PackageFiles<'a> {
 }
 
 impl<'a> PackageFiles<'a> {
-    /// Check the package once before reading its generated files.
+    /// Make sure of the package once before reading its generated files.
     ///
     /// # Errors
     ///
     /// When workspace output has no current build record.
     pub fn open(root: &'a Path) -> Result<Self, RouteSchemaError> {
-        crate::build_record::check_current(root).map_err(|error| RouteSchemaError {
+        crate::build_record::require_current(root).map_err(|error| RouteSchemaError {
             source: Some(error.into()),
             ..RouteSchemaError::new(RouteSchemaErrorType::Read, &root.display().to_string(), "")
         })?;
@@ -178,9 +178,9 @@ impl<'a> PackageFiles<'a> {
     ///
     /// When the reference is invalid or the schema is unreadable.
     pub fn schema(&self, reference: &str) -> Result<Value, RouteSchemaError> {
-        let file = Path::new(checked(reference)?)
+        let file = Path::new(require_reference(reference)?)
             .strip_prefix("generated")
-            .expect("a checked reference lies under generated/routes/");
+            .expect("a validated reference lies under generated/routes/");
         read_json(&crate::output_root(self.root).join(file))
     }
 
@@ -226,7 +226,7 @@ fn resolve(
     read: &mut dyn FnMut(&str) -> Result<Value, RouteSchemaError>,
 ) -> Result<(), RouteSchemaError> {
     if let Some(reference) = reference(schema) {
-        *schema = read(checked(reference)?)?;
+        *schema = read(require_reference(reference)?)?;
     }
     Ok(())
 }
@@ -249,7 +249,7 @@ pub fn resolve_attachments(
 /// Resolve the input schema reference of one attachment, when it names one.
 ///
 /// The authored `definition-hash` identifies the authored definition, which
-/// names the file. The hash is checked against it, and then derived again over
+/// names the file. The hash is validated against it, and then derived again over
 /// the definition that carries the schema, so a contract change moves the
 /// served hash with no edit to the attachment document.
 ///
@@ -504,7 +504,9 @@ mod tests {
             "generated/routes/pallet/create.sql",
         ] {
             assert_eq!(
-                checked(escaping).expect_err(escaping).error_type(),
+                require_reference(escaping)
+                    .expect_err(escaping)
+                    .error_type(),
                 RouteSchemaErrorType::Reference
             );
         }

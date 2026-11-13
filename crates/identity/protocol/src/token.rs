@@ -46,7 +46,7 @@ pub struct SessionClaims {
     pub iat: i64,
     /// Token identifier only; never a server-side session record.
     pub jti: String,
-    /// Current server-side authority, checked for every new admission.
+    /// Current server-side authority, validated for every new admission.
     pub authority: SessionAuthority,
     /// SHA-256 hex of the CSRF token, on a token that a cookie carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,13 +83,13 @@ pub fn session_header(kid: &str) -> Header {
 }
 
 impl SessionClaims {
-    /// Check the identity and credential fields before signing.
+    /// Make sure of the identity and credential fields before signing.
     pub fn validate(&self) -> Result<(), SessionError> {
         validate_claim_shape(self)
     }
 }
 
-/// Check lifetime, future issuance, and expiry as three separate age rules.
+/// Make sure of lifetime, future issuance, and expiry as three separate age rules.
 pub(crate) fn validate_session_age(
     issued_at: i64,
     expires_at: i64,
@@ -134,7 +134,7 @@ pub(crate) fn verify_session_token(
     let mut validation = Validation::new(Algorithm::EdDSA);
     validation.set_issuer(&[scope.issuer]);
     validation.set_audience(&[scope.audience]);
-    // The verifier owns the clock, including the admission-time recheck.
+    // The verifier owns the clock, including the admission-time test again.
     validation.validate_exp = false;
     let claims = jsonwebtoken::decode::<SessionClaims>(
         token,
@@ -152,7 +152,7 @@ pub(crate) fn verify_session_token(
 }
 
 /// Refuse claims whose principal, authority, roles, or CSRF digest are not
-/// canonical. The signer checks the same shape before it signs.
+/// canonical. The signer tests the same shape before it signs.
 pub(crate) fn validate_claim_shape(claims: &SessionClaims) -> Result<(), SessionError> {
     if claims.iss.trim().is_empty()
         || claims.org.is_empty()

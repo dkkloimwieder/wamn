@@ -6,8 +6,8 @@
 //! `credential_bound`, the pending sample count, and the key, capture time and
 //! reason of each refused sample that no operator resolved. It carries no
 //! sample body. The socket has no port and no key, so nothing off the box
-//! reaches it, and it checks no credential, as the host's probe listener
-//! checks none. Its own accept loop keeps it apart from the release routes,
+//! reaches it, and it tests no credential, as the host's probe listener
+//! tests none. Its own accept loop keeps it apart from the release routes,
 //! which keep their one matcher.
 
 use std::convert::Infallible;

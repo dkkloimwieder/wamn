@@ -16,12 +16,12 @@ Application components use the upstream linker. Undeclared WASI imports no longe
 The [2.12.0](https://github.com/wasmCloud/wasmCloud/releases/tag/v2.12.0) and [2.12.1](https://github.com/wasmCloud/wasmCloud/releases/tag/v2.12.1) runtime changes include:
 
 - Linkers seal after binding and retain their prepared links. Linear-memory slots and core-instance counters have separate budgets.
-- Derived cgroup memory budgets cap at RAM plus swap. Process-footprint checks refresh on each start beyond the high-water mark.
+- Derived cgroup memory budgets cap at RAM plus swap. Process-footprint tests refresh on each start beyond the high-water mark.
 - Plugin configuration keeps secrets typed until a consumer reads them. Plugin-served WASI interfaces use plugin precedence instead of builtin overrides.
 - Linked async tasks release on stop, service failures propagate, and stalled NATS secret reads allow shutdown.
 - HTTP span names align, P3 responses stream directly, and guests can still write an unsent outgoing HTTP body.
 - New TLS connections refresh the client identity. Native socket handling fixes UDP progress, reconnects, and shared receive budgets.
-- Wasmtime 48.0.8 fixes UDP permission checks, cross-engine GC type confusion, typed-reference panics, borrowed-resource accounting, and P2 HTTP content lengths.
+- Wasmtime 48.0.8 fixes UDP permission tests, cross-engine GC type confusion, typed-reference panics, borrowed-resource accounting, and P2 HTTP content lengths.
 
 Upstream NATS, PostgreSQL, telemetry, and S3 plugins also gain input and transport fixes.
 Those changes apply where their native implementations run. WAMN-owned clients and plugins retain their own behavior.

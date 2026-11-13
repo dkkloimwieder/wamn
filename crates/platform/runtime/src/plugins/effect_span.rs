@@ -159,7 +159,7 @@ pub(crate) struct EffectWiring<'a> {
 
 /// The run coordinates of one effect, for a surface whose contract carries them.
 ///
-/// Guest-supplied, and therefore only ever a trace label — the authority checks
+/// Guest-supplied, and therefore only ever a trace label — the authority tests
 /// that make these coordinates load-bearing live in the plugin, not here.
 ///
 /// `node_id` and `occurrence` are NOT here: one coordinate has one owner, and

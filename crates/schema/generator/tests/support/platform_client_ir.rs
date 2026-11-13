@@ -424,10 +424,10 @@ fn paging_and_closed_values_reach_the_platform_ir() {
 
 /// Every fixture attachment is a route to one export. Each one projects a
 /// direct client route with its response schema, which the wiring it replaced
-/// projected too. `materialize_package check` holds the bytes.
+/// projected too. `materialize_package test` holds the bytes.
 #[test]
 fn each_fixture_route_projects_a_direct_client_route() {
-    wamn_schema_generator::build_record::check_current(&wamn_fixture_package::package_root())
+    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
     let package = wamn_fixture_package::package_root();
     let publication = package.join("publication");

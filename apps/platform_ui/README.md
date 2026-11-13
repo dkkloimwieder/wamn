@@ -83,9 +83,9 @@ WFE owns the theme properties, styles, fonts, and licenses.
 This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
 The application owns dashboard height. EntryPanel owns the centered identity form layout.
 
-The type check keeps `strict` enabled and omits `exactOptionalPropertyTypes`, which the wfe form source does not support.
+The type test keeps `strict` enabled and omits `exactOptionalPropertyTypes`, which the wfe form source does not support.
 
-From the repository root, run `pnpm --filter @wamn/platform-ui check`, `test`, or `build`.
+From the repository root, run `pnpm --filter @wamn/platform-ui lint`, `test`, or `build`.
 The build writes `apps/platform_ui/dist`.
 The page reads only the org from `/config.json` and offers the audiences that identity returns for that org.
 The platform UI is a platform asset with no `wamn.k` or package artifact.

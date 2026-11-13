@@ -21,7 +21,7 @@ struct Observed {
     body: Vec<u8>,
 }
 
-type AssertionCheck = Arc<dyn Fn(&Observed, &str) + Send + Sync>;
+type AssertionVerifier = Arc<dyn Fn(&Observed, &str) + Send + Sync>;
 
 type ResponsePause = (
     tokio::sync::oneshot::Sender<()>,
@@ -42,13 +42,13 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn start(tokens: Vec<(u16, String)>, api: Vec<u16>) -> Self {
-        Self::start_checked(tokens, api, None).await
+        Self::start_with_verifier(tokens, api, None).await
     }
 
-    async fn start_checked(
+    async fn start_with_verifier(
         tokens: Vec<(u16, String)>,
         api: Vec<u16>,
-        assertion_check: Option<AssertionCheck>,
+        assertion_verifier: Option<AssertionVerifier>,
     ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/bound/", listener.local_addr().unwrap());
@@ -71,7 +71,7 @@ impl Fixture {
                 let api = Arc::clone(&api);
                 let pause = Arc::clone(&response_pause);
                 let token_pause = Arc::clone(&endpoint_pause);
-                let assertion_check = assertion_check.clone();
+                let assertion_verifier = assertion_verifier.clone();
                 let token_base = token_base.clone();
                 let pkce = Arc::clone(&expected_pkce);
                 hyper::server::conn::http1::Builder::new()
@@ -83,7 +83,7 @@ impl Fixture {
                             let api = Arc::clone(&api);
                             let pause = Arc::clone(&pause);
                             let token_pause = Arc::clone(&token_pause);
-                            let assertion_check = assertion_check.clone();
+                            let assertion_verifier = assertion_verifier.clone();
                             let token_base = token_base.clone();
                             let pkce = Arc::clone(&pkce);
                             async move {
@@ -121,8 +121,8 @@ impl Fixture {
                                     headers: parts.headers,
                                     body,
                                 };
-                                if token && let Some(assertion_check) = assertion_check {
-                                    assertion_check(&request, &token_base);
+                                if token && let Some(assertion_verifier) = assertion_verifier {
+                                    assertion_verifier(&request, &token_base);
                                 }
                                 observed.lock().unwrap().push(request);
                                 let (status, body) = if token {
@@ -1210,7 +1210,7 @@ async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>
     let _lock = wamn_test_postgres::lock();
     let identifiers = Arc::new(Mutex::new(Vec::new()));
     let recorded = Arc::clone(&identifiers);
-    let assertion_check: AssertionCheck = Arc::new(move |request, base| {
+    let assertion_verifier: AssertionVerifier = Arc::new(move |request, base| {
         assert_eq!(request.method, "POST");
         assert!(!request.headers.contains_key("authorization"));
         assert_eq!(
@@ -1229,10 +1229,10 @@ async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>
         assert!(!identifiers.contains(&jti));
         identifiers.push(jti);
     });
-    let mut fixture = Fixture::start_checked(
+    let mut fixture = Fixture::start_with_verifier(
         vec![token(1, Some(3600)), token(2, Some(3600))],
         vec![401, 200],
-        Some(assertion_check),
+        Some(assertion_verifier),
     )
     .await;
     let mut parameters = fixture.parameters();

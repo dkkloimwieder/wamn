@@ -418,7 +418,7 @@ pub fn render_host_values(
     })
 }
 
-/// Check the overlay's own identity without changing it.
+/// Make sure of the overlay's own identity without changing it.
 pub fn assert_rendered_identity(rendered: &str, expected: &HostIdentity) -> anyhow::Result<()> {
     let values: HostValues =
         serde_yaml::from_str(rendered).context("parse rendered host identity")?;

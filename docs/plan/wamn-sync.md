@@ -974,8 +974,8 @@ A signed-in user takes one of two actions on an expired entry:
 - Plain IndexedDB at rest: saved rows and outbox entries are not encrypted on the device.
 - The cached view is display only: it decides which screens show, and the host authorizes every call.
 - A lost device loses its unsent writes.
-- Late replay relies on the server's own checks, such as `quantity_exceeds_remaining`, because the host does not know what changed while the device was offline.
-- The device clock is not a security control: a user can change it, so the `loginExpiresAt` and `pending_max_age` checks on the device limit only honest use. The host's token expiry and authorization are the controls.
+- Late replay relies on the server's own tests, such as `quantity_exceeds_remaining`, because the host does not know what changed while the device was offline.
+- The device clock is not a security control: a user can change it, so the `loginExpiresAt` and `pending_max_age` tests on the device limit only honest use. The host's token expiry and authorization are the controls.
 
 ## Release compatibility
 
@@ -1028,7 +1028,7 @@ screen receiving.lines {
 
 `feed` belongs to one list read, generated or authored, as [Query feed](#query-feed-host) states.
 It defaults on for a generated list read and off for an authored read.
-An authored read turns it on with `feed = true`, and its view must pass the shape check in [Authored views](authored-views.md#feed-on-a-view).
+An authored read turns it on with `feed = true`, and its view must pass the shape test in [Authored views](authored-views.md#feed-on-a-view).
 `append_only` declares whether a prior refusal holds later entries for that record.
 `offline` selects application-defined offline wiring without promising whole-application coverage.
 `read` selects `liveRows` or `liveList` under the read-shape rule.

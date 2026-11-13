@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use wamn_control_provision::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_FLOOR_MISSING,
-    operation_grant_floor_check_sql,
+    operation_grant_floor_requirements_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
@@ -62,10 +62,10 @@ fn query(url: &str, statement: &str) -> String {
 /// The transaction binds `wamn:apply-package`, as apply-package does, and
 /// runs the admin statement for tenant `t1`.
 fn transaction() -> String {
-    let floor_check = operation_grant_floor_check_sql();
+    let floor_requirements = operation_grant_floor_requirements_sql();
     let actor = bind_platform_principal_sql(PlatformComponent::ApplyPackage);
     format!(
-        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_check} \
+        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_requirements} \
          PREPARE ensure_admin AS {ENSURE_ADMIN_ROLE_SQL}; \
          EXECUTE ensure_admin; COMMIT;"
     )

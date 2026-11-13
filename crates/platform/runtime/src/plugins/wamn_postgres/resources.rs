@@ -44,7 +44,7 @@ pub(super) struct TxnState {
 
 pub(super) type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
 
-/// Owns a checked-out connection across an await.
+/// Owns a acquired connection across an await.
 ///
 /// Dropping an armed guard destroys the connection, so cancellation cannot
 /// fast-repool a session whose claim transaction may still be open.
@@ -314,7 +314,7 @@ pub(super) async fn run_verified_query(
         // Admission parses declared SQL and refuses these constructs on the
         // parse tree (`wamn_package_control::component_admission`, `declared_sql`).
         // This text guard stays as a second layer: a release admitted before
-        // that check, or a forged descriptor, was never parsed.
+        // that test, or a forged descriptor, was never parsed.
         reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
         let prepared = conn
             .prepare_cached(&statement.exact_sql)

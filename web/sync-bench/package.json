@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm --workspace-root run wfe:build && vite build",
-    "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
+    "lint": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
     "test": "pnpm --workspace-root run wfe:build && vitest run",
     "bench": "pnpm --workspace-root run wfe:build && vite build && node bench/run.mjs"
   },

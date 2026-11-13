@@ -1,4 +1,4 @@
-//! Ownership checks and deletion of resources installed outside Helm.
+//! Ownership tests and deletion of resources installed outside Helm.
 
 use anyhow::Context as _;
 use serde_json::Value;
@@ -23,7 +23,7 @@ async fn get(
 }
 
 /// Refuse foreign resources before the first destructive operation.
-pub(super) async fn check_ownership(
+pub(super) async fn require_ownership(
     platform: &Platform,
     triple: &Triple,
     database: &str,

@@ -4,7 +4,7 @@ This file holds the tool output that every audit lane reads. Root ran the tools 
 
 ## 1. Lines by language (tokei)
 
-Command: `tokei --exclude vendor --exclude node_modules --exclude target --exclude apps/target -s lines`. The `web/wfe` submodule was not checked out at this run.
+Command: `tokei --exclude vendor --exclude node_modules --exclude target --exclude apps/target -s lines`. The `web/wfe` submodule was not validated out at this run.
 
 ```text
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -188,7 +188,7 @@ Total warnings: 1691. Compile errors: 16, all of them `include_str!` of generate
 | `crates/authoring/model` | 7 |
 | `services/scenario-worker` | 7 |
 | `crates/platform/number-pattern` | 4 |
-| `tools/submodule-check` | 4 |
+| `tools/submodule-pins` | 4 |
 | `crates/identity/session` | 3 |
 | `crates/catalog/package-artifact` | 3 |
 | `tools/bench` | 3 |
@@ -675,7 +675,7 @@ wit-parser v0.259.0
 
 ## 7. Copy and paste detection (jscpd)
 
-Command: `pnpm dlx jscpd --config jscpd.json crates services tests test-support tools web apps deploy` with `minTokens` 70 and formats rust, typescript, tsx, javascript, sql, bash. `web/wfe` was not checked out. Full report in `raw/jscpd-report.json`.
+Command: `pnpm dlx jscpd --config jscpd.json crates services tests test-support tools web apps deploy` with `minTokens` 70 and formats rust, typescript, tsx, javascript, sql, bash. `web/wfe` was not validated out. Full report in `raw/jscpd-report.json`.
 
 Clones: 592. Duplicated lines: 8548 of 509024 (1.68 percent).
 
@@ -886,7 +886,7 @@ Command: `cargo metadata --no-deps --format-version 1`, reduced to in-workspace 
 | `wamn-scenario-worker` | wamn-authoring-model,wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-package-artifact,wamn-platform-identity,wamn-runtime,wamn-schema-control | wamn-catalog,wamn-control,wamn-control-provision,wamn-session,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-cdc-reader` | wamn-control-provision,wamn-control-registry,wamn-pg-core | wamn-catalog,wamn-test-postgres |
 | `wamn-bench` | - | - |
-| `wamn-submodule-check` | - | - |
+| `wamn-submodule-pins` | - | - |
 | `wamn-gates` | wamn-conformance-tests,wamn-integration-tests,wamn-runtime,wamn-system-tests | - |
 | `wamn-conformance-tests` | wamn-component-policy,wamn-engine,wamn-gate-harness,wamn-run-state,wamn-runtime | wamn-execution-host,wamn-fixture-package,wamn-run-state,wamn-schema-generator,wamn-test-postgres |
 | `wamn-integration-tests` | wamn-catalog,wamn-component-composer,wamn-component-policy,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-execution-host,wamn-gate-harness,wamn-package-artifact,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-session,wamn-test-infrastructure,wamn-workflow | wamn-catalog,wamn-client,wamn-control,wamn-run-state,wamn-schema-introspection,wamn-test-postgres |

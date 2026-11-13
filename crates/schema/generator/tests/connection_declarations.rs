@@ -47,7 +47,7 @@ fn connection_shape_refuses_missing_invalid_and_value_fields() {
 }
 
 #[test]
-fn kcl_checks_interfaces_mode_and_no_values() {
+fn kcl_requires_interfaces_mode_and_no_values() {
     let directory =
         std::env::temp_dir().join(format!("wamn-connections-kcl-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();

@@ -9,7 +9,7 @@ fn main() -> ExitCode {
     let root = std::env::args_os()
         .nth(1)
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let problems = wamn_conformance_tests::repo_policy::check(&root);
+    let problems = wamn_conformance_tests::repo_policy::diagnostics(&root);
     for problem in &problems {
         eprintln!("repo-policy: {problem}");
     }

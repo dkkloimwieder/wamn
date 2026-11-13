@@ -1,4 +1,4 @@
-//! Checks database shapes and author privileges in fresh PostgreSQL 18.
+//! Tests database shapes and author privileges in fresh PostgreSQL 18.
 //!
 //! It uses a superuser connection to a database on the PostgreSQL server of its
 //! test process.
@@ -96,7 +96,7 @@ async fn install_control_database(client: &Client) {
         .batch_execute(&grant_identity_issuer_surface_sql())
         .await
         .expect("install canonical identity issuer key-table authority");
-    // Check the identity issuer privileges, including SELECT and no TRUNCATE.
+    // Make sure of the identity issuer privileges, including SELECT and no TRUNCATE.
     for table in IDENTITY_ISSUER_TABLES {
         let relation = format!("identity.{table}");
         let privileges: bool = client
@@ -163,14 +163,14 @@ async fn install_project_database(client: &Client, url: &str) {
         "the project install did not converge; the database still requires changes: {:#?}",
         converged.actions
     );
-    // …and the post-check named the PROJECT record, on a database that carried
+    // …and the post-test named the PROJECT record, on a database that carried
     // the CONTROL plane's same-qualified schemas moments ago.
     let mut at_target = converged.at_target.clone();
     at_target.sort();
     assert_eq!(
         at_target,
         ["environment_policies", "run_queue", "runs",],
-        "the converged post-check did not name exactly the project run-plane record"
+        "the converged postcondition did not name exactly the project run-plane record"
     );
 
     apply_package::apply_package(ApplyPackageRequest {

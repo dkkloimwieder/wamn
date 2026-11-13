@@ -55,7 +55,7 @@ The environment owns concrete endpoints, schemas, container names, prefixes, and
 Authors declare portable requirement aliases and supported connection types.
 Wiring validation refuses string values with the existing secret prefixes: `Bearer `, `-----BEGIN`, and `AKIA`.
 It inspects nested values, including case inputs, without copying rejected values into errors.
-Reference names remain valid. This pattern check cannot identify every arbitrary secret.
+Reference names remain valid. This pattern test cannot identify every arbitrary secret.
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
@@ -267,7 +267,7 @@ Provisioning compares existing configuration and refuses a mismatch.
 Runtime publishers and materializers can publish, subscribe, and attach to declared consumers.
 They cannot create, update, or delete streams or consumers.
 Activation compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
-The consumer check compares only the fields wamn sets; the broker owns every other consumer field, and the check does not compare it.
+The consumer test compares only the fields wamn sets; the broker owns every other consumer field, and the test does not compare it.
 
 The platform runs one NATS for the scheduler, the events and the host memories.
 Each client presents a certificate, and the server maps it to a NATS user.

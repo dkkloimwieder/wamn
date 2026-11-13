@@ -221,7 +221,7 @@ impl SystemReaderConnection {
 /// Refuse an absent or out-of-scope `WAMN_SYSTEM_URL`, purely.
 ///
 /// The fail-closed gate a reading consumer runs **before any network, database,
-/// or filesystem I/O**, with the same strict URL checks:
+/// or filesystem I/O**, with the same strict URL tests:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
 /// * its path names exactly one database;
@@ -234,9 +234,9 @@ impl SystemReaderConnection {
 /// unconfined owner crash-loops the consumer instead of serving from it. It is
 /// also what keeps the two readers' Secrets from being swapped — the family's
 /// domain separator is inside the digest, so the identity reader's login cannot
-/// satisfy the registry reader's check or the reverse.
+/// satisfy the registry reader's test or the reverse.
 ///
-/// A pure check cannot establish that the named database *is* the control
+/// A pure test cannot establish that the named database *is* the control
 /// database, and that half is enforced by the ACL: only the control database
 /// grants these roles `CONNECT`, and each role's grant set is confined to its
 /// own schema there.
@@ -398,7 +398,7 @@ mod tests {
     }
 
     /// A credential for another environment presents a role derived from that
-    /// environment's digest, so it cannot satisfy this process's check.
+    /// environment's digest, so it cannot satisfy this process's test.
     #[test]
     fn a_credential_scoped_to_another_environment_is_refused() {
         let foreign = system_reader_generation_role(

@@ -133,7 +133,7 @@ async fn pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authori
             serde_json::to_value(&verified_claims.claims().roles).unwrap(),
             roles
         );
-        verified_claims.check_admission().expect("fresh evidence");
+        verified_claims.require_admission().expect("fresh evidence");
     }
     assert_eq!(server.count(), 1, "all warm verification remains offline");
 }
@@ -194,26 +194,26 @@ async fn unknown_key_ids_across_clones_share_the_issuer_refresh_budget() {
 }
 
 #[tokio::test]
-async fn pending_admission_rechecks_token_and_key_deadlines_after_permission_work() {
+async fn pending_admission_requires_fresh_token_and_key_after_permission_work() {
     let server = Server::start().await;
     let token = signed(&header(), &claims());
     let (verifier, token_clock, key_clock) = server.verifier();
     let pending = verifier.verify(&token).await.expect("initial verification");
     token_clock.set(1929);
     pending
-        .check_admission()
+        .require_admission()
         .expect("last second within tolerance");
     token_clock.set(1930);
     assert!(
-        pending.check_admission().is_err(),
+        pending.require_admission().is_err(),
         "permission delay crosses token expiry"
     );
     token_clock.set(1000);
     key_clock.advance(Duration::from_secs(299));
-    pending.check_admission().expect("key remains fresh");
+    pending.require_admission().expect("key remains fresh");
     key_clock.advance(Duration::from_secs(1));
     assert!(
-        pending.check_admission().is_err(),
+        pending.require_admission().is_err(),
         "permission delay crosses key deadline"
     );
     assert_eq!(
@@ -236,7 +236,7 @@ async fn verification_near_the_key_deadline_admits_across_it() {
         .expect("verification inside the refresh window");
     key_clock.advance(Duration::from_secs(20));
     pending
-        .check_admission()
+        .require_admission()
         .expect("admission after the old key deadline");
     assert_eq!(server.count(), 2, "the key set refreshed ahead of expiry");
 }

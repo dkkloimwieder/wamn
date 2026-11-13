@@ -1,7 +1,7 @@
 //! Build and publish digest-addressed wasm integration artifacts.
 
 pub(super) mod plan;
-use plan::check_code;
+use plan::require_code;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -83,7 +83,7 @@ fn source_digest(root: &Path) -> anyhow::Result<String> {
 ///
 /// Refuses invalid codes, failed builds, and outputs that are not components.
 pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegration> {
-    check_code(code)?;
+    require_code(code)?;
     let repository = repository.canonicalize()?;
     let guest = repository.join("apps/platform/no-std").join(code);
     let source = if guest.join("Cargo.toml").is_file() {

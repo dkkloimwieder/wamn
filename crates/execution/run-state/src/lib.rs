@@ -35,7 +35,7 @@ mod credential_generation;
 pub mod intent_cases;
 /// The per-call intent record as a storage trait.
 pub mod intent_store;
-/// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
+/// RUN-* as plain `fn require_invariants(state)` functions, for the pure decision tests to
 /// call after every step.
 pub mod invariants;
 /// Evidence basis for operator resolution of intents.

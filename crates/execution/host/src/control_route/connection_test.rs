@@ -167,7 +167,7 @@ impl ControlRoutes<'_> {
             .connection_health
             .ok_or_else(|| invalid("integration_type"))?;
         let result = health
-            .check(
+            .probe(
                 context["integration_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,

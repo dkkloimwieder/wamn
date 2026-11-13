@@ -5,7 +5,7 @@
 //! token's org. A project route needs that row or a current `project-admin`
 //! row of the caller in the project that the request names. A write runs in
 //! one transaction on the org's `control` login, binds `app.user_id` to the
-//! caller and `app.operation` to the route's sealed operation id, and checks
+//! caller and `app.operation` to the route's sealed operation id, and tests
 //! the role again inside it. The writes are the functions of
 //! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
 //! second writer exists.
@@ -80,7 +80,7 @@ use wamn_platform_identity::org::{
     status_environments,
 };
 use wamn_platform_identity::paging::{ListPage, Order};
-use wamn_platform_identity::{IdentityError, IdentityRefusal, check_user_contact};
+use wamn_platform_identity::{IdentityError, IdentityRefusal, require_user_contact};
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -646,7 +646,7 @@ impl ControlRoutes<'_> {
     ) -> Result<Value, Refusal> {
         let request: InviteRequest = serde_json::from_str(payload)
             .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
-        check_user_contact(&request.email, &request.display_name)?;
+        require_user_contact(&request.email, &request.display_name)?;
         let identity = self.identity.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
                 "the control host has no identity operator client"
@@ -874,7 +874,7 @@ impl ControlRoutes<'_> {
     }
 
     /// Open the write transaction of one route: bind the caller and the
-    /// sealed operation id, and check the route's role again inside it.
+    /// sealed operation id, and test the route's role again inside it.
     async fn begin_in<'c>(
         &self,
         writer: &'c mut Client,

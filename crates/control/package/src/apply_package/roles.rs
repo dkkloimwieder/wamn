@@ -39,7 +39,7 @@ pub(super) async fn assert_host_role(tx: &impl GenericClient) -> anyhow::Result<
 }
 
 /// Run each admitted statement under its relation owner. An overlay can extend
-/// a base relation only after the migration policy checks its field ownership.
+/// a base relation only after the migration policy tests its field ownership.
 /// Exact byte slices retain the authored statement and its literals.
 pub(super) async fn execute_migration(
     tx: &impl GenericClient,

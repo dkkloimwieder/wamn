@@ -50,7 +50,8 @@ pub struct ProvisionSystemRequest {
 
 /// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
-    validate_platform_domain(&request.platform_domain).context("check the platform domain")?;
+    validate_platform_domain(&request.platform_domain)
+        .context("make sure of the platform domain")?;
     let (mut client, connection) = connect_system_database(&request.system_database_url)
         .await
         .context("connect to the system database")?;

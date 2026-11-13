@@ -334,7 +334,7 @@ async fn authenticated_as(
     caller
 }
 
-/// Activation checks the entry's grant once, before the guest runs.
+/// Activation tests the entry's grant once, before the guest runs.
 async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) {
     let fixture =
         Fixture::build_with_reuse(Case::CalleeGrant, true, true, None, None, Some(postgres)).await;
@@ -1031,7 +1031,7 @@ fn native_warm_alternating_callers_and_credentials() {
                 .enabled
                 .store(false, std::sync::atomic::Ordering::SeqCst);
             // This host watches no auth bucket, so it keeps no auth answer and
-            // the principal check reaches the credential (wamn-f2qud).
+            // the principal test reaches the credential (wamn-f2qud).
             let mut request = retired.request(Instant::now() + CLEANUP);
             request.facts.caller = Some(bob.clone());
             assert!(

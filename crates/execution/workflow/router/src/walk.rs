@@ -126,7 +126,7 @@ pub struct Walk {
     current: Option<Active>,
     step_seq: u64,
     /// Invocations [`Wiring::next`] has handed out for this walk — the counter
-    /// the hop limit is checked against.
+    /// the hop limit is validated against.
     hops: u64,
     /// COMPLETED visits per node (a success or an error-ROUTED emission; retries
     /// of one visit do not count) — the source of [`NodeCall::occurrence`], so a
@@ -155,7 +155,7 @@ impl Walk {
         self.step_seq
     }
     /// Invocations handed out for this walk (the counter the hop limit is
-    /// checked against).
+    /// validated against).
     pub fn hops(&self) -> u64 {
         self.hops
     }

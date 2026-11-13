@@ -643,7 +643,7 @@ mod tests {
     }
 
     /// The spellings PostgreSQL 18.6 respells without touching scale, each
-    /// checked here against the `(value::numeric)::text` it was measured to
+    /// validated here against the `(value::numeric)::text` it was measured to
     /// give. An exponent is deliberately not among them --- see
     /// `canonical_positive_numeric` for the reason it stays refused.
     #[test]

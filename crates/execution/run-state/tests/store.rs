@@ -28,7 +28,7 @@ fn status_sql_literals_round_trip() {
     }
     assert_eq!(RunStatus::from_sql("nope"), None);
     assert!(serde_json::from_value::<RunStatus>(json!("nope")).is_err());
-    // Spot-check the wire literals the DDL CHECK constraints pin.
+    // sample the wire literals the DDL CHECK constraints pin.
     assert_eq!(
         RunStatus::InfrastructureFailure.as_sql(),
         "infrastructure-failure"

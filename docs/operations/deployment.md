@@ -540,7 +540,7 @@ It admits each component, pushes it under its digest, and then pushes the packag
 Before it pushes anything, it reads the tag `<package_id>-<version>`.
 If the tag holds another digest, it refuses, names both digests, and pushes nothing. Tags are immutable.
 If the tag holds the same digest, it reports `already present` and pushes nothing again.
-No database records the package: the artifact in the registry is the proof of its checks.
+No database records the package: the artifact in the registry is the proof of its tests.
 Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--artifact-base`, read from the registry only.
 A package with no artifact in the registry refuses, and the publish writes nothing.
 The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
@@ -643,7 +643,7 @@ The CDN caches only what the origin marks as cacheable.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.
 The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) describe the external inputs. Deployment integration remains unfinished.
 The edge keeps `/api` for native file requests and removes it for other API requests.
-It checks the identity certificate, as it does in kind.
+It makes sure of the identity certificate, as it does in kind.
 
 ## Identity password configuration
 

@@ -280,7 +280,7 @@ pub struct ProvisionProjectEnvArgs {
 /// `required_unless_present_any` arrays, and admitting a family meant
 /// remembering to append its three flag names to every one of them. A closed
 /// enum that must be appended to by hand in sixteen places is not closed; it is
-/// a checklist.
+/// a task list.
 pub const WORKLOAD_ACTION_GROUP: &str = "workload_generation_action";
 
 /// The id of the one group every derived credential-Secret flag belongs to.
@@ -781,7 +781,7 @@ fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvReq
         policy: None,
         target: args
             .target
-            .expect("provision checks --target before it builds the request"),
+            .expect("provision requires --target before it builds the request"),
         disposable: args.disposable.then_some(true),
         system_database_url: args.system_database_url,
         cluster: args.cluster,

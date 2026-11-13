@@ -184,10 +184,10 @@ impl RequirementType {
         }
     }
 
-    /// Check a generation definition against the coordinates this type's
+    /// Make sure of a generation definition against the coordinates this type's
     /// plugin reads, and return the reason it is refused. `wamn-ctl
     /// binding refuses with it.
-    pub fn check_definition(self, definition: &serde_json::Value) -> Result<(), String> {
+    pub fn require_definition(self, definition: &serde_json::Value) -> Result<(), String> {
         use serde_json::Value;
         let Some(object) = definition.as_object() else {
             return Err("the generation definition must be a JSON object".to_owned());
@@ -262,10 +262,10 @@ impl RequirementType {
         Ok(())
     }
 
-    /// Check the credential handle of a checked definition. A `gcs`
+    /// Make sure of the credential handle of a validated definition. A `gcs`
     /// definition takes none, because the host signs with its pod's service
     /// account, and every other definition needs one.
-    pub fn check_credential_handle(
+    pub fn require_credential_handle(
         self,
         definition: &serde_json::Value,
         credential_handle: Option<&str>,
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn an_http_definition_needs_exactly_the_coordinates_the_plugin_reads() {
         RequirementType::Http
-            .check_definition(&serde_json::json!({
+            .require_definition(&serde_json::json!({
                 "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
             }))
             .expect("the two coordinates the plugin reads are a complete definition");
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn a_missing_http_primary_authority_is_refused_by_name() {
         let error = RequirementType::Http
-            .check_definition(&serde_json::json!({"tls-verification": "verify-authority"}))
+            .require_definition(&serde_json::json!({"tls-verification": "verify-authority"}))
             .expect_err("primary-authority is read at resolve time");
         assert_eq!(
             error,
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn a_missing_http_tls_verification_is_refused_by_name() {
         let error = RequirementType::Http
-            .check_definition(&serde_json::json!({"primary-authority": "https://erp.example"}))
+            .require_definition(&serde_json::json!({"primary-authority": "https://erp.example"}))
             .expect_err("tls-verification is read at resolve time");
         assert_eq!(
             error,
@@ -477,7 +477,7 @@ mod tests {
             definition[key] = serde_json::json!("unused");
             assert_eq!(
                 RequirementType::Http
-                    .check_definition(&definition)
+                    .require_definition(&definition)
                     .unwrap_err(),
                 format!(
                     "the generation definition carries {key}, which Http never reads; a coordinate nobody reads is a coordinate nobody validates"
@@ -494,7 +494,7 @@ mod tests {
             });
             definition[coordinate] = serde_json::json!("");
             let error = RequirementType::Http
-                .check_definition(&definition)
+                .require_definition(&definition)
                 .expect_err("the plugin needs a nonempty coordinate");
             assert_eq!(
                 error,
@@ -512,7 +512,7 @@ mod tests {
             definition[coordinate] = serde_json::json!(42);
             assert_eq!(
                 RequirementType::Http
-                    .check_definition(&definition)
+                    .require_definition(&definition)
                     .unwrap_err(),
                 format!(
                     "the generation definition's {coordinate} must be a string; Http reads it as one"
@@ -526,7 +526,7 @@ mod tests {
         for requirement in [RequirementType::Http, RequirementType::Blobstore] {
             assert_eq!(
                 requirement
-                    .check_definition(&serde_json::json!("not an object"))
+                    .require_definition(&serde_json::json!("not an object"))
                     .unwrap_err(),
                 "the generation definition must be a JSON object"
             );
@@ -554,7 +554,7 @@ mod tests {
         });
         for handle in [None, Some("")] {
             assert_eq!(
-                RequirementType::Http.check_credential_handle(&definition, handle),
+                RequirementType::Http.require_credential_handle(&definition, handle),
                 Err(
                     "the credential handle must not be empty; the host resolves it by name"
                         .to_owned()
@@ -562,7 +562,7 @@ mod tests {
             );
         }
         RequirementType::Http
-            .check_credential_handle(&definition, Some("erp"))
+            .require_credential_handle(&definition, Some("erp"))
             .expect("the host resolves a named credential");
     }
 
@@ -693,7 +693,7 @@ mod tests {
                 definition["endpoint"] = "https://s3.example.com".into();
             }
             RequirementType::Blobstore
-                .check_definition(&definition)
+                .require_definition(&definition)
                 .unwrap();
             for origin in [
                 "cdn.example.com",
@@ -702,7 +702,7 @@ mod tests {
             ] {
                 definition["cdn_host"] = origin.into();
                 RequirementType::Blobstore
-                    .check_definition(&definition)
+                    .require_definition(&definition)
                     .unwrap();
             }
             for origin in [
@@ -717,7 +717,7 @@ mod tests {
                 definition["cdn_host"] = origin;
                 assert!(
                     RequirementType::Blobstore
-                        .check_definition(&definition)
+                        .require_definition(&definition)
                         .is_err()
                 );
             }
@@ -739,7 +739,7 @@ mod org_handle_tests {
         );
         assert!(
             RequirementType::Http
-                .check_credential_handle(&serde_json::json!({}), Some(&handle))
+                .require_credential_handle(&serde_json::json!({}), Some(&handle))
                 .is_err()
         );
         for bad in [

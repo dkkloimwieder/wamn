@@ -16,7 +16,7 @@ use std::process::Command;
 
 use super::Problems;
 
-pub(super) fn check(root: &Path, problems: &mut Problems) {
+pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     let output = match Command::new("git")
         .arg("-C")
         .arg(root)

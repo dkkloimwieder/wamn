@@ -41,8 +41,8 @@ Control plane only, reached through platform routes and the host:
 
 | table | columns | note |
 | --- | --- | --- |
-| `target` | id, name, type (`local`, `cloud`), status, last\_seen\_at | identity and check-in of a runtime; named in `environment.k`; the cloud cluster is one row |
-| `target_application` | target\_id, application, environment, bundle\_digest, status; PK (target\_id, application, environment) | what each target runs, written by env apply and confirmed at check-in; null digest on the cloud target, which runs a release |
+| `target` | id, name, type (`local`, `cloud`), status, last\_seen\_at | identity and release of a runtime; named in `environment.k`; the cloud cluster is one row |
+| `target_application` | target\_id, application, environment, bundle\_digest, status; PK (target\_id, application, environment) | what each target runs, written by env apply and confirmed at release; null digest on the cloud target, which runs a release |
 
 - `user` is a projection: identity in the system database is authoritative, and the control host writes the projection (as it writes `app_system.users` today) and propagates deactivation on the admin-hierarchy path. It holds every org user, not only users with a role on the project, so `created_by` / `updated_by` FKs never dangle. Deactivation is `active = false`; rows are never deleted.
 - Application rows that name a user (`created_by`, `updated_by`, `employee.user_id`) carry a uuid FK to `platform.user`. The host fills `created_by` and `updated_by` from the operation caller; the payload cannot supply them.
@@ -147,7 +147,7 @@ A connection has one transport and one exchange shape. Two connections between t
 - `transport` is a parameter of the connection, as `tcp` vs `rtu` is for Modbus. The `wamn` integration is designed for nats, http (websocket) and mqtt; the first build is nats leaf only, and http and mqtt are added when a site needs them. A local target always dials out; no transport needs an inbound port on the plant network.
 - `exchange = request | event`. The caller gets the shape from the binding it names; awaiting an `event` connection is a host refusal. A new `wamn` connection defaults to `event`; `request` is chosen where the caller accepts the offline refusal.
 - The cloud application's connection to a box application and that application's connection back are the two ends of one link; each row names its transport and they must agree. Apply refuses a mismatch.
-- Platform services (check-in, bundle pull, grants, settings and role rows reaching a local target) ride a connection the platform owns: principal `platform`, integration `wamn`, transport nats, exchange `event`, one row per target, created with the target. Same table, same connector.
+- Platform services (release, bundle pull, grants, settings and role rows reaching a local target) ride a connection the platform owns: principal `platform`, integration `wamn`, transport nats, exchange `event`, one row per target, created with the target. Same table, same connector.
 
 ### Connector versions
 
@@ -195,7 +195,7 @@ $ wamn env apply environments/   # every environment inheriting the default move
 
 ## Roles
 
-A role is per application, and an application is the composed unit. A user may hold several roles on an application and has exactly one active per application per session, chosen explicitly; permissions are never rolled up across held roles. This amends what runs today, where a request is checked against every role the token carries; the token's role claim becomes one role per application and the platform UI gains the picker.
+A role is per application, and an application is the composed unit. A user may hold several roles on an application and has exactly one active per application per session, chosen explicitly; permissions are never rolled up across held roles. This amends what runs today, where a request is validated against every role the token carries; the token's role claim becomes one role per application and the platform UI gains the picker.
 
 Intent, not yet a ruling: a project has at most one interactive application — the one people use, composed from packages. Any other application in the project is a service: a sync job, a local program on a box. Services hold service principals, not user roles. Under that intent "roles per application" and "roles per project" are one set, and the shared database exists so a service writes rows the interactive application reads as relations.
 
@@ -235,9 +235,9 @@ Moving dev to prod is not a copy. Schema and new tables ride the release. Rows t
 
 ## Invariants
 
-Each rule has one check that runs in the platform test set.
+Each rule has one test that runs in the platform test set.
 
-| invariant | check |
+| invariant | test |
 | --- | --- |
 | application role: `SELECT` on the listed tables (plus `role`, `user_role`, `permission` and `environment`), `EXECUTE` on `bump_counter`, `assign_counter` and `set_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
 | no manifest model names a `platform.*` table | build refusal; fixture with such a model is refused |
@@ -245,7 +245,7 @@ Each rule has one check that runs in the platform test set.
 | a set below a live number is caught by the model's `UQ` | records to 17; set 10 → allowed; the insert that renders 10 is refused by the `UQ`; `set_counter` reads no application table |
 | every bound connection has a pinned connector | `environment.k` binds a modbus connection with no `connectors.modbus` line → apply refuses |
 | no network call inside a database transaction | a command opens `begin-operation`, then calls `file.put` or any bound connection → host refusal; the same call before `begin-operation` → allowed |
-| a target runs only what was applied to it | a target's check-in reports a bundle with no `target_application` row → flagged, not served |
+| a target runs only what was applied to it | a target's release reports a bundle with no `target_application` row → flagged, not served |
 | every application user FK resolves | FK to `platform.user`; `user` holds every org user |
 | a `file` row exists only for a stored blob | application INSERT on `file` is refused; `file.put` leaves one row whose sha256 matches the blob; an unreferenced row is still there a month later; an aged staging object is gone; a live object stays regardless of age; a committed row with only staging bytes repairs on read; disk eviction belongs to C10 |
 | exposure is enforced per file | application: session with `file.get` → 200, anonymous → 401, session without the grant → 403, another application never serves it; private: fetch by id → 403, signed url from the operation → 200, same url after expiry → 403; public: plain url with no session → 200, after unexpose → origin 404; signed lifetime above 15 minutes is capped; public on a store with no cdn\_host → refused |
@@ -275,7 +275,7 @@ Each rule has one check that runs in the platform test set.
 | one `number_counter` row per distinct key is acceptable growth | count rows per sequence after a month of batches and periods | a retention rule on `per=` rows older than their records' retention; nothing else |
 | row-lock serialization of creates per counter and key is acceptable | measure creates per second per document type with the Postgres benchmark replay | switch that sequence to a Postgres sequence and accept gaps, per sequence, not globally |
 | `platform.user` carrying every org user is acceptable fan-out | count user writes per org per day against project count | materialize on first grant and store `updated_by` as a bare uuid without FK |
-| after A5 the host can refuse a blobstore or connection call while an operation transaction is open | the plugins see the operation state `begin-operation` sets, as `run` does | the rule holds by generator refusal of such calls in an operation body instead; weaker, until the host check lands |
+| after A5 the host can refuse a blobstore or connection call while an operation transaction is open | the plugins see the operation state `begin-operation` sets, as `run` does | the rule holds by generator refusal of such calls in an operation body instead; weaker, until the host test lands |
 | a connector can be a dependency of an application: admission has a connector class that grants a component sockets and refuses postgres, and an application bundle carries its connectors by digest | one wasm connector pinned in `environment.k`, pulled with the application onto a local target, started and restarted with the host running; sockets granted to it and still refused to application components | every connector is `form = host`; the `connectors` line in `environment.k` is always `host`; a connector bump is a platform release |
 | a bundle is one application, so a target serving two applications runs two bundles | the bundle names one manifest | `target_application` keys on bundle, not application, and the bundle lists its applications |
 | an http transport can hold a box-initiated connection the cloud calls down, with a result back | a request connection round-trips to a named application on a local target within its timeout | only the event exchange reaches a box until it does; request connections stay cloud-to-cloud |
@@ -288,11 +288,11 @@ Each rule has one check that runs in the platform test set.
 
 ### Rules
 
-C3 requires the ruling 18 kind check unless the owner rules otherwise.
+C3 requires the ruling 18 kind test unless the owner rules otherwise.
 
 See [standing repository rules](../../CLAUDE.md#standing-repository-rules), [platform version procedure](../operations/building.md#platform-version-procedure), and [cloud prerequisites](../operations/gcp.md#cloud-credentials-and-prerequisites). Plus:
 
-- The spec's invariants table is the test set. Each epic lands the checks for the invariants it makes true; a check asserts a fact, never a stored literal.
+- The spec's invariants table is the test set. Each epic lands the tests for the invariants it makes true; a test asserts a fact, never a stored literal.
 - Receiving and WMS change only where the spec makes today's shape non-conforming (`number =`, `role = "actor"`, `relations`, connection bindings). Nothing else in them moves.
 - One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
 - Platform version bumps follow the [platform version procedure](../operations/building.md#platform-version-procedure). C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
@@ -309,10 +309,10 @@ Tag = the spec's dependency tag. Owner = which running agent takes it, in its qu
 
 | # | Epic | Tag | Owner | Done when |
 | --- | --- | --- | --- | --- |
-| C3 | **Connections, bindings and targets.** Run the ruling 18 kind check. `wamn` connections, with service-token signing, are `wamn-ym204`. Target application records and the platform connection are `wamn-ztxg2`. | now | integrations agent | The REST connection from `rest_connector` to `rest_consumer_fixture` works in the WMS dev document with no values in `environment.k`. |
+| C3 | **Connections, bindings and targets.** Run the ruling 18 kind test. `wamn` connections, with service-token signing, are `wamn-ym204`. Target application records and the platform connection are `wamn-ztxg2`. | now | integrations agent | The REST connection from `rest_connector` to `rest_consumer_fixture` works in the WMS dev document with no values in `environment.k`. |
 | C4 | **Files.** `platform.file`, pinned connection generations, native streaming `file.put/get/delete/expose`, grants, exposure, signed URLs, and staging repair on GCS and S3. Disk stores and eviction belong to C10. | now | integrations agent, after C3.5 | File invariants pass, including origin 404 after unexpose and staging-only age cleanup. |
 | C5 | **Admin screens.** Control: project integrations and environment connections with write-only credentials, sequences (`set_counter`), settings (org/project scope with the environment picker). Application: settings at application/role/user scope, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass. An admin creates an integration and connection, sets a counter and locks a setting from the browser. The server refuses what the UI hides. |
-| C6 | **Active role.** Token claim `application → role` map; the auth check uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
+| C6 | **Active role.** Token claim `application → role` map; the auth test uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
 | C7 | **Environment copy and seed rows.** `environment copy` carries `number_counter`, `setting`, roles; package seed data upserted at env apply. | now | platform-install agent, after E5 | Copy and seed invariants pass on kind. |
 | C8 | **Transaction refusal.** Host refuses storage and connection calls while `begin-operation` is open. | after A5 | perf-arch agent (A5 owner) | The network-in-transaction invariant passes. |
 | C9 | **Loadable connectors.** Spec assumption 11 spike first (connector class in admission, sockets granted to a connector component and refused to applications, bundle carries connectors). Then `integration.form`, `connectors` pins in `environment.k`, `wamn integration build/publish`, `target_application` digests. | after loadable connectors | integrations agent, after C4 | One wasm connector pinned per environment, bumped by an `environment.k` edit, no platform release. |
@@ -327,8 +327,8 @@ The owner ruled that no kind run follows C2.4. Its rulings replace the C2 ruling
 - Sequences and records are independent. A package declares a sequence and its default pattern, and the admin owns the pattern after that.
 - The build refusals "sequence with no field and no caller" and "a key must be a field of every model using the sequence" are removed (C2.4.2). A model's numbered field must have a field for each key its pattern names (C2.4.3).
 - `set_counter` reads and writes counter rows only. It renders no number and scans no application table. The model's `UQ` catches a set that gives a number a record already has (C2.4.4).
-- Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the check closes.
-- Package backfill SQL is outside the counter check, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
+- Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the test closes.
+- Package backfill SQL is outside the counter test, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
 - Migration 0031 stays rewritten in place, because no wamn-dev database ran it.
 - `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18).
 - No sleep inside the tokio test, no NATS port race, and the numbering live tests reuse `test_database` (C2.4.21).
@@ -339,7 +339,7 @@ Rulings for C2 as filed:
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
 - C2.4 allows a sequence with no field and no caller. A sequence key need not belong to every model that uses the sequence (owner ruling 2026-10-24).
-- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it checked against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).
+- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it validated against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).
 
 Out of C2: settings resolution, the `set_counter` UI, the SQLite renderer, connections, seed rows.
 
@@ -363,7 +363,7 @@ Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text b
 14. See [integration and connection schema](integration-schema.md).
 15. C3 creates only the target identity. `target_application` and the target's platform connection are `wamn-ztxg2`.
 16. C3 builds inbound authentication only for the principals of external connections. The `wamn` connection records, peer external identity, inbound authentication, and request and event capability belong to `wamn-ym204`. The platform catalog gains a `wamn` type and version when that implementation is available.
-18. The final kind check is the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document.
+18. The final kind test is the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document.
 
 Owner rulings made while C3 was built:
 
@@ -374,7 +374,7 @@ Rules:
 - Every write to a principal or a grant also deletes the matching `auth_changes` key.
 - A service principal never holds a user role through the active-role logic, and a test asserts it.
 
-The ruling 18 kind check must prove the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document, with no values in `environment.k`.
+The ruling 18 kind test must prove the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document, with no values in `environment.k`.
 
 ### Open decisions
 

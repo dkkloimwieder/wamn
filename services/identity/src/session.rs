@@ -70,7 +70,7 @@ pub(super) fn audience<'a>(inner: &'a Inner, audience: &'a str) -> Option<Audien
 }
 
 /// The claims of a password-login session for the resolved audience, after
-/// the same current authority checks as discovery.
+/// the same current authority tests as discovery.
 pub(super) async fn claims_for_audience(
     inner: &Inner,
     client: &(impl GenericClient + Sync),
@@ -168,8 +168,8 @@ fn claims(
     })
 }
 
-// Discovery and issuance share the same current authority checks. A discovery
-// result is not a credential: issuance repeats these checks after selection.
+// Discovery and issuance share the same current authority tests. A discovery
+// result is not a credential: issuance repeats these tests after selection.
 pub(super) async fn authorized_roles(
     inner: &Inner,
     principal: &AuthenticatedPrincipal,

@@ -11,7 +11,7 @@ use super::Problems;
 
 const MVP_CARGO_VERSION: &str = "0.1.0";
 
-pub(super) fn check(root: &Path, problems: &mut Problems) {
+pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     for manifest in [root.join("Cargo.toml"), root.join("apps/Cargo.toml")] {
         match cargo_metadata(&manifest) {
             Ok(metadata) => workspace_version_violations(&metadata, problems),

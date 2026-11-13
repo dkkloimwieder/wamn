@@ -1,7 +1,7 @@
 //! The edge's `wamn:operation` host over the run-state file.
 //!
 //! The route guest calls this interface for each route that names a sealed
-//! operation. Each call first runs the checks that the cloud host runs before
+//! operation. Each call first runs the tests that the cloud host runs before
 //! it touches a connection, in its order. `authorize` opens a read, which
 //! claims nothing and binds no statement authority, because the box has no
 //! SQL; `finish-read` ends it. `begin-operation` claims the idempotency key as
@@ -64,7 +64,7 @@ impl EdgeOperation {
         }
     }
 
-    /// The checks of a call that the cloud host makes before it touches a
+    /// The tests of a call that the cloud host makes before it touches a
     /// connection, in its order, and the package that owns the operation. A
     /// `begin` of a read claims nothing.
     fn admit(
@@ -324,10 +324,10 @@ async fn revision(intents: &SqliteIntentStore) -> Result<String, Refusal> {
         .map_err(|error| storage_refusal(&error))
 }
 
-/// The claim that a checked begin makes.
+/// The claim that a validated begin makes.
 type Entered = Option<(SqliteIntentStore, ClaimRequest)>;
 
-/// Check the call's caller and operation, and open the read of an authorize
+/// Make sure of the call's caller and operation, and open the read of an authorize
 /// or the claiming begin. A begin returns the request of its claim.
 fn enter<T: 'static + Send>(
     accessor: &Accessor<T, EdgeOperationHost>,

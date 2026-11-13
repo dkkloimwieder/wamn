@@ -20,7 +20,7 @@
 # `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
-# (stream name + subject segments + the env_key label checked against the
+# (stream name + subject segments + the env_key label validated against the
 # credential-scoped catalog row) — RLS holds regardless of what the env claims.
 #
 # ONE ENV_KEY PER WORKLOAD (v1): registrations and claims use env_key.

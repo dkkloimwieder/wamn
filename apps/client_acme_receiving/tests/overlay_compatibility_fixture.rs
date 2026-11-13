@@ -218,7 +218,7 @@ fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::
 
 /// The schema the package at `root` needs, as its build wrote it.
 fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
-    wamn_schema_generator::build_record::check_current(root)?;
+    wamn_schema_generator::build_record::require_current(root)?;
     let relative = Path::new(wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH)
         .strip_prefix("generated")?;
     let path = wamn_schema_generator::output_root(root).join(relative);
@@ -272,7 +272,7 @@ async fn install_fresh(
     let fresh = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
     ensure!(
         (180_000..190_000).contains(&fresh.get::<_, i32>(0)) && fresh.get::<_, bool>(2),
-        "observer check requires fresh PostgreSQL 18"
+        "observer test requires fresh PostgreSQL 18"
     );
     project
         .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())

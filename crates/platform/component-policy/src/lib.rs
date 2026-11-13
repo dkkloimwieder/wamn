@@ -171,7 +171,7 @@ pub struct CapabilityRow {
 /// The closed capability registry: the complete set of packages a tenant
 /// component may import, each with its declared posture.
 ///
-/// This replaces two implicit classifiers — a `wamn:`-prefix shape check and a
+/// This replaces two implicit classifiers — a `wamn:`-prefix shape test and a
 /// namespace complement rule — with one declared table. Three properties are
 /// deliberate:
 ///
@@ -398,7 +398,7 @@ pub fn analyze_tenant(
     label: &str,
 ) -> Result<PolicyReport, TenantImportError> {
     // A grant may only name a registered package. This replaces the old
-    // `wamn:`-prefix shape check: the registry, not a namespace rule, decides
+    // `wamn:`-prefix shape condition: the registry, not a namespace rule, decides
     // what a grant is allowed to say.
     let invalid_registry: Vec<_> = admitted_platform_packages
         .iter()
@@ -419,7 +419,7 @@ pub fn analyze_tenant(
 
     // Fail-closed by ABSENCE: an import with no matching row is refused because
     // nothing declares it, not because its namespace looks wrong. An effect
-    // additionally needs the per-component grant — deleting the shape check
+    // additionally needs the per-component grant — deleting the shape test
     // widens no one's grant, because the two layers stay separate.
     let denied: Vec<_> = imports
         .iter()
@@ -813,7 +813,7 @@ mod tests {
         }
     }
 
-    /// An effect still needs its per-component grant. Deleting the shape check
+    /// An effect still needs its per-component grant. Deleting the shape test
     /// must not widen anyone's grant — this is the test that says so.
     #[test]
     fn an_effect_without_a_grant_is_refused_but_an_ambient_is_not() {

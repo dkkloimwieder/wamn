@@ -28,14 +28,14 @@ CREATE TABLE registry.integration_type (
     runtime_type text NOT NULL CHECK (runtime_type IN ('host', 'wasm', 'native')),
     exclusive boolean NOT NULL,                      -- one physical resource, one holder at a time
     resource_key_template text CHECK (resource_key_template <> ''),  -- e.g. serial:{device}; uses immutable fields only;
-                                                     -- no version may change it (publish check)
+                                                     -- no version may change it (publish test)
     CHECK (exclusive = (resource_key_template IS NOT NULL))
 );
 
 CREATE TABLE registry.integration_type_version (    -- every build, every parameter-shape change
     integration_type text NOT NULL REFERENCES registry.integration_type (code),
     version          integer NOT NULL CHECK (version > 0),
-    digest           text CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),  -- the bytes; NULL only for host types (publish check); not unique
+    digest           text CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),  -- the bytes; NULL only for host types (publish test); not unique
     parameter_schema jsonb NOT NULL,                 -- flat object; per field: optional immutable, optional deprecated
     operations       text NOT NULL,                  -- the one exported WIT world, e.g. wamn:modbus/client@1.0.0
     exports          text[] NOT NULL,                -- every interface that world exports; decoded at publish (host types: seeded)
@@ -48,7 +48,7 @@ CREATE TABLE registry.auth_type (
     code              text PRIMARY KEY,
     credential_schema jsonb NOT NULL,                -- fields the secret must carry
     parameter_schema  jsonb NOT NULL,                -- placement: api_key header or query name, OAuth token URL and scopes
-    http_only         boolean NOT NULL               -- paired only with HTTP-interface types (checked at every version publish)
+    http_only         boolean NOT NULL               -- paired only with HTTP-interface types (validated at every version publish)
 );
 
 CREATE TABLE registry.integration_type_auth (
@@ -99,7 +99,7 @@ CREATE TABLE registry.connection (                     -- the integration in one
     env                  text NOT NULL,
     integration_type     text NOT NULL,                  -- projected, so apply can find the version's exports
     target_id            uuid NOT NULL,                  -- where the env runs: the cloud cluster or a local box
-    resource_key         text,                           -- NOT NULL iff the type is exclusive (checked at write)
+    resource_key         text,                           -- NOT NULL iff the type is exclusive (validated at write)
     active_generation    bigint NOT NULL,
     service_principal_id uuid NOT NULL UNIQUE,
     principal_type       text NOT NULL DEFAULT 'service' CHECK (principal_type = 'service'),
@@ -164,7 +164,7 @@ CREATE TABLE registry.connection_generation (          -- immutable (trigger, as
     connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
     generation    bigint NOT NULL CHECK (generation > 0),
     parameters    jsonb NOT NULL DEFAULT '{}',           -- all parameters for this env; auth placement under "auth"
-    credential_id uuid,                                  -- NULL only for auth type none (checked at write)
+    credential_id uuid,                                  -- NULL only for auth type none (validated at write)
     created_at    timestamptz NOT NULL,
     created_by    uuid NOT NULL,
     PRIMARY KEY (connection_id, generation),
@@ -212,7 +212,7 @@ CREATE TABLE catalog.connection_requirement (
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id       text NOT NULL,          -- name, interface and mode come from the package's wamn.k
     name             text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),  -- declared in wamn.k; a WIT label
-    interface        text NOT NULL,          -- install checks the component imports it under the label name
+    interface        text NOT NULL,          -- install makes sure of the component imports it under the label name
     mode             text NOT NULL CHECK (mode IN ('read', 'write')),
     PRIMARY KEY (env_key, component_digest, package_id, name)
 );
@@ -282,7 +282,7 @@ Configuration is never rolled back. Credentials, parameters, versions and bindin
 A resource is a physical thing one holder may use at a time on a target, such as a serial port or a Modbus device. A target is where an env runs: the cloud cluster or a local box.
 
 - Identity: `integration_type.resource_key_template` (`serial:{device}`, `tcp:{host}:{port}`), rendered once from immutable fields into `connection.resource_key`, stable across versions and releases.
-- Static check: the unique index on active connections per (target, resource\_key). Disabling a connection frees the resource; re-enabling it is refused while an active replacement holds the same key.
+- Static condition: the unique index on active connections per (target, resource\_key). Disabling a connection frees the resource; re-enabling it is refused while an active replacement holds the same key.
 - Runtime lease: a Postgres session advisory lock in the system database (two envs may share a target, and advisory locks are per database), taken on a dedicated session on a 64-bit `hashtextextended` of (target, resource\_key). The holder is the host process. It serializes calls on the connection, so several components (for example a reader and a writer) may share one exclusive connection; whether the resource stays open between calls is the integration code's choice (a wasm guest with a fresh store per call reopens it). A call on an exclusive connection waits for the lease up to 30 s, then fails with unavailable. If the lease session drops, calls fail with unavailable until the host holds the lease again. A crashed or killed pod drops its session and the lock. On a local box the lease is in-process, because one host serves every env there.
 - Lease key: hashtextextended('resource:' || target_id || ':' || resource_key, 0), in the system database, on one dedicated session per host shared by every lease the host holds. Local targets use an in-process lease with the same key.
 - One replica: an env that binds an exclusive connection runs one host replica. Replicas share the run queue (fact: `run-queue.sql`), so a second replica would claim runs it cannot serve while the first holds the lease. Apply reads the count from the host group body it takes from `WAMN_RELEASE_HOST_GROUP` (fact: `environment/mod.rs` `host_group`, `release_chart.rs`); with an exclusive binding it refuses unless that body names `replicas: 1`, and it never falls back to the chart default. No per-call locking and no routing to the holder.
@@ -296,7 +296,7 @@ Three separate controls; none is a column on the connection or the binding.
 - **Which users may write:** the ACL on application operations. A user without the operation is refused before any connection is touched.
 - **What the code may do:** `connection_requirement.mode`, declared in `wamn.k`. Two values; `write` includes `read`.
   - wasm and native types: WIT enforces it. A declared name imports exactly one interface. The version records the exports that write (`write_interfaces`, declared at publish); apply refuses a `read` requirement whose interface is one of them. A write interface carries the read functions too, so a `write` requirement still imports one interface.
-  - host types: one interface serves every mode (HTTP: `wamn:connection/http`), so the host enforces mode at run time, as main does today (fact: `connection_http.rs::authorize_method` allows only GET and HEAD on a read binding; `wamn_blobstore/store.rs::with_read_only`). The interface check does not apply.
+  - host types: one interface serves every mode (HTTP: `wamn:connection/http`), so the host enforces mode at run time, as main does today (fact: `connection_http.rs::authorize_method` allows only GET and HEAD on a read binding; `wamn_blobstore/store.rs::with_read_only`). The interface test does not apply.
 - **What the connection can do at all:** the credential, such as a read-only IAM or ERP role, enforced by the external system.
 
 ```wit
@@ -322,9 +322,9 @@ Every parameter is connection-scoped, set per env on the connection generation. 
 
 - An edit appends a generation and makes it active; every bound release sees it on its next request. No deployment, no restart.
 - Validation is wamn's own. The schema is a flat object, with custom keywords on top-level properties only. Values must validate against every version a live release uses of the connection (both, during a rollout). Fields declared only by other published versions are accepted as staged; fields unknown to every published version are refused. Per-version `additionalProperties: false` is not used, because staging validates against the union.
-- Auth placement lives under `parameters.auth`, validated against the auth type's `parameter_schema`; a publish check forbids a top-level `auth` property in any type schema.
+- Auth placement lives under `parameters.auth`, validated against the auth type's `parameter_schema`; a publish test forbids a top-level `auth` property in any type schema.
 - Fields marked `immutable` (storage location: bucket, base path, endpoint host) cannot change after creation. Moving storage is a new integration.
-- Retained rollback releases are not checked at write; `env rollback` re-validates and refuses if the values no longer fit.
+- Retained rollback releases are not validated at write; `env rollback` re-validates and refuses if the values no longer fit.
 
 ### Field lifecycle (expand, deprecate, contract)
 
@@ -336,12 +336,12 @@ A field changes shape only through a new name, over three versions. `deprecated`
 | v5 | deprecated, optional | optional |
 | v6 | removed | required |
 
-- Checked at publish: a field may be removed only if the previous version deprecated it; may become required only if the previous version had it as optional; its JSON type and meaning never change. Adjacent versions (N, N+1) can therefore always share one set of stored values.
-- Checked at apply: moving to v6 refuses until the new field has a value. Any versions may be in use at once, provided the stored values validate against all of them.
+- Validated at publish: a field may be removed only if the previous version deprecated it; may become required only if the previous version had it as optional; its JSON type and meaning never change. Adjacent versions (N, N+1) can therefore always share one set of stored values.
+- Validated at apply: moving to v6 refuses until the new field has a value. Any versions may be in use at once, provided the stored values validate against all of them.
 
 ## Files
 
-- File stores are types with runtime type host only (`gcs`, `s3`, `disk`); `platform.file.connection_id` may reference only such a connection (checked at write).
+- File stores are types with runtime type host only (`gcs`, `s3`, `disk`); `platform.file.connection_id` may reference only such a connection (validated at write).
 - A file is read through its own `file.connection_id` with the host's built-in store code and the connection's active generation, authorized by the application's `file.get` permission, not by a binding. Its location is fixed by immutable fields and `blob_key`, so `file.connection_generation` goes.
 - A connection with live `platform.file` rows cannot be deleted; disabling it makes those files unreadable.
 
@@ -359,7 +359,7 @@ On main (fact): `wamn:connector@0.1.0` `bound` exposes only `authority()` and `c
 
 - The package is renamed `wamn:integration`.
 - Add `parameters: func() -> string` (validated JSON) to `bound`. The host strips `auth` before returning it, because the host applies auth; only the `custom` auth type receives it, beside `bound.credential()`.
-- `wamn:integration/reader` is retired. Each version exports exactly one typed WIT world (`operations`), which may hold read and write interfaces and always exports `wamn:integration/health` (`check: func() -> result<_, string>`). Host types implement health in the host.
+- `wamn:integration/reader` is retired. Each version exports exactly one typed WIT world (`operations`), which may hold read and write interfaces and always exports `wamn:integration/health` (`probe: func() -> result<_, string>`). Host types implement health in the host.
 - Types share interfaces where the protocol is shared (`s3`, `gcs` and `disk` export blobstore; HTTP-based types export `wamn:connection/http`); a unique protocol gets its own package (`wamn:modbus`, `wamn:netsuite/rest`).
 - An application imports interfaces, never a type. In a typed integration world, each declared name is a component-model named import, `import <name>: <interface>;` (the `implements` form that wash-runtime routes per label), so the host links each label to its bound connection and two names may import the same interface. A declared name is a WIT label: `^[a-z][a-z0-9-]{0,62}$`. `wamn:connection/http` and blobstore are host-type platform interfaces: they select the connection by its declared name at run time, so generic workflow nodes can use any declared connection.
 - Within one release, every component bound to a connection imports from that release's one version, so consumers of a connection upgrade together; they may import different interfaces of its world. Apply refuses a mismatch and names the component; `wamn build` warns first.
@@ -388,7 +388,7 @@ applications = {
 | `environment.k` apply | deployment | `release_connection` and `connection_binding` | `wamn-ctl env apply` |
 
 - Apply refuses when the env has no active connection for the named integration, or when the version it uses does not export the interface the requirement declares (component-model semver). The type never has to match: any type whose version exports the interface fits, so a blobstore requirement binds gcs, s3 or disk.
-- Changes from main: `wamn.k` replaces `integration` with `interface`, imported under the declared name (checked at install against the component's imports); `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
+- Changes from main: `wamn.k` replaces `integration` with `interface`, imported under the declared name (validated at install against the component's imports); `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
 
 ## Headless interface
 
@@ -416,7 +416,7 @@ Removed: `project_connection.enable` and `.disable`, `integration_allow.allow`, 
 Disable and delete:
 
 - Disabling an integration or a connection makes it stop serving and releases its leases.
-- Delete removes a row created by mistake when nothing references it; anything referenced is disabled instead. The control host holds the administration login of every env database in the org, so it checks each env database of the project under the env lifecycle lock, deletes from the system database, then removes the projected rows.
+- Delete removes a row created by mistake when nothing references it; anything referenced is disabled instead. The control host holds the administration login of every env database in the org, so it makes sure of each env database of the project under the env lifecycle lock, deletes from the system database, then removes the projected rows.
   - A connection needs no binding, no `release_connection` row and no `platform.file` row. Its generations, credential rows and token row cascade with it, and its store secrets are destroyed; its service principal is disabled, not deleted, because the write log and ACL history reference principal ids.
   - Env delete removes every connection of the env in its own transaction, with no reference refusal; principals are disabled, and the env's credential Secret, ServiceAccount and Role are destroyed after the commit. A kept env database keeps its projected rows.
   - An integration needs its connections deleted first.
@@ -426,8 +426,8 @@ Disable and delete:
 
 Integration rules for the platform and application upgrade paths:
 
-- **Application upgrade:** apply's compatibility step checks that each named version is published and served, each component's imports are compatible with it, and required fields have values. Expand re-syncs the projection, validates existing connections against the new versions and writes the new release's rows; contract removes the old release's rows.
-- **The host serves versions N and N-1 of every host type.** A platform upgrade drops N-1 only when no live release uses it; otherwise it refuses and names the releases. A retained rollback release that needs a dropped version stops being a rollback target, and the upgrade says which. Built when the first host-type version 2 is published; until then every host type has one version and apply's published-and-served check is the whole rule.
+- **Application upgrade:** apply's compatibility step makes sure that each named version is published and served, each component's imports are compatible with it, and required fields have values. Expand re-syncs the projection, validates existing connections against the new versions and writes the new release's rows; contract removes the old release's rows.
+- **The host serves versions N and N-1 of every host type.** A platform upgrade drops N-1 only when no live release uses it; otherwise it refuses and names the releases. A retained rollback release that needs a dropped version stops being a rollback target, and the upgrade says which. Built when the first host-type version 2 is published; until then every host type has one version and apply's published-and-served test is the whole rule.
 - **wasm and native versions are never deleted automatically.** A retained `environment.k` in git may name any of them; pruning is a manual platform action.
 - A new version appears in the catalog only; nothing moves until a document changes a version. Not now: `version = "latest-compatible"`.
 - A rollback target whose version a platform upgrade dropped, or whose parameters no longer validate, is refused at apply.
@@ -464,7 +464,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 ### Admin flow (no deployment)
 
 1. The admin pastes the secret into a write-only field in the UI.
-2. Optional: `connection.test` runs the candidate parameters and credential in memory through `health.check()`; nothing is committed. Its optional version defaults to the live release's version, or the newest published one when nothing is bound.
+2. Optional: `connection.test` runs the candidate parameters and credential in memory through `health.probe()`; nothing is committed. Its optional version defaults to the live release's version, or the newest published one when nothing is bound.
 3. The control host writes the secret to the store and inserts a new immutable `identity.credential` row with the store's version id.
 4. A new generation pointing at that row becomes active, and the control host deletes the connection's memory key after the commit.
 5. There is no switching back: a wrong or leaked credential is fixed by setting a new one. The value is never shown again; the UI shows `hint`, `created_by`, `created_at`.
@@ -493,9 +493,9 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 
 ## Invariants
 
-Each is checked by the named test type: SQL (a statement against a fresh schema), unit, apply (an `env apply` test) or live (a running host).
+Each is validated by the named test type: SQL (a statement against a fresh schema), unit, apply (an `env apply` test) or live (a running host).
 
-| # | Invariant | Check |
+| # | Invariant | Test |
 | --- | --- | --- |
 | 1 | A binding whose connection's version does not export the interface the requirement declares is refused. | apply: bind a requirement to a connection whose version lacks its interface → refused; install: a declared name the component does not import under that label → refused |
 | 2 | One connection per integration per env. | SQL: second `connection` for (integration, env) → unique violation |

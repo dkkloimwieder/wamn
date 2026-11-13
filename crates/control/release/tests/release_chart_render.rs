@@ -1,4 +1,4 @@
-//! Renders `deploy/platform/release` with `helm template` and checks what an
+//! Renders `deploy/platform/release` with `helm template` and tests what an
 //! environment's Helm release holds
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!

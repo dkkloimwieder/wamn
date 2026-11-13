@@ -62,7 +62,7 @@ pub struct WamnBlobstore {
 /// The release digest and environment one invocation authorizes under.
 ///
 /// A CANDIDATE closure states them itself. A RELEASED one takes them from the
-/// mounted serving manifest and its digest, after TWO CHECKS — because a
+/// mounted serving manifest and its digest, after TWO TESTS — because a
 /// mounted manifest is an input like any other:
 ///
 /// - it must belong to THIS tenant, or a manifest served for another one would
@@ -116,7 +116,7 @@ fn release_coordinates(
 ///
 /// Both rules come from the HTTP capability and are called, not copied. The
 /// blobstore applied the released rule alone and let every candidate closure
-/// through with no closure check at all (`wamn-b2m6.6`). One spelling of each
+/// through with no closure test at all (`wamn-b2m6.6`). One spelling of each
 /// rule now authorizes both surfaces.
 ///
 /// Pure and separate from the plugin, so the decision gating every effect can
@@ -281,7 +281,7 @@ impl WamnBlobstore {
             );
         let definition = &definition;
         wamn_catalog::RequirementType::Blobstore
-            .check_definition(definition)
+            .require_definition(definition)
             .map_err(|error| refused(&error))?;
         let handle = self
             .facts
@@ -983,7 +983,7 @@ mod tests {
     /// THE DEFECT (`wamn-b2m6.6`). A candidate closure whose authority snapshot
     /// disagrees with the binding frozen at admission is refused.
     ///
-    /// The blobstore ran NO closure check on a candidate. It passed
+    /// The blobstore ran NO closure test on a candidate. It passed
     /// `candidate_binding: None` to the authority and authorized only when a
     /// released manifest was mounted, so a snapshot naming another credential,
     /// another instance or another generation reached `binding::resolve` and
@@ -1018,7 +1018,7 @@ mod tests {
         );
     }
 
-    /// The rule admits the run it was frozen for. A check that refuses every
+    /// The rule admits the run it was frozen for. A test that refuses every
     /// candidate satisfies the two tests above and breaks the surface.
     #[test]
     fn a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted() {

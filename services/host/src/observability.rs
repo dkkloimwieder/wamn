@@ -85,7 +85,7 @@ fn sampled_or_undecided() -> bool {
 ///
 /// It asks [`sampled_or_undecided`] before the wrapped subscriber sees a span,
 /// so a refused span reaches no layer and the registry stores nothing for it.
-/// Span call sites, WAMN and upstream, do not check sampling. Tasks that carry
+/// Span call sites, WAMN and upstream, do not test sampling. Tasks that carry
 /// the entered entry span read the same decision. Events are never refused.
 ///
 /// A wrapper rather than a layer: in tracing-subscriber 0.3 a layer over

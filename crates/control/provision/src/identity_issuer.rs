@@ -414,7 +414,7 @@ pub fn grant_identity_issuer_surface_sql() -> String {
     sql
 }
 
-/// Prepare an inactive login after the driver checks its exact role state.
+/// Prepare an inactive login after the driver tests its exact role state.
 pub fn prepare_identity_issuer_generation_sql(
     issuer: &str,
     generation: CredentialGeneration,

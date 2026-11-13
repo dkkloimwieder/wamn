@@ -51,7 +51,7 @@ SELECT COALESCE( \
        jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
   FROM release_scope";
 
-/// Check that every component-grain requirement in the synchronous release
+/// Make sure that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
@@ -231,10 +231,10 @@ impl WamnPostgres {
         }
     }
 
-    /// Check the exact component requirements selected by request readiness.
+    /// Make sure of the exact component requirements selected by request readiness.
     ///
     /// An empty digest set is a background-only release and performs no store
-    /// call. Otherwise the check shares the driver's existing platform pool and
+    /// call. Otherwise the test shares the driver's existing platform pool and
     /// tenant claim; missing rows, unavailable storage and malformed results are
     /// errors, while an ordinary unbound requirement is `Ok(false)`.
     pub async fn release_component_bindings_ready(
@@ -336,7 +336,7 @@ fn decode_release_components(
     Ok(components)
 }
 
-/// Check each node's admitted component against the document, and keep both.
+/// Make sure of each node's admitted component against the document, and keep both.
 pub(super) fn resolved_wiring(
     decoded: DecodedWiring,
     manifest_digest: &str,

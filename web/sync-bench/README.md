@@ -69,10 +69,10 @@ WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
 The package reads the generated WMS client from `apps/target/wamn/wamn_wms/client-ts`.
 Build it with `wamn build apps/wamn_wms`, as [building](../../docs/operations/building.md#wamn-build) describes.
 
-## Checks
+## Tests
 
 ```bash
 cd web/sync-bench
-pnpm run check
+pnpm run lint
 pnpm test
 ```

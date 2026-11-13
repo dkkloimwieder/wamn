@@ -2,8 +2,8 @@
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! Each step accepts absent resources so an interrupted delete can resume.
-//! Under the lifecycle lock, check ownership and existing stranded runs before
-//! uninstalling application releases. Drain their hosts and check runs again.
+//! Under the lifecycle lock, test ownership and existing stranded runs before
+//! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
 //! Remove the materializer, PATs, Secrets, control administration key, streams,
 //! event certificate, Publication CR, replication slot, and Database CR.
@@ -112,7 +112,7 @@ async fn delete_locked(
     let database = project_env_database_name(org, project, env, &instance);
     let env_key = wamn_control_provision::project_env_key(org, project, env);
 
-    resources::check_ownership(platform, triple, &database).await?;
+    resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
     let observed = wamn_kubernetes::environment_state::observe_environment(
         &platform.target.namespace,

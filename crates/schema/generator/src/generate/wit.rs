@@ -957,20 +957,20 @@ fn emit_mutation_validation(
             },
             Vec::as_slice,
         );
-        let mut checks = Vec::new();
+        let mut conditions = Vec::new();
         if column.column_type() == SqlValueType::Uuid {
-            checks.push("!canonical_uuid(value)".to_owned());
+            conditions.push("!canonical_uuid(value)".to_owned());
         }
         if !values.is_empty() {
-            checks.push(format!("!{values:?}.contains(&value.as_str())"));
+            conditions.push(format!("!{values:?}.contains(&value.as_str())"));
         }
         // The fewest characters after a trim. The table's CHECK guards the
         // same rule, and this refusal answers first.
         if let Some(minimum) = min_lengths.get(field) {
-            checks.push(format!("value.trim().chars().count() < {minimum}"));
+            conditions.push(format!("value.trim().chars().count() < {minimum}"));
         }
-        if !checks.is_empty() {
-            let condition = checks.join(" || ");
+        if !conditions.is_empty() {
+            let condition = conditions.join(" || ");
             writeln!(source, "    if let Some(Some(value)) = &mut {access} && ({condition}) {{ return Err(invalid({path:?})); }}")
                 .expect("writing to a String cannot fail");
         }
@@ -1421,13 +1421,13 @@ fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), Gener
 }
 
 fn codec_prelude(request_element_type: &str, minimum: u32, maximum: u32, keyed: bool) -> String {
-    let key_check = if keyed {
+    let key_requirement = if keyed {
         "\n    if input.iter().any(|request_element| request_element.request_id.is_empty()) {\n        return Err(CodecError(\"every operation request element must carry a nonempty string request_id\"));\n    }"
     } else {
         ""
     };
     format!(
-        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype RequestElement = contract::{request_element_type};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input request element count must be {minimum}..={maximum}\";\n\n#[allow(dead_code)]\npub(crate) fn validate(input: &[RequestElement]) -> Result<(), CodecError> {{\n    validate_count(input.len())?;{key_check}\n    Ok(())\n}}\n\n"
+        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype RequestElement = contract::{request_element_type};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input request element count must be {minimum}..={maximum}\";\n\n#[allow(dead_code)]\npub(crate) fn validate(input: &[RequestElement]) -> Result<(), CodecError> {{\n    validate_count(input.len())?;{key_requirement}\n    Ok(())\n}}\n\n"
     )
 }
 
@@ -2642,17 +2642,17 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
             }
             continue;
         }
-        let mut checks = Vec::new();
+        let mut conditions = Vec::new();
         if field.type_name == "uuid" {
-            checks.push("!canonical_uuid(value)".to_owned());
+            conditions.push("!canonical_uuid(value)".to_owned());
         }
         if !field.values.is_empty() {
-            checks.push(format!("!{:?}.contains(&value.as_str())", field.values));
+            conditions.push(format!("!{:?}.contains(&value.as_str())", field.values));
         }
-        if checks.is_empty() {
+        if conditions.is_empty() {
             continue;
         }
-        let condition = checks.join(" || ");
+        let condition = conditions.join(" || ");
         let path = &field.path;
         if field.nullable {
             // One let chain, so clippy::collapsible_if accepts the generated code.

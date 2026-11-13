@@ -2,20 +2,20 @@
 
 Test each contract at the lowest real interface that can establish it.
 Use the smallest existing test that reaches the changed behavior.
-Compile checks, generated examples, database tests, and deployed tests establish different facts.
-An interface can be a product Rust function, database executor, component, HTTP route, or CLI; interface testing does not mean running every check through kind.
+Compile tests, generated examples, database tests, and deployed tests establish different facts.
+An interface can be a product Rust function, database executor, component, HTTP route, or CLI; interface testing does not mean running every test through kind.
 
 The expected result comes from the accepted behavior, not the implementation under test.
 Name only the boundary exercised: compilation is not execution, a renderer is not an operator, and message delivery is not workflow admission.
 
-Repository lints check dependency graphs and compiler or tool results, never hand-written module rosters or source markers.
+Repository lints test dependency graphs and compiler or tool results, never hand-written module rosters or source markers.
 Test a requirement through behavior at its owning interface, or record it as untested.
 
 [CLAUDE.md](../../CLAUDE.md) owns the five test rules and integration selection.
 [Mutation tests](mutation.md) owns deliberate-defect evaluation; [test results](evidence.md) owns reporting.
 [Running tests](../operations/running-tests.md) owns commands, prerequisites, timing, and cleanup.
 The tables below select coverage, not permission to run it: kind/cluster execution, including a diagnostic experiment, needs explicit user approval with its purpose and expected duration.
-Complete a seconds-long prerequisite check before any cluster step; stop a stage after 30 minutes of silence, not after 30 minutes of total runtime.
+Complete a seconds-long prerequisite test before any cluster step; stop a stage after 30 minutes of silence, not after 30 minutes of total runtime.
 The cluster approval restriction and testing budget are recorded in `docs/audit/fixtures.md` and `docs/audit/tests.md`; narrower current user instructions still apply.
 
 ## Ownership
@@ -60,14 +60,14 @@ For example, PostgreSQL establishes migration retry behavior, while one SQL-Job 
 
 ### Application data must be connected to the operation
 
-**Bad:** create a separate database, apply a chart containing only a ConfigMap, and check that the database row survived.
-**Good:** create records in alpha and beta through their application routes, deploy alpha, read the records back, and check the specified beta deployment state remains unchanged.
-A Helm-only test checks Helm reapply/recovery and makes no application-data claim.
+**Bad:** create a separate database, apply a chart containing only a ConfigMap, and make sure that the database row survived.
+**Good:** create records in alpha and beta through their application routes, deploy alpha, read the records back, and test the specified beta deployment state remains unchanged.
+A Helm-only test tests Helm reapply/recovery and makes no application-data claim.
 
 Project meaningful state rather than comparing all database rows or Kubernetes metadata.
-For code-only deployment, check application data and schema identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
+For code-only deployment, test application data and schema identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
 Release-cache additions, application bindings and scoped grants are not forbidden application-data mutations.
-Check beta's effective permissions as well as its release where permission isolation is the requirement.
+Make sure of beta's effective permissions as well as its release where permission isolation is the requirement.
 
 ### Migration retry must expose repeated effects
 
@@ -80,7 +80,7 @@ UPDATE demo_data.progress SET value = value + 1 WHERE key = 'sample';
 
 After apply, read 8 and the matching applied migration record; apply the same bytes again and read 8 again.
 The sequence 7 → 8 → 8 distinguishes zero, one and repeated effects.
-Use an execution-time PostgreSQL failure in an ordinary migration to check rollback of both effects and its completion record; a validator refusal cannot establish transaction rollback.
+Use an execution-time PostgreSQL failure in an ordinary migration to make sure of rollback of both effects and its completion record; a validator refusal cannot establish transaction rollback.
 
 ### Nontransactional outcomes remain explicit
 
@@ -103,7 +103,7 @@ An error alone does not establish absence of effects; the test must not automati
 
 ### Published execution must not depend on source
 
-**Bad:** check that a package-copy helper wrote a directory and claim deployed SQL uses published bytes.
+**Bad:** make sure that a package-copy helper wrote a directory and claim deployed SQL uses published bytes.
 **Good:** publish through the product owner, retain the immutable digest, make the source unavailable, apply the selected release, and inspect its database effect and recorded artifact identity.
 `crates/control/environment/tests/application_activation_live.rs` contains this test shape.
 
@@ -114,7 +114,7 @@ An executor-only test may supply verified artifacts directly but must not claim 
 
 **Bad:** count NATS messages or inspect a passed argument and claim the run selected the correct release.
 **Good:** admit events for alpha and beta through the actual admission interface and inspect each run's application and manifest digest.
-Make a different release available without selecting it and check that the admitting host still uses its loaded release.
+Make a different release available without selecting it and make sure that the admitting host still uses its loaded release.
 Redelivery must preserve an existing run's identity and pinned release under the accepted duplicate-prevention rule.
 
 During rollout, old and new hosts can coexist; do not assume an instantaneous global switch unless the product specifies it.
@@ -157,14 +157,14 @@ One source-publication case can establish source wiring; other cases can consume
 This table identifies preparation for approved verification, not a request to start a cluster run.
 Use `docs/operations/running-tests.md` for actual commands and integration requirements.
 
-| Changed input | First useful check | Artifact implication |
+| Changed input | First useful test | Artifact implication |
 |---|---|---|
 | Test assertion/reporting | Affected test target | No unchanged product-image rebuild |
-| Migration policy/planning | Validator/planner/publication tests | Changed native targets; deployed executor image only for its integration check |
+| Migration policy/planning | Validator/planner/publication tests | Changed native targets; deployed executor image only for its integration test |
 | SQL execution or grants | Real PostgreSQL | The executable or Job image must include the fix when tested deployed |
-| Job arguments, credentials or registry inputs | Input/render checks; approved SQL-Job case | Affected chart/image inputs only |
+| Job arguments, credentials or registry inputs | Input/render tests; approved SQL-Job case | Affected chart/image inputs only |
 | Helm rendering or host configuration | Semantic renderer; approved relevant kind case | Selected chart and changed host artifact |
-| CNPG reset sequencing | Relevant database checks; approved reset case | Actual reset CLI and Job inputs |
+| CNPG reset sequencing | Relevant database tests; approved reset case | Actual reset CLI and Job inputs |
 | Business operation | Application/runtime tests | Application and affected composed dependents, not unrelated services |
 
 Retain compatible build outputs and immutable artifacts.
@@ -187,7 +187,7 @@ For defect detection, use `mutation.md` at the owning interface. Source inspecti
 | Missing product interface | Keep required coverage explicitly incomplete; do not implement the missing product operation inside the test |
 
 Group failures by cause, not target count.
-A TLS failure before permission evaluation establishes nothing about the permission check and does not by itself distinguish product wiring from test setup.
+A TLS failure before permission evaluation establishes nothing about the permission test and does not by itself distinguish product wiring from test setup.
 Compilation-blocked tests can be reviewed for relevance but remain unexecuted.
 
 | Disposition | When | Required change |
@@ -212,19 +212,19 @@ Use ordinary test review, existing run approval and the owning Bead; report resu
 **At review:** identify the retained behavior, realistic defect, lowest useful interface and any existing detector or preparation made redundant.
 Inspect the actual assertions and setup, not the test's name.
 Reject unnecessary cluster dependencies, mandatory preceding scenarios, source-spelling assertions and duplicated expensive matrices.
-Preserve meaningful data and authorization checks; delete obsolete expectations rather than restoring removed product machinery.
+Preserve meaningful data and authorization tests; delete obsolete expectations rather than restoring removed product machinery.
 
 - For changes to input → producer → consumer or setup → operation → cleanup paths, review the complete path.
 - Before a long scenario, exercise the smallest affected boundary. Build and publish authored fixtures through the product. Run external commands against the pinned executable. Exercise lifecycle operations through minimal creation and deletion. Exercise runner changes with short real processes that establish the working directory, exit status and cancellation.
 - Compilation alone does not complete setup or cleanup work. Record demonstrated execution in the existing issue.
 - Replace misleading mocks or assertions about source structure instead of adding duplicate coverage.
 
-**Before cluster execution:** an approval request identifies the additional integration observation that cheaper checks cannot establish and the focused results already available.
+**Before cluster execution:** an approval request identifies the additional integration observation that cheaper tests cannot establish and the focused results already available.
 A failed cluster run alone does not justify another full replay.
 Diagnose the cause first, then choose the smallest relevant reproduction; genuine CNPG or Helm failures may need an approved focused kind case.
 Existing integration-selection requirements still apply.
 
-**For runner or selection changes:** verify mechanical behavior through existing outputs and tests: the requested case exists and executes, focused selection prepares only its required inputs, and prerequisite checks precede cluster work.
+**For runner or selection changes:** verify mechanical behavior through existing outputs and tests: the requested case exists and executes, focused selection prepares only its required inputs, and prerequisite tests precede cluster work.
 Inspect the selected commands and executed work rather than inferring selectivity from a flag.
 Whether assertions detect the same behavior remains a review judgment, not a source-pattern rule.
 
@@ -239,7 +239,7 @@ Evaluate representative changes when their test or preparation owner is being ch
 | Test-only assertion change | The affected test is rebuilt as necessary; unchanged product-image inputs do not trigger image rebuilds |
 | Test deletion or consolidation | The retained detector still catches the relevant defect; unused registrations and exclusive setup are removed, with any remaining coverage gap explicit |
 
-Use `mutation.md` for representative defect checks, not a mandatory experiment for every minor edit.
+Use `mutation.md` for representative defect tests, not a mandatory experiment for every minor edit.
 Cluster-based evaluation still requires approval; source review alone cannot establish runtime savings.
 Compare comparable inputs and cache conditions, separating cold setup from warm execution.
 Use existing timings to identify work removed and time saved; set time expectations from measurements rather than an arbitrary universal duration.
@@ -247,13 +247,13 @@ Fewer tests, deleted lines and a passing full run are not substitutes for these 
 
 **Completion criterion:** a testing improvement is complete only when its claimed reduction in coupling or execution work is demonstrated at the affected boundary, redundant assertions and exclusive preparation are removed, and retained behavior remains covered or explicitly untested.
 New names and a passing combined run do not establish that improvement.
-Record the result in the existing issue; unresolved checks remain incomplete rather than being closed on intent.
+Record the result in the existing issue; unresolved tests remain incomplete rather than being closed on intent.
 
 ## Scope and results
 
 Use real application and platform functions through existing Rust test owners.
 Generated claim tests complement full-command execution and do not replace it.
-Required checks must execute their named cases and pass.
+Required tests must execute their named cases and pass.
 An absent case, ignored case, or explicit skip cannot establish success.
 Each guard must name the runner that executes it.
 A required runner must refuse a missing, renamed, or unbuilt subject.

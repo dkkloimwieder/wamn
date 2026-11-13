@@ -55,7 +55,7 @@ fn refuse(kind: SessionRoleReaderUrlErrorType, reason: &'static str) -> SessionR
     }
 }
 
-/// A credential checked against the provisioner-controlled environment target.
+/// A credential validated against the provisioner-controlled environment target.
 #[derive(Clone)]
 pub struct SessionRoleReaderConnection {
     url: String,
@@ -107,7 +107,7 @@ impl fmt::Display for SessionRoleReaderConnection {
 /// Refuse credentials outside the trusted org, project, environment and database.
 ///
 /// The database argument must come from provisioning, never from the request
-/// or the presented URL. This check does not authenticate the remote server;
+/// or the presented URL. This test does not authenticate the remote server;
 /// deployment supplies the endpoint and database connection security.
 pub fn parse_session_role_reader_url(
     raw: &str,

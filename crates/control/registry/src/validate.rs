@@ -1,6 +1,6 @@
 //! Structural validation of a [`Registry`].
 //!
-//! Checks well-formedness — id slug/reserved-prefix discipline, uniqueness, and
+//! Tests well-formedness — id slug/reserved-prefix discipline, uniqueness, and
 //! referential integrity (a project names a real org; a project-env names a real
 //! project **and** a real env policy) — plus schema-format compatibility and the
 //! D18 env-policy integrity (`env` resolves to a policy; `shared-with` targets
@@ -71,7 +71,7 @@ const INSTANCE_SUFFIX_LEN: usize = 8;
 
 /// The first violating [`Issue`] for an org/project id under the given codes, or
 /// `None` if `id` is a non-empty, non-reserved lowercase slug within length. The
-/// diagnostic mapping for the shared identifier rule, used by [`check_id`] and
+/// diagnostic mapping for the shared identifier rule, used by [`report_id_issues`] and
 /// [`validate_org_id`] (standalone).
 fn id_issue(
     path: String,
@@ -104,7 +104,7 @@ fn id_issue(
 }
 
 /// Validate an org/project id: non-empty slug, within length, not reserved.
-fn check_id(
+fn report_id_issues(
     issues: &mut Vec<Issue>,
     path: String,
     id: &str,
@@ -142,7 +142,7 @@ pub fn validate_org_id(id: &str) -> Result<(), Issue> {
 /// into `<org>-<env>` cluster names and `<project>--<env>.<org>` subdomains but do
 /// **not** mint platform-owned `wamn-*` names, so the reserved-prefix rule does
 /// not apply (an env may be any well-formed slug).
-fn check_env(
+fn report_env_issues(
     issues: &mut Vec<Issue>,
     path: String,
     env: &str,
@@ -165,8 +165,8 @@ fn check_env(
 
 /// Validate a cluster / Secret **name**. These are platform-minted DNS-1123
 /// labels and *may* carry the `wamn` prefix (`wamn-pg`, `wamn-db-<project>`), so
-/// only the charset/length is checked — the reserved-prefix rule does not apply.
-fn check_name(
+/// only the charset/length is validated — the reserved-prefix rule does not apply.
+fn report_name_issues(
     issues: &mut Vec<Issue>,
     path: String,
     name: &str,
@@ -192,7 +192,7 @@ fn check_name(
 /// Held here and not only at DB insert (wamn-0h0g.15.89), because
 /// [`Registry::from_json`](crate::Registry::from_json) is an import path a
 /// document arrives on without passing the storage CHECK.
-fn check_instance_suffix(
+fn report_instance_suffix_issues(
     issues: &mut Vec<Issue>,
     path: String,
     suffix: &str,
@@ -238,7 +238,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
     // --- orgs: valid ids, unique, valid placement ---------------------------
     let mut org_ids: HashSet<&str> = HashSet::new();
     for (i, o) in reg.orgs.iter().enumerate() {
-        check_id(
+        report_id_issues(
             &mut issues,
             format!("orgs[{i}].id"),
             &o.id,
@@ -254,9 +254,9 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
             ));
         }
         // Placement: a pooled org's pool cluster must be a valid name; a dedicated
-        // org's clusters are derived (`cluster_of`), so there is nothing to check.
+        // org's clusters are derived (`cluster_of`), so there is nothing to test.
         if let Some(pool) = o.placement.pool() {
-            check_name(
+            report_name_issues(
                 &mut issues,
                 format!("orgs[{i}].placement.pool"),
                 pool,
@@ -270,7 +270,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
     // org, known org, resolvable recovery domains within the org's own set ---
     let mut policy_keys: HashSet<(&str, &str)> = HashSet::new();
     for (i, p) in reg.env_policies.iter().enumerate() {
-        check_env(
+        report_env_issues(
             &mut issues,
             format!("env-policies[{i}].policy.name"),
             &p.policy.name,
@@ -361,7 +361,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
     // --- projects: valid ids, known org, unique per org ---------------------
     let mut project_keys: HashSet<(&str, &str)> = HashSet::new();
     for (i, p) in reg.projects.iter().enumerate() {
-        check_id(
+        report_id_issues(
             &mut issues,
             format!("projects[{i}].id"),
             &p.id,
@@ -402,7 +402,7 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
         // The env slug must be well-formed AND name a policy in ITS ORG's set
         // (D18 + 8df.4: validity is "well-formed slug + resolves the org's
         // policy", replacing the closed CHECK).
-        check_env(
+        report_env_issues(
             &mut issues,
             format!("project-envs[{i}].triple.env"),
             &t.env,
@@ -428,14 +428,14 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
                 ),
             ));
         }
-        check_name(
+        report_name_issues(
             &mut issues,
             format!("project-envs[{i}].db-secret.name"),
             &pe.db_secret.name,
             "empty-secret-name",
             "invalid-secret-name",
         );
-        check_instance_suffix(
+        report_instance_suffix_issues(
             &mut issues,
             format!("project-envs[{i}].instance-suffix"),
             &pe.instance_suffix,
@@ -609,7 +609,7 @@ mod tests {
         let mut r = minimal();
         rename_first_org(&mut r, "a-b-c");
         assert!(r.is_valid(), "{:?}", r.issues());
-        // Empty is its own, earlier code (charset check skipped).
+        // Empty is its own, earlier code (charset test skipped).
         let mut r = minimal();
         r.orgs[0].id = String::new();
         let c = codes(&r);
@@ -639,7 +639,7 @@ mod tests {
         assert!(!c.contains(&"unknown-env"));
 
         // The DERIVED Secret name legitimately carries the `--` component
-        // separator (`wamn-db-<org>--<project>--<env>`) — check_name stays
+        // separator (`wamn-db-<org>--<project>--<env>`) — report_name_issues stays
         // permissive so a real provisioned name is not spuriously rejected.
         let mut r = minimal();
         r.project_envs[0].db_secret = SecretRef::new("wamn-db-acme--billing--prod");
@@ -656,7 +656,7 @@ mod tests {
         }
 
         // Empty / charset / boundary / length / reserved are each rejected with a
-        // stable code (mirrors the in-registry `check_id`).
+        // stable code (mirrors the in-registry `report_id_issues`).
         for (bad, code) in [
             ("", "empty-org-id"),
             ("Bad", "invalid-org-id"), // uppercase

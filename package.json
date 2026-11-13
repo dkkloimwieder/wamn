@@ -3,10 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "prettier --check . && eslint .",
+    "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint .",
+    "format:lint": "prettier --check .",
     "wfe:build": "pnpm --recursive --filter \"./web/wfe/packages/*\" run prepare"
   },
   "devDependencies": {

@@ -297,7 +297,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         .await
         .unwrap()
         .get(0);
-    // The sha256 of the canonical bytes `{}`, which catalog.releases checks.
+    // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
     environment.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('acme--one--dev',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
     environment.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('acme--one--dev',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();

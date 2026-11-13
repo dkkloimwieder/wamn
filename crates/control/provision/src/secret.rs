@@ -70,7 +70,7 @@ pub enum WorkloadSecretBody<'a> {
         tenant_key: &'a str,
         url: &'a str,
     },
-    /// The checked audience binding and reader credential in `target.json`.
+    /// The validated audience binding and reader credential in `target.json`.
     SessionTarget(&'a SessionTarget),
 }
 
@@ -90,7 +90,7 @@ impl WorkloadSecretBody<'_> {
 /// Replaces the four copy-pasted per-family renderers. Name, component label
 /// and body shape are all DERIVED from the family, so admitting a family
 /// publishes its Secret without a renderer being written for it. The body is
-/// checked against the family's declared shape rather than trusted, so a caller
+/// validated against the family's declared shape rather than trusted, so a caller
 /// cannot hand the guest family a plain url and lose the tenant key.
 pub fn render_workload_secret_manifest(
     family: WorkloadRoleFamily,
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn session_reader_secret_round_trips_the_checked_target() {
+    fn session_reader_secret_round_trips_the_validated_target() {
         let triple = Triple::new("acme", "widgets", "dev");
         let database = crate::project_env_database_name("acme", "widgets", "dev", "k3m9x2p7");
         let role = crate::workload_generation_role(

@@ -585,7 +585,7 @@ pub async fn run_org_workload_action(
 /// Prepare one generation, then verify it and publish its Secret.
 ///
 /// **A REFUSED PREPARE IS NOT ATOMIC, deliberately (`wamn-0h0g.12.179`).** The
-/// prepare transaction COMMITS before the post-commit checks run, because the
+/// prepare transaction COMMITS before the post-commit tests run, because the
 /// generation must be authenticated over a real connection — which no
 /// uncommitted role can accept. A refusal after that point therefore leaves,
 /// and is contracted to leave, exactly two things behind:
@@ -681,7 +681,7 @@ where
         )
         .await?;
     }
-    // Pre-checked ONLY for a family whose stable grant set is converged
+    // Pre-validated ONLY for a family whose stable grant set is converged
     // elsewhere. A family whose grant set THIS batch applies has nothing to
     // assert yet on a first prepare, so the condition is the absence of a
     // stable surface, not a family name.

@@ -70,9 +70,9 @@ pub struct QueueState<'a> {
     pub now: Millis,
 }
 
-/// Check the RUN-* invariants the pure decision layer can evaluate. Cheap enough
+/// Make sure of the RUN-* invariants the pure decision layer can evaluate. Cheap enough
 /// to call after every step.
-pub fn check(state: &QueueState<'_>) -> Result<(), Violation> {
+pub fn require_invariants(state: &QueueState<'_>) -> Result<(), Violation> {
     run_2_one_live_lease(state)?;
     run_3_claimable_is_claimed(state)?;
     run_4_budget_and_janitor(state)?;

@@ -33,10 +33,10 @@ COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-# tools/bench and tools/submodule-check are workspace members, so Cargo needs
+# tools/bench and tools/submodule-pins are workspace members, so Cargo needs
 # their manifests to load the workspace.
 COPY tools/bench ./tools/bench
-COPY tools/submodule-check ./tools/submodule-check
+COPY tools/submodule-pins ./tools/submodule-pins
 # The copied .cargo/config.toml selects clang/mold, limits build jobs, and
 # enables offline SQLx. It sets no rustc-wrapper, so this stage and
 # component-toolchain need no wrapper binary. Local Cargo uses kache through
@@ -180,7 +180,7 @@ COPY --from=build-native /native-output/wamn-identity /usr/local/bin/wamn-identi
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-identity"]
 
-# Compose the control-only platform entry after the route pin is checked.
+# Compose the control-only platform entry after the route pin is validated.
 FROM component-builder AS control-entry
 COPY --from=build-native /native-output/wamn-component-composer /usr/local/bin/wamn-component-composer
 RUN wamn-component-composer --control-route /component-output/http_route.wasm --output /component-output/control_http.wasm

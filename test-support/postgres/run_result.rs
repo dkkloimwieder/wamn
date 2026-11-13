@@ -1,19 +1,19 @@
-//! Run results retained by failed cluster checks.
+//! Run results retained by failed cluster tests.
 
 use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-/// Attach the case's run status, failure and output to a failed check.
-// Box at the call boundary so nested checks do not enlarge their callers' futures.
-pub fn check<T>(
+/// Attach the case's run status, failure and output to a failed test.
+// Box at the call boundary so nested tests do not enlarge their callers' futures.
+pub fn require_success<T>(
     directory: &Path,
     helper: &str,
     project: &tokio_postgres::Client,
-    checking: impl Future<Output = anyhow::Result<T>>,
+    execution: impl Future<Output = anyhow::Result<T>>,
 ) -> impl Future<Output = anyhow::Result<T>> {
-    Box::pin(check_with_results(directory, helper, checking, async {
+    Box::pin(require_with_results(directory, helper, execution, async {
         Ok(project
             .query_one(
                 "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
@@ -28,13 +28,13 @@ pub fn check<T>(
     }))
 }
 
-async fn check_with_results<T>(
+async fn require_with_results<T>(
     directory: &Path,
     helper: &str,
-    checking: impl Future<Output = anyhow::Result<T>>,
+    execution: impl Future<Output = anyhow::Result<T>>,
     results: impl Future<Output = anyhow::Result<Value>>,
 ) -> anyhow::Result<T> {
-    let error = match checking.await {
+    let error = match execution.await {
         Ok(value) => return Ok(value),
         Err(error) => error,
     };

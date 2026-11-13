@@ -118,7 +118,7 @@ pub trait DevStageRunner {
 
     /// Prepare the target before the first stage of a run.
     ///
-    /// A disposable runner checks its lease and recreates invalidated schema here.
+    /// A disposable runner tests its lease and recreates invalidated schema here.
     fn prepare_run(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
         async { Ok(()) }
     }

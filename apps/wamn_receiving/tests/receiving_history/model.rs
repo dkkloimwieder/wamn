@@ -1,4 +1,4 @@
-//! Shared fixture and its local checks.
+//! Shared fixture and its local tests.
 
 include!("model_fixture.rs");
 #[cfg(test)]

@@ -1,6 +1,6 @@
 # Audit report H: Hygiene
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lt36n.1, wamn-lt36n.2, wamn-lt36n.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and validated that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lt36n.1, wamn-lt36n.2, wamn-lt36n.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- report H1, bead wamn-lt36n.1 -->
 
@@ -18,7 +18,7 @@ Area: `tools/journey-image-cache`
 
 Evidence: `tools/journey-image-cache:19`, `tools/journey-image-cache:111`, `Dockerfile:36`, `Dockerfile:44`, `Dockerfile:124`, `crates/control/lib/src/upgrade_environment.rs:394`.
 
-Problem: The cache lists its copied inputs manually, but that list omits `vendor`, `tools/bench`, `tools/submodule-check`, and `tools/guest-rustflags`. Docker copies these paths. Changes confined to omitted inputs leave the cache identity unchanged and can reuse stale images.
+Problem: The cache lists its copied inputs manually, but that list omits `vendor`, `tools/bench`, `tools/submodule-pins`, and `tools/guest-rustflags`. Docker copies these paths. Changes confined to omitted inputs leave the cache identity unchanged and can reuse stale images.
 
 Proposal: Merge production image preparation into `wamn-control` and its existing platform build owner. Let Docker handle build caching, or derive any retained source identity from the complete build context.
 
@@ -40,7 +40,7 @@ Problem: The script reads changed paths through process substitution, which does
 
 Proposal: Complete both Git reads successfully before selecting tests. Treat unreadable change information as a failure.
 
-Deletes: The unchecked process substitution around change discovery.
+Deletes: The unverified process substitution around change discovery.
 
 Risk: The train can accept a revision without running its selected tests. Add Git-failure cases to `tests/conformance/tests/test_changes.rs` and assert that selection fails before Cargo runs.
 
@@ -50,9 +50,9 @@ Owner review 2026-10-31: Group 3 Do, small. `tools/train-run` and `tools/train-t
 
 Severity: medium  
 Effort: S  
-Area: `tools/native-descriptor-limit-check`
+Area: `tools/native-descriptor-limit-probe`
 
-Evidence: `tools/native-descriptor-limit-check:129`, `tools/native-descriptor-limit-check:158`, `tools/native-descriptor-limit-check:167`.
+Evidence: `tools/native-descriptor-limit-probe:129`, `tools/native-descriptor-limit-probe:158`, `tools/native-descriptor-limit-probe:167`.
 
 Problem: The diagnostic defines one binary and runs two modes, so it creates two cases. Its final verdict requires four passing cases, which makes every invocation fail.
 
@@ -76,7 +76,7 @@ Problem: Value-taking arguments call `shift 2` without first requiring a second 
 
 Proposal: Require each argument value before advancing the parser. During the identity runner consolidation, move this parser into the existing Rust test command.
 
-Deletes: The unchecked argument branches, followed by the shell parser when its owner moves.
+Deletes: The unverified argument branches, followed by the shell parser when its owner moves.
 
 Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_gate_runner.rs` with bounded missing-value cases for every value-taking flag.
 
@@ -152,13 +152,13 @@ Owner review 2026-10-31: In passing, when `gcp.sh` is next touched. The `COMMIT_
 
 Severity: medium  
 Effort: S  
-Area: `tools/train-run`, `tools/submodule-check`
+Area: `tools/train-run`, `tools/submodule-pins`
 
-Evidence: `tools/train-run:73`, `tools/train-run:80`, `tools/submodule-check/src/main.rs:33`, `docs/operations/running-tests.md:139`.
+Evidence: `tools/train-run:73`, `tools/train-run:80`, `tools/submodule-pins/src/main.rs:33`, `docs/operations/running-tests.md:139`.
 
 Problem: The operating instructions say that the train runs the submodule guard before integration. The runner initializes submodules and runs test selection, but never invokes that guard. No tracked automatic caller was found.
 
-Proposal: The renamed revision runner (`tools/test-revision`, from H1-2) calls `submodule-check` before its test stage. Keep this repository rule outside `wamn-ctl`.
+Proposal: The renamed revision runner (`tools/test-revision`, from H1-2) calls `submodule-pins` before its test stage. Keep this repository rule outside `wamn-ctl`.
 
 Deletes: No production functionality. Remove any duplicate external invocation once the revision runner owns it.
 
@@ -182,9 +182,9 @@ Merged into code-quality A2-10 (owner review 2026-10-31). In passing, no tests.
 
 Severity: low  
 Effort: S  
-Area: `tools/repo-lint`, `tools/test-changes`, `tools/contract-diff`, `tools/wasmcloud-release-check`
+Area: `tools/repo-lint`, `tools/test-changes`, `tools/contract-diff`, `tools/wasmcloud-release-tests`
 
-Evidence: `tools/repo-lint:18`, `tools/contract-diff:18`, `tools/contract-diff:52`, `tools/wasmcloud-release-check:21`, `tools/wasmcloud-release-check:92`.
+Evidence: `tools/repo-lint:18`, `tools/contract-diff:18`, `tools/contract-diff:52`, `tools/wasmcloud-release-tests:21`, `tools/wasmcloud-release-tests:92`.
 
 Problem: The scripts copy root discovery, executable lookup, error output, and command-plan printing. Each copy maintains the same operational rules separately.
 
@@ -232,7 +232,7 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `kubernetes-gate-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
 | `lane-start` | 90 | Prepare checkout, binaries, dependencies, and packages. Build and test instructions. | Cut down and renamed under F2-7 (banned word). |
 | `local-registry` | 41 | Start or reuse a labeled host registry. Build instructions. | Merge into control-side local platform preparation. |
-| `native-descriptor-limit-check` | 178 | Exercise descriptor limits in host processes. No caller. | Merge into host tests. |
+| `native-descriptor-limit-probe` | 178 | Exercise descriptor limits in host processes. No caller. | Merge into host tests. |
 | `rc-gate-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
 | `receiving-cluster-journey-run` | 133 | Receiving lifecycle adapter. Receiving cluster fixtures. | Merge into shared test infrastructure. |
 | `rename-app-system-to-platform` | 105 | Apply a one-time schema spelling change. No caller. | Delete. |
@@ -242,9 +242,9 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `test-changes` | 520 | Select tests and prepare their inputs. Train and test instructions. | Keep as repository tooling. |
 | `train-run` | 80 | Test a committed revision in a detached checkout. Self-tests and instructions. | Keep behavior, rename (`tools/test-revision`), call the submodule guard. |
 | `train-tools-test` | 208 | Fake-command tests for selection and runner behavior. Test instructions. | Keep behavior, rename with the runner. |
-| `wasmcloud-release-check` | 173 | Exercise exact upstream release sources. Conformance tests and cutover history. | Keep as explicit dependency-upgrade tooling. |
+| `wasmcloud-release-tests` | 173 | Exercise exact upstream release sources. Conformance tests and cutover history. | Keep as explicit dependency-upgrade tooling. |
 | `wms-cluster-journey-run` | 134 | WMS lifecycle adapter. WMS cluster fixtures. | Merge into shared test infrastructure. |
-| `submodule-check/` | 411 | Detect undeclared and backward pins. Workspace manifest and train instructions. | Keep, wire into train. |
+| `submodule-pins/` | 411 | Detect undeclared and backward pins. Workspace manifest and train instructions. | Keep, wire into train. |
 
 Paths below are relative to `tools/bench/`.
 
@@ -600,7 +600,7 @@ Effort: M
 Area: `web/shell/vite.ts`, application Vite files  
 Evidence: `web/shell/vite.ts:122`, `apps/platform_ui/vite.config.ts:5`, `apps/wamn_receiving/web/vite.config.ts:17`, `web/sync-bench/vite.config.ts:30`.
 
-Problem: Three application configurations repeat Solid setup, browser resolution, deduplication, and test environment rules. Platform and Receiving separately implement checks for the bundled Solid version. Receiving and sync-bench separately define worker entry naming. The shared helper supplies an empty deduplication list and makes applications reconstruct the common policy.
+Problem: Three application configurations repeat Solid setup, browser resolution, deduplication, and test environment rules. Platform and Receiving separately implement tests for the bundled Solid version. Receiving and sync-bench separately define worker entry naming. The shared helper supplies an empty deduplication list and makes applications reconstruct the common policy.
 
 Proposal: One shared Vite owner must supply Solid compilation, resolution policy, runtime identity assertions, test defaults, and the worker build recipe. It must retain the existing development proxy, scope response, output handling, and precache support. Applications supply their entries, ports, output locations, public assets, and application-specific middleware.
 

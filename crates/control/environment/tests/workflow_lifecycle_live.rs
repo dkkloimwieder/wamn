@@ -1,7 +1,7 @@
 //! Live tests of environment workflows
 //! (docs/architecture/execution.md#environment-workflows): authorship against
 //! the serving release, one enabled version, the
-//! lifecycle lock, the enable-role checks, the immutability trigger and the
+//! lifecycle lock, the enable-role tests, the immutability trigger and the
 //! `workflow` user row.
 //!
 //! The project database carries the production catalog and platform schemas

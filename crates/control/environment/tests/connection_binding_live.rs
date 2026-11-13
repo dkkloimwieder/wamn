@@ -474,7 +474,7 @@ async fn assert_nested_effect_snapshot(
     .await;
 
     // This shows the SQL snapshot only. The mounted-release helper owns the
-    // separate test that the origin declares a dependency on this executor.
+    // separate make sure that the origin declares a dependency on this executor.
     let nested = ConnectionEffectLookup {
         entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
             package_id: WIRING_PACKAGE,
@@ -1131,7 +1131,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
 
 fn blobstore(definition: &serde_json::Value) -> anyhow::Result<()> {
     RequirementType::Blobstore
-        .check_definition(definition)
+        .require_definition(definition)
         .map_err(anyhow::Error::msg)
 }
 use wamn_runtime::connection_generation::{

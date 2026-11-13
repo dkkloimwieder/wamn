@@ -117,17 +117,17 @@ pub(crate) fn validate_connection_code(
         let ComponentItem::ComponentInstance(health) = health.ty else {
             anyhow::bail!("integration health is not an interface instance");
         };
-        let check = health
-            .get_export(raw, "check")
-            .ok_or_else(|| anyhow::anyhow!("integration health has no check function"))?;
-        let ComponentItem::ComponentFunc(check) = check.ty else {
-            anyhow::bail!("integration health check is not a function");
+        let probe = health
+            .get_export(raw, "probe")
+            .ok_or_else(|| anyhow::anyhow!("integration health has no probe function"))?;
+        let ComponentItem::ComponentFunc(probe) = probe.ty else {
+            anyhow::bail!("integration health probe is not a function");
         };
         anyhow::ensure!(
-            !check.async_(),
+            !probe.async_(),
             "integration health uses the synchronous component ABI"
         );
-        check.typecheck::<(), (Result<(), String>,)>(&ty.instance_type())?;
+        probe.typecheck::<(), (Result<(), String>,)>(&ty.instance_type())?;
         Ok(())
     };
     signature().map_err(|source| {
@@ -252,7 +252,7 @@ pub fn validate_component_admission(
             let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
                 &adapter_results[0]
             else {
-                unreachable!("the JSON adapter passed its result type check");
+                unreachable!("the JSON adapter passed its result type test");
             };
             anyhow::ensure!(
                 result.err() == adapter_result.err(),
@@ -481,7 +481,7 @@ fn operation_signature_mismatch(
 /// through the operations it calls, and an empty projection claims it pure.
 ///
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
-/// the INHERITED provenance and the audited-imports check stays with the
+/// the INHERITED provenance and the audited-imports test stays with the
 /// IMPORTED one. The interface this component imports is the dependency
 /// operation itself, and `wamn_catalog` excludes an operation-dependency
 /// import from the effect interfaces by rule. The package never collides with
@@ -896,7 +896,7 @@ mod tests {
     }
 
     /// RULED wamn-362o.46: an async node exports wamn:node/async-handler and
-    /// lifts `run` async; the pin admits the lift THERE, and the type check is
+    /// lifts `run` async; the pin admits the lift THERE, and the type test is
     /// the same one handler.run passes.
     #[test]
     fn an_async_lifted_run_on_async_handler_is_admitted() {
@@ -919,7 +919,7 @@ mod tests {
             .insert(ASYNC_HANDLER_OPERATION.to_string(), operation);
         // The fixture's lift is asserted, not assumed: the dummy builder
         // applies the async ABI only where the type allows it, so a test that
-        // skipped this check would pass on a sync lift and show nothing.
+        // skipped this test would pass on a sync lift and show nothing.
         let component = Component::new(engine.inner(), &bytes).expect("fixture instantiates");
         let raw = component.engine();
         let ComponentItem::ComponentInstance(instance) = component
@@ -1154,7 +1154,7 @@ mod tests {
     // Run this test with `--all-features`.
     #[cfg(feature = "wasm_component_model_implements")]
     #[test]
-    fn multi_export_admission_checks_global_union_and_preserves_attachment() {
+    fn multi_export_admission_requires_global_union_and_preserves_attachment() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let base = base_bytes();
         let bytes = composed(

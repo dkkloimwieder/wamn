@@ -341,7 +341,7 @@ impl WamnPostgres {
         statement_timeout_ms: u32,
     ) -> Result<BoundClaims, PgError> {
         // The tenant is still VALIDATED on the guest path even though it is no
-        // longer bound: it selected the credential this connection was checked
+        // longer bound: it selected the credential this connection was validated
         // out with, so a malformed one is a bug worth failing on.
         validate_claims(
             env_key,

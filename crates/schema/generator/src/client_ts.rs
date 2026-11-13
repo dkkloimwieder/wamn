@@ -391,14 +391,14 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut used = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut served = false;
-    check_reversible(
+    require_reversible(
         &model.name,
         &format!("package {package} model {:?}", model.name),
     )?;
     for operation in &operations {
-        check_reversible(&operation.name, &operation.operation)?;
-        check_field_names(&operation.input_fields, &operation.operation)?;
-        check_field_names(
+        require_reversible(&operation.name, &operation.operation)?;
+        require_field_names(&operation.input_fields, &operation.operation)?;
+        require_field_names(
             operation
                 .route
                 .as_ref()
@@ -1312,7 +1312,7 @@ fn ts_member(leaf: &str, path: &str) -> Result<String, ClientTsError> {
 /// name back reaches the contract name that emitted it. `line_1` reverses,
 /// because an underscore becomes a capital only before a lowercase letter. A
 /// capital inside a contract name does not reverse.
-fn check_reversible(name: &str, subject: &str) -> Result<(), ClientTsError> {
+fn require_reversible(name: &str, subject: &str) -> Result<(), ClientTsError> {
     let member = to_camel(name);
     let back = to_snake(&member);
     if back == name {
@@ -1325,7 +1325,7 @@ fn check_reversible(name: &str, subject: &str) -> Result<(), ClientTsError> {
 }
 
 /// Refuse every declared name of one shape that does not reverse.
-fn check_field_names(fields: &[FieldIr], subject: &str) -> Result<(), ClientTsError> {
+fn require_field_names(fields: &[FieldIr], subject: &str) -> Result<(), ClientTsError> {
     for field in fields {
         let leaf = field
             .path
@@ -1334,9 +1334,9 @@ fn check_field_names(fields: &[FieldIr], subject: &str) -> Result<(), ClientTsEr
             .unwrap_or(&field.path)
             .trim_end_matches("[]");
         if !leaf.is_empty() {
-            check_reversible(leaf, &format!("{subject} field {:?}", field.path))?;
+            require_reversible(leaf, &format!("{subject} field {:?}", field.path))?;
         }
-        check_field_names(&field.children, subject)?;
+        require_field_names(&field.children, subject)?;
     }
     Ok(())
 }

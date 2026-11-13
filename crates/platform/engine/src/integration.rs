@@ -391,7 +391,7 @@ impl Integration {
 
     /// Test the remote service through the version's required health export.
     pub async fn health(&self) -> anyhow::Result<Result<(), String>> {
-        match self.call(HEALTH, "check", &[]).await?.as_slice() {
+        match self.call(HEALTH, "probe", &[]).await?.as_slice() {
             [Val::Result(Ok(None))] => Ok(Ok(())),
             [Val::Result(Err(Some(error)))] => match error.as_ref() {
                 Val::String(error) => Ok(Err(error.clone())),

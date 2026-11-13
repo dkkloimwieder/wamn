@@ -9,7 +9,7 @@
 //! else — but four of the six invariants are about a TRAJECTORY: a merge running
 //! once per arriving token, a retry budget spent across attempts, a wait landing
 //! ahead of the clock, a terminal outcome matching the failure it produced. So
-//! the driver accumulates a [`WalkTrace`] as it drives, and [`check`] reads the
+//! the driver accumulates a [`WalkTrace`] as it drives, and [`require_invariants`] reads the
 //! wiring, the live walk and that trace together.
 
 use std::collections::BTreeMap;
@@ -137,7 +137,7 @@ impl WalkTrace {
     }
 }
 
-/// The walk under check: the graph, the live walk, and what the driver observed.
+/// The walk under require_invariants: the graph, the live walk, and what the driver observed.
 #[derive(Debug, Clone, Copy)]
 pub struct WalkState<'a> {
     pub wiring: &'a Wiring,
@@ -145,9 +145,9 @@ pub struct WalkState<'a> {
     pub trace: &'a WalkTrace,
 }
 
-/// Check WALK-1..6 against one observed walk. Cheap enough to call after every
+/// Make sure of WALK-1..6 against one observed walk. Cheap enough to call after every
 /// `apply`.
-pub fn check(state: &WalkState<'_>) -> Result<(), Violation> {
+pub fn require_invariants(state: &WalkState<'_>) -> Result<(), Violation> {
     walk_1_hop_limit(state)?;
     walk_2_no_invoke_after_done(state)?;
     walk_3_once_per_arriving_token(state)?;

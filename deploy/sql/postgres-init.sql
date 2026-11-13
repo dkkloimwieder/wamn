@@ -280,7 +280,7 @@ CREATE INDEX scratch_tkey
     ON s2.scratch ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON s2.scratch TO wamn_app;
 
--- FK-violation fixture (FK checks run as table owner and bypass RLS; the
+-- FK-violation fixture (FK tests run as table owner and bypass RLS; the
 -- guest only needs a way to trip 23503).
 CREATE TABLE s2.fkchild (
     id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -3,9 +3,9 @@
 //! This module owns only artifact transfer. Callers provide a complete admitted
 //! component fact and explicit registry configuration; the source derives the
 //! immutable reference, verifies the manifest and both blobs, and returns only
-//! component bytes checked against that fact. It owns no catalog read, cache,
+//! component bytes validated against that fact. It owns no catalog read, cache,
 //! instance pool, or router behavior. The source implements
-//! [`ArtifactSource`] from `wamn-engine`, which holds the digest checks and the
+//! [`ArtifactSource`] from `wamn-engine`, which holds the digest tests and the
 //! local file source.
 
 use std::fmt;
@@ -79,7 +79,7 @@ impl ComponentArtifactSourceConfig {
     /// surface, `oci::{pull_component, push_component}`, is fixed to
     /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
     /// platform-owned layer and config blob — the config blob being the very
-    /// admission fact [`ArtifactSource::pull_verified`] checks again. See
+    /// admission fact [`ArtifactSource::pull_verified`] tests again. See
     /// `docs/architecture/native-alignment.md#retained-wamn-implementations`
     /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
     /// pull through `pull_component`.
@@ -317,7 +317,7 @@ impl ArtifactSource for ComponentArtifactSource {
         let named = entry.whole();
         let auth = self.auth(registry, &named).await?;
         let client = registry_client(&self.config)?;
-        // The client checks the manifest against the digest in the reference.
+        // The client tests the manifest against the digest in the reference.
         let (manifest, _) = registry_pull::retry(
             &entry,
             deadline,

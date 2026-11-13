@@ -60,7 +60,7 @@ The run and queue row commit in one transaction.
 
 A workflow run has no waiting HTTP caller.
 Use an emit terminal, or let the graph finish without a terminal.
-Before each node, the host reads the principal's current grants for the run's role, and applies the normal operation checks.
+Before each node, the host reads the principal's current grants for the run's role, and applies the normal operation tests.
 A role revoked during a run refuses the next node.
 Operations that require a fresh PAT refuse a queued run.
 The executing principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.

@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json && tsc --project tsconfig.test.json",
+    "lint": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json && tsc --project tsconfig.test.json",
     "test": "pnpm --workspace-root run wfe:build && vitest run"
   },
   "devDependencies": {

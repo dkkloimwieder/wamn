@@ -22,7 +22,7 @@ See [transactions and composition](../architecture/data-access.md#inputs-queries
 3. Transaction — unchanged in A. `begin_item` opens a host transaction when the entry's released statement set is non-empty (native\_policy.rs:239-244); `fold_call_graph` fills that set with callee statements through declared dependencies (serving\_manifest.rs:329), so an SQL-free Acme entry calling Receiving already gets one. A read never does: `begin_item` runs only for operation types that log intent (`logs_intent`, intent.rs:84-88). A member-union rule was proposed and withdrawn (2026-10-12): `apps/edge_samples` has SQL-free `sample.read` beside SQL `sample.record` in one component and would have lost its two-step claim. When `operations[].dependencies` goes (Cleanup), the begin decision needs a replacement that is not a graph. Candidate: the manifest's declared `transaction` field (`sample.read` declares `transaction = None`; `has_host_transaction`, manifest.rs:161) without the statements-non-empty requirement. Decided at cleanup, not in A.
 4. **Refusals inside a host transaction** — `run`, `run-stream`, guest `begin`. Already there.
 
-**The effect profile is a review screen, derived from bytes, and nothing enforces on it.** Per operation: which sibling operations it can reach, which statements (via the generated bindings it calls, `record_receipt.rs:18,467`), which tables and columns those read, write, or lock (relations derived from SQL, `data-access.md:164`). Reads matter most here: "granting `acme.receipt_screen` lets a role see `purchase_order.{id,status,cost}`." A role's profile is the union over its granted operations. Imprecision — an export widened to the member union by inlining, `call_indirect`, or a rewritten path — is marked as imprecision and degrades the screen, not security. Other consumers (stateless derivation, connection binding, recovery-class check, edge tiering) are each their own decision when they have a case.
+**The effect profile is a review screen, derived from bytes, and nothing enforces on it.** Per operation: which sibling operations it can reach, which statements (via the generated bindings it calls, `record_receipt.rs:18,467`), which tables and columns those read, write, or lock (relations derived from SQL, `data-access.md:164`). Reads matter most here: "granting `acme.receipt_screen` lets a role see `purchase_order.{id,status,cost}`." A role's profile is the union over its granted operations. Imprecision — an export widened to the member union by inlining, `call_indirect`, or a rewritten path — is marked as imprecision and degrades the screen, not security. Other consumers (stateless derivation, connection binding, recovery-class test, edge tiering) are each their own decision when they have a case.
 
 ## `wamn:postgres` stays 0.3
 
@@ -54,7 +54,7 @@ See [transactions and composition](../architecture/data-access.md#inputs-queries
 
 ## Authoring discipline
 
-The one thing composition cannot avoid: a base package exports operations at the granularity a composer needs. Receiving's `record_receipt_in` is six `generated::*` calls in a fixed order (`record_receipt.rs:456-585`). Naming them is not the work; making each safe alone is. `finish_purchase_order.sql` bumps `row_version` on any open purchase order whether or not a receipt was inserted; as an export it needs a precondition it does not have today. Expect one such check per export.
+The one thing composition cannot avoid: a base package exports operations at the granularity a composer needs. Receiving's `record_receipt_in` is six `generated::*` calls in a fixed order (`record_receipt.rs:456-585`). Naming them is not the work; making each safe alone is. `finish_purchase_order.sql` bumps `row_version` on any open purchase order whether or not a receipt was inserted; as an export it needs a precondition it does not have today. Expect one such test per export.
 
 Database state cannot prove that an earlier step ran *in this command*: an existing receipt is not proof that this invocation inserted it. Two mechanisms make an export safe alone, in order of preference:
 
@@ -84,7 +84,7 @@ let open = acme::select_open_lines(po)?;                      // acme's own SELE
 if !open.is_empty() { return Err(AcmeError::PartialReceipt(open)); }   // Err → host ROLLBACK
 ```
 
-- The check is a **post-condition in the same transaction**. It runs after the base, under the base's `FOR UPDATE` lock, so it cannot race. A pre-check before `receive-lines` could.
+- The test is a **post-condition in the same transaction**. It runs after the base, under the base's `FOR UPDATE` lock, so it cannot race. A pre-test before `receive-lines` could.
 - The constraint holds because operator roles are granted `acme.receive` and not `receiving.receive-lines`. The ACL is the enforcement, against routes and workflow targets alike — after C. Under A alone `ReleaseClosures::expand` still makes a reached operation's permission effective when the entry is granted, so until C lands the constraint depends on the application not routing `receiving.receive-lines` as a target of its own. The platform does not make an overlay mandatory; the admin does, by what they grant.
 - A constraint the overlay wants enforced even against direct base calls belongs in the schema (a `CHECK` on an overlay-owned column) or in the base.
 
@@ -156,7 +156,7 @@ Acme application = Receiving + Acme + LotTracking + Analytics.
 | Member | Imports | In the receive transaction | Routes it owns |
 | --- | --- | --- | --- |
 | Receiving | statements | yes, called by Acme's entry | none routed directly |
-| Acme | statements, entry | yes: tolerance check, inspection row | `receive`, `approve-inspection` |
+| Acme | statements, entry | yes: tolerance test, inspection row | `receive`, `approve-inspection` |
 | LotTracking | statements | no; reacts via CDC workflow | `assign-lot`, `lot-history` |
 | Analytics | statements, on the analytics connection | no; consumes CDC | `dashboards` (reads) |
 
@@ -175,7 +175,7 @@ See [current caller authorization](../architecture/execution.md#caller-authentic
 
 | Section | Today | Becomes |
 | --- | --- | --- |
-| §2.5 Non-grantable operations | the ACL-editing operations (`role.*`, `permission.*`, `user_role.*`, `user.*`) are reserved to `admin` | Ruling: everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation may confer only what its caller already holds, with `admin` treated as the full set (it has no rows, so a row-subset test would pass vacuously). Prior art: Kubernetes RBAC escalation prevention; AWS IAM permission boundaries. Scope: the ruling is recorded here; the code is a follow-up after C, rescoped then (cut 2026-10-11 so C stays pure deletion). Until it lands, §2.5 behavior is unchanged: ACL-editing operations stay reserved to `admin`. The follow-up as sketched, to be re-examined: (1) a third host-route authority, `Granted`, so the route keeps an operation identity for the ACL check (`registered_operation()` returns one only for Admin today, host\_route.rs:421-423; a Member route would be open to every authenticated member); (2) `is_host_route_operation` stops refusing grants of these operations (application\_route.rs:168); (3) the escalation check in each handler; (4) `UserRoleGrant` takes `OPERATION_GRANT_LOCK_SQL` like `PermissionGrant` (application\_route.rs:217,281). `permission.mine` stays readable by any session. |
+| §2.5 Non-grantable operations | the ACL-editing operations (`role.*`, `permission.*`, `user_role.*`, `user.*`) are reserved to `admin` | Ruling: everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation may confer only what its caller already holds, with `admin` treated as the full set (it has no rows, so a row-subset test would pass vacuously). Prior art: Kubernetes RBAC escalation prevention; AWS IAM permission boundaries. Scope: the ruling is recorded here; the code is a follow-up after C, rescoped then (cut 2026-10-11 so C stays pure deletion). Until it lands, §2.5 behavior is unchanged: ACL-editing operations stay reserved to `admin`. The follow-up as sketched, to be re-examined: (1) a third host-route authority, `Granted`, so the route keeps an operation identity for the ACL test (`registered_operation()` returns one only for Admin today, host\_route.rs:421-423; a Member route would be open to every authenticated member); (2) `is_host_route_operation` stops refusing grants of these operations (application\_route.rs:168); (3) the escalation test in each handler; (4) `UserRoleGrant` takes `OPERATION_GRANT_LOCK_SQL` like `PermissionGrant` (application\_route.rs:217,281). `permission.mine` stays readable by any session. |
 
 ## Deferred — build when a consumer exists
 
@@ -192,7 +192,7 @@ Four review rounds each found a way the previous mechanism was incomplete, and e
 | Transitive permission closure (caller holds every reached operation's permission) | Stop an overlay author exposing a cheap operation that calls an expensive one | Retired, not deferred (ruled 2026-10-11). The requirement is the entry; what it reaches is a review artifact. The escalation it guarded against is an authoring bug the artifact makes visible. See Mechanism for the full reasoning; do not reintroduce without a case the artifact cannot catch. |
 | Per-entry narrowing of member statement sets | Least privilege inside one invocation | Ownership is already per instance (Receiving's statements run only under Receiving's code). Narrowing to the entry's reach adds nothing a caller can exploit; it only shrinks a set the member's own code controls. |
 | SQL-free entry admission rule | A pure orchestrator command with no local SQL | Acme's real entry owns the inspection SQL once the participant goes (wamn.k:51-108), so it is an ordinary command with a base dependency. No pure orchestrator exists. Falls out of the derived graph anyway when one does. |
-| Other consumers of the effect profile (ACL review screen, stateless derivation, connection binding, recovery-class check, edge tiering) | The derived profile answers each question someone answers by hand today | The extraction is built once for the two consumers this spec needs. Each other consumer is its own decision when it has a case; listed so nobody re-declares what the bytes say. |
+| Other consumers of the effect profile (ACL review screen, stateless derivation, connection binding, recovery-class test, edge tiering) | The derived profile answers each question someone answers by hand today | The extraction is built once for the two consumers this spec needs. Each other consumer is its own decision when it has a case; listed so nobody re-declares what the bytes say. |
 | Converting existing read exports to operation-transaction() so a command can call them and see in-flight state | Nested reads inside a command | Receiving's reads use guest begin/commit (read.rs:84-163), which refuses inside a host transaction. No composer needs a nested read yet; Acme passes records. Supported limitation of spike A; convert per read when a composer needs one. |
 
 ### Over-verification removed
@@ -220,7 +220,7 @@ Left open and not scheduled: `wamn-xt0tg` and `wamn-b71vg` (wire contracts, with
 
 **C. Authorization** (your rulings of 2026-10-11; independent of A and B)
 
-- [x] Not in C: grantable administration (`Granted` authority, escalation check, grant lock) is a follow-up after C lands, rescoped then. C leaves ACL-editing operations reserved to `admin` as today; its tests are the two above. Evidence: ACL-editing stays `admin` (`wamn-14bx8.4`); grantable administration is still open and needs an owner sentence.
+- [x] Not in C: grantable administration (`Granted` authority, escalation test, grant lock) is a follow-up after C lands, rescoped then. C leaves ACL-editing operations reserved to `admin` as today; its tests are the two above. Evidence: ACL-editing stays `admin` (`wamn-14bx8.4`); grantable administration is still open and needs an owner sentence.
 
 Pass A: per-member instances with wiring verification, transaction selection unchanged, `run`/`run-stream` refusal in a host transaction, `client` denied to application components — one epic, `wamn:postgres` still 0.3. Fail on the link test: try the adapter fallback before anything else. Fail on rollback or authority: stop; the model is wrong. B has no failure mode that matters; a worse screen is a worse screen. Pass C: both folds, `required_by`, `fresh_only` deleted, with the platform-ui.md amendments — one epic, pure deletion. Follow-up after C: grantable administration, rescoped once C is in. Then Cleanup after migration, in its own change. Nothing from Deferred rides along with any of them.
 
@@ -238,4 +238,4 @@ Order (owner ruling 2026-10-14). C goes first because it is pure deletion and A 
 | Claim | Source |
 | --- | --- |
 | Authorization at publish, never per call; nested calls are component calls | project ruling 2026-09-24 |
-| Package facts have one owner, the OCI registry; no database stores package verification; the artifact's existence is the proof of its checks (owner ruling 2026-10-11) | 20efa90, 69c1cba (wamn-vavs4.11); ../operations/building.md#reading-a-pushed-package |
+| Package facts have one owner, the OCI registry; no database stores package verification; the artifact's existence is the proof of its tests (owner ruling 2026-10-11) | 20efa90, 69c1cba (wamn-vavs4.11); ../operations/building.md#reading-a-pushed-package |

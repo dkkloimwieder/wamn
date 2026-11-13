@@ -1,4 +1,4 @@
-//! Checked principal identities and role names.
+//! Validated principal identities and role names.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
@@ -47,7 +47,7 @@ impl<'de> Deserialize<'de> for PrincipalId {
     }
 }
 
-/// A role name checked against the database's role-name rule.
+/// A role name validated against the database's role-name rule.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct RoleName(Box<str>);
@@ -70,11 +70,11 @@ impl FromStr for RoleName {
     type Err = ParseIdentityError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim().to_ascii_lowercase();
-        checked_role(value)
+        require_role(value)
     }
 }
 
-fn checked_role(value: String) -> Result<RoleName, ParseIdentityError> {
+fn require_role(value: String) -> Result<RoleName, ParseIdentityError> {
     if value.is_empty()
         || value.len() > 64
         || !value.bytes().enumerate().all(|(index, byte)| {
@@ -92,7 +92,7 @@ fn checked_role(value: String) -> Result<RoleName, ParseIdentityError> {
 impl<'de> Deserialize<'de> for RoleName {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        checked_role(value).map_err(serde::de::Error::custom)
+        require_role(value).map_err(serde::de::Error::custom)
     }
 }
 

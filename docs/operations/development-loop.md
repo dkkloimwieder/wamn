@@ -375,7 +375,7 @@ The platform UI lives in `apps/platform_ui` and reads an org-only `config.json`.
 Run these commands from the repository root:
 
 ```bash
-pnpm --filter @wamn/platform-ui check
+pnpm --filter @wamn/platform-ui lint
 pnpm --filter @wamn/platform-ui test
 pnpm --filter @wamn/platform-ui build
 ```

@@ -400,7 +400,7 @@ ROLLBACK;"
 /// wamn-83eth.3). The App generation holds EXECUTE on it. It inserts a counter
 /// row or sets its value; it refuses a value below 1, and refuses with
 /// `undefined_object` an id that is not a sequence. It reads no claim: the
-/// route resolves the sequence by the application it checked.
+/// route resolves the sequence by the application it validated.
 #[test]
 fn the_application_sets_a_counter_only_through_set_counter() {
     let _serialized = wamn_test_postgres::lock();

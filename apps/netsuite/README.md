@@ -203,7 +203,7 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' CARGO_TARGET_DIR="$PWD/target" \
 ```
 
 Run the publication test after the package build.
-It checks the pull checkpoint through the application role and the refusal of invalid ports and dependencies:
+It makes sure of the pull checkpoint through the application role and the refusal of invalid ports and dependencies:
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \

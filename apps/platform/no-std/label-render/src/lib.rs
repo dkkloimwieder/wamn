@@ -36,7 +36,7 @@
 //! and the wiring's behaviour caller-dependent. It also puts the closed set in
 //! the declaration's parameter schema as a typed `enum`, so an unknown
 //! template refuses at gate/config-validation time rather than at first
-//! invocation. The check below is defence in depth behind that, not the
+//! invocation. The test below is defence in depth behind that, not the
 //! primary gate.
 
 #![no_std]
@@ -122,7 +122,7 @@ impl Guest for Component {
             // this node's own output is the authority on what it rendered.
             let record = fields
                 .as_object_mut()
-                .expect("the value was checked to be an object above");
+                .expect("the value was validated to be an object above");
             record.insert("zpl".to_string(), serde_json::Value::String(zpl));
         }
         let payload = serde_json::to_string(&envelope)

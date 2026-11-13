@@ -4,7 +4,7 @@
 //! row of type `platform`. The row carries the derived id, the
 //! `wamn:<component>` name, and the email `<component>@<platform-domain>`.
 //! `deploy/sql/app-schema.sql` pins each name and id pair. Static SQL cannot
-//! read deployment configuration, so this module checks the platform domain
+//! read deployment configuration, so this module tests the platform domain
 //! and writes the email.
 //!
 //! A platform component that writes binds its principal id as `app.user_id`

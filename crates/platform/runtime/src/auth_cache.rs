@@ -163,7 +163,7 @@ impl AuthCache {
         principal: &str,
         pat: Option<AuthenticatedPrincipal>,
     ) {
-        // The lock is held during the check, so a token kept here falls to
+        // The lock is held during the test, so a token kept here falls to
         // the clear that follows a broken watch.
         let mut tokens = self.tokens();
         if self.memory.bucket().is_none() {
@@ -210,7 +210,7 @@ impl AuthCache {
     }
 
     /// Keep the grants of a principal. A present user row also answers the
-    /// provisioned-principal check of the claim bind.
+    /// provisioned-principal test of the claim bind.
     pub async fn keep_grants(
         &self,
         env_key: &str,
@@ -526,7 +526,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
-    async fn present_grants_answer_the_provisioned_check() {
+    async fn present_grants_establish_provisioned_authority() {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let cache = Arc::new(AuthCache::default());

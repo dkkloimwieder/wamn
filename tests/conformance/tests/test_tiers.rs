@@ -188,7 +188,7 @@ fn literal(expression: &syn::Expr) -> Option<String> {
     }
 }
 
-fn precheck_matches(function: &syn::ItemFn, reason: &str) -> bool {
+fn has_prerequisite(function: &syn::ItemFn, reason: &str) -> bool {
     match function
         .block
         .stmts
@@ -275,8 +275,8 @@ fn ignore_errors(function: &syn::ItemFn) -> Vec<String> {
     let mut errors = Vec::new();
     if let Err(error) = wamn_test_postgres::parse_prerequisites(&reason) {
         errors.push(error);
-    } else if !precheck_matches(function, &reason) {
-        errors.push("first executable statement does not check the ignore reason".into());
+    } else if !has_prerequisite(function, &reason) {
+        errors.push("first executable statement does not require the ignore reason".into());
     }
     let mut body = ChildBody::default();
     body.visit_block(&function.block);

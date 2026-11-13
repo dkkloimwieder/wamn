@@ -7,7 +7,7 @@ Branch `worktree-cleanup` on origin, seven commits on main 556b79265. Not merged
 | Issue | Commit after rebase | Commit in the close reason |
 | --- | --- | --- |
 | .1 upgrade-environment path | 3b38a0da7 | 2ee9dce5a |
-| .2 migration machinery, baseline check | ebcf9480a | a5807242a |
+| .2 migration machinery, baseline test | ebcf9480a | a5807242a |
 | .3 in-place package upgrade | 618abc4ed, 6f48fdd71, 85cfbe2ca | 1514c681f |
 | .4 tools and stray files | 3d5d50fc8 | e5bb185bc |
 

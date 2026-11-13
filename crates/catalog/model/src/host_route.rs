@@ -215,15 +215,15 @@ pub enum HostHandler {
 pub enum HostRouteAuthority {
     /// Every authenticated caller. On the control set, that is a holder of
     /// `org-admin` in the token's org or of `project-admin` in one of its
-    /// projects, and the handler checks it again.
+    /// projects, and the handler tests it again.
     Member,
     /// A holder of the application role `admin`.
     Admin,
-    /// A holder of `org-admin` in the token's org. The handler checks the
+    /// A holder of `org-admin` in the token's org. The handler tests the
     /// role, again in its write transaction.
     OrgAdmin,
     /// A holder of `org-admin` in the token's org, or of `project-admin` in
-    /// the project that the request names. The handler checks the role,
+    /// the project that the request names. The handler tests the role,
     /// again in its write transaction.
     ProjectAdmin,
     /// A holder of `admin`, or of an authored role that holds the route's

@@ -78,5 +78,5 @@ if grep -qxF 'selected: nothing' "$state/selection.log"; then exit 0; fi
 if grep -qE '^suites:.*(^| )web( |$)' "$state/selection.log"; then
   step web-install pnpm install --offline
 fi
-step submodule-check cargo run --offline -p wamn-submodule-check -- main
+step submodule-pins cargo run --offline -p wamn-submodule-pins -- main
 step tests tools/test-changes run --base "$base"

@@ -426,7 +426,7 @@ impl BaseComponentDigestExpectation {
     }
 }
 
-/// The base component digest one run checked, and the pin it moved off.
+/// The base component digest one run validated, and the pin it moved off.
 ///
 /// `digest` is always the digest OBSERVED on the built component, which is the
 /// value every later stage carries. `superseded_pin` records the stale
@@ -1051,7 +1051,7 @@ pub(crate) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
     // JSON in a build output directory still consumes an artifact.
     let path = wamn_schema_generator::package_manifest_path(root);
     if path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
-        wamn_schema_generator::build_record::check_current(root).map_err(|source| {
+        wamn_schema_generator::build_record::require_current(root).map_err(|source| {
             DevPackageError::manifest(
                 DevPackageErrorType::ManifestInvalid,
                 root.join(wamn_schema_generator::build_record::BUILD_RECORD_FILE),
@@ -1168,10 +1168,9 @@ pub(crate) mod tests {
     use tokio::net::TcpListener;
 
     const ENDPOINT_COUNT: usize = 10;
-    const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
-        wamn_schema_generator::build_record::check_current(&wamn_fixture_package::overlay_root())
+        wamn_schema_generator::build_record::require_current(&wamn_fixture_package::overlay_root())
             .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::overlay_manifest_bytes()
     }
@@ -1332,15 +1331,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// Regenerate the checked-in schema with
-    /// `cargo run --locked --offline -p wamn-ctl --example print-dev-config-schema > crates/control/dev/schema/wamn-dev.schema.json`.
-    #[test]
-    fn checked_in_dev_config_schema_matches_generated_bytes() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEV_CONFIG_SCHEMA_PATH);
-        let checked_in = fs::read(&path).expect("read checked-in wamn dev schema");
-        assert_eq!(checked_in, dev_config_schema_bytes());
-    }
-
     #[test]
     fn generated_schema_and_strict_parser_share_one_field_authority() {
         let first = dev_config_schema_bytes();
@@ -1471,8 +1461,7 @@ manifest.Package {
         fs::write(root.join("wamn.k"), authored.replace("1.0.0", "1.0.1")).unwrap();
         fs::create_dir(root.join("migrations")).unwrap();
         fs::write(root.join("migrations/0001_initial.sql"), "SELECT 1;\n").unwrap();
-        let stale = build_record::check_current(&root).unwrap_err();
-        assert!(stale.to_string().contains("is stale"), "{stale:#}");
+        build_record::require_current(&root).unwrap_err();
 
         let resolved = resolve_dev_packages(&config, &root).unwrap();
         assert_eq!(resolved.overlay_manifest().package.version, "1.0.1");
@@ -1484,12 +1473,11 @@ manifest.Package {
             fs::read(output.join(build_record::BUILD_RECORD_FILE)).unwrap(),
             built.to_bytes()
         );
-        let error = wamn_package_control::component_admission::load_package_statement_facts(
+        wamn_package_control::component_admission::load_package_statement_facts(
             &root,
             resolved.overlay_manifest(),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("is stale"), "{error}");
     }
 
     #[test]

@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 # The framed scope digest alone.
-# The shipped runtime needs exactly this much to check that a resolved guest
+# The shipped runtime needs exactly this much to make sure that a resolved guest
 # credential belongs to the tenant it is about to serve (wamn-0h0g.22.6.7).
 tenant-key = [
     "dep:hex",

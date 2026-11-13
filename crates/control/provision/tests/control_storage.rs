@@ -43,7 +43,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     script.push_str(&identifier_cases());
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
     // same id must collapse to ONE row (the second refreshing the placement),
-    // checking `ON CONFLICT (id) DO UPDATE`.
+    // testing `ON CONFLICT (id) DO UPDATE`.
     writeln!(
         script,
         "PREPARE up (text,text,text) AS {upsert};\n\
@@ -212,7 +212,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // the demo/app/dev project-env provisioned above: upsert twice (the second
     // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
     // select, reject a registration for an UNPROVISIONED env (the project-env
-    // FK — enable-cdc is an overlay on an already-provisioned env), and check that
+    // FK — enable-cdc is an overlay on an already-provisioned env), and make sure that
     // the whole-org cascade drops the registration.
     writeln!(
         script,
@@ -587,7 +587,7 @@ END $$;
 
 -- Deleting an org cascades its projects, project-envs, and policy rows — the
 -- whole-org delete succeeds despite the in-use-policy
--- NO ACTION FK (checked at statement end, after the project-env cascade).
+-- NO ACTION FK (validated at statement end, after the project-env cascade).
 DELETE FROM registry.orgs WHERE id='acme';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';

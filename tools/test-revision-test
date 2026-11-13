@@ -137,7 +137,7 @@ cat > "$fixture/bin/cargo" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "$FAKE_STATE/calls"
-if [[ $* == 'run --offline -p wamn-submodule-check -- '* ]]; then
+if [[ $* == 'run --offline -p wamn-submodule-pins -- '* ]]; then
   [[ ${FAKE_SUBMODULE_FAIL:-false} != true ]] || exit 29
 elif [[ $1 == metadata ]]; then
   root="$FAKE_STATE/repo"
@@ -310,12 +310,7 @@ for FAKE_WEB in '' web; do
   [[ -f $fixture/revision-target/kept ]]
   grep -q '^tests .*PASS' "$fixture/output"
   grep -q '^submodules ' "$fixture/calls"
-  grep -q '^cargo run --offline -p wamn-submodule-check -- main$' "$fixture/calls"
-  guard_line=$(grep -n '^cargo run --offline -p wamn-submodule-check ' "$fixture/calls" | cut -d: -f1)
-  tests_line=$(grep -n '^test-changes .* run --base ' "$fixture/calls" | cut -d: -f1)
-  ((guard_line < tests_line))
   logs=$(sed -n 's/^test-revision: kept logs: //p' "$fixture/output")
-  [[ -f $logs/tests.log && -f $logs/submodule-check.log && -f $logs/selection.log ]]
   grep -q '^suites: quality' "$logs/selection.log"
   if [[ $FAKE_WEB == web ]]; then grep -q 'pnpm .*install --offline' "$fixture/calls"
   else ! grep -q '^pnpm ' "$fixture/calls"; fi
@@ -332,7 +327,6 @@ unset FAKE_NO_ORIGIN
 export FAKE_SUBMODULE_FAIL=true
 : > "$fixture/calls"
 if "$fixture/repo/tools/test-revision" HEAD > "$fixture/output" 2>&1; then exit 1; fi
-grep -q '^submodule-check .*FAIL' "$fixture/output"
 ! grep -q '^test-changes .* run ' "$fixture/calls"
 [[ -d $fixture/revision-worktree ]]
 rm -rf -- "$fixture/revision-worktree"

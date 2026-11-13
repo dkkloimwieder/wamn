@@ -1096,7 +1096,7 @@ fn validate_route_target(
     Ok(())
 }
 
-/// The checks that every attachment passes, whatever it targets.
+/// The tests that every attachment passes, whatever it targets.
 fn validate_attachment(
     package_versions: &BTreeMap<&str, &str>,
     attachment_id: &str,

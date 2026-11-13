@@ -101,7 +101,7 @@ impl WiringTerminal {
 pub struct WiringNode {
     /// The palette component this node runs. It is the instance-pool key —
     /// pools are per component, shared across every wiring using it — and half
-    /// of the `(component, interface-version)` pair promotion checks the target
+    /// of the `(component, interface-version)` pair promotion tests the target
     /// library covers.
     pub component: String,
     /// The WIT interface version this node was wired against. The other half of
@@ -117,7 +117,7 @@ pub struct WiringNode {
     pub operation_dependency: Option<WiringOperationDependency>,
     /// Values bound to the component's declared params — a generic `entity`
     /// node's relation and filter spec, for instance. Typed by the component's
-    /// WIT declaration and checked by the gate (wamn-0h0g.18.3), not by this
+    /// WIT declaration and validated by the gate (wamn-0h0g.18.3), not by this
     /// crate: the palette is tenant data, so a shape written here would be a
     /// second, staler copy of it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -183,7 +183,7 @@ pub struct WiringDocument {
     /// The node a delivery enters at: where the walk puts the admitted payload
     /// and the only node it can reach without an edge.
     ///
-    /// Required, and checked against [`WiringDocument::nodes`] here, so a graph
+    /// Required, and validated against [`WiringDocument::nodes`] here, so a graph
     /// the router could not enter is refused at authoring rather than in the
     /// serving path — where the same refusal is
     /// `wamn_router::WiringErrorType::UnresolvedEntry`, one activation and one

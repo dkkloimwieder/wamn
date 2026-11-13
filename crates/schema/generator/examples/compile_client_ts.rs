@@ -1,10 +1,10 @@
-//! Type-checks the generated TypeScript bindings for the platform fixture.
+//! compiles the generated TypeScript bindings for the platform fixture.
 //!
 //! Run this by hand. `tsc` is not a build step and not a test, so nothing in
 //! `cargo build` or `cargo test` needs Node.
 //!
 //! ```bash
-//! cargo run --locked --offline -p wamn-schema-generator --example check_client_ts
+//! cargo run --locked --offline -p wamn-schema-generator --example compile_client_ts
 //! ```
 //!
 //! It emits fixture bindings under sync-bench source, writes a strict
@@ -58,7 +58,7 @@ const TSCONFIG: &str = r#"{
 fn main() -> Result<()> {
     let root = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
-        None => repository_root()?.join("web/sync-bench/src/generated/check-client-ts"),
+        None => repository_root()?.join("web/sync-bench/src/generated/compile-client-ts"),
     };
     let version = tsc_version()?;
     let files = emit_ts_client(&fixture::client_release())
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
             .replace("RUNTIME_PATH", &runtime.display().to_string()),
     )?;
     for file in &files {
-        // Every emitted path starts with `generated/client-ts/`. The check
+        // Every emitted path starts with `generated/client-ts/`. The test
         // needs the modules beside each other, not that prefix.
         let name = Path::new(file.path())
             .file_name()
@@ -123,7 +123,7 @@ fn main() -> Result<()> {
 
     println!("tsc {version}");
     println!(
-        "checking UUID, int32, and int64 modules in {}",
+        "testing UUID, int32, and int64 modules in {}",
         root.display()
     );
     let status = Command::new("tsc")
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
     if !status.success() {
         bail!("tsc refused the generated bindings in {}", root.display());
     }
-    println!("the generated bindings type-check under tsc strict");
+    println!("the generated bindings compile under tsc strict");
     Ok(())
 }
 

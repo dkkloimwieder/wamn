@@ -1,6 +1,6 @@
 use super::{BuiltIntegration, Publication, ensure};
 
-pub(super) fn check_code(code: &str) -> anyhow::Result<()> {
+pub(super) fn require_code(code: &str) -> anyhow::Result<()> {
     ensure!(
         code.bytes()
             .next()

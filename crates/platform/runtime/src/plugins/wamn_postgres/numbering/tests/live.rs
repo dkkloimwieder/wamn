@@ -1,4 +1,4 @@
-//! Live checks of the numbering invariants
+//! Live tests of the numbering invariants
 //! (docs/architecture/data-access.md#numbering).
 //!
 //! Each test owns a database of the test PostgreSQL server with the real

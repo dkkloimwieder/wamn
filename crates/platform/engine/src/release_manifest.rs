@@ -26,8 +26,8 @@
 //! # Identity is derived, never asserted — and pod-to-release binding is the
 //! # pod template's, by ratified design
 //!
-//! There is deliberately no second carrier to check the manifest against, and no
-//! comparison of the bytes to the ConfigMap's own name. Such a check would not be
+//! There is deliberately no second carrier to test the manifest against, and no
+//! comparison of the bytes to the ConfigMap's own name. Such a test would not be
 //! a verification: the name inside the container is a string placed by the *same
 //! pod template* that mounts the bytes, so comparing them tests the template's
 //! internal consistency against itself. A pod cannot second-guess its own birth
@@ -45,7 +45,7 @@
 //! name-matching would rebuild, inside the pod, an attestation the deployment
 //! plane already owns.
 //!
-//! What *is* load-bearing survives, and it is stronger than a name check: the
+//! What *is* load-bearing survives, and it is stronger than a name test: the
 //! canonical round-trip confirms the mounted bytes are well-formed manifest content
 //! whose identity is computable. Corruption, truncation, or hand-editing either
 //! fails the parse or shifts the digest — and a shifted digest is not a
@@ -210,7 +210,7 @@ impl LoadedRelease {
     /// `origin` names that carrier in refusals — a mount path, or the OCI
     /// reference a
     /// `ReleaseManifestSource`
-    /// checked the bytes against. It takes no part in verification: identity
+    /// validated the bytes against. It takes no part in verification: identity
     /// still comes only out of the bytes.
     pub fn load_canonical_bytes(
         bytes: &[u8],
@@ -296,7 +296,7 @@ impl LoadedRelease {
 /// Refuse an admitted component fact that the loaded release does not carry.
 ///
 /// The cloud host reads the facts from the catalog and the edge reads them
-/// from its release bundle. Both run this one check before loading a component.
+/// from its release bundle. Both run this one test before loading a component.
 pub fn validate_component_in_release(
     release: &LoadedRelease,
     component: &AdmittedComponent,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, RouteAuthenticator,
-    RouteCredential, authentication_unavailable, check_csrf, route_credential, unauthorized,
+    RouteCredential, authentication_unavailable, require_csrf, route_credential, unauthorized,
 };
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -56,7 +56,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
             .map_err(|_| unauthorized())?;
         let claims = session.claims();
         if let Some(required) = csrf {
-            check_csrf(required, claims.csrf.as_deref(), request.headers)?;
+            require_csrf(required, claims.csrf.as_deref(), request.headers)?;
         }
         Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,

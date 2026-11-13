@@ -17,7 +17,7 @@
         "hooks": [
           {
             "command": "bd codex-hook PreCompact",
-            "statusMessage": "Checking Beads context",
+            "statusMessage": "Reading Beads context",
             "type": "command"
           }
         ],

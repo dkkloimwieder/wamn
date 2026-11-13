@@ -1151,7 +1151,7 @@ impl TransactionManager for WamnTransactionManager {
 
     fn start_rollback(connection: &mut WamnConnection) {
         // Dropping the WIT transaction resource invokes the host destructor,
-        // which destroys its checked-out connection and lets PostgreSQL abort.
+        // which destroys its acquired connection and lets PostgreSQL abort.
         drop(connection.transaction.take());
     }
 

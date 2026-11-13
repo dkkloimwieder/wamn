@@ -4,7 +4,7 @@
 //! The plugin takes the caller handle back from the resource table and hands
 //! the request to the host's [`RouteDelivery`]. Every host serves a delivery
 //! with the pieces that live here: source and target resolution, the caller
-//! and operation grant checks, the causation that a delivery derives, the
+//! and operation grant tests, the causation that a delivery derives, the
 //! settlement of a route's one export call, and the refusal literals.
 
 use std::collections::HashSet;
@@ -241,7 +241,7 @@ fn validate_caller(
     }
 }
 
-/// Resolve a delivery source to its target, and check its caller and the
+/// Resolve a delivery source to its target, and test its caller and the
 /// registered operation grant.
 pub fn resolve_authorized_target(
     manifest: &ServingManifest,
@@ -256,7 +256,7 @@ pub fn resolve_authorized_target(
     Ok(target)
 }
 
-/// Resolve an attachment source to a host route of the release, and check
+/// Resolve an attachment source to a host route of the release, and test
 /// its caller and the grant of an `admin`-only route. A host route is never
 /// anonymous. `None` when the source is not a host route.
 pub fn resolve_authorized_host_route(
@@ -442,7 +442,7 @@ impl fmt::Display for OperationRefusal {
 
 impl std::error::Error for OperationRefusal {}
 
-/// Check the grant of a released operation before its entry runs: the caller
+/// Make sure of the grant of a released operation before its entry runs: the caller
 /// must hold the entry's own registered operation.
 pub fn authorize_released_operation(
     caller: Option<&AuthenticatedCaller>,
@@ -451,7 +451,7 @@ pub fn authorize_released_operation(
     authorize_registered_operation(caller, released.registered_operation.as_deref())
 }
 
-/// Check that the originating caller holds the registered operation grant.
+/// Make sure that the originating caller holds the registered operation grant.
 pub fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
     operation: Option<&str>,

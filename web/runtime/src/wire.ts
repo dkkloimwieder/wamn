@@ -202,7 +202,7 @@ export function toWire(value: unknown, fields: FieldMap): JsonValue {
 /**
  * Rename the keys inside one outcome and state its result type.
  *
- * The cast is unchecked, exactly as the Rust client returns a JSON value that
+ * The cast is unverified, exactly as the Rust client returns a JSON value that
  * the caller reads through its declared result type. The transport already
  * held the response to the operation's contract.
  *

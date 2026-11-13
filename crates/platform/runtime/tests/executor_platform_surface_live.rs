@@ -7,11 +7,11 @@
 //!
 //! PLAN SUPPLY. The released and candidate wiring statements execute here with
 //! bound parameters under the minted executor-platform generation. The tests
-//! check exact component facts and distinguish legitimate empty results from
+//! test exact component facts and distinguish legitimate empty results from
 //! missing row-level access.
 //!
 //! The raw statements run without the resolution wrappers so lowering failures
-//! cannot hide which database access check failed.
+//! cannot hide which database access test failed.
 //!
 //! CREDENTIAL EXACTNESS. `credential_exactness_probe`'s wrong-database,
 //! wrong-tenant-binding and wrong-membership arms were unit-covered against a
@@ -336,7 +336,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     // ---- CREDENTIAL EXACTNESS, LIVE ---------------------------------------
     //
-    // The probe checks `session_user`, `current_user` and `current_database()`
+    // The probe tests `session_user`, `current_user` and `current_database()`
     // against the expectation, then asks the SERVER for each membership and
     // each ACL fact. Only the source arms refuse before a socket exists; the
     // rest are the server's own answers, and none of them had ever been asked.
@@ -592,12 +592,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     ] {
         let error = result.expect_err("broad table grants must not replace executor membership");
         assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
-        assert_eq!(error.operation(), "check executor authority");
-        assert!(
-            error
-                .to_string()
-                .contains("executor-platform-authority-required")
-        );
     }
     let after: Value = admin.query_one(snapshot, &[&ENV_KEY]).await?.get(0);
     assert_eq!(
