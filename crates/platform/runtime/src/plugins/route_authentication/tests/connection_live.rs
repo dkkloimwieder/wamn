@@ -78,9 +78,38 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         row_limit: 100,
     };
     let sources = StaticCredentialProvider::projects_from_json(&json!({"host-project":{"credentials":{(AuthorityClass::CallableHttp.as_str()):reader.to_string()}}}).to_string(),&base).unwrap();
-    let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
-        StaticCredentialProvider::new(sources, None),
-    )));
+    let mut postgres =
+        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(sources, None)));
+    let applications = ["receiver"];
+    assert!(
+        postgres
+            .configure_revocation("host-project", &applications)
+            .await
+            .is_err()
+    );
+    project
+        .batch_execute(
+            "INSERT INTO platform.setting(target_type,target_id,key,value) VALUES \
+        ('project','host-project','revocation-seconds','60'), \
+        ('application','receiver','revocation-seconds','5')",
+        )
+        .await
+        .unwrap();
+    postgres
+        .configure_revocation("host-project", &applications)
+        .await
+        .unwrap();
+    project
+        .batch_execute("UPDATE platform.setting SET value='true' WHERE target_type='application'")
+        .await
+        .unwrap();
+    assert!(
+        postgres
+            .configure_revocation("host-project", &applications)
+            .await
+            .is_err()
+    );
+    let postgres = Arc::new(postgres);
     let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
@@ -93,15 +122,9 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let authority = connect(fixture.database.url()).await;
     let authority = Arc::new(authority);
     let authentication = Arc::new(
-        RouteAuthentication::new(
-            authority,
-            Arc::clone(&postgres),
-            "acme",
-            "host-project",
-            "unused",
-        )
-        .await
-        .unwrap(),
+        RouteAuthentication::new(authority, Arc::clone(&postgres), "host-project")
+            .await
+            .unwrap(),
     );
     let routing = routing_policy(
         json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook@2"}),
@@ -134,6 +157,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(caller.permits("fixture:item/read@1.0.0"));
     assert!(!caller.permits("fixture:item/write@1.0.0"));
     assert!(caller.active_role().is_none());
+    // An API service needs its application grants, with no operator identity or system admin role.
     let mut authority = connect(fixture.database.url()).await;
     let tx = authority.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_system")
@@ -146,18 +170,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .unwrap();
     let service = wamn_platform_identity::create_service(
         &tx,
-        "wrong-subject",
-        "Wrong subject",
-        &mut AuthDrops::default(),
-    )
-    .await
-    .unwrap();
-    wamn_platform_identity::assign_project_role(
-        &tx,
-        service.id(),
-        "acme",
-        "host-project",
-        "admin",
+        "api.acme.host-project.reader",
+        "API reader",
         &mut AuthDrops::default(),
     )
     .await
@@ -165,37 +179,27 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let pat = wamn_platform_identity::issue_pat(
         &tx,
         service.id(),
-        "wrong subject",
+        "API reader",
         std::time::Duration::from_secs(3600),
     )
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    let authenticated = authentication
-        .prepared
-        .authenticate_route_pat(
-            authentication.identity_reader.as_ref(),
-            pat.token(),
-            "acme",
-            "host-project",
-            &[ADMIN_ROLE],
-        )
-        .await
-        .unwrap()
-        .expect("the PAT is valid for this project");
-    assert_eq!(authenticated.principal().id(), service.id());
+    project.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','api@example.test')", &[&service.id().to_string()]).await.unwrap();
+    project.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')", &[&service.id().to_string()]).await.unwrap();
     let bearer = format!("Bearer {}", pat.token());
     let pat_routing = super::routing(&json!(["pat"])).with_authenticator(Arc::new(
         PlatformRouteAuthenticator::default().with_authentication(authentication),
     ));
-    assert_eq!(
-        pat_routing
-            .authenticate_headers_for_test("orders", &[("Authorization", &bearer)])
-            .await
-            .unwrap_err()
-            .0,
-        401
-    );
+    let api = pat_routing
+        .authenticate_headers_for_test("orders", &[("Authorization", &bearer)])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(api.principal_id(), service.id().to_string());
+    assert!(!api.admin());
+    assert!(api.permits("fixture:item/read@1.0.0"));
+    assert!(!api.permits("fixture:item/write@1.0.0"));
     project
         .execute(
             "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",

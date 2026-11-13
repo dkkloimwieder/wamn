@@ -11,7 +11,6 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-wamn-kubernetes = { workspace = true, optional = true }
 wamn-digest.workspace = true
 # The edge links the engine and run-state and never wamn-runtime. The
 # dependency test measures what these bring.
@@ -52,16 +51,10 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# The cluster web edge reads release bundles from the web bucket. Only the
-# amd64 `edge-web` image turns on `web`; the box never links object_store.
-object_store = { workspace = true, features = ["gcp"], optional = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 # RUST_LOG selects the log level.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-
-[features]
-web = ["dep:object_store", "dep:wamn-kubernetes"]
 
 [dev-dependencies]
 wamn-test-postgres = { workspace = true }

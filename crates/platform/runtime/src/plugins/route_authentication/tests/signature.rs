@@ -95,7 +95,7 @@ impl Fixture {
             "dev",
         ));
         let authentication = Arc::new(
-            RouteAuthentication::new(Arc::new(identity), postgres, "acme", project, "unused")
+            RouteAuthentication::new(Arc::new(identity), postgres, project)
                 .await
                 .unwrap(),
         );

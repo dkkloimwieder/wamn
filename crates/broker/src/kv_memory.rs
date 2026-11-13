@@ -6,9 +6,11 @@
 
 use std::time::Duration;
 
-/// How long a bucket keeps a value, and a host its copy: the backstop for a
-/// lost delete.
-pub const MEMORY_TTL: Duration = Duration::from_secs(60);
+/// Retention for connection facts. Auth revocation bounds belong to project configuration.
+pub const CONNECTION_MEMORY_TTL: Duration = Duration::from_secs(60);
+
+// Auth facts have different revocation bounds. Bound storage by bytes instead of a shared age.
+const AUTH_MEMORY_BYTES: i64 = 1 << 20;
 
 /// The keys one change deletes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +78,16 @@ async fn create_bucket(
         .create_or_update_key_value(async_nats::jetstream::kv::Config {
             bucket: bucket.to_owned(),
             history: 1,
-            max_age: MEMORY_TTL,
+            max_age: if bucket == crate::connection_changes::BUCKET {
+                CONNECTION_MEMORY_TTL
+            } else {
+                Duration::ZERO
+            },
+            max_bytes: if bucket == crate::auth_changes::BUCKET {
+                AUTH_MEMORY_BYTES
+            } else {
+                0
+            },
             storage: async_nats::jetstream::stream::StorageType::Memory,
             ..Default::default()
         })

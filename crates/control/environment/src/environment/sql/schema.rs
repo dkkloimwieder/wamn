@@ -988,11 +988,11 @@ mod tests {
     fn document() -> EnvironmentDocument {
         EnvironmentDocument::from_json(
             br#"{
-            "org":"acme", "project":"schema", "env":"dev", "target":"cloud", "policy":"dev",
+            "org":"acme", "project":"schema", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "schema":{"mode":"reset"},
             "applications": {
-                "alpha":{"current":"none", "hostname":"alpha.invalid", "packages":["alpha"]},
-                "beta":{"current":"none", "hostname":"beta.invalid", "packages":["beta"]}
+                "alpha":{"current":"none", "revocation_seconds":5,"hostname":"alpha.invalid", "packages":["alpha"]},
+                "beta":{"current":"none", "revocation_seconds":5,"hostname":"beta.invalid", "packages":["beta"]}
             }
         }"#,
         )

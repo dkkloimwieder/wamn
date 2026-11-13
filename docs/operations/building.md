@@ -371,7 +371,7 @@ docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha2
 The result is one stripped file, `$CARGO_TARGET_DIR/edge/wamn-edge`.
 The target compiles with the Debian trixie cross compiler.
 The cluster image `edge-web` is a different build.
-The Dockerfile stage `build-edge-web` builds `wamn-edge` with the `web` feature for linux/amd64.
+The Dockerfile stage `build-edge-web` builds the separate `wamn-web-front` service for linux/amd64.
 
 ## Isolated worktrees
 

@@ -292,10 +292,10 @@ mod tests {
             .map(|root| root.file_name().unwrap().to_str().unwrap())
             .collect::<Vec<_>>();
         let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev",
+            "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
             "applications": {
-                "selected": {"current": "none", "hostname": "selected.invalid", "packages": members},
-                "unavailable": {"current": "none", "hostname": "unavailable.invalid", "packages": ["missing"]}
+                "selected": {"current": "none", "revocation_seconds":5,"hostname": "selected.invalid", "packages": members},
+                "unavailable": {"current": "none", "revocation_seconds":5,"hostname": "unavailable.invalid", "packages": ["missing"]}
             }
         }))?)?;
         let (name, roots) = sources(&document, &scratch.path().join("overlay"))?;

@@ -632,7 +632,7 @@ async fn seed_with_client(
         .await?;
     let authority: wamn_environment_control::environment::document::EnvironmentDocument =
         serde_json::from_value(
-            serde_json::json!({"org":"acme","project":PROJECT,"env":ENVIRONMENT,"target":"cloud","policy":"dev",
+            serde_json::json!({"org":"acme","project":PROJECT,"env":ENVIRONMENT,"target":"cloud","policy":"dev","revocation_seconds":60,
             "applications": {}}),
         )?;
     let _ = wamn_environment_control::environment::bindings::project_authority(

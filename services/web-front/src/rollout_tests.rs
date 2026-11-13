@@ -88,14 +88,14 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
                 Client::builder(TokioExecutor::new()).build(connector), endpoint, String::new(), "hosts".into()),
         };
-        let web = Web { store: None, files: RwLock::new(BTreeMap::new()) };
+        let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();
         tasks.spawn(async move {
-            let proxy = Client::builder(TokioExecutor::new()).build_http();
+            let proxy = Client::builder(TokioExecutor::new()).build(hyper_rustls::HttpsConnectorBuilder::new().with_provider_and_native_roots(rustls::crypto::aws_lc_rs::default_provider()).unwrap().https_or_http().enable_http1().build());
             let (stream, _) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {
-                Ok::<_, Infallible>(respond(&web, &releases, &proxy, request).await.unwrap())
+                Ok::<_, Infallible>(respond(&web, &releases, &proxy, "https://identity.example", "127.0.0.1".parse().unwrap(), 0, request).await.unwrap())
             });
             hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service).await.unwrap();

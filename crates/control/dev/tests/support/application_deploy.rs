@@ -288,7 +288,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         Provider::Gcp => None,
     };
     let edge =
-        wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 443)
+        wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 80)
             .await?;
     let identity_tls = get(run, "identity", "secret", "identity-tls").await?;
     let operator = get(
@@ -400,28 +400,21 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .context("owner control session")?;
     let file = run.directory.join("environments/environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev",
+        "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":{
-            "alpha":{"current":"none","hostname":alpha_host,"packages":["alpha"]},
-            "beta":{"current":"none","hostname":beta_host,"packages":["beta"]}
+            "alpha":{"current":"none","revocation_seconds":5,"hostname":alpha_host,"packages":["alpha"]},
+            "beta":{"current":"none","revocation_seconds":5,"hostname":beta_host,"packages":["beta"]}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let mut client = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(30));
-    if run.document.provider == Provider::Kind {
-        let edge_tls = get(run, "hosts", "secret", "wamn-edge-tls").await?;
-        client = client.add_root_certificate(reqwest::Certificate::from_pem(&secret(
-            &edge_tls, "ca.crt",
-        )?)?);
-    }
-    let client = client
+        .timeout(Duration::from_secs(30))
         .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&isolated_host, ([127, 0, 0, 1], edge.port).into())
         .build()?;
-    let edge_url = format!("https://{alpha_host}:{}", edge.port);
+    let edge_url = format!("http://{alpha_host}:{}", edge.port);
     let issued: Value = identity_client.post(format!("{endpoint}/pats"))
         .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
         .send().await?.error_for_status()?.json().await?;

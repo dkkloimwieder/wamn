@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
   {{- if .Values.neg }}
   annotations:
-    cloud.google.com/neg: '{"exposed_ports":{"443":{"name":"wamn-edge"}}}'
+    cloud.google.com/neg: '{"exposed_ports":{"80":{"name":"wamn-edge"}}}'
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
@@ -16,9 +16,9 @@ spec:
     app.kubernetes.io/name: wamn-edge
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-    - name: https
-      port: 443
-      targetPort: https
+    - name: http
+      port: 80
+      targetPort: http
       {{- if .Values.service.nodePort }}
       nodePort: {{ .Values.service.nodePort }}
       {{- end }}

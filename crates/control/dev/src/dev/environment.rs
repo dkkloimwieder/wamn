@@ -169,6 +169,18 @@ pub async fn provision(
     // both package migrations and their generated ACL union.
     let (project, project_task) = connect(&project_url).await?;
     install_journey_platform_base_grants(project.as_ref(), platform_domain).await?;
+    project.batch_execute("BEGIN").await?;
+    project
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    wamn_environment_control::environment::document::write_revocation_configuration(
+        project.as_ref(),
+        document,
+    )
+    .await?;
+    project.batch_execute("COMMIT").await?;
     drop(project);
     project_task.abort();
 
@@ -994,8 +1006,8 @@ mod tests {
     #[test]
     fn activation_uses_the_authored_coordinate() {
         let document = serde_json::from_value(serde_json::json!({
-            "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev",
-            "applications": {"stock":{"current": "none", "hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
+            "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "applications": {"stock":{"current": "none", "revocation_seconds":5,"hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
         .unwrap();
         let identity = dev_activation_identity(&document);
         assert_eq!(identity.org, "other");

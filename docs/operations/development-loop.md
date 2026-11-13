@@ -108,7 +108,7 @@ The command prints the platform UI URL and a URL for each built application clie
 `web.json` in the environment directory records those URLs.
 Each URL uses one origin for static files, `/password` requests, and `/api` requests.
 The proxy trusts the local identity certificate authority and preserves session cookies.
-The platform UI receives an org-only `config.json`, as it does after `wamn web upload --platform-ui`.
+The platform UI receives an org-only `config.json` from the web front.
 Application clients receive the org and project.
 The development loop writes `application-endpoint.json` after activation and removes it before shutdown.
 The proxy reads that file for each application request, so rebuilds can change the host port.
@@ -151,13 +151,17 @@ environment.Environment {
     org = "acme"
     project = "receiving"
     env = "dev"
-    release = "none"
-    route_host = "receiving.localhost"
+    target = "cloud"
     policy = "dev"
+    revocation_seconds = 60
     applications = {
-        receiving = {packages = ["wamn_receiving", "client_acme_receiving"]}
+        receiving = {
+            current = "none"
+            hostname = "receiving.localhost"
+            revocation_seconds = 5
+            packages = ["wamn_receiving", "client_acme_receiving"]
+        }
     }
-    connections = {}
 }
 ```
 
@@ -215,8 +219,7 @@ Warm reuse trusts only the digest of the HTTP route component staged by this dev
 Rebuild `wamn` after changing that file.
 
 The URL printed by `wamn dev` reaches the host directly.
-The [local benchmark](benchmark.md#local-run) adds the deployed nginx edge configuration with a plain HTTP listener.
-Its `--no-edge` flag uses the direct host URL for comparison.
+The [local benchmark](benchmark.md#local-run) uses the direct host URL.
 
 ## Saved changes and target state
 

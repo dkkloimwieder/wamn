@@ -145,6 +145,7 @@ pub(super) async fn prepare_at(
         &[&project_env_key],
     )
     .await?;
+    super::document::write_revocation_configuration(&tx, document).await?;
     wamn_package_control::connection_requirement::prepare_release(
         &tx,
         &project_env_key,

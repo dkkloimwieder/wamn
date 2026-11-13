@@ -113,6 +113,7 @@ targets = [
   { workspace="root", package="wamn-ctl", target="test:receiving_ui_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:session_audience_live", tier="live-postgres" },
   { workspace="root", package="wamn-edge", target="lib:wamn_edge", tier="contract" },
+  { workspace="root", package="wamn-web-front", target="lib:wamn_web_front", tier="contract" },
   { workspace="root", package="wamn-edge", target="test:device", tier="contract" },
   { workspace="root", package="wamn-edge", target="test:forward", tier="contract" },
   { workspace="root", package="wamn-edge", target="test:release", tier="contract" },

@@ -1,5 +1,6 @@
 //! Environment provisioning, reconciliation, and platform operations for the CLI and test support.
 
+pub mod api_service;
 pub mod author_workflow;
 pub mod capture_gap;
 #[cfg(feature = "ops")]

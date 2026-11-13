@@ -133,8 +133,8 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
     std::fs::write(
         &file,
         serde_json::to_vec(&json!({
-            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev",
-            "applications":{"a":{"current":"none", "hostname":"a.invalid", "packages":["a"]}}
+            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "applications":{"a":{"current":"none", "revocation_seconds":5,"hostname":"a.invalid", "packages":["a"]}}
         }))?,
     )?;
     let internal = arguments.first() == Some(&"env");

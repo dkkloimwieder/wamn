@@ -309,8 +309,8 @@ impl Fixture {
         if let UpgradeTarget::Host { release, group } = selection {
             let digest = format!("sha256:{}", "c".repeat(64));
             let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-                "org":self.document.org,"project":"fixture","env":"dev","target":"cloud","policy":"dev",
-                "applications":{"alpha":{"packages":["alpha"],"current":digest,"hostname":"alpha.example"}}
+                "org":self.document.org,"project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
+                "applications":{"alpha":{"packages":["alpha"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"}}
             }))?)?;
             let manifest = serde_json::from_value(json!({
                 "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -639,7 +639,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
         .await?;
     wamn_package_control::schema_baseline::record_project(&client).await?;
-    let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#;
+    let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#;
     let document = EnvironmentDocument::from_json(text.as_bytes())?;
     // The deployed environment ConfigMap is the document authority.
     let coordinate = wamn_control_provision::environment_names::environment_resource_name(

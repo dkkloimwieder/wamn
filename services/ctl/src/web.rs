@@ -58,9 +58,6 @@ pub struct UploadArgs {
     /// The platform UI artifact digest, from the prepared chart.
     #[arg(long, required_unless_present = "web", conflicts_with = "web")]
     pub platform_ui: Option<String>,
-    /// The org written to config.json.
-    #[arg(long)]
-    pub org: String,
 }
 
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
@@ -88,7 +85,6 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         web_artifact::platform_ui::upload(
             &registry,
             &digest,
-            &args.org,
             args.bucket.as_deref().unwrap_or("gs://wamn-dev-web"),
         )
         .await?
@@ -96,7 +92,6 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         upload_web_artifact(
             &registry,
             args.web.as_deref().context("upload requires --web")?,
-            &args.org,
             args.bucket.as_deref().context("--web requires --bucket")?,
         )
         .await?
@@ -146,14 +141,12 @@ mod tests {
     }
 
     #[test]
-    fn upload_requires_a_web_digest_org_bucket_and_registry() {
+    fn upload_requires_a_web_digest_bucket_and_registry() {
         let valid = [
             "web",
             "upload",
             "--web",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--org",
-            "acme",
             "--bucket",
             "gs://web/prefix",
             "--artifact-base",
@@ -167,7 +160,6 @@ mod tests {
         assert!(Cli::try_parse_from(valid).is_ok());
         for flag in [
             "--web",
-            "--org",
             "--bucket",
             "--artifact-base",
             "--registry-auth-file",
@@ -192,26 +184,19 @@ mod tests {
     }
 
     #[test]
-    fn platform_ui_requires_a_digest_org_and_registry() {
+    fn platform_ui_requires_a_digest_and_registry() {
         let valid = [
             "web",
             "upload",
             "--platform-ui",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--org",
-            "acme",
             "--artifact-base",
             "registry.example/wamn/platform-ui",
             "--registry-auth-file",
             "auth.json",
         ];
         assert!(Cli::try_parse_from(valid).is_ok());
-        for flag in [
-            "--platform-ui",
-            "--org",
-            "--artifact-base",
-            "--registry-auth-file",
-        ] {
+        for flag in ["--platform-ui", "--artifact-base", "--registry-auth-file"] {
             let index = valid.iter().position(|value| *value == flag).unwrap();
             let mut missing = valid.to_vec();
             missing.drain(index..index + 2);

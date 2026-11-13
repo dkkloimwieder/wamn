@@ -490,10 +490,10 @@ mod tests {
         };
         let document = environment::document::EnvironmentDocument::from_json(
             br#"{
-            "org":"acme", "project":"one", "env":"dev", "target":"cloud", "policy":"dev",
+            "org":"acme", "project":"one", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "applications": {
-                "first":{"current":"none", "hostname":"first.example", "packages":["first"]},
-                "second":{"current":"none", "hostname":"second.example", "packages":["second"]}
+                "first":{"current":"none", "revocation_seconds":5,"hostname":"first.example", "packages":["first"]},
+                "second":{"current":"none", "revocation_seconds":5,"hostname":"second.example", "packages":["second"]}
             }
         }"#,
         )

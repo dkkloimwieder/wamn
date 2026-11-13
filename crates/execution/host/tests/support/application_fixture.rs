@@ -314,9 +314,7 @@ pub(super) async fn application_host_with_release(
                     RouteAuthentication::new(
                         reader().await?,
                         Arc::clone(&postgres_credentials),
-                        ORG,
                         PROJECT,
-                        PROJECT_ENV_KEY,
                     )
                     .await?,
                 ))

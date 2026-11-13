@@ -13,7 +13,7 @@ It builds the host in a separate Cargo call with the Dockerfile's packages and b
 
 It requires Docker, Helm, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
-The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in `deploy/platform/otel-collector.yaml`, and `nginx:1.27-alpine` must already exist locally.
+The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in `deploy/platform/otel-collector.yaml` must already exist locally.
 The command does not pull images.
 
 The command starts its own PostgreSQL, one NATS with TLS, and collector containers on free loopback ports.
@@ -29,13 +29,13 @@ It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to co
 Activation supplies the shared host settings described in [development loop](development-loop.md), including the three allocator residency values from the release chart.
 That page also describes the unit test that compares local activation with the rendered deployed host.
 The generated wrapper only records the process ID and pins the host CPU cores.
-The default run sends requests through an nginx container using the configuration rendered from `deploy/platform/edge`.
+The local run sends requests directly to the host ingress.
 The local listener uses plain HTTP on a free loopback port. The chart owns `/api/` removal and Host handling.
 It also owns the single worker and HTTP/1.1 upstream connections without keepalive.
 The container uses host networking to reach the loopback host and mounts the local identity CA.
 There is no load balancer in this local run.
-For a direct comparison, run `cargo xtask bench-local --no-edge --concurrency 16 --duration-secs 60`.
-`--no-edge` bypasses nginx and does not require Helm or the nginx image.
+Run `cargo xtask bench-local --concurrency 16 --duration-secs 60`.
+The local run needs no web proxy or Helm.
 
 The command loads the 1000-order seed and runs get, update, query, record_receipt, and the mix for 60 seconds each at concurrency 16.
 The default run writes `result.json` in its printed temporary directory, in the same format as the platform results.
@@ -162,7 +162,7 @@ Each span part excludes the union of its direct children's time intervals.
 The reader uses sampled traces directly and does not multiply their times by ten.
 
 Compare this mode with full local get and update to locate changes in the host and guest path.
-Use the full run's `--no-edge` variant when comparing direct host latency.
+Use the full run when comparing direct host latency.
 If the Postgres minimum changes while the application span parts stay stable, investigate the database layer.
 If application span parts change while the minimum stays stable, investigate those host or guest parts.
 If only the full run changes, inspect its application SQL, payload, and edge behavior.

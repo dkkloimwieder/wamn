@@ -24,7 +24,7 @@ use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
 use wamn_broker::connection_changes::{BUCKET, connection_key, connections_key, release_key};
-use wamn_broker::kv_memory::MEMORY_TTL;
+use wamn_broker::kv_memory::CONNECTION_MEMORY_TTL;
 
 pub use crate::kv_memory::Ticket;
 use crate::kv_memory::{KvMemory, Watched};
@@ -120,7 +120,7 @@ pub struct ConnectionMemory {
 
 impl Default for ConnectionMemory {
     fn default() -> Self {
-        Self::with_ttl(MEMORY_TTL)
+        Self::with_ttl(CONNECTION_MEMORY_TTL)
     }
 }
 

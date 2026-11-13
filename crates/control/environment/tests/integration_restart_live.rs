@@ -536,10 +536,10 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
-        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"policy":"dev",
+        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"policy":"dev","revocation_seconds":60,
         "applications": {
-            "reader":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
-            "observer":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
+            "reader":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
+            "observer":{"current": format!("sha256:{}","c".repeat(64)), "revocation_seconds":5,"hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
         }}),
     )?)?;
     let selections = document

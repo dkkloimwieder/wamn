@@ -90,14 +90,14 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-edge --features web \
- && install -D -m 0755 target/release/wamn-edge /native-output/wamn-edge
+ && cargo build --locked --release -p wamn-web-front \
+ && install -D -m 0755 target/release/wamn-web-front /native-output/wamn-web-front
 
 FROM debian:trixie-slim AS edge-web
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-edge-web /native-output/wamn-edge /usr/local/bin/wamn-edge
+COPY --from=build-edge-web /native-output/wamn-web-front /usr/local/bin/wamn-web-front
 ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-edge"]
+ENTRYPOINT ["/usr/local/bin/wamn-web-front"]
 
 # ---- combined HTTP and durable-queue host image ----------------------------
 FROM debian:trixie-slim AS host

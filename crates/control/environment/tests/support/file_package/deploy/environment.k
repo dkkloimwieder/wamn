@@ -6,13 +6,14 @@ environment.Environment {
     env = "files"
     target = "cloud"
     policy = "dev"
+    revocation_seconds = 60
     integrations = {
         "file-store" = {version = 1}
         "files-no-cdn" = {version = 1}
     }
     applications = {
         files = {
-            current = "__RELEASE_DIGEST__", hostname = "files.orders.example", packages = ["file_fixture"]
+            current = "__RELEASE_DIGEST__", revocation_seconds = 5, hostname = "files.orders.example", packages = ["file_fixture"]
             connections = {
                 files = "file-store"
                 "files-read" = "file-store"

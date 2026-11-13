@@ -132,7 +132,7 @@ Without `client`, the host serves no application web client.
 Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
 Apply reads the web artifact without owning it, so environments can share one artifact.
 `wamn web upload` copies that artifact’s `dist/` to the shared digest root.
-It writes files create-only, then the org and project configuration, then the index.
+It writes files create-only, then the index.
 An existing index marks completion, so another upload writes nothing.
 
 The Rust edge reads `release.json` for each request.
@@ -141,10 +141,14 @@ The web digest must use `sha256:` and 64 lowercase hex digits.
 A host without a client package or web digest refuses with `the host has no web client`.
 The release digest does not select browser files.
 
-For application `config.json`, the edge adds `release` and `web` from the live release to the uploaded org and project.
+The Rust web front generates application `config.json` from the live release.
+It supplies `org`, `project`, `release` and `web`.
 A web-only apply changes the bundle and `web`, while `release` stays the same.
-The edge caches other files by their full bucket path and serves `config.json` with `no-cache`.
-The platform UI still uses `platform-ui/<platform version>/` and its uploaded org configuration.
+The web front reads other files from the bucket without a process cache and serves `config.json` with `no-cache`.
+The platform UI uses `platform-ui/sha256-<digest>/`.
+The web front generates its org configuration from the live release.
+`wamn-web-front` owns response headers and proxies `/password/` to identity over HTTPS.
+TLS for browser traffic terminates at ingress.
 
 `wamn-ctl env` has five verbs:
 

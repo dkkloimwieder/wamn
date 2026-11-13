@@ -15,9 +15,9 @@ async fn connect(url: &str) -> tokio_postgres::Client {
 }
 fn document() -> EnvironmentDocument {
     EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":"acme","project":"one","env":"dev","target":"cloud","policy":"dev",
+        "org":"acme","project":"one","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
         "integrations":{"erp":{"version":1}},
-        "applications": {"app":{"current": format!("sha256:{}","a".repeat(64)), "hostname": "one.example", "packages":["fixture"],"connections":{"upstream":"erp"}}}})).unwrap()).unwrap()
+        "applications": {"app":{"current": format!("sha256:{}","a".repeat(64)), "revocation_seconds":5,"hostname": "one.example", "packages":["fixture"],"connections":{"upstream":"erp"}}}})).unwrap()).unwrap()
 }
 fn package(integration_type: &str) -> PackageManifest {
     let interface = match integration_type {

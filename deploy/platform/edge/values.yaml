@@ -1,17 +1,15 @@
-# nginx terminates TLS and forwards application requests to the Rust edge.
-image:
-  repository: nginx
-  # nginx:1.27-alpine. A digest selects exact bytes, and a tag does not.
-  digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
-  pullPolicy: IfNotPresent
+# TLS terminates at ingress. The Rust web front serves HTTP.
 
-# Platform provisioning supplies the existing serving certificate.
+# Serving certificate used by ingress.
 tlsSecret: ""
 
 # The identity service, HTTPS. The edge tests its certificate against ca.crt
 # in identityCaConfigMap, for the DNS name in the identity URL.
 identity: ""
 identityCaConfigMap: ""
+
+# Count trusted proxies from the direct peer. GCP uses two.
+trustedProxyHops: 1
 
 # The selected Rust edge image discovers application routes in Kubernetes.
 web:

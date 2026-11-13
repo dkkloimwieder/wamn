@@ -551,6 +551,7 @@ pub async fn authenticate_password(
     let principal = decode_principal(&row)
         .map_err(|source| infrastructure("stored password principal refused", source))?;
     Ok(Some(AuthenticatedPrincipal {
+        pat_deadline: None,
         principal,
         pat_id: None,
     }))

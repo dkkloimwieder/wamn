@@ -36,10 +36,14 @@ use wamn_platform_identity::session_keys::session_jwks;
 // is introduced when TLS, request headers, or the authoritative read stalls.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The default signing key rotation interval: 30 days.
+pub const DEFAULT_KEY_ROTATION: Duration = Duration::from_hours(30 * 24);
+
 /// Validated exact issuer and its narrow database credential.
 #[derive(Clone, Debug)]
 pub struct IdentityConfig {
     issuer: String,
+    key_rotation: Duration,
     connection: IdentityIssuerConnection,
     targets: BTreeMap<String, SessionTarget>,
     mail: Option<mail::MailConfig>,
@@ -53,11 +57,23 @@ impl IdentityConfig {
             .map_err(|_| IdentityServiceError::new("identity database configuration refused"))?;
         Ok(Self {
             issuer: issuer.to_owned(),
+            key_rotation: DEFAULT_KEY_ROTATION,
             connection,
             targets: BTreeMap::new(),
             mail: None,
             changes: wamn_broker::Publisher::default(),
         })
+    }
+
+    /// Set the signing key schedule. The previous public key retains its token window.
+    pub fn with_key_rotation(mut self, interval: Duration) -> Result<Self, IdentityServiceError> {
+        if interval.as_secs() == 0 || i64::try_from(interval.as_secs()).is_err() {
+            return Err(IdentityServiceError::new(
+                "signing key interval must be positive",
+            ));
+        }
+        self.key_rotation = interval;
+        Ok(self)
     }
 
     /// Publish each logout, logout-all, reset and replay revocation to the
@@ -108,6 +124,7 @@ pub struct IdentityService {
 #[derive(Debug)]
 struct Inner {
     issuer: String,
+    key_rotation: Duration,
     // Every held connection opens again with this capability after Postgres
     // closes it, for example when the server restarts.
     connection: IdentityIssuerConnection,
@@ -168,6 +185,17 @@ pub(crate) async fn connect_database(url: &str) -> Result<Database, IdentityServ
 }
 
 impl Inner {
+    async fn rotate_keys(&self) -> Result<(), IdentityServiceError> {
+        let mut database = connect_database(self.connection.url()).await?;
+        wamn_platform_identity::session_keys::rotate_session_keys(
+            &mut database.client,
+            &self.issuer,
+            self.key_rotation,
+        )
+        .await
+        .map_err(|_| IdentityServiceError::new("rotate signing keys failed"))
+    }
+
     /// The shared connection, opened again when Postgres closed it.
     async fn database(&self) -> Result<Arc<Database>, IdentityServiceError> {
         let current = || self.database.read().expect("database lock").clone();
@@ -207,6 +235,7 @@ impl IdentityService {
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
+                key_rotation: config.key_rotation,
                 connection: config.connection,
                 passwords,
                 changes: config.changes,
@@ -236,6 +265,24 @@ impl IdentityService {
         operator: bool,
         source: std::net::IpAddr,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
+        let source = match request.headers().get("x-forwarded-for") {
+            Some(value) => match value
+                .to_str()
+                .ok()
+                .and_then(|value| value.rsplit(',').next())
+                .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok())
+            {
+                Some(address) => address,
+                None => {
+                    return Ok(response(
+                        StatusCode::BAD_REQUEST,
+                        "application/json",
+                        b"{\"error\":\"invalid client address\"}".to_vec(),
+                    ));
+                }
+            },
+            None => source,
+        };
         if request.method() == Method::POST
             && request.uri().query().is_none()
             && matches!(

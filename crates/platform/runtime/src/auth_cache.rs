@@ -9,7 +9,7 @@
 //! read, so a delete in between refuses the put. Every host watches the keys
 //! of its project and keeps each value it sees. Every writer of a fact deletes
 //! its key after the commit ([`wamn_broker::auth_changes`]). The
-//! bucket keeps a value for at most [`MEMORY_TTL`], and so does the replica.
+//! replica expires facts at the configured project and application revocation bound.
 //!
 //! An admitted PAT and an active session stay in the host that read them,
 //! because the token answer never leaves the host. A delete of the key
@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
@@ -33,7 +33,6 @@ use sha2::{Digest as _, Sha256};
 use wamn_broker::auth_changes::{
     BUCKET, IDENTITY_TOKEN, principal_key, project_env_key as environment_status_key,
 };
-pub use wamn_broker::kv_memory::MEMORY_TTL;
 use wamn_platform_identity::AuthenticatedPrincipal;
 
 pub use crate::kv_memory::Ticket;
@@ -72,6 +71,7 @@ pub struct IdentityTicket(u64);
 
 struct Token {
     seen: Instant,
+    deadline: SystemTime,
     principal: String,
     /// The principal a PAT admitted, or `None` for an active session.
     pat: Option<AuthenticatedPrincipal>,
@@ -80,7 +80,7 @@ struct Token {
 #[derive(Default)]
 struct Tokens {
     tokens: HashMap<[u8; 32], Token>,
-    /// The highest revision of an identity key this host saw.
+    /// The local generation, advanced by identity invalidations and watch resets.
     identity_revision: u64,
 }
 
@@ -94,7 +94,7 @@ pub struct AuthCache {
 
 impl Default for AuthCache {
     fn default() -> Self {
-        Self::with_ttl(MEMORY_TTL)
+        Self::with_ttl(Duration::ZERO)
     }
 }
 
@@ -129,7 +129,9 @@ impl AuthCache {
     /// Drop every fact.
     pub fn clear(&self) {
         self.memory.clear();
-        self.tokens().tokens.clear();
+        let mut tokens = self.tokens();
+        tokens.identity_revision = tokens.identity_revision.wrapping_add(1);
+        tokens.tokens.clear();
     }
 
     /// The principal of an admitted PAT.
@@ -138,7 +140,7 @@ impl AuthCache {
         self.tokens()
             .tokens
             .get(&digest(token))
-            .filter(|token| token.seen.elapsed() < ttl)
+            .filter(|token| token.seen.elapsed() < ttl && SystemTime::now() < token.deadline)
             .and_then(|token| token.pat.clone())
     }
 
@@ -148,7 +150,11 @@ impl AuthCache {
         self.tokens()
             .tokens
             .get(&digest(token))
-            .is_some_and(|token| token.seen.elapsed() < ttl && token.pat.is_none())
+            .is_some_and(|token| {
+                token.seen.elapsed() < ttl
+                    && SystemTime::now() < token.deadline
+                    && token.pat.is_none()
+            })
     }
 
     /// The ticket of a PAT or session read, taken before the read.
@@ -161,12 +167,16 @@ impl AuthCache {
         ticket: IdentityTicket,
         token: &str,
         principal: &str,
-        pat: Option<AuthenticatedPrincipal>,
+        pat: Option<&AuthenticatedPrincipal>,
+        deadline: SystemTime,
     ) {
         // The lock is held during the test, so a token kept here falls to
         // the clear that follows a broken watch.
         let mut tokens = self.tokens();
-        if self.memory.bucket().is_none() {
+        if self.memory.bucket().is_none()
+            || self.memory.ttl().is_zero()
+            || SystemTime::now() >= deadline
+        {
             return;
         }
         // An identity key changed during the read, so the answer can be stale.
@@ -175,25 +185,42 @@ impl AuthCache {
         }
         if tokens.tokens.len() >= SWEEP_AT {
             let ttl = self.memory.ttl();
-            tokens.tokens.retain(|_, token| token.seen.elapsed() < ttl);
+            tokens.tokens.retain(|_, token| {
+                token.seen.elapsed() < ttl && SystemTime::now() < token.deadline
+            });
         }
         tokens.tokens.insert(
             digest(token),
             Token {
                 seen: Instant::now(),
+                deadline,
                 principal: principal.to_owned(),
-                pat,
+                pat: pat.cloned(),
             },
         );
     }
 
-    pub fn keep_pat(&self, ticket: IdentityTicket, token: &str, principal: AuthenticatedPrincipal) {
+    pub fn keep_pat(
+        &self,
+        ticket: IdentityTicket,
+        token: &str,
+        principal: &AuthenticatedPrincipal,
+    ) {
         let id = principal.principal().id().to_string();
-        self.keep_token(ticket, token, &id, Some(principal));
+        let Some(deadline) = principal.pat_deadline() else {
+            return;
+        };
+        self.keep_token(ticket, token, &id, Some(principal), deadline);
     }
 
-    pub fn keep_session_active(&self, ticket: IdentityTicket, token: &str, principal: &str) {
-        self.keep_token(ticket, token, principal, None);
+    pub fn keep_session_active(
+        &self,
+        ticket: IdentityTicket,
+        token: &str,
+        principal: &str,
+        deadline: SystemTime,
+    ) {
+        self.keep_token(ticket, token, principal, None, deadline);
     }
 
     /// The grants of a principal, or the ticket of a read of them.
@@ -306,7 +333,7 @@ impl Watched for AuthCache {
             .and_then(|rest| rest.strip_prefix('.'))
         {
             let mut tokens = self.tokens();
-            tokens.identity_revision = tokens.identity_revision.max(entry.revision);
+            tokens.identity_revision = tokens.identity_revision.wrapping_add(1);
             tokens
                 .tokens
                 .retain(|_, token| token.principal != principal);
@@ -356,7 +383,7 @@ pub(crate) mod tests {
 
     #[test]
     fn grants_without_principal_type_are_a_cache_miss() {
-        let cache = AuthCache::default();
+        let cache = AuthCache::with_ttl(Duration::from_secs(60));
         let missing: PrincipalGrants = serde_json::from_value(
             serde_json::json!({"present":true,"active":true,"roles":{"admin":[]}}),
         )
@@ -391,7 +418,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_host_without_the_bucket_keeps_no_fact() {
-        let cache = AuthCache::default();
+        let cache = AuthCache::with_ttl(Duration::from_secs(60));
         let ticket = cache.environment_inactive("t").unwrap_err();
         cache.keep_environment_inactive("t", ticket, true).await;
         let ticket = cache.grants("t", "p").unwrap_err();
@@ -401,7 +428,12 @@ pub(crate) mod tests {
             ..PrincipalGrants::default()
         };
         cache.keep_grants("t", "p", ticket, present).await;
-        cache.keep_session_active(cache.identity_ticket(), "token", "p");
+        cache.keep_session_active(
+            cache.identity_ticket(),
+            "token",
+            "p",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
         assert!(cache.environment_inactive("t").is_err());
         assert!(cache.grants("t", "p").is_err());
         assert!(cache.provisioned("t", "p").is_err());
@@ -417,12 +449,32 @@ pub(crate) mod tests {
         watched(&client, None, Arc::clone(&cache)).await;
         let ticket = cache.environment_inactive("t").unwrap_err();
         cache.keep_environment_inactive("t", ticket, true).await;
-        cache.keep_session_active(cache.identity_ticket(), "token", "p");
+        cache.keep_session_active(
+            cache.identity_ticket(),
+            "token",
+            "p",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
         assert_eq!(cache.environment_inactive("t"), Ok(true));
         assert!(cache.session_active("token"));
         assert!(!cache.session_active("other"));
 
+        cache.keep_session_active(
+            cache.identity_ticket(),
+            "expired",
+            "p",
+            SystemTime::UNIX_EPOCH,
+        );
+        assert!(!cache.session_active("expired"));
+        let in_flight = cache.identity_ticket();
         cache.clear();
+        cache.keep_session_active(
+            in_flight,
+            "stale",
+            "p",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
+        assert!(!cache.session_active("stale"));
         assert!(cache.environment_inactive("t").is_err());
         assert!(!cache.session_active("token"));
 
@@ -446,9 +498,9 @@ pub(crate) mod tests {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
         let (_server, client) = nats().await;
-        let a = Arc::new(AuthCache::default());
-        let b = Arc::new(AuthCache::default());
-        let other = Arc::new(AuthCache::default());
+        let a = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
+        let b = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
+        let other = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
         let writer = replicate(&client, Some("t"), Arc::clone(&a));
         replicate(&client, Some("t"), Arc::clone(&b));
         replicate(&client, Some("u"), Arc::clone(&other));
@@ -517,8 +569,18 @@ pub(crate) mod tests {
 
         // An identity change drops the session of its principal on every
         // host, and a session read during any identity change is not kept.
-        a.keep_session_active(a.identity_ticket(), "token-p", "p");
-        a.keep_session_active(a.identity_ticket(), "token-q", "q");
+        a.keep_session_active(
+            a.identity_ticket(),
+            "token-p",
+            "p",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
+        a.keep_session_active(
+            a.identity_ticket(),
+            "token-q",
+            "q",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
         let read = b.identity_ticket();
         let mut drops = AuthDrops::default();
         drops.identity("p");
@@ -532,7 +594,12 @@ pub(crate) mod tests {
             b.identity_ticket() != read
         })
         .await;
-        b.keep_session_active(read, "token-p", "p");
+        b.keep_session_active(
+            read,
+            "token-p",
+            "p",
+            SystemTime::now() + Duration::from_secs(3600),
+        );
         assert!(!b.session_active("token-p"));
     }
 
@@ -541,7 +608,7 @@ pub(crate) mod tests {
     async fn present_grants_establish_provisioned_authority() {
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
-        let cache = Arc::new(AuthCache::default());
+        let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(60)));
         watched(&client, None, Arc::clone(&cache)).await;
         let ticket = cache.grants("t", "a").unwrap_err();
         cache

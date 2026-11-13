@@ -50,8 +50,8 @@ mod tests {
     fn document() -> EnvironmentDocument {
         serde_json::from_value(serde_json::json!({
             "org": "test", "project": "wms", "env": "dev",
-            "target": "cloud", "policy": "dev",
-            "applications": {"fixture": {"current": "none", "hostname": "wms.example.com", "packages": ["fixture"]}}}))
+            "target": "cloud", "policy": "dev","revocation_seconds":60,
+            "applications": {"fixture": {"current": "none", "revocation_seconds":5,"hostname": "wms.example.com", "packages": ["fixture"]}}}))
         .unwrap()
     }
 
