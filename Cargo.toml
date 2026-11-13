@@ -155,7 +155,6 @@ url = "2"
 # why the emitter's own compile gate declares them too (wamn-10yt.45).
 rust_decimal = { version = "1", default-features = false }
 uuid = "1"
-jmespath = "0.5.0"
 libc = "0.2"
 opentelemetry = { version = "=0.32.0", default-features = false }
 opentelemetry-otlp = { version = "=0.32.0", default-features = false }
@@ -234,21 +233,17 @@ wamn-fixture-package = { path = "test-support/fixture-package", version = "0.1.0
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
 wamn-component-composer = { path = "crates/platform/component-composer", version = "0.1.0" }
-wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", version = "0.1.0" }
 wamn-package-control = { path = "crates/control/package", version = "0.1.0" }
 wamn-release-control = { path = "crates/control/release", version = "0.1.0" }
 wamn-environment-control = { path = "crates/control/environment", version = "0.1.0" }
 wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
-wamn-ctl = { path = "services/ctl", version = "0.1.0" }
-wamn-identity = { path = "services/identity", version = "0.1.0" }
 wamn-event-reg = { path = "apps/platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "apps/platform/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "apps/platform/execution/contract", version = "0.1.0" }
 wamn-engine = { path = "crates/platform/engine", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
-wamn-host = { path = "services/host", version = "0.1.0" }
 wamn-materializer = { path = "apps/platform/events/materializer", version = "0.1.0" }
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
 wamn-number-pattern = { path = "crates/platform/number-pattern", version = "0.1.0" }

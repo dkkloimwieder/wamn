@@ -124,7 +124,7 @@ impl WamnPostgres {
                     component.package_id
                 )
             })?;
-            for (id, fact) in &component.operations {
+            for (id, fact) in &component.descriptor.operations {
                 applications.insert(id.clone(), application.to_owned());
                 let read = release
                     .manifest()
@@ -151,6 +151,7 @@ impl WamnPostgres {
         let mut members = BTreeMap::new();
         if application.statement_instances.is_empty() {
             let statements = application
+                .descriptor
                 .operations
                 .values()
                 .flat_map(|fact| fact.statements.clone())

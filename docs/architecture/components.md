@@ -61,6 +61,8 @@ Publish writes each member's own statement set into the served component, keyed 
 The host binds each import from that served set only, and it refuses to load a composition whose release has no set for it.
 Base membership alone does not authorize an operation. The [execution rules](execution.md) check the entry's own grant.
 
+The serving manifest reads each export from its component descriptor.
+It stores no second operation map.
 Release membership names package versions and component digests.
 Publication uses WAMN-owned OCI media types and retains the component configuration needed to establish admission.
 The host compares bytes and artifact layout with the admitted facts before native loading.

@@ -31,8 +31,8 @@ use tokio_postgres::NoTls;
 use wamn_catalog::component_artifact_reference;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation,
-    WiringDocument, WiringNode, WiringTerminal,
+    ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument, WiringNode,
+    WiringTerminal,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -410,21 +410,6 @@ fn release_manifest(
     component: &AdmittedComponent,
     _document: &WiringDocument,
 ) -> serde_json::Value {
-    let operations: BTreeMap<_, _> = component
-        .operations
-        .iter()
-        .map(|(name, operation)| {
-            (
-                name.clone(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: operation.registered_operation.clone(),
-                    permissions: operation.registered_operation.iter().cloned().collect(),
-                    statements: operation.statements.clone(),
-                },
-            )
-        })
-        .collect();
     serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
@@ -435,7 +420,6 @@ fn release_manifest(
         },
         "components": [{
             "package-id": PACKAGE,
-            "operations": operations,
             "descriptor": ComponentDescriptor::new(
                 component.clone(),
                 vec![ComponentConnection {

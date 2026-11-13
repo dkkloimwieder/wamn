@@ -12,12 +12,12 @@ pub use plan::plan_run_plane;
 #[cfg(test)]
 use declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
-    RUNS_ADMISSION_PINS_TRIGGER_SQL, helper_specs, trigger_specs,
+    helper_specs, trigger_specs,
 };
 #[cfg(test)]
 use plan::environment_policy_row_security_at_record;
 #[cfg(test)]
-use schema::{index_statements, record_columns, record_tables, table_section};
+use schema::{index_statements, record_columns, record_tables};
 #[cfg(test)]
 use std::collections::BTreeSet;
 #[cfg(test)]

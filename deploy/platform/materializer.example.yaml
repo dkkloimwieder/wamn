@@ -28,10 +28,8 @@
 # Multi-registration fan-out within the env_key is one workload
 # (a durable consumer per registration).
 #
-# EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT
-# DO NOTHING on both the write-ahead and the enqueue — replicas > 1 is SAFE
-# (duplicates collapse; the matbench redelivery phase shows it) but 1 is the
-# v1 shape: JetStream redelivery, not replica count, is the availability story.
+# Event delivery can repeat. Admission uses the workflow and delivery identity
+# to avoid duplicate runs. Queue claims have no event ordering guarantee.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:

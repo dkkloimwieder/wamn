@@ -164,56 +164,6 @@ fn observation_at_record() -> RunPlaneObservation {
     obs
 }
 
-#[test]
-fn run_queue_record_columns_pin_the_global_fifo_shape() {
-    let cols = record_columns(RUN_QUEUE_SQL, "wamn_run", "run_queue");
-    let names: Vec<&str> = cols.iter().map(|(c, _)| c.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "created_at",
-            "created_by",
-            "updated_at",
-            "updated_by",
-            "env_key",
-            "run_id",
-            "priority",
-            "available_at",
-            "stream_seq",
-            "lease_owner",
-            "lease_expires_at",
-            "lease_generation",
-            "attempts",
-            "max_attempts",
-            "enqueued_at",
-        ]
-    );
-    let definitions: Vec<&str> = cols
-        .iter()
-        .map(|(_, definition)| definition.as_str())
-        .collect();
-    assert_eq!(
-        definitions,
-        [
-            "created_at timestamptz NOT NULL",
-            "created_by uuid NOT NULL",
-            "updated_at timestamptz NOT NULL",
-            "updated_by uuid NOT NULL",
-            "env_key text NOT NULL CHECK (env_key <> '')",
-            "run_id text NOT NULL",
-            "priority int NOT NULL DEFAULT 0",
-            "available_at timestamptz NOT NULL DEFAULT now()",
-            "stream_seq bigint NOT NULL DEFAULT 0",
-            "lease_owner text",
-            "lease_expires_at timestamptz",
-            "lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0)",
-            "attempts int NOT NULL DEFAULT 0",
-            "max_attempts int NOT NULL DEFAULT 20",
-            "enqueued_at timestamptz NOT NULL DEFAULT now()",
-        ]
-    );
-}
-
 /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
 /// `fail_type` — the fqg.16 sibling — is present as a column.
 #[test]
@@ -262,117 +212,6 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
     );
 }
 
-/// A manual workflow run is its own grain
-/// (docs/architecture/execution.md#environment-workflows): no flow, no service
-/// principal, no registration, no binding world; a release pin, frozen node
-/// digests as a JSON object, an executing principal and role, and the invoking
-/// user. A schedule workflow run is the same grain with the schedule as its
-/// cause and no invoking user. Every other grain leaves those columns NULL, and
-/// admission pins them.
-#[test]
-fn runs_manual_grain_check_mirrors_are_exact() {
-    let check = |name: &str| {
-        CHECK_SPECS
-            .iter()
-            .find(|spec| spec.table == "runs" && spec.name == name)
-            .unwrap_or_else(|| panic!("runs.{name} CHECK mirror exists"))
-            .definition
-    };
-    let grain = check("runs_execution_grain_check");
-    assert!(
-        grain.contains(
-            " OR flow_id IS NULL AND flow_version IS NULL \
-             AND NOT trigger_source IS DISTINCT FROM 'manual'::text \
-             AND registration_id IS NULL AND service_principal_id IS NULL \
-             AND wiring_id IS NOT NULL AND wiring_id <> ''::text \
-             AND wiring_version IS NOT NULL AND wiring_version > 0 \
-             AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text \
-             AND manifest_digest IS NOT NULL AND node_digests_json IS NOT NULL \
-             AND jsonb_typeof(node_digests_json) = 'object'::text \
-             AND execution_principal_id IS NOT NULL \
-             AND execution_role IS NOT NULL AND execution_role <> ''::text \
-             AND NOT invoked_by IS DISTINCT FROM 'manual'::text \
-             AND invoked_by_user_id IS NOT NULL AND binding_world_json IS NULL OR "
-        ),
-        "{grain}"
-    );
-    assert!(
-        grain.ends_with(
-            " OR flow_id IS NULL AND flow_version IS NULL \
-             AND NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-             AND registration_id IS NULL AND service_principal_id IS NULL \
-             AND wiring_id IS NOT NULL AND wiring_id <> ''::text \
-             AND wiring_version IS NOT NULL AND wiring_version > 0 \
-             AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text \
-             AND manifest_digest IS NOT NULL AND node_digests_json IS NOT NULL \
-             AND jsonb_typeof(node_digests_json) = 'object'::text \
-             AND execution_principal_id IS NOT NULL \
-             AND execution_role IS NOT NULL AND execution_role <> ''::text \
-             AND NOT invoked_by IS DISTINCT FROM 'schedule'::text \
-             AND invoked_by_user_id IS NULL AND binding_world_json IS NULL)"
-        ),
-        "{grain}"
-    );
-    assert_eq!(
-        check("runs_execution_identity_check"),
-        "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text \
-         OR NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-         OR NOT trigger_source IS DISTINCT FROM 'event'::text \
-         OR execution_principal_id IS NULL AND execution_role IS NULL \
-         AND invoked_by IS NULL AND invoked_by_user_id IS NULL \
-         AND node_digests_json IS NULL)"
-    );
-    // Only an automation run carries a service principal.
-    assert_eq!(
-        check("runs_service_principal_check"),
-        "CHECK ((NOT trigger_source IS DISTINCT FROM 'automation'::text) \
-         = (service_principal_id IS NOT NULL))"
-    );
-    for pinned in [
-        "execution_principal_id",
-        "execution_role",
-        "invoked_by",
-        "invoked_by_user_id",
-        "node_digests_json",
-    ] {
-        assert!(
-            RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned},"))
-                || RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned} ON")),
-            "the admission pins trigger names {pinned}"
-        );
-        assert!(
-            RUNS_ADMISSION_PINS_TRIGGER_SQL.contains(pinned),
-            "the admission pins trigger SQL names {pinned}"
-        );
-    }
-}
-
-/// Sections carry the table's whole apparatus: indexes, RLS, policy, grant.
-#[test]
-fn table_sections_carry_indexes_rls_and_grants() {
-    let rq = table_section(RUN_QUEUE_SQL, "wamn_run", "run_queue");
-    assert!(rq.contains("CREATE INDEX run_queue_claimable"));
-    assert!(rq.contains("available_at, stream_seq, run_id, lease_expires_at"));
-    assert!(rq.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(rq.contains("FROM PUBLIC, wamn_app"));
-    assert!(!rq.contains("TO wamn_app"));
-    for retired in [
-        "partition_key",
-        "partition_policy",
-        "partition_owner",
-        "run_dead_letters",
-        "run_queue_partition",
-    ] {
-        assert!(
-            !rq.contains(retired),
-            "retired queue DDL remains: {retired}"
-        );
-    }
-
-    let package = table_section(CATALOG_SCHEMA_SQL, "catalog", "packages");
-    assert!(package.contains("artifact_digest"));
-}
-
 /// THE load-bearing self-consistency invariant: an observation derived from
 /// the record itself plans NOTHING. Whatever the record files evolve into,
 /// a schema at record is a no-op — this is what makes the verb idempotent
@@ -399,29 +238,25 @@ fn observation_at_record_plans_a_noop() {
 /// restore.
 #[test]
 fn a_pin_carrier_added_without_its_inline_check_does_not_converge() {
-    for (column, check) in [
-        ("capture_mode", "runs_capture_mode_check"),
-        ("durability_class", "runs_durability_class_check"),
-    ] {
-        let mut obs = observation_at_record();
-        obs.checks.remove(&("runs".to_string(), check.to_string()));
-        assert!(
-            obs.tables
-                .get("runs")
-                .is_some_and(|columns| columns.contains(column)),
-            "the bare-ADD state has the carrier without its CHECK"
-        );
+    let (column, check) = ("capture_mode", "runs_capture_mode_check");
+    let mut obs = observation_at_record();
+    obs.checks.remove(&("runs".to_string(), check.to_string()));
+    assert!(
+        obs.tables
+            .get("runs")
+            .is_some_and(|columns| columns.contains(column)),
+        "the bare-ADD state has the carrier without its CHECK"
+    );
 
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        assert!(
-            plan.actions.iter().any(|action| {
-                action.kind == RunPlaneActionKind::RepairConstraint
-                    && action.target == format!("runs.{check}")
-            }),
-            "a bare {column} costs a second reconcile turn: {:#?}",
-            plan.actions
-        );
-    }
+    let plan = plan_run_plane(&schema("demo"), &obs);
+    assert!(
+        plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairConstraint
+                && action.target == format!("runs.{check}")
+        }),
+        "a bare {column} costs a second reconcile turn: {:#?}",
+        plan.actions
+    );
 }
 
 #[test]

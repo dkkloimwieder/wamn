@@ -60,8 +60,8 @@ fn fresh_run_history_stamps_rows() {
         "BEGIN",
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
-        INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ('history','dev','standard');
-        INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,environment) VALUES ('history','run','flow',1,'package','dev');
+        INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ('history','dev');
+        INSERT INTO wamn_run.runs (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) VALUES ('history','run','fixture',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'package','dev');
     ",
         "INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('history','run');",
         "COMMIT",

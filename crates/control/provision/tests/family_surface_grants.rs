@@ -373,7 +373,6 @@ fn expected_executor_grants() -> Vec<String> {
     // the manual grain of `insert_manual_run_sql`
     // (docs/architecture/execution.md#environment-workflows).
     for column in [
-        "durability_class",
         "event_source_run_id",
         "event_root_run_id",
         "event_depth",
@@ -545,7 +544,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'INSERT'), \
            'the executor admits only the event run columns, never a whole row'; \
          ASSERT has_table_privilege(r, 'wamn_run.environment_policies', 'SELECT'), \
-           'an event admission reads the durability class'; \
+           'the executor can read the environment policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.environment_policies', 'UPDATE'), \
            'the executor never changes a policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'DELETE'), \
@@ -566,7 +565,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for column in [
         "run_id",
         "binding_world_json",
-        "flow_id",
         "capture_mode",
         "invocation_context",
         "caller_outcome_json",
@@ -594,7 +592,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for column in [
         "input_json",
         "binding_world_json",
-        "durability_class",
         "wiring_id",
         "wiring_version",
         "wiring_hash",
@@ -624,7 +621,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in ["priority", "stream_seq", "max_attempts", "enqueued_at"] {
+    for column in ["max_attempts", "enqueued_at"] {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
@@ -650,8 +647,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
                (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
-               (env_key, expected_environment, durability_class) \
-             VALUES ('t1', 'dev', 'standard');\n\
+               (env_key, expected_environment) \
+             VALUES ('t1', 'dev');\n\
              INSERT INTO wamn_run.runs \
                (env_key, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \

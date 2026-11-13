@@ -456,7 +456,7 @@ pub(super) fn project_routes(
     // claim their keys, for private and registered commands alike. An HTTP
     // attachment is not required to call an operation.
     for component in components.iter() {
-        for operation in component.operations.keys() {
+        for operation in component.descriptor.operations.keys() {
             let Some(contract) =
                 route_contracts.get(&(component.package_id.clone(), operation.clone()))
             else {

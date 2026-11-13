@@ -173,7 +173,6 @@ fn component(
         package_id: name.into(),
         descriptor,
         runtime_schema: None,
-        operations: BTreeMap::from([("run".into(), serde_json::from_value(json!({}))?)]),
         statement_instances: BTreeMap::new(),
     })
 }

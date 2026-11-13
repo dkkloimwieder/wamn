@@ -99,7 +99,7 @@ impl fmt::Display for BareSchemaName {
 /// its table that the live definition does not (word-boundary token match, so
 /// `run_id` never matches inside `event_root_run_id`). This is deliberately the
 /// narrow, real drift class — notably the pre-E4 `run_queue_claimable` without
-/// `stream_seq` — not a general definition difference.
+/// the ordering columns. It does not compare other definition differences.
 pub(super) fn index_definition_stale(
     file: &str,
     table: &str,

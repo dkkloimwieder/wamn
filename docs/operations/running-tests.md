@@ -1383,12 +1383,10 @@ Run the combined host's lifecycle tests:
 cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
 ```
 
-The shared queue tests run real admission, active-work cancellation, lease recovery, and authority cleanup.
-They start a disposable PostgreSQL server.
-The ignored cases of the module need more inputs and do not run here.
+Queue shutdown recovery and event admission tests use PostgreSQL 18:
 
 ```bash
-cargo test --locked --offline -p wamn-workflow --lib queue::automation_live:: -- --nocapture
+cargo test -p wamn-workflow --lib queue::admission_live::
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).

@@ -197,9 +197,9 @@ fn write_bundle(
                 served.package_id == attachment.package_id
                     && served.descriptor.component == attachment.component
             })
-            .and_then(|served| served.operations.get(&attachment.operation))
+            .and_then(|served| served.descriptor.operations.get(&attachment.operation))
             .with_context(|| format!("attachment {id} names no released operation"))?;
-        permissions.extend(operation.permissions.iter().cloned());
+        permissions.extend(operation.registered_operation.iter().cloned());
     }
     let mut grants = EdgeGrants::default();
     grants.roles.insert(ADMIN_ROLE.to_owned(), permissions);

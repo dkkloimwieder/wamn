@@ -33,8 +33,8 @@ impl Grants {
         let required: BTreeSet<&str> = manifest
             .components
             .iter()
-            .flat_map(|component| component.operations.values())
-            .flat_map(|operation| operation.permissions.iter().map(String::as_str))
+            .flat_map(|component| component.descriptor.operations.values())
+            .filter_map(|operation| operation.registered_operation.as_deref())
             .collect();
         for (role, permissions) in &document.roles {
             if !is_role_slug(role) {

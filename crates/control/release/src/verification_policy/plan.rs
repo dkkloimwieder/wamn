@@ -1,4 +1,4 @@
-use super::{DurabilityClass, EnvPolicy};
+use super::EnvPolicy;
 use anyhow::Context as _;
 
 pub(super) fn authoritative_environment_policy(
@@ -20,10 +20,4 @@ pub struct AuthoritativeEnvironmentPolicy {
     pub source_policy_org: Box<str>,
     pub policy: EnvPolicy,
     pub source_policy_hash: Box<str>,
-}
-
-impl AuthoritativeEnvironmentPolicy {
-    pub const fn durability_class(&self) -> DurabilityClass {
-        self.policy.durability_class
-    }
 }

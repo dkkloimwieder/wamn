@@ -255,10 +255,10 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "root", "package-version": "1.0.0"}]},
         "components": [{"package-id": "root",
-            "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
             "operations": {
-                ROOT: {"registered-operation": ROOT, "permissions": [ROOT]}
-            }}],
+                ROOT: {"registered-operation": ROOT, "input-ports": [], "output-ports": [], "parameters": []}
+            }}}],
         "routes": [{"package-id":"root","component":"node","operation":ROOT,"type":"command"}],
         "attachments": {ATTACHMENT: {"type":"http","package-id":"root","component":"node","operation":ROOT,
             "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
@@ -794,7 +794,7 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 })
                 .expect("the release serves the root");
             assert!(
-                released.operations[ROOT].statements.is_empty(),
+                released.descriptor.operations[ROOT].statements.is_empty(),
                 "the released root operation holds no statement: nothing is folded"
             );
             assert!(fixture.root.operations[ROOT].host_transaction);
@@ -1282,7 +1282,7 @@ async fn pat_caller(
     postgres: Arc<WamnPostgres>,
     release: &LoadedRelease,
 ) -> anyhow::Result<AuthenticatedCaller> {
-    use wamn_platform_identity::{create_user, grant_project_env_membership, issue_pat};
+    use wamn_platform_identity::{assign_project_role, create_service, issue_pat};
     use wamn_runtime::plugins::route_authentication::RouteAuthentication;
 
     let system_database = wamn_control_provision::test_database::system();
@@ -1302,17 +1302,24 @@ async fn pat_caller(
             &[&ORG, &PROJECT],
         )
         .await?;
-    let principal = create_user(
+    let principal = create_service(
         &system,
-        "warm-pat@example.invalid",
-        "warm-pat@example.invalid",
+        "warm-test",
         "Warm test caller",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
     )
     .await?;
     system.execute("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')", &[&ORG, &ENVIRONMENT]).await?;
     system.execute("INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES ($1, $2, $3, 'warm-test', 'a1b2c3d4', $3)", &[&ORG, &PROJECT, &ENVIRONMENT]).await?;
-    wamn_platform_identity::org::activate_org_membership(&system, principal.id(), ORG).await?;
-    grant_project_env_membership(&system, principal.id(), ORG, PROJECT, ENVIRONMENT).await?;
+    assign_project_role(
+        &system,
+        principal.id(),
+        ORG,
+        PROJECT,
+        "admin",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
     let token = issue_pat(
         &system,
         principal.id(),
@@ -1322,7 +1329,7 @@ async fn pat_caller(
     .await?;
     let admin = connect(admin_url).await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','warm-pat@example.invalid')", &[&principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')", &[&principal.id().as_str()]).await?;
     admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,
@@ -1367,14 +1374,8 @@ async fn pat_caller(
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(
-                    Arc::new(reader),
-                    postgres,
-                    ORG,
-                    PROJECT,
-                    "unused-user-subject",
-                )
-                .await?,
+                RouteAuthentication::new(Arc::new(reader), postgres, ORG, PROJECT, "warm-test")
+                    .await?,
             )),
         ));
     routing

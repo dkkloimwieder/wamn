@@ -106,7 +106,7 @@ pub async fn workflow_host(
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ($1,'test')", &[&ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(

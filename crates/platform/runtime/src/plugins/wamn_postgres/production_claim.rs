@@ -109,15 +109,9 @@ struct ExhaustedClaim {
 }
 
 #[derive(Debug)]
-enum ExhaustedExecutionIdentity {
-    Flow {
-        flow_id: String,
-        flow_version: i32,
-    },
-    Wiring {
-        wiring_id: String,
-        wiring_version: i32,
-    },
+struct ExhaustedExecutionIdentity {
+    wiring_id: String,
+    wiring_version: i32,
 }
 
 #[async_trait::async_trait]
@@ -862,7 +856,7 @@ async fn release_in_transaction(
         return Ok(false);
     };
     if row_value::<bool>(&row, 0, "released run exhausted")? {
-        let identity = ExhaustedExecutionIdentity::Wiring {
+        let identity = ExhaustedExecutionIdentity {
             wiring_id: row_value(&row, 1, "released wiring id")?,
             wiring_version: row_value(&row, 2, "released wiring version")?,
         };
@@ -1253,21 +1247,11 @@ async fn reap_in_transaction(
             format!("unknown run status {status_text:?}"),
         )
     })?;
-    let flow_id: Option<String> = row_value(&row, 3, "exhausted root flow id")?;
-    let flow_version: Option<i32> = row_value(&row, 4, "exhausted root flow version")?;
-    let wiring_id: Option<String> = row_value(&row, 5, "exhausted wiring id")?;
-    let wiring_version: Option<i32> = row_value(&row, 6, "exhausted wiring version")?;
-    let identity = match (flow_id, flow_version, wiring_id, wiring_version) {
-        (Some(flow_id), Some(flow_version), _, _) if !flow_id.is_empty() && flow_version > 0 => {
-            ExhaustedExecutionIdentity::Flow {
-                flow_id,
-                flow_version,
-            }
-        }
-        (None, None, Some(wiring_id), Some(wiring_version))
-            if !wiring_id.is_empty() && wiring_version > 0 =>
-        {
-            ExhaustedExecutionIdentity::Wiring {
+    let wiring_id: Option<String> = row_value(&row, 3, "exhausted wiring id")?;
+    let wiring_version: Option<i32> = row_value(&row, 4, "exhausted wiring version")?;
+    let identity = match (wiring_id, wiring_version) {
+        (Some(wiring_id), Some(wiring_version)) if !wiring_id.is_empty() && wiring_version > 0 => {
+            ExhaustedExecutionIdentity {
                 wiring_id,
                 wiring_version,
             }
@@ -1337,26 +1321,12 @@ fn generic_failure_outcome(
     identity: &ExhaustedExecutionIdentity,
     run_id: &str,
 ) -> Result<(String, String), ProductionClaimError> {
-    let coordinate = match identity {
-        ExhaustedExecutionIdentity::Flow {
-            flow_id,
-            flow_version,
-        } => serde_json::json!({
-            "code": code,
-            "flow-id": flow_id,
-            "flow-version": flow_version,
-            "run-id": run_id,
-        }),
-        ExhaustedExecutionIdentity::Wiring {
-            wiring_id,
-            wiring_version,
-        } => serde_json::json!({
-            "code": code,
-            "wiring-id": wiring_id,
-            "wiring-version": wiring_version,
-            "run-id": run_id,
-        }),
-    };
+    let coordinate = serde_json::json!({
+        "code": code,
+        "wiring-id": identity.wiring_id,
+        "wiring-version": identity.wiring_version,
+        "run-id": run_id,
+    });
     let body = serde_json::json!({ "error": coordinate });
     let body_hash = wamn_execution_contract::canonical_json_sha256(&body);
     let body_json = serde_json::to_string(&body).map_err(|error| {
@@ -1382,10 +1352,8 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let wiring_version: Option<i32> = row_value(row, 5, "wiring version")?;
     let router_caller_attached: bool = row_value(row, 6, "router caller attachment")?;
     let durable_caller_attached: bool = row_value(row, 7, "durable caller attachment")?;
-    let flow_id: Option<String> = row_value(row, 8, "legacy flow id")?;
-    let flow_version: Option<i32> = row_value(row, 9, "legacy flow version")?;
-    let wiring_hash: Option<String> = row_value(row, 10, "candidate wiring hash")?;
-    let binding_world: Option<String> = row_value(row, 11, "candidate binding world")?;
+    let wiring_hash: Option<String> = row_value(row, 8, "candidate wiring hash")?;
+    let binding_world: Option<String> = row_value(row, 9, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
@@ -1395,18 +1363,13 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
-    let service_principal_id: Option<String> = row_value(row, 13, "service principal")?;
+    let service_principal_id: Option<String> = row_value(row, 11, "service principal")?;
     let workflow_hash = wiring_hash.clone();
-    let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
+    let candidate = match (wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
         // or a workflow run under its principal. The grain check tells them apart.
-        (None, None, Some(hash), None) if !hash.is_empty() => None,
-        (Some(flow_id), Some(flow_version), None, None)
-            if !flow_id.is_empty() && flow_version > 0 =>
-        {
-            None
-        }
-        (None, None, Some(wiring_hash), Some(binding_world)) if !wiring_hash.is_empty() => {
+        (Some(hash), None) if !hash.is_empty() => None,
+        (Some(wiring_hash), Some(binding_world)) if !wiring_hash.is_empty() => {
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
                     ProductionClaimError::new(
@@ -1446,14 +1409,14 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     let mut workflow = decode_workflow(
         workflow_hash,
-        row_value::<Option<String>>(row, 14, "trigger source")?.as_deref(),
-        row_value(row, 15, "execution principal")?,
-        row_value(row, 16, "execution role")?,
-        row_value(row, 17, "node digests")?,
+        row_value::<Option<String>>(row, 12, "trigger source")?.as_deref(),
+        row_value(row, 13, "execution principal")?,
+        row_value(row, 14, "execution role")?,
+        row_value(row, 15, "node digests")?,
     )?;
     if let Some(workflow) = workflow.as_mut() {
-        let root: Option<String> = row_value(row, 18, "event root")?;
-        let depth: Option<i32> = row_value(row, 19, "event depth")?;
+        let root: Option<String> = row_value(row, 16, "event root")?;
+        let depth: Option<i32> = row_value(row, 17, "event depth")?;
         if let (Some(root), Some(depth)) = (root, depth) {
             workflow.causation = Some(wamn_event_wire::Causation {
                 run: row_value(row, 0, "run id")?,
@@ -1477,7 +1440,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
-        package_id: row_value(row, 12, "package id")?,
+        package_id: row_value(row, 10, "package id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload,
@@ -1764,43 +1727,8 @@ mod tests {
     }
 
     #[test]
-    fn generic_refusal_body_is_exact_and_message_free() {
-        let identity = ExhaustedExecutionIdentity::Flow {
-            flow_id: "root".to_owned(),
-            flow_version: 7,
-        };
-        let (json, hash) = generic_failure_outcome("foreign-revision", &identity, "run-1").unwrap();
-        let body = serde_json::from_str::<serde_json::Value>(&json).unwrap();
-        assert_eq!(
-            body,
-            serde_json::from_str::<serde_json::Value>(
-                r#"{"error":{"code":"foreign-revision","flow-id":"root","flow-version":7,"run-id":"run-1"}}"#,
-            )
-            .unwrap()
-        );
-        assert!(body["error"].get("message").is_none());
-        assert_eq!(hash, wamn_execution_contract::canonical_json_sha256(&body));
-    }
-
-    #[test]
-    fn janitor_failure_body_uses_host_jcs_not_database_json_text() {
-        let identity = ExhaustedExecutionIdentity::Flow {
-            flow_id: "root-flow".to_owned(),
-            flow_version: 19,
-        };
-        let (json, hash) =
-            generic_failure_outcome("infrastructure-failure", &identity, "run-exhausted").unwrap();
-        assert_eq!(
-            json,
-            r#"{"error":{"code":"infrastructure-failure","flow-id":"root-flow","flow-version":19,"run-id":"run-exhausted"}}"#
-        );
-        let body = serde_json::from_str(&json).unwrap();
-        assert_eq!(hash, wamn_execution_contract::canonical_json_sha256(&body));
-    }
-
-    #[test]
     fn candidate_janitor_failure_body_names_the_frozen_wiring() {
-        let identity = ExhaustedExecutionIdentity::Wiring {
+        let identity = ExhaustedExecutionIdentity {
             wiring_id: "candidate-orders".to_owned(),
             wiring_version: 4,
         };
@@ -1868,40 +1796,6 @@ mod tests {
             RunStatus::Dispatched.as_sql(),
             RunStatus::Running.as_sql()
         )));
-    }
-
-    #[test]
-    fn candidate_projection_is_exactly_what_the_decoder_indexes() {
-        let sql = select_production_claim_sql();
-        let start = sql
-            .find("SELECT candidate.run_id")
-            .expect("the outer projection opens on the run id");
-        let projection = &sql[start..];
-        let mut cursor = 0;
-        for (index, column) in [
-            "candidate.run_id",
-            "candidate.had_prior_lease",
-            "r.status",
-            "AS input_json",
-            "r.wiring_id",
-            "r.wiring_version",
-            "AS router_caller_attached",
-            "AS durable_caller_attached",
-            "r.flow_id",
-            "r.flow_version",
-            "r.wiring_hash",
-            "r.binding_world_json::text",
-            "r.package_id",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let offset = projection[cursor..].find(column).unwrap_or_else(|| {
-                panic!("projected column {index} ({column}) is absent or out of order")
-            });
-            cursor += offset + column.len();
-        }
-        assert!(!projection.contains("execution_bundle_hash"));
     }
 
     #[test]

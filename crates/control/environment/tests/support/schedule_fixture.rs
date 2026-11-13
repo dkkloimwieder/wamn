@@ -222,8 +222,8 @@ pub async fn fixture() -> Fixture {
              INSERT INTO platform.permission (role_name, permission) VALUES \
                ('reader', '{READ_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');
+             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
+               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
              INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
                VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))

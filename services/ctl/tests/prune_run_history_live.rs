@@ -130,9 +130,9 @@ async fn seed_run(admin: &Client, env_key: &str, run_id: &str, status: &str, age
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs ( \
-                   env_key, run_id, flow_id, flow_version, package_id, manifest_digest, \
+                   env_key, run_id, wiring_id,wiring_version,wiring_hash,binding_world_json, package_id, manifest_digest, \
                    environment, status, input_json, created_at \
-                 ) VALUES ($1, $2, 'f', 1, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
+                 ) VALUES ($1, $2, 'fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
                            jsonb_build_object('payload', $1::text), \
                            now() - ($4::bigint * interval '1 day'))"
             ),

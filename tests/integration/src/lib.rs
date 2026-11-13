@@ -20,3 +20,11 @@ mod write_log_live;
 
 #[cfg(test)]
 mod fixture_membership;
+
+#[cfg(test)]
+#[path = "../../../crates/platform/runtime/tests/support/session_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also serves verifier lifecycle tests."
+)]
+mod session_fixture;

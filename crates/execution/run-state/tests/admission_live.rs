@@ -169,12 +169,12 @@ fn surviving_authority_matrix_live() {
              INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment,durability_class) \
-             VALUES ('t1','dev','standard'); \
+               (env_key,expected_environment) \
+             VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
-             VALUES ('t1','run-1','legacy-flow',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
+             VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
              INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('t1','run-1');",
             manifest_hash = "a".repeat(64),
@@ -247,7 +247,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
-             'durability_class,env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
+             'env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
 idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
 package_id,registration_id,service_principal_id,status,trigger_source,wiring_hash,wiring_id,wiring_version', \
                   'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \
@@ -369,14 +369,14 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
                     ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment,durability_class) \
-             VALUES ('t1','dev','standard'); \
+               (env_key,expected_environment) \
+             VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
-             VALUES ('t1','run-b','legacy-flow',1,'cat',{release_2},'dev','legacy-wiring',1, \
+             VALUES ('t1','run-b','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_2},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'), \
-                    ('t1','run-a','legacy-flow',1,'cat',{release_1},'dev','legacy-wiring',1, \
+                    ('t1','run-a','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_1},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
              INSERT INTO wamn_run.run_queue (env_key,run_id,available_at) \
              VALUES ('t1','run-b',now() - interval '2 minutes'), \
@@ -429,11 +429,11 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         &url,
         &format!(
             "INSERT INTO wamn_run.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json, \
                 event_source_run_id,event_root_run_id,event_depth, \
                 execution_principal_id,execution_role,node_digests_json) \
-             VALUES ('t1','projection','f',1,'cat',{RELEASE_1},'dev','w',1,'dispatched','event', \
+             VALUES ('t1','projection','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{RELEASE_1},'dev','w',1,'dispatched','event', \
                '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}', \
                'source','trusted-root',2,'00000000-0000-0000-0000-000000000002', \
                'workflow','{{\"node\":\"sha256:frozen\"}}'); \
@@ -482,20 +482,18 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         &format!(
             "BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
              UPDATE run_queue SET available_at='infinity'; \
-             DO $test$ DECLARE source text; component bool; router bool; durable bool; \
+             DO $test$ DECLARE source text; router bool; durable bool; \
                selected record; identity text; BEGIN \
-               FOR source, component, router, durable IN VALUES \
-                 ('http',false,true,true),('internal',false,true,true),('studio',false,true,true), \
-                 ('scenario-draft',true,true,false),('test-case',true,true,false), \
-                 ('test-case',false,false,false) LOOP \
-                 identity := source || '-' || component::text; \
-                 INSERT INTO runs (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
+               FOR source, router, durable IN VALUES \
+                 ('http',true,true),('internal',true,true),('studio',true,true), \
+                 ('scenario-draft',true,false),('test-case',true,false) LOOP \
+                 identity := source; \
+                 INSERT INTO runs (env_key,run_id,package_id,manifest_digest, \
                    environment,wiring_id,wiring_version,wiring_hash,binding_world_json, \
                    status,trigger_source) \
-                 VALUES ('t1',identity,CASE WHEN component THEN NULL ELSE 'f' END, \
-                   CASE WHEN component THEN NULL ELSE 1 END,'cat',{RELEASE_1},'dev','w',1, \
-                   CASE WHEN component THEN 'sha256:' || repeat('d',64) END, \
-                   CASE WHEN component THEN '[]'::jsonb END,'dispatched',source); \
+                 VALUES ('t1',identity,'cat',{RELEASE_1},'dev','w',1, \
+                   'sha256:' || repeat('d',64), \
+                   '[]'::jsonb,'dispatched',source); \
                  INSERT INTO run_queue(env_key,run_id) VALUES ('t1',identity); \
                  EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                  ASSERT selected.run_id=identity, 'one eligible row is selected'; \

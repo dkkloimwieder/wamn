@@ -394,7 +394,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     project
         .batch_execute("INSERT INTO platform.environment(status) VALUES ('active')")
         .await?;
-    project.execute("INSERT INTO wamn_run.environment_policies(env_key,expected_environment,durability_class) VALUES ($1,'http','standard')", &[&env_key]).await?;
+    project.execute("INSERT INTO wamn_run.environment_policies(env_key,expected_environment) VALUES ($1,'http')", &[&env_key]).await?;
     let instance: u32 = project
         .query_one(
             "SELECT oid FROM pg_database WHERE datname=current_database()",
@@ -440,7 +440,6 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &policy.backup_cadence,
                 &policy.wal_retention,
                 &policy.hibernation,
-                &policy.durability_class.as_sql(),
             ],
         )
         .await?;

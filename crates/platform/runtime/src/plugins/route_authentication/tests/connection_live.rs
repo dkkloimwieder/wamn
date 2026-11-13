@@ -178,7 +178,6 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             pat.token(),
             "acme",
             "host-project",
-            "prod",
             &[ADMIN_ROLE],
         )
         .await

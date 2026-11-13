@@ -329,8 +329,8 @@ async fn fixture() -> Fixture {
                ('reader', '{START_REFERENCE}'), \
                ('clerk', '{START_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');
+             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
+               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
              INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
                VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
              CREATE TABLE application_data.orders (id text PRIMARY KEY, total int NOT NULL, status text NOT NULL);
@@ -712,7 +712,7 @@ impl Fixture {
                    FROM catalog.releases WHERE env_key = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
                    FROM platform.environment \
-                 UNION ALL SELECT format('policy %s %s', expected_environment, durability_class) \
+                 UNION ALL SELECT format('policy %s', expected_environment) \
                    FROM wamn_run.environment_policies WHERE env_key = $1 \
                  ORDER BY 1",
                 &[&ENV_KEY],

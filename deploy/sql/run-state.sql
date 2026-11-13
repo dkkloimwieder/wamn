@@ -158,12 +158,9 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id
-       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version
-       OR NEW.package_id IS DISTINCT FROM OLD.package_id
+    IF NEW.package_id IS DISTINCT FROM OLD.package_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
-       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
        OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
@@ -208,11 +205,10 @@ $$;
 REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 
 -- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
--- by `reconcile-run-plane`; admission reads only this local relation and freezes
--- the selected class onto the run row, so policy changes affect future runs only.
+-- by `reconcile-run-plane`; publication verifies the projected source identity.
 -- A project database is constant for (org, project, env), so expected_environment
 -- is verified, never selected as a second key. One tenant has one row; a missing
--- or mismatched projection refuses admission rather than inventing a decision.
+-- or mismatched projection refuses publication.
 -- The nullable source carriers make the additive migration honest for older
 -- rows: release publishing refuses an unattested row until the sole policy-copy
 -- writer fills both from the authoritative system policy.
@@ -223,9 +219,6 @@ CREATE TABLE wamn_run.environment_policies (
     updated_by uuid NOT NULL,
     env_key              text NOT NULL CHECK (env_key <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
-    durability_class    text NOT NULL
-        CONSTRAINT environment_policies_durability_class_check
-        CHECK (durability_class IN ('standard')),
     source_policy_org   text,
     source_policy_hash  text,
     PRIMARY KEY (env_key)
@@ -251,7 +244,7 @@ REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- runs: one row per flow execution. `input_json` is the admitted trigger
+-- runs: one row per workflow execution. `input_json` is the admitted trigger
 -- payload; `result_json` is the last node's output on
 -- completion; `state_json` carries transient run state such as bounded-retry
 -- scheduling and execution context. `idempotency_key` dedupes at-least-once
@@ -264,11 +257,6 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 CREATE TABLE wamn_run.runs (
     env_key         text NOT NULL CHECK (env_key <> ''),
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
-    -- Nullable legacy execution grain. New admissions leave both NULL and
-    -- carry the complete component-era wiring grain below; no migration
-    -- fabricates component provenance for historical flow rows.
-    flow_id         text,
-    flow_version    int,
     package_id      text NOT NULL,
     environment     text NOT NULL,
     attachment_id   text,
@@ -287,8 +275,8 @@ CREATE TABLE wamn_run.runs (
     service_principal_id uuid,
     -- A manual or schedule workflow run (docs/plan/workflows.md R3, R2):
     -- executed as this principal with this one role active, invoked by
-    -- `invoked_by` (what caused it) and `invoked_by_user_id` (the session or
-    -- PAT user of a manual run), and executing the component digest admission
+    -- `invoked_by` (what caused it) and `invoked_by_user_id` (the user of a
+    -- password session for a manual run), and executing the component digest admission
     -- froze for each node. Every other grain leaves the five columns NULL.
     execution_principal_id uuid,
     execution_role  text,
@@ -297,14 +285,7 @@ CREATE TABLE wamn_run.runs (
     node_digests_json jsonb,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
-    -- The environment policy selects the class at admission. The only class,
-    -- `standard`, uses queue leases without claim-time effect classification.
-    durability_class text NOT NULL DEFAULT 'standard'
-        CONSTRAINT runs_durability_class_check
-        CHECK (durability_class IN ('standard')),
-    -- Immutable execution identity selected from the trusted active-wiring
-    -- pointer by the admission transaction. Legacy rows remain NULL until the
-    -- post-drain cutover; admission never backfills them.
+    -- The admission transaction freezes the execution identity.
     wiring_id       text,
     wiring_version  int,
     wiring_hash     text,
@@ -386,37 +367,31 @@ CREATE TABLE wamn_run.runs (
       OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
           AND wiring_id <> '' AND wiring_version > 0)
     ),
-    -- Exactly one complete historical or component-era execution grain. The
-    -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
-    -- admitting a half-record. Existing flow rows stay truthful; they are not
-    -- backfilled with an identity that was never recorded. The later arms admit
-    -- stored event runs from a registration with no caller, and event, manual
-    -- and schedule workflow runs under
-    -- their executing principal and role.
+    -- Each run carries one complete execution identity. The explicit
+    -- IS NOT NULL arms prevent incomplete records.
     CONSTRAINT runs_execution_grain_check CHECK (
-      (flow_id IS NOT NULL AND flow_version IS NOT NULL
-       AND flow_id <> '' AND flow_version > 0
-       AND wiring_hash IS NULL
-       AND binding_world_json IS NULL)
-      OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+      (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
        AND wiring_id <> '' AND wiring_version > 0
        AND wiring_hash IS NOT NULL
        AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NOT NULL
        AND jsonb_typeof(binding_world_json) = 'array')
       OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'automation'
+      (trigger_source IS NOT NULL AND trigger_source IN ('http', 'internal', 'studio')
+       AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
+       AND wiring_id <> '' AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND manifest_digest IS NOT NULL
+       AND binding_world_json IS NULL)
+      OR
+      (trigger_source IS NOT DISTINCT FROM 'automation'
        AND service_principal_id IS NOT NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NULL)
       OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'event'
+      (trigger_source IS NOT DISTINCT FROM 'event'
        AND registration_id IS NOT NULL AND registration_id <> ''
        AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
@@ -424,8 +399,7 @@ CREATE TABLE wamn_run.runs (
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NULL)
       OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'event'
+      (trigger_source IS NOT DISTINCT FROM 'event'
        AND registration_id IS NULL
        AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
@@ -438,8 +412,7 @@ CREATE TABLE wamn_run.runs (
        AND invoked_by IS NOT NULL AND invoked_by <> ''
        AND binding_world_json IS NULL)
       OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'manual'
+      (trigger_source IS NOT DISTINCT FROM 'manual'
        AND registration_id IS NULL
        AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
@@ -454,8 +427,7 @@ CREATE TABLE wamn_run.runs (
        AND invoked_by_user_id IS NOT NULL
        AND binding_world_json IS NULL)
       OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'schedule'
+      (trigger_source IS NOT DISTINCT FROM 'schedule'
        AND registration_id IS NULL
        AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
@@ -493,7 +465,6 @@ CREATE TABLE wamn_run.runs (
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (env_key, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
-CREATE INDEX runs_flow ON wamn_run.runs (env_key, flow_id, created_at);
 CREATE INDEX runs_event_root ON wamn_run.runs (env_key, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (env_key, response_deadline_at)
@@ -523,8 +494,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF flow_id, flow_version, package_id, environment,
-                 capture_mode, durability_class, wiring_id, wiring_version,
+BEFORE UPDATE OF package_id, environment,
+                 capture_mode, wiring_id, wiring_version,
                  wiring_hash, binding_world_json, manifest_digest, service_principal_id,
                  execution_principal_id, execution_role, invoked_by, invoked_by_user_id,
                  node_digests_json
