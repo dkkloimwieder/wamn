@@ -14,7 +14,7 @@ use super::schema::{
 
 use super::{
     BareSchemaName, RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, rewrite_schema,
+    RunPlaneAction, RunPlaneActionType, RunPlaneObservation, RunPlanePlan, rewrite_schema,
 };
 
 use super::declarations::{
@@ -213,7 +213,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             .iter()
             .cloned();
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairRunCapturePrivilege,
+            type_: RunPlaneActionType::RepairRunCapturePrivilege,
             target: "runs.capture_mode".to_string(),
             sql: repair_run_capture_privilege_sql(schema, available_columns),
         });
@@ -230,7 +230,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             any_missing = true;
             creates.push(RunPlaneAction {
-                kind: RunPlaneActionKind::CreateTable,
+                type_: RunPlaneActionType::CreateTable,
                 target: table.clone(),
                 sql: rewrite_schema(&table_section(file, "wamn_run", &table), schema),
             });
@@ -238,7 +238,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
     if any_missing {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureSchema,
+            type_: RunPlaneActionType::EnsureSchema,
             target: schema.to_string(),
             sql: rewrite_schema(&schema_header_section(RUN_STATE_SQL, "wamn_run"), schema),
         });
@@ -255,7 +255,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             })
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairHelperFunction,
+                type_: RunPlaneActionType::RepairHelperFunction,
                 target: spec.name.to_string(),
                 sql: rewrite_schema(&spec.sql, schema),
             });
@@ -268,7 +268,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
             if !obs.catalog_tables.contains(&table) {
                 plan.actions.push(RunPlaneAction {
-                    kind: RunPlaneActionKind::CreateCatalogTable,
+                    type_: RunPlaneActionType::CreateCatalogTable,
                     target: table.clone(),
                     sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
                 });
@@ -276,7 +276,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     } else {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureCatalogSchema,
+            type_: RunPlaneActionType::EnsureCatalogSchema,
             target: "catalog".to_string(),
             sql: CATALOG_SCHEMA_SQL.to_string(),
         });
@@ -305,7 +305,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             )
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RemoveAppRunQueueAuthority,
+            type_: RunPlaneActionType::RemoveAppRunQueueAuthority,
             target: format!("{}.run_queue.app-authority", schema.as_str()),
             sql: format!(
                 "REVOKE ALL PRIVILEGES ON TABLE {}.run_queue FROM PUBLIC, wamn_app{column_revoke}",
@@ -463,7 +463,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         )
         .expect("writing to a String cannot fail");
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
+            type_: RunPlaneActionType::RepairAuthoringPrivilege,
             target: format!("{schema_name}.{}", spec.table),
             sql,
         });
@@ -486,7 +486,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                         quote_ident(&table),
                     );
                     plan.actions.push(RunPlaneAction {
-                        kind: RunPlaneActionKind::AddColumn,
+                        type_: RunPlaneActionType::AddColumn,
                         target: format!("{table}.{col}"),
                         sql: add_column_sql,
                     });
@@ -509,7 +509,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             != Some(&environment_policy_row_security_at_record())
     {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairRowSecurity,
+            type_: RunPlaneActionType::RepairRowSecurity,
             target: "environment_policies.row-security".to_string(),
             sql: repair_environment_policy_row_security_sql(schema),
         });
@@ -549,7 +549,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             String::new()
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairConstraint,
+            type_: RunPlaneActionType::RepairConstraint,
             target: format!("{}.{}", spec.table, spec.name),
             sql: format!(
                 "ALTER TABLE {}.{} {drop}ADD CONSTRAINT {} {}",
@@ -567,7 +567,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::DropExtraConstraint,
+                type_: RunPlaneActionType::DropExtraConstraint,
                 target: format!("{table}.{name}"),
                 sql: format!(
                     "ALTER TABLE {}.{} DROP CONSTRAINT {}",
@@ -612,7 +612,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             String::new()
         };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairTrigger,
+            type_: RunPlaneActionType::RepairTrigger,
             target: format!("{}.{}", spec.table, spec.name),
             sql: format!("{drop}{}", rewrite_schema(&spec.sql, schema)),
         });
@@ -622,7 +622,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
         {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::DropExtraTrigger,
+                type_: RunPlaneActionType::DropExtraTrigger,
                 target: format!("{table}.{name}"),
                 sql: format!(
                     "DROP TRIGGER {} ON {}.{}",
@@ -644,13 +644,13 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             match obs.indexes.get(&name) {
                 None => plan.actions.push(RunPlaneAction {
-                    kind: RunPlaneActionKind::CreateIndex,
+                    type_: RunPlaneActionType::CreateIndex,
                     target: name.clone(),
                     sql: rewrite_schema(&stmt, schema),
                 }),
                 Some(live_def) if index_definition_stale(file, &table, &stmt, live_def) => {
                     plan.actions.push(RunPlaneAction {
-                        kind: RunPlaneActionKind::RecreateIndex,
+                        type_: RunPlaneActionType::RecreateIndex,
                         target: name.clone(),
                         sql: format!(
                             "DROP INDEX {}.{}; {}",

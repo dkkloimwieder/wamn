@@ -10,15 +10,15 @@ use wash_runtime::wasmtime::component::Val;
 
 use super::native_call::NativeOutcome;
 
-/// A result transformation failure retains its original cause and result kind.
+/// A result transformation failure retains its original cause and result type.
 #[derive(Debug)]
 pub(super) struct SignedResultError {
-    kind: &'static str,
+    type_: &'static str,
     source: anyhow::Error,
 }
 impl std::fmt::Display for SignedResultError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sign {} operation result: {}", self.kind, self.source)
+        write!(f, "sign {} operation result: {}", self.type_, self.source)
     }
 }
 impl std::error::Error for SignedResultError {
@@ -38,13 +38,13 @@ where
     F: FnMut(Uuid, Duration) -> Fut + Send,
     Fut: Future<Output = anyhow::Result<String>> + Send,
 {
-    let kind = match &outcome {
+    let type_ = match &outcome {
         NativeOutcome::Json(_) => "JSON",
         NativeOutcome::Typed(_) => "typed",
     };
     sign_result_inner(outcome, reads, sign)
         .await
-        .map_err(|source| SignedResultError { kind, source })
+        .map_err(|source| SignedResultError { type_, source })
 }
 
 async fn sign_result_inner<F, Fut>(

@@ -24,4 +24,4 @@ SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.
 The container restarts in the same pod. The run waits for its old lease to expire. The lease lasts 30 seconds (`DEFAULT_QUEUE_LEASE_TTL_MS`).
 The restarted host then claims the run again with the next lease generation, and the run completes. Its queue row is gone.
 The bucket holds one label object for the run, because the killed attempt wrote no label.
-The run is `completed` with no failure kind, and it needs no operator action.
+The run is `completed` with no failure type, and it needs no operator action.

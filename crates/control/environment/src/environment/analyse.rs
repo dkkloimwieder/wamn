@@ -122,7 +122,7 @@ pub struct Notice {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Observation {
     PlatformSchema {
         report: wamn_package_control::schema_baseline::SchemaReport,

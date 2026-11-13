@@ -156,7 +156,7 @@ Evidence: `tools/repo-lint-dependencies:87`, `tools/repo-lint-dependencies:110`,
 
 Problem: The existing gate enforces selected edge, engine, and workflow boundaries through normal dependency trees. It does not encode the complete control/build separation or the six development back-edges. Measurements.md section 10 omits dependencies outside native workspace membership and includes optional declarations, so its rows cannot establish production reachability. For example, project-state’s catalog dependency belongs to `test-util`, while native dependencies on application-owned contract libraries disappear from the reduced graph.
 
-Rejected as written (owner review 2026-10-31): no extension of the check to three workspaces, dependency kinds and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
+Rejected as written (owner review 2026-10-31): no extension of the check to three workspaces, dependency types and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
 
 The small crates do not justify deletion by size alone. `wamn-pg-core` explicitly began as a cycle-free home for `Sql`, but now also owns identifier and qualified-name contracts. Evidence: `crates/platform/pg-core/src/lib.rs:17`, `crates/platform/pg-core/src/lib.rs:59`, `crates/platform/pg-core/src/lib.rs:171`, `crates/platform/pg-core/src/lib.rs:226`.
 

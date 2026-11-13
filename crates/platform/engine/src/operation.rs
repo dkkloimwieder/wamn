@@ -92,7 +92,7 @@ impl<P: InvocationPolicy> fmt::Debug for OperationCall<'_, P> {
 /// Call one export once, under the call's deadline, and return what the
 /// component returned. The caller lowers the result for its own entry.
 ///
-/// With an [`IntentContext`] of a kind that [`logs_intent`], the call logs one intent
+/// With an [`IntentContext`] of a type that [`logs_intent`], the call logs one intent
 /// for each input request element and runs only the new request elements ([`intent`]).
 pub async fn invoke_operation<H: ApplicationHost>(
     host: &H,
@@ -104,7 +104,7 @@ pub async fn invoke_operation<H: ApplicationHost>(
     let operation = call.operation;
     let facts = call.facts.clone();
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
-    let outcome = match intent.filter(|intent| logs_intent(intent.kind)) {
+    let outcome = match intent.filter(|intent| logs_intent(intent.type_)) {
         // The per request element loop holds a large future, so it lives on the heap.
         Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await?,
         None => Box::pin(run_export(host, call)).await?,

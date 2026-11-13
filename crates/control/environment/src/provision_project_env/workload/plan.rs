@@ -1,6 +1,6 @@
 use super::{
     DateTime, PLATFORM_GROUP_ROLE, SecondsFormat, Utc, WORKLOAD_CREDENTIAL_TTL_DAYS,
-    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType,
     validate_project_env,
 };
 
@@ -43,30 +43,30 @@ pub(in super::super) fn workload_lifecycle<'a>(
         project,
         environment,
     } = identity;
-    let scope = match family.scope_kind() {
+    let scope = match family.scope_type() {
         // Tenant scope for the guest credential: the digest in the role name IS
         // the tenant key, so the login the mint issues and the key
         // `wamn_authority.tenant_key` computes are the same string
         // (`wamn-0h0g.22.6.4`).
-        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey { env_key, database },
-        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleScopeType::EnvKey => WorkloadRoleScope::EnvKey { env_key, database },
+        WorkloadRoleScopeType::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+        WorkloadRoleScopeType::Control => WorkloadRoleScope::Control {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org { org, database },
+        WorkloadRoleScopeType::Org => WorkloadRoleScope::Org { org, database },
     };
     WorkloadLifecycle {
         family,
         scope,
-        control_env_key: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(env_key),
+        control_env_key: (family.scope_type() == WorkloadRoleScopeType::Control).then_some(env_key),
     }
 }
 

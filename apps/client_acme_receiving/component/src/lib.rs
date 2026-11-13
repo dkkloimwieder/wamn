@@ -86,8 +86,8 @@ fn emission(payload: String) -> Emission {
 }
 
 fn private_node_error(error: &AccessError) -> NodeError {
-    let kind = error.error_type();
-    let code = match kind {
+    let type_ = error.error_type();
+    let code = match type_ {
         AccessErrorType::InvalidInput => "invalid_input",
         AccessErrorType::Retry => "retry",
         AccessErrorType::Timeout => "timeout",
@@ -101,7 +101,7 @@ fn private_node_error(error: &AccessError) -> NodeError {
         message: error.context().to_owned(),
         code: Some(code.to_owned()),
     };
-    match kind {
+    match type_ {
         AccessErrorType::InvalidInput => NodeError::InvalidInput(detail),
         AccessErrorType::Retry | AccessErrorType::Timeout => NodeError::Retryable(detail),
         AccessErrorType::NotFound

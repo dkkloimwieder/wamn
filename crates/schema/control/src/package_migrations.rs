@@ -182,9 +182,9 @@ impl PackageMigrationError {
         self.actual_hash.as_deref()
     }
 
-    pub(crate) fn new(kind: PackageMigrationErrorType, context: impl Into<String>) -> Self {
+    pub(crate) fn new(type_: PackageMigrationErrorType, context: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into().into_boxed_str(),
             coordinate: None,
             path: None,

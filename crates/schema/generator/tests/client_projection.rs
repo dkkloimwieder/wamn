@@ -115,7 +115,7 @@ fn change(contracts: &mut Contracts, path: &str, pointer: &str, value: Value) {
 }
 
 #[test]
-fn declared_kind_and_record_mappings_bind_operations_with_unrelated_names() {
+fn declared_type_and_record_mappings_bind_operations_with_unrelated_names() {
     let (contracts, routes) = records();
     let ir = project(&contracts, &routes);
     assert_eq!(operation(&ir, "read_projection").type_, "get");

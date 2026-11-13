@@ -238,7 +238,7 @@ pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Valu
         .query_one(
             &format!(
                 "SELECT jsonb_build_object( \
-                    'kind',caller_outcome_type, 'body',caller_outcome_json, \
+                    'type',caller_outcome_type, 'body',caller_outcome_json, \
                     'status',caller_http_status, 'node',caller_release_node_id, \
                     'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
                    FROM {SCHEMA}.runs WHERE env_key=$1 AND run_id=$2"
@@ -258,7 +258,7 @@ pub async fn assert_callerless_terminal(
     assert_eq!(
         caller_fields(client, run_id).await?,
         json!({
-            "kind": null,
+            "type": null,
             "body": null,
             "status": null,
             "node": null,
@@ -276,7 +276,7 @@ pub async fn assert_prior_winner_terminal(
     winner: &Value,
 ) -> anyhow::Result<()> {
     assert_eq!(caller_fields(client, run_id).await?, *winner);
-    assert_eq!(winner["kind"], "responded");
+    assert_eq!(winner["type"], "responded");
     assert_eq!(winner["body"], json!({"winner": "prior"}));
     assert_eq!(winner["status"], 207);
     assert_eq!(winner["node"], "prior-node");

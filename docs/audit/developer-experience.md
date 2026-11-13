@@ -285,14 +285,14 @@ Risk: Cleanup must never remove another session's services. Prove concurrent sta
 
 Owner review 2026-10-31: keep, Group 2 Do. Bare `wamn dev` owns a private stack, and external endpoints are explicit overrides. F2-9 folds in here. Question 1 is answered: yes. Docker on Linux x86_64 is the supported host for now, the reviewer's pick for the owner to confirm.
 
-## Finding F2-6: Startup requires 22 input kinds that largely describe local machinery
+## Finding F2-6: Startup requires 22 input types that largely describe local machinery
 
 Severity: medium  
 Effort: M  
 Area: services/ctl/src/dev/up.rs  
 Evidence: `services/ctl/src/dev/up.rs:29`, `services/ctl/src/dev/up.rs:109`, `services/ctl/src/dev/up.rs:153`, `services/ctl/src/dev/command.rs:21`, `apps/wamn_receiving/tests/examples/delivery_timings.rs:338`
 
-Problem: `dev up` requires 22 input kinds through flags or environment variables, including four event credential pairs. Only the platform UI path has a value default. The optional `--overlay-root` controls the printed next command, but that next command requires it. Startup therefore exposes provisioning details before the developer can run an application.
+Problem: `dev up` requires 22 input types through flags or environment variables, including four event credential pairs. Only the platform UI path has a value default. The optional `--overlay-root` controls the printed next command, but that next command requires it. Startup therefore exposes provisioning details before the developer can run an application.
 
 Proposal: Take package identities, dependencies, components, schemas, and connection requirements from `wamn.k`. Take the coordinate, route host, and application map from `environment.k`. Default binary paths to siblings of `wamn`, resolve component paths from build output, and allocate a private session root and service ports. Generate local broker credentials and use the fixture's local values of one replica and a 120-second duplicate window. Keep connection instance selections and external credentials explicit.
 

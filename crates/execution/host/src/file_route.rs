@@ -29,7 +29,7 @@ use wamn_engine::flow_http_routing::{
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::PrincipalId;
 use wamn_runtime::plugins::wamn_blobstore::files::{
-    FileStorageError, FileStorageErrorKind, FileStore, MAX_URL_LIFETIME,
+    FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
@@ -153,11 +153,11 @@ impl From<tokio_postgres::Error> for FileError {
 }
 impl From<FileStorageError> for FileError {
     fn from(error: FileStorageError) -> Self {
-        let refusal = match error.kind {
-            FileStorageErrorKind::NotFound => Some(FileRefusal::NotFound),
-            FileStorageErrorKind::Refused => Some(FileRefusal::BindingRefused),
-            FileStorageErrorKind::Body => Some(FileRefusal::InvalidInput),
-            FileStorageErrorKind::Backend => None,
+        let refusal = match error.type_ {
+            FileStorageErrorType::NotFound => Some(FileRefusal::NotFound),
+            FileStorageErrorType::Refused => Some(FileRefusal::BindingRefused),
+            FileStorageErrorType::Body => Some(FileRefusal::InvalidInput),
+            FileStorageErrorType::Backend => None,
         };
         Self {
             refusal,

@@ -37,7 +37,7 @@ pub enum SessionErrorType {
     KeyFile,
 }
 
-/// A session failure with a stable kind and a diagnostic message.
+/// A session failure with a stable type and a diagnostic message.
 #[derive(Debug)]
 pub struct SessionError {
     type_: SessionErrorType,
@@ -45,9 +45,9 @@ pub struct SessionError {
 }
 
 impl SessionError {
-    fn new(kind: SessionErrorType, message: impl Into<Box<str>>) -> Self {
+    fn new(type_: SessionErrorType, message: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             message: message.into(),
         }
     }

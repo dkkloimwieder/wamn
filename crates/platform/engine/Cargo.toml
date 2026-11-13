@@ -23,7 +23,7 @@ wamn-run-state = { workspace = true }
 # platform component that runs it. Both crates are pure.
 wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-# A route request's credential kind reads the PAT prefix. The crate is pure.
+# A route request's credential type reads the PAT prefix. The crate is pure.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 # Route input schemas. A pure schema check with no I/O.

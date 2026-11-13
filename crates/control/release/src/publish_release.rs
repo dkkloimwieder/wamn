@@ -178,9 +178,9 @@ pub struct PublishManifestError {
 }
 
 impl PublishManifestError {
-    pub fn new(kind: PublishManifestErrorType, detail: impl Into<String>) -> Self {
+    pub fn new(type_: PublishManifestErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
             source: None,
         }
@@ -229,11 +229,11 @@ impl std::error::Error for PublishManifestError {
 pub type RouteContracts = BTreeMap<(String, String), RouteContract>;
 
 /// What a route takes from the generated contract `operation.json` of its
-/// operation: the kind, the relations a read reads, and the revision field of
+/// operation: the type, the relations a read reads, and the revision field of
 /// a `get`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteContract {
-    kind: OperationType,
+    type_: OperationType,
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     idempotency: Option<String>,
@@ -241,9 +241,9 @@ pub struct RouteContract {
 
 #[cfg(test)]
 impl From<OperationType> for RouteContract {
-    fn from(kind: OperationType) -> Self {
+    fn from(type_: OperationType) -> Self {
         Self {
-            kind,
+            type_,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
@@ -1161,7 +1161,7 @@ mod tests {
     ) -> ServingAttachment {
         let definition = serde_json::json!({
             "id": attachment_id,
-            "kind": "http",
+            "type": "http",
             "route": {"path": path},
         });
         let definition_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1320,7 +1320,7 @@ mod tests {
     fn release_publish_binds_each_attachment_hash_to_its_definition() {
         let definition = serde_json::json!({
             "id": "fixture-http",
-            "kind": "http",
+            "type": "http",
             "route": {"path": "/widget/get"},
         });
         let definition_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1355,7 +1355,7 @@ mod tests {
     fn release_publish_writes_no_route_host_and_refuses_an_authored_one() {
         let definition = serde_json::json!({
             "id": "fixture-http",
-            "kind": "http",
+            "type": "http",
             "route": {"path": "/widget/get"},
         });
         let authored_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1416,7 +1416,7 @@ mod tests {
             .expect("the attachment exists")
             .type_ = wamn_catalog::AttachmentType::Internal;
         let package_host = resolve_route_methods(&non_routed, &fixture_route_contracts(&authored))
-            .expect_err("every attachment kind refuses an authored route hostname");
+            .expect_err("every attachment type refuses an authored route hostname");
         assert_eq!(
             package_host.error_type(),
             PublishManifestErrorType::Document
@@ -1455,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn release_publish_writes_the_method_from_the_operation_kind() {
+    fn release_publish_writes_the_method_from_the_operation_type() {
         let route = |id: &str, operation: &str, path: &str| {
             let mut attachment = package_http_attachment(id, "source_fixture", id, operation, path);
             attachment.target = wamn_catalog::AttachmentTarget::Route {
@@ -1497,7 +1497,7 @@ mod tests {
                 ),
             ),
         ]);
-        let kinds: RouteContracts = [
+        let types: RouteContracts = [
             ("widget/get", OperationType::Get),
             ("widget/query", OperationType::Query),
             ("widget/load", OperationType::Projection),
@@ -1506,18 +1506,18 @@ mod tests {
             ("widget/flow", OperationType::Command),
         ]
         .into_iter()
-        .map(|(operation, kind)| {
+        .map(|(operation, type_)| {
             (
                 (
                     "source_fixture".to_owned(),
                     format!("source-fixture:{operation}@1.0.0"),
                 ),
-                RouteContract::from(kind),
+                RouteContract::from(type_),
             )
         })
         .collect();
         let resolved =
-            resolve_route_methods(&authored, &kinds).expect("every route resolves a method");
+            resolve_route_methods(&authored, &types).expect("every route resolves a method");
         for (id, method) in [
             ("get-http", "GET"),
             ("query-http", "GET"),
@@ -1530,7 +1530,7 @@ mod tests {
         }
 
         let unknown = resolve_route_methods(&authored, &BTreeMap::new())
-            .expect_err("a route to an operation with no contract kind refuses");
+            .expect_err("a route to an operation with no contract type refuses");
         assert_eq!(
             unknown.error_type(),
             PublishManifestErrorType::PackageManifest
@@ -1542,7 +1542,7 @@ mod tests {
             .expect("the attachment exists");
         get.definition["route"]["method"] = serde_json::json!("GET");
         refresh_definition_hash(get);
-        let refusal = resolve_route_methods(&authored_method, &kinds)
+        let refusal = resolve_route_methods(&authored_method, &types)
             .expect_err("an authored method refuses");
         assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
         assert!(

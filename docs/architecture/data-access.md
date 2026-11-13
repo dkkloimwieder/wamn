@@ -95,7 +95,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `audit_log.columns`, `.retention` | Application history policy. Retain. |
 | `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
 | Create `values` | Application value policy for a new record: the subset of an `enum_fields` list that a create accepts. The generated input contract states it, and states the model list for every other enum field, so a client and the generated route schema offer only those values. Retain. |
-| CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation kind and applicable database constraints. Remove from authored input. |
+| CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation type and applicable database constraints. Remove from authored input. |
 | `authored_sql.default`, `.variants[].field`, `.direction`, `.path` | Application selection of exact SQL for each supported ordering of a query that generation cannot write: one that joins, aggregates with `GROUP BY`, or windows with `OVER`. SQL files own statement bytes. Generation writes every variant of a query that its model's table alone answers from the declared filters, search and sort, and refuses `authored_sql` whose every variant reads only that table. Retain mappings for the others. |
 | `filters[].field`, `sort.fields`, `.directions`, `pagination.default_sort`, `.tie_breaker`, `limit.default`, `.minimum`, `.maximum` | Application query bounds and selection. Retain within supported generator rules. |
 | `filters[].match` | Application match mode of one filter. `exact` is the default and the contract leaves it unstated. `contains` and `prefix` match a part or the start of a text field with no `enum_fields` list. `range` takes one object with an optional inclusive `min` and `max`, on an int32, float64, numeric or timestamptz field. `is_null` takes one boolean on a nullable field: true keeps the empty rows. Generation refuses a mode on any other field. The generated query SQL implements the mode, and authored query SQL must implement the mode that its filter declares. Retain. |
@@ -856,7 +856,7 @@ Only the consumer schema requires CDC capture.
 ### Actors
 
 The actor is the `platform."user"` id of the executing principal, never the credential.
-The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each kind of delivery.
+The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each type of delivery.
 A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
@@ -1048,12 +1048,12 @@ The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provi
 `identity.principals.type` is `user`, `service`, or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
-It also refuses a `wamn:` display name on another kind, and the subject pattern of another kind refuses a colon.
+It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
 Only `wamn:provisioning` writes in the system database, so the schema creates only its row.
 The schema binds `wamn:provisioning` for the transaction that creates the row, so the row stamps itself.
 A platform principal cannot authenticate.
-The `identity.pats` foreign key carries the principal kind, and a CHECK refuses a token for a platform principal.
-Every path that turns a stored principal into a caller also refuses the platform kind.
+The `identity.pats` foreign key carries the principal type, and a CHECK refuses a token for a platform principal.
+Every path that turns a stored principal into a caller also refuses the platform type.
 
 The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
 wamn-identity issues each token in its own transaction.
@@ -1205,11 +1205,11 @@ Cursor numerics preserve their PostgreSQL scale.
 Constraint and ordinary-index names follow this pattern unless an explicit shorter name is required:
 
 ```text
-<table>_<column_1>[_<column_n>]_<kind>
+<table>_<column_1>[_<column_n>]_<type>
 ```
 
 Columns appear in table-definition order.
-Kinds are `pkey`, `key`, `fkey`, `check`, and `idx` for primary, unique, foreign, check, and ordinary-index objects.
+Types are `pkey`, `key`, `fkey`, `check`, and `idx` for primary, unique, foreign, check, and ordinary-index objects.
 Names must contain fewer than 64 bytes.
 The author supplies an explicit shorter name when needed. Tools do not silently abbreviate or accept PostgreSQL truncation.
 

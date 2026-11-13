@@ -40,10 +40,10 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 
 /// One anonymous route of the tenant's release.
 fn release() -> anyhow::Result<Arc<LoadedRelease>> {
-    let definition = json!({"id": ROUTE, "kind": "http", "route": {
+    let definition = json!({"id": ROUTE, "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase/read", "method": "POST"
     }});
-    let wiring_route = json!({"id": "purchase-http", "kind": "http", "route": {
+    let wiring_route = json!({"id": "purchase-http", "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
     let attachment: Value = json!({"type": "http", "package-id": "status_test",

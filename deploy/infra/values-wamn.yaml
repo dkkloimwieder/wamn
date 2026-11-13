@@ -1,6 +1,6 @@
 # Helm values for the CLUSTER-SINGLETON runtime-operator release (S1).
 #
-# TWO KINDS OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
+# TWO TYPES OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
 # first of them (rulings wamn-0h0g.13.49 + .13.50, bead wamn-0h0g.15.15):
 #
 #   1. THIS FILE — the operator and its five CRDs.

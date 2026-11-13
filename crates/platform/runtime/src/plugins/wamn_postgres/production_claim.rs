@@ -1039,7 +1039,7 @@ async fn complete_in_transaction(
 fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionClaimError> {
     let code: String = row_value(row, 0, "caller release result")?;
     let status: Option<String> = row_value(row, 1, "caller release run status")?;
-    let kind: Option<String> = row_value(row, 2, "caller outcome kind")?;
+    let type_: Option<String> = row_value(row, 2, "caller outcome type")?;
     let body_text: Option<String> = row_value(row, 3, "caller outcome body")?;
     let body = body_text
         .map(|body| serde_json::from_str(&body))
@@ -1067,7 +1067,7 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
     CallerReleaseResult::from_parts(
         &code,
         status.as_deref().unwrap_or_default(),
-        kind,
+        type_,
         body,
         http_status,
         release_node_id,

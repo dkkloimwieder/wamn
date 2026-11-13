@@ -310,8 +310,8 @@ pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
 /// Whether this import's PACKAGE is a registered capability, at any version.
 ///
 /// Distinct from [`import_posture`], which matches package AND version. Some
-/// callers need to know what KIND of thing an import is — a platform
-/// capability versus a cross-package application call — and that kind does not
+/// callers need to know what TYPE of thing an import is — a platform
+/// capability versus a cross-package application call — and that type does not
 /// change with the version. A `wasi:clocks` import at an unregistered version
 /// is still a platform capability; it is admission's job to refuse the
 /// version, not this classifier's job to reclassify it as an application call.

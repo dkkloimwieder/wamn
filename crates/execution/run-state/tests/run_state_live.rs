@@ -321,7 +321,7 @@ fn run_state_live() {
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
                    'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
-           ASSERT replayed.outcome_type = 'responded', 'stored kind returned'; \
+           ASSERT replayed.outcome_type = 'responded', 'stored type returned'; \
          END $test$; COMMIT;",
         executor_preamble(),
         release

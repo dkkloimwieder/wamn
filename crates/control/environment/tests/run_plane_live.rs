@@ -28,7 +28,7 @@ use wamn_environment_control::reconcile_run_plane::{
     ReconcileTargetErrorType,
 };
 use wamn_environment_control::verification_policy::project_environment_policy;
-use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
+use wamn_schema_control::{BareSchemaName, RunPlaneActionType, rewrite_schema};
 use wamn_test_infrastructure::locked_database;
 
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
@@ -1050,7 +1050,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             .await
             .unwrap_or_else(|error| panic!("observe {mutant} mutant: {error}"));
         assert_eq!(dry.actions.len(), 1, "{mutant}: {:#?}", dry.actions);
-        assert_eq!(dry.actions[0].kind, RunPlaneActionKind::RepairRowSecurity);
+        assert_eq!(dry.actions[0].type_, RunPlaneActionType::RepairRowSecurity);
         assert_eq!(dry.actions[0].target, "environment_policies.row-security");
 
         let applied = reconcile_run_plane::reconcile(su, &schema, true)

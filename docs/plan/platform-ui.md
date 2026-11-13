@@ -3,7 +3,7 @@
 **Design baseline:** `main` at `3a81dcfec`  
 **Repository when Revision 9 was prepared:** `main` at `8a5182be3`  
 **Revision:** 9, after the 2026-09-29 reviews and owner rulings  
-**Status:** architecture accepted. Platform UI implementation remains gated on the accepted and completed `kind` → `type` precursor.
+**Status:** architecture accepted. The platform uses `type` for variant names.
 
 [Operator clients](../architecture/execution.md#operator-clients) and [organization membership and administration](../architecture/overview.md#organization-membership-and-administration) own the current references. Section 5 is superseded by [environment lifecycle](../architecture/overview.md#environment-lifecycle).
 

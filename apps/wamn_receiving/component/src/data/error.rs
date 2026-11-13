@@ -166,9 +166,9 @@ impl AccessError {
         constraint: Option<&str>,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let (kind, constraint) = classify(type_, constraint, allowed_constraints);
+        let (type_, constraint) = classify(type_, constraint, allowed_constraints);
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             constraint,
             field: None,
@@ -179,9 +179,9 @@ impl AccessError {
         }
     }
 
-    fn new(kind: AccessErrorType, context: impl Into<Box<str>>) -> Self {
+    fn new(type_: AccessErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             constraint: None,
             field: None,
@@ -261,8 +261,11 @@ fn classify(
     }
 }
 
-fn named_violation(kind: AccessErrorType, constraint: &str) -> (AccessErrorType, Option<Box<str>>) {
-    (kind, Some(constraint.into()))
+fn named_violation(
+    type_: AccessErrorType,
+    constraint: &str,
+) -> (AccessErrorType, Option<Box<str>>) {
+    (type_, Some(constraint.into()))
 }
 
 #[cfg(test)]
@@ -289,16 +292,16 @@ mod tests {
             (StatementErrorType::ExclusionViolation, "hidden_exclusion"),
         ];
 
-        for (kind, constraint) in errors {
+        for (type_, constraint) in errors {
             assert_eq!(
-                classify(kind, Some(constraint), AllowedConstraints::NONE),
+                classify(type_, Some(constraint), AllowedConstraints::NONE),
                 (AccessErrorType::InternalError, None)
             );
         }
     }
 
     #[test]
-    fn operation_contract_exposes_only_exact_names_of_the_expected_kind() {
+    fn operation_contract_exposes_only_exact_names_of_the_expected_type() {
         let accepted = [
             (
                 (StatementErrorType::UniqueViolation, "allowed_unique"),
@@ -321,9 +324,10 @@ mod tests {
             ),
         ];
 
-        for ((error, expected_constraint), expected_kind) in accepted {
-            let (kind, constraint) = classify(error, Some(expected_constraint), UPDATE_CONSTRAINTS);
-            assert_eq!(kind, expected_kind);
+        for ((error, expected_constraint), expected_type) in accepted {
+            let (type_, constraint) =
+                classify(error, Some(expected_constraint), UPDATE_CONSTRAINTS);
+            assert_eq!(type_, expected_type);
             assert_eq!(constraint.as_deref(), Some(expected_constraint));
         }
 
@@ -340,9 +344,9 @@ mod tests {
             (StatementErrorType::UniqueViolation, "allowed_exclusion"),
         ];
 
-        for (kind, constraint) in rejected {
+        for (type_, constraint) in rejected {
             assert_eq!(
-                classify(kind, Some(constraint), UPDATE_CONSTRAINTS),
+                classify(type_, Some(constraint), UPDATE_CONSTRAINTS),
                 (AccessErrorType::InternalError, None)
             );
         }
@@ -388,10 +392,10 @@ mod tests {
             );
         }
 
-        for (kind, expected_kind) in cases {
+        for (type_, expected_type) in cases {
             assert_eq!(
-                classify(kind, None, AllowedConstraints::NONE),
-                (expected_kind, None)
+                classify(type_, None, AllowedConstraints::NONE),
+                (expected_type, None)
             );
         }
     }

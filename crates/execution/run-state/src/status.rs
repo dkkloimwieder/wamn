@@ -1,4 +1,4 @@
-//! The persisted status/kind vocabularies — the storage-literal side of the
+//! The persisted status/type vocabularies — the storage-literal side of the
 //! engine's execution taxonomy. Each maps 1:1 to a `text` column value via
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
 //! tied to `deploy/sql/run-state.sql` by a drift-guard test).
@@ -142,7 +142,7 @@ impl NodeRunStatus {
     }
 }
 
-/// A completed node-run's classified failure kind for run history.
+/// A completed node-run's classified failure type for run history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeErrorType {

@@ -84,9 +84,9 @@ pub struct ComponentProjectionError {
 }
 
 impl ComponentProjectionError {
-    fn new(kind: ComponentProjectionErrorType, detail: impl Into<String>) -> Self {
+    fn new(type_: ComponentProjectionErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }

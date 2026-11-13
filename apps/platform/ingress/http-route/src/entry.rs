@@ -7,12 +7,12 @@ use serde_json::{Value, json};
 use crate::entry_response::{refusal, resolved, uncertain, with_request_id};
 
 use super::bindings::wamn::flow_http_routing::routing::{
-    AuthenticatedCaller, EtagKind, RouteDefinition,
+    AuthenticatedCaller, EtagType, RouteDefinition,
 };
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
 use super::bindings::wamn::{application_dispatch::dispatch, operation::operation};
 use super::{
-    DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryReport,
+    DeliveryError, DeliveryFailure, DeliveryFailureType, DeliveryOutcome, DeliveryReport,
     DeliveryRequest,
 };
 
@@ -72,7 +72,7 @@ pub(super) async fn deliver(
 
 fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String> {
     let inputs = route.etag_inputs.as_ref()?;
-    let EtagKind::List(relations) = &inputs.kind else {
+    let EtagType::List(relations) = &inputs.type_ else {
         return None;
     };
     let position = position?;
@@ -128,7 +128,7 @@ async fn execute(
                     .await
                     .map_err(|error| boundary(&error, operation_id))?;
                 if let Some(inputs) = &route.etag_inputs
-                    && let EtagKind::Get(field) = &inputs.kind
+                    && let EtagType::Get(field) = &inputs.type_
                     && let Some(request_elements) = result.as_array()
                     && let [request_element] = request_elements.as_slice()
                     && let Some(revision) = request_element
@@ -350,7 +350,7 @@ fn wants_list_etag(route: &RouteDefinition) -> bool {
     route
         .etag_inputs
         .as_ref()
-        .is_some_and(|inputs| matches!(inputs.kind, EtagKind::List(_)))
+        .is_some_and(|inputs| matches!(inputs.type_, EtagType::List(_)))
 }
 
 async fn read_call(
@@ -388,22 +388,22 @@ fn boundary(error: &operation::Refusal, id: &str) -> DeliveryError {
 
 fn invalid(message: &str) -> DeliveryOutcome {
     DeliveryOutcome::Failed(DeliveryFailure {
-        kind: DeliveryFailureKind::InvalidInput,
+        type_: DeliveryFailureType::InvalidInput,
         code: Some("invalid_input".into()),
         message: message.into(),
     })
 }
 
 fn node_failure(error: NodeError) -> DeliveryOutcome {
-    let (kind, detail) = match error {
-        NodeError::InvalidInput(detail) => (DeliveryFailureKind::InvalidInput, detail),
-        NodeError::Terminal(detail) => (DeliveryFailureKind::Terminal, detail),
-        NodeError::Retryable(detail) => (DeliveryFailureKind::RetryExhausted, detail),
-        NodeError::RateLimited(limited) => (DeliveryFailureKind::RetryExhausted, limited.detail),
+    let (type_, detail) = match error {
+        NodeError::InvalidInput(detail) => (DeliveryFailureType::InvalidInput, detail),
+        NodeError::Terminal(detail) => (DeliveryFailureType::Terminal, detail),
+        NodeError::Retryable(detail) => (DeliveryFailureType::RetryExhausted, detail),
+        NodeError::RateLimited(limited) => (DeliveryFailureType::RetryExhausted, limited.detail),
         NodeError::Cancelled => return DeliveryOutcome::Cancelled,
     };
     DeliveryOutcome::Failed(DeliveryFailure {
-        kind,
+        type_,
         code: detail.code,
         message: detail.message,
     })

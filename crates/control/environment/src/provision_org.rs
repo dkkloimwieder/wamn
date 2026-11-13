@@ -242,7 +242,7 @@ async fn record_org_rows(
         ))
         .await
         .context("bind wamn:provisioning as the actor")?;
-    let placement_type = org.placement.kind_str();
+    let placement_type = org.placement.type_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
     client
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn templates_drive_placement_and_cluster_shape() {
         let (pooled, _) = Template::trials().stamp("trialco", "wamn-pg");
-        assert_eq!(pooled.placement.kind_str(), "pooled");
+        assert_eq!(pooled.placement.type_str(), "pooled");
         assert_eq!(pooled.placement.pool(), Some("wamn-pg"));
         assert!(
             one_org_registry(&Template::trials(), "trialco")
@@ -377,7 +377,7 @@ mod tests {
         );
 
         let (std_org, _) = Template::standard().stamp("acme", "wamn-pg");
-        assert_eq!(std_org.placement.kind_str(), "dedicated");
+        assert_eq!(std_org.placement.type_str(), "dedicated");
         let set = wamn_control_provision::org::render_org_cluster_set(
             &std_org,
             &Template::standard().policies,

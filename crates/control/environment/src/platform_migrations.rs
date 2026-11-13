@@ -87,7 +87,7 @@ async fn warnings(
             );
             let column = (mutation.definition_type() == DefinitionType::Field)
                 .then_some(mutation.definition());
-            let (kind, member) = match mutation.definition_type() {
+            let (type_, member) = match mutation.definition_type() {
                 DefinitionType::Relation => ("table", String::new()),
                 DefinitionType::Field => (
                     "column",
@@ -105,7 +105,7 @@ async fn warnings(
                 ),
             };
             warnings.push(format!(
-                "{} removes {kind} {relation}{member}. Inspect {consumers} consumers.",
+                "{} removes {type_} {relation}{member}. Inspect {consumers} consumers.",
                 file.relative_path
             ));
             for row in client

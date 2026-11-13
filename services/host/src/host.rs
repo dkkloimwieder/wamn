@@ -934,7 +934,7 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 /// error) hands the first connect to the client's own retry, so the host
 /// starts while NATS is down; a refused credential or TLS setup fails startup,
 /// because no probe would show a host that never connects. A `ClientError`
-/// event carries only the error kind, so each line also counts the failed
+/// event carries only the error type, so each line also counts the failed
 /// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
 /// The data client and its `name`: the connection of the host's own code by the
@@ -3745,7 +3745,7 @@ host:
                     definition_hash: DefinitionHash::parse(RELEASE_DIGEST).unwrap(),
                     definition: serde_json::json!({
                         "id": "orders",
-                        "kind": "http",
+                        "type": "http",
                         "source-id": "public",
                         "route": {"path": "/orders", "method": "POST"}
                     }),

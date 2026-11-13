@@ -58,7 +58,7 @@ impl WebManifest {
 }
 
 #[derive(Debug)]
-enum WebArtifactErrorKind {
+enum WebArtifactErrorType {
     Build,
     Pack,
     Push,
@@ -69,7 +69,7 @@ enum WebArtifactErrorKind {
 /// A web artifact failure with its action, path or reference, and source.
 #[derive(Debug)]
 pub struct WebArtifactError {
-    kind: WebArtifactErrorKind,
+    type_: WebArtifactErrorType,
     context: String,
     source: anyhow::Error,
 }
@@ -79,7 +79,7 @@ impl std::fmt::Display for WebArtifactError {
         write!(
             f,
             "web artifact {:?} {}: {:#}",
-            self.kind, self.context, self.source
+            self.type_, self.context, self.source
         )
     }
 }
@@ -134,7 +134,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Build,
+        type_: WebArtifactErrorType::Build,
         context: package_root.display().to_string(),
         source,
     })
@@ -156,7 +156,7 @@ pub struct PackedWebArtifact {
 /// Refuses invalid metadata, a missing index, links, special files, or unreadable files.
 pub fn pack_web_artifact(root: &Path) -> Result<PackedWebArtifact, WebArtifactError> {
     pack_web(root).map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Pack,
+        type_: WebArtifactErrorType::Pack,
         context: root.display().to_string(),
         source,
     })
@@ -241,13 +241,13 @@ fn artifact_files(
     files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
 ) -> anyhow::Result<()> {
     let path = root.join(relative);
-    let kind = std::fs::symlink_metadata(&path)?.file_type();
+    let type_ = std::fs::symlink_metadata(&path)?.file_type();
     ensure!(
-        kind.is_dir() || kind.is_file(),
+        type_.is_dir() || type_.is_file(),
         "web artifact path {} is not a regular file or directory",
         path.display()
     );
-    if kind.is_dir() {
+    if type_.is_dir() {
         for entry in std::fs::read_dir(&path)? {
             artifact_files(root, &relative.join(entry?.file_name()), files)?;
         }
@@ -294,7 +294,7 @@ pub async fn push_web_artifact(
         Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))
     })()
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Push,
+        type_: WebArtifactErrorType::Push,
         context: format!("{}:{}", registry.artifact_base, packed.tag),
         source,
     })?;
@@ -349,7 +349,7 @@ pub async fn push_archive(
             disposition,
         })
     }.await.map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Push,
+        type_: WebArtifactErrorType::Push,
         context: repository.reference.to_string(),
         source,
     })
@@ -379,7 +379,7 @@ async fn pull_web(
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Pull,
+        type_: WebArtifactErrorType::Pull,
         context: format!("{}@{digest}", registry.artifact_base),
         source,
     })
@@ -462,7 +462,7 @@ pub async fn upload_web_artifact(
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Upload,
+        type_: WebArtifactErrorType::Upload,
         context: format!("{}@{digest} to {bucket}", registry.artifact_base),
         source,
     })

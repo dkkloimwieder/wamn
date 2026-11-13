@@ -615,7 +615,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// # The grains, and why each is the one it is
 ///
 /// * `catalog`: `USAGE` plus TABLE-grain `SELECT` on
-///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any kind.
+///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any type.
 /// * `runs`: TABLE-grain `SELECT` because `transitions::FENCED_PREFIX` locks the
 ///   row with `SELECT r.*`, and COLUMN-grain `UPDATE` over
 ///   [`EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS`]. The admission pins, the wiring
@@ -872,7 +872,7 @@ pub fn grant_registry_reader_surface_sql() -> String {
 /// deliberately when that route did exist, and the grant then drifted
 /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
 /// the identity service’s
-/// `only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501` decides
+/// `only_the_mounted_types_have_a_route_and_the_rest_answer_a_bare_501` decides
 /// the mounted route list by CALLING route selection, so a re-mounted session
 /// route changes an answer that test reads. The write privilege such a route
 /// would need is pinned separately by

@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScopeKind};
+use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScopeType};
 use wamn_digest::bytes_sha256;
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
@@ -1222,7 +1222,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     };
     let mut credential_checks = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+        .filter(|family| family.scope_type() != WorkloadRoleScopeType::Control)
     {
         let mut project_admin = url::Url::parse(system.url())?;
         project_admin.set_path(&database_name);
@@ -1250,8 +1250,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         run_workload_action(&request).await?;
         let secret: serde_json::Value =
             serde_json::from_slice(&std::fs::read(request.secret.unwrap())?)?;
-        let credential_url = match family.secret_body_kind() {
-            wamn_control_provision::WorkloadSecretBodyKind::SessionTarget => {
+        let credential_url = match family.secret_body_type() {
+            wamn_control_provision::WorkloadSecretBodyType::SessionTarget => {
                 wamn_control_provision::session_target::SessionTarget::from_json(
                     secret["stringData"]
                         [wamn_control_provision::session_target::SESSION_TARGET_KEY]

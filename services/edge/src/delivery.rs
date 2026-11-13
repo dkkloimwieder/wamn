@@ -154,7 +154,7 @@ impl EdgeDelivery {
                 tenant: &self.tenant,
                 release: &release,
                 package: &target.package_id,
-                kind: route.type_,
+                type_: route.type_,
                 key_field: route.idempotency.as_deref(),
             });
         let result = async {

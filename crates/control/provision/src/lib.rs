@@ -122,7 +122,7 @@ pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
     SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError,
-    WorkloadRoleScopeKind, WorkloadSecretBodyKind, workload_generation_role,
+    WorkloadRoleScopeType, WorkloadSecretBodyType, workload_generation_role,
     workload_role_scope_hash,
 };
 

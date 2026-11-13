@@ -96,7 +96,7 @@ pub struct DeliveryRequest<Caller> {
 
 /// Stable router failure classes preserved by the delivery bridge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeliveryFailureKind {
+pub enum DeliveryFailureType {
     Terminal,
     RetryExhausted,
     InvalidInput,
@@ -110,7 +110,7 @@ pub enum DeliveryFailureKind {
 /// A routed failure with no retired node or flow coordinate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryFailure {
-    pub kind: DeliveryFailureKind,
+    pub type_: DeliveryFailureType,
     pub code: Option<String>,
     pub message: String,
 }
@@ -829,7 +829,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         DeliveryOutcome::Emit(_) => error_response(500, "http-route-emitted"),
         DeliveryOutcome::Discard => error_response(500, "http-route-discarded"),
         DeliveryOutcome::Failed(failure) => {
-            let status = if failure.kind == DeliveryFailureKind::InvalidInput {
+            let status = if failure.type_ == DeliveryFailureType::InvalidInput {
                 400
             } else {
                 500
@@ -839,7 +839,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
                 failure
                     .code
                     .as_deref()
-                    .unwrap_or(failure_kind_code(failure.kind)),
+                    .unwrap_or(failure_type_code(failure.type_)),
                 Some(&failure.message),
                 None,
             )
@@ -921,16 +921,16 @@ fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     }
 }
 
-fn failure_kind_code(kind: DeliveryFailureKind) -> &'static str {
-    match kind {
-        DeliveryFailureKind::Terminal => "terminal",
-        DeliveryFailureKind::RetryExhausted => "retry-exhausted",
-        DeliveryFailureKind::InvalidInput => "invalid-input",
-        DeliveryFailureKind::HopLimit => "hop-limit",
-        DeliveryFailureKind::UnreleasedCaller => "unreleased-caller",
-        DeliveryFailureKind::MissingDedupId => "missing-dedup-id",
-        DeliveryFailureKind::RespondWithoutCaller => "respond-without-caller",
-        DeliveryFailureKind::SecondVerdict => "second-verdict",
+fn failure_type_code(type_: DeliveryFailureType) -> &'static str {
+    match type_ {
+        DeliveryFailureType::Terminal => "terminal",
+        DeliveryFailureType::RetryExhausted => "retry-exhausted",
+        DeliveryFailureType::InvalidInput => "invalid-input",
+        DeliveryFailureType::HopLimit => "hop-limit",
+        DeliveryFailureType::UnreleasedCaller => "unreleased-caller",
+        DeliveryFailureType::MissingDedupId => "missing-dedup-id",
+        DeliveryFailureType::RespondWithoutCaller => "respond-without-caller",
+        DeliveryFailureType::SecondVerdict => "second-verdict",
     }
 }
 

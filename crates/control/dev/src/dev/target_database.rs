@@ -475,16 +475,16 @@ impl fmt::Debug for TargetDatabaseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TargetDatabaseError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("remedy", &self.remedy)
             .finish_non_exhaustive()
     }
 }
 
 impl TargetDatabaseError {
-    fn new(kind: TargetDatabaseErrorType, remedy: &'static str) -> Self {
+    fn new(type_: TargetDatabaseErrorType, remedy: &'static str) -> Self {
         Self {
-            type_: kind,
+            type_,
             remedy,
             source: None,
         }

@@ -38,7 +38,7 @@ fn status_sql_literals_round_trip() {
 }
 
 #[test]
-fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
+fn persisted_fail_type_vocabulary_is_exact_and_alias_free() {
     const EXPECTED: [&str; 11] = [
         "terminal",
         "retry-exhausted",
@@ -55,11 +55,11 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
 
     assert_eq!(FailType::ALL.map(FailType::as_sql), EXPECTED);
     for literal in EXPECTED {
-        let kind = FailType::from_sql(literal).expect("frozen fail_type literal parses");
-        assert_eq!(serde_json::to_value(kind).unwrap(), json!(literal));
+        let type_ = FailType::from_sql(literal).expect("frozen fail_type literal parses");
+        assert_eq!(serde_json::to_value(type_).unwrap(), json!(literal));
         assert_eq!(
             serde_json::from_value::<FailType>(json!(literal)).unwrap(),
-            kind
+            type_
         );
     }
 
@@ -289,7 +289,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     .expect("writing to a String cannot fail");
     // The installed fail_type CHECK, asked for its literal set like the status one.
     script.push_str(
-        "SELECT 'fail-kind-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
+        "SELECT 'fail-type-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
          FROM (\n\
            SELECT hit.parts[1] AS literal\n\
            FROM pg_constraint AS con\n\
@@ -380,10 +380,10 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let stdout = String::from_utf8(out.stdout).expect("psql stdout is UTF-8");
     let mut answers = std::collections::BTreeMap::new();
     let mut installed = None;
-    let mut fail_kinds = None;
+    let mut fail_types = None;
     for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix("fail-kind-installed ") {
-            fail_kinds = Some(rest.to_string());
+        if let Some(rest) = line.strip_prefix("fail-type-installed ") {
+            fail_types = Some(rest.to_string());
         }
         if let Some(rest) = line.strip_prefix("status-answer ") {
             let (literal, answer) = rest
@@ -422,7 +422,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let mut fail_vocabulary = FailType::ALL.map(FailType::as_sql);
     fail_vocabulary.sort_unstable();
     assert_eq!(
-        fail_kinds.as_deref(),
+        fail_types.as_deref(),
         Some(fail_vocabulary.join(" ").as_str()),
         "the installed runs fail_type CHECK admits a different vocabulary than FailType::ALL"
     );

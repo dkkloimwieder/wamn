@@ -141,7 +141,7 @@ struct TableParts {
 struct RelationRow {
     schema: String,
     name: String,
-    kind: String,
+    type_: String,
     persistence: String,
     access_method: Option<String>,
     row_security: bool,
@@ -192,7 +192,7 @@ struct ConstraintRow {
     schema: String,
     table: String,
     name: String,
-    kind: String,
+    type_: String,
     columns: Vec<i16>,
     referenced_schema: Option<String>,
     referenced_table: Option<String>,
@@ -844,12 +844,12 @@ fn database_error(
 }
 
 fn ir_error(schema: &str, object: &str, error: &IrError) -> PostgresIntrospectionError {
-    let kind = match error.error_type() {
+    let type_ = match error.error_type() {
         IrErrorType::EmptyName => PostgresIntrospectionErrorType::UnsupportedConstraint,
         IrErrorType::UnsupportedType => PostgresIntrospectionErrorType::UnsupportedColumnType,
         IrErrorType::UnsupportedDefault => PostgresIntrospectionErrorType::UnsupportedColumnDefault,
     };
-    refusal(kind, Some(schema), Some(object), error.to_string())
+    refusal(type_, Some(schema), Some(object), error.to_string())
 }
 
 fn configured_schemas(application_schemas: &[&str]) -> Vec<String> {
@@ -1078,7 +1078,7 @@ fn relation_row(row: &Row) -> RelationRow {
     RelationRow {
         schema: row.get("schema_name"),
         name: row.get("relation_name"),
-        kind: row.get("relation_kind"),
+        type_: row.get("relation_kind"),
         persistence: row.get("persistence"),
         access_method: row.get("access_method"),
         row_security: row.get("row_security"),
@@ -1093,7 +1093,7 @@ fn validate_relations(
 ) -> Result<BTreeMap<TableKey, TableParts>, PostgresIntrospectionError> {
     let mut tables = BTreeMap::new();
     for relation in relations {
-        match relation.kind.as_str() {
+        match relation.type_.as_str() {
             "r" => {
                 if relation.persistence != "p" {
                     return Err(refusal(
@@ -1223,7 +1223,7 @@ async fn refuse_routines(
     let name = row.get::<_, String>("routine_name");
     let arguments = row.get::<_, String>("arguments");
     let routine_kind = row.get::<_, String>("routine_kind");
-    let kind = match routine_kind.as_str() {
+    let type_ = match routine_kind.as_str() {
         "f" => "function",
         "p" => "procedure",
         "a" => "aggregate",
@@ -1234,7 +1234,7 @@ async fn refuse_routines(
         PostgresIntrospectionErrorType::UnsupportedRoutine,
         Some(&schema),
         Some(&format!("{name}({arguments})")),
-        format!("{kind} is outside the supported catalog set"),
+        format!("{type_} is outside the supported catalog set"),
     ))
 }
 
@@ -1388,12 +1388,12 @@ async fn validate_types(
             continue;
         }
 
-        let kind = row.get::<_, String>("type_kind");
+        let type_ = row.get::<_, String>("type_kind");
         return Err(refusal(
             PostgresIntrospectionErrorType::UnsupportedCustomType,
             Some(&schema),
             Some(&name),
-            format!("custom pg_type kind `{kind}` is outside the supported catalog set"),
+            format!("custom pg_type type `{type_}` is outside the supported catalog set"),
         ));
     }
     Ok(())
@@ -1417,7 +1417,7 @@ async fn refuse_default_acls(
         PostgresIntrospectionErrorType::UnsupportedAcl,
         Some(&schema),
         Some(&owner),
-        format!("default ACL for object kind `{object_kind}` is not supported"),
+        format!("default ACL for object type `{object_kind}` is not supported"),
     ))
 }
 
@@ -1721,7 +1721,7 @@ fn constraint_row(row: &Row) -> ConstraintRow {
         schema: row.get("schema_name"),
         table: row.get("table_name"),
         name: row.get("constraint_name"),
-        kind: row.get("constraint_kind"),
+        type_: row.get("constraint_kind"),
         columns: row.get("column_numbers"),
         referenced_schema: row.get("referenced_schema"),
         referenced_table: row.get("referenced_table"),
@@ -1870,7 +1870,7 @@ fn validate_constraint_shape(row: &ConstraintRow) -> Result<(), PostgresIntrospe
         || !row.validated
         || !row.local
         || row.inherited_count != 0
-        || (matches!(row.kind.as_str(), "c" | "n") && row.no_inherit)
+        || (matches!(row.type_.as_str(), "c" | "n") && row.no_inherit)
         || row.period
         || row.parent
     {
@@ -2081,10 +2081,10 @@ fn map_constraints(
 ) -> Result<(), PostgresIntrospectionError> {
     for row in rows {
         validate_constraint_shape(row)?;
-        if row.kind == "n" {
+        if row.type_ == "n" {
             continue;
         }
-        if row.kind == "x" {
+        if row.type_ == "x" {
             let exclusion = map_exclusion(row, attributes)?;
             table_parts(tables, row)?.exclusions.push(exclusion);
             continue;
@@ -2098,7 +2098,7 @@ fn map_constraints(
             &row.columns,
             attributes,
         )?;
-        let constraint = match row.kind.as_str() {
+        let constraint = match row.type_.as_str() {
             "p" => {
                 if columns.is_empty() {
                     return Err(refusal(

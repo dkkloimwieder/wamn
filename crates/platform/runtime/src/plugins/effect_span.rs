@@ -285,7 +285,7 @@ impl Drop for EffectOutcomeGuard {
 /// refuses ANY `static` / `LazyLock` / `OnceLock` in `connection_http.rs` — a
 /// deliberately coarse rule that keeps a credentialed HTTP client from ever
 /// being cached process-wide. Keeping them together honours it without
-/// weakening it: that file still holds no process-wide cell of any kind.
+/// weakening it: that file still holds no process-wide cell of any type.
 ///
 /// `$instrument` is an expression, not a literal, so an instrument whose name is
 /// itself a published identifier can be declared from the `const` that pins it

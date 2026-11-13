@@ -39,7 +39,7 @@ use url::Url;
 use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType,
     workload_generation_role,
 };
 use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL};
@@ -498,9 +498,9 @@ fn login_url(admin_url: &str, role: &str) -> String {
 
 /// The database a family's credential reaches.
 fn database_of(family: WorkloadRoleFamily) -> &'static str {
-    match family.scope_kind() {
-        WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment => DATABASE,
-        WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => CONTROL_DATABASE,
+    match family.scope_type() {
+        WorkloadRoleScopeType::EnvKey | WorkloadRoleScopeType::ProjectEnvironment => DATABASE,
+        WorkloadRoleScopeType::Control | WorkloadRoleScopeType::Org => CONTROL_DATABASE,
     }
 }
 
@@ -517,24 +517,24 @@ struct Fixture {
 
 /// The deterministic generation name the real mint would issue for one family.
 fn generation(family: WorkloadRoleFamily) -> String {
-    let scope = match family.scope_kind() {
-        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
+    let scope = match family.scope_type() {
+        WorkloadRoleScopeType::EnvKey => WorkloadRoleScope::EnvKey {
             env_key: ENV_KEY_A,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleScopeType::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+        WorkloadRoleScopeType::Control => WorkloadRoleScope::Control {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database: CONTROL_DATABASE,
         },
-        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org {
+        WorkloadRoleScopeType::Org => WorkloadRoleScope::Org {
             org: ORG,
             database: CONTROL_DATABASE,
         },
@@ -1233,7 +1233,7 @@ fn the_env_key_scoped_platform_member_reads_nothing_outside_its_grants() {
         .iter()
         .map(|reach| reach.family)
         .filter(|family| {
-            matches!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey)
+            matches!(family.scope_type(), WorkloadRoleScopeType::EnvKey)
                 && family.is_platform_grain()
         })
         .collect();

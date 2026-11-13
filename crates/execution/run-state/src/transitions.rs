@@ -69,13 +69,13 @@ impl StoredCallerOutcome {
     /// or incorrectly decoded row.
     pub fn exactly_matches(
         &self,
-        kind: &str,
+        type_: &str,
         body: &Value,
         http_status: Option<u16>,
         release_node_id: Option<&str>,
         hash: &str,
     ) -> bool {
-        self.type_ == kind
+        self.type_ == type_
             && &self.body == body
             && self.http_status == http_status
             && self.release_node_id.as_deref() == release_node_id
@@ -99,7 +99,7 @@ impl CallerReleaseResult {
     pub fn from_parts(
         code: &str,
         run_status: &str,
-        kind: Option<String>,
+        type_: Option<String>,
         body: Option<Value>,
         http_status: Option<u16>,
         release_node_id: Option<String>,
@@ -108,7 +108,7 @@ impl CallerReleaseResult {
         match code {
             "released" => Some(CallerReleaseResult::Released),
             "already-released" => Some(CallerReleaseResult::AlreadyReleased(StoredCallerOutcome {
-                type_: kind?,
+                type_: type_?,
                 body: body?,
                 http_status,
                 release_node_id,
@@ -133,8 +133,8 @@ impl CallerReleaseResult {
 /// Release the durable caller outcome under the queue fence.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// outcome kind, outcome JSON text, HTTP status, release node id, outcome hash,
-/// release instant. The one returned row is `(result_code, run_status, kind,
+/// outcome type, outcome JSON text, HTTP status, release node id, outcome hash,
+/// release instant. The one returned row is `(result_code, run_status, type,
 /// body_text, http_status, release_node_id, hash)`.
 ///
 /// The caller supplies the instant (D2b). The statement never reads the server
@@ -235,7 +235,7 @@ pub fn record_deadline_adjustments_sql() -> String {
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// terminal status, terminal reason, result JSON text, failure kind, terminal
+/// terminal status, terminal reason, result JSON text, failure type, terminal
 /// instant. Completing a caller-attached run before caller release is a typed
 /// refusal.
 ///

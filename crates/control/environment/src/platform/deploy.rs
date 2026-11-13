@@ -446,7 +446,7 @@ async fn certificates_ready(target: &Target, objects: &[Value]) -> anyhow::Resul
             object["metadata"]["namespace"]
                 .as_str()
                 .unwrap_or("platform"),
-            object["kind"].as_str().context("certificate kind")?,
+            object["kind"].as_str().context("certificate type")?,
             object["metadata"]["name"]
                 .as_str()
                 .context("certificate name")?,

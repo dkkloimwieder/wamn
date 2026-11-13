@@ -60,10 +60,10 @@ fn valid_key(order: Order, key: &Value) -> bool {
                         .is_ok_and(|parsed| parsed.to_string().as_str() == id)
                 })
         }
-        (Order::Audience, [kind, audience]) => {
-            matches!(kind.as_u64(), Some(0 | 1))
+        (Order::Audience, [type_, audience]) => {
+            matches!(type_.as_u64(), Some(0 | 1))
                 && text(audience)
-                && (kind.as_u64() != Some(0)
+                && (type_.as_u64() != Some(0)
                     || audience
                         .as_str()
                         .and_then(crate::control::control_audience_org)
@@ -143,8 +143,8 @@ impl ListPage {
         self.cursor.key.get(index).and_then(Value::as_str)
     }
 
-    /// The audience kind, or none on the first page.
-    pub fn after_kind(&self) -> Option<u64> {
+    /// The audience type, or none on the first page.
+    pub fn after_type(&self) -> Option<u64> {
         self.cursor.key.get(0).and_then(Value::as_u64)
     }
 

@@ -380,7 +380,7 @@ pub(super) fn project_components(
 
 /// Project operation contracts for released components and route attachments.
 ///
-/// The kind comes from the generated contract of the operation, or from the
+/// The type comes from the generated contract of the operation, or from the
 /// published manifest a promotion copies.
 pub(super) fn project_routes(
     request: &PublishReleaseManifest<'_>,
@@ -423,7 +423,7 @@ pub(super) fn project_routes(
                 PublishManifestError::new(
                     PublishManifestErrorType::PackageManifest,
                     format!(
-                        "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
+                        "route operation {operation:?} of package {:?} has no generated contract type; regenerate the package evidence",
                         attachment.package_id
                     ),
                 )
@@ -445,7 +445,7 @@ pub(super) fn project_routes(
             package_id: attachment.package_id.clone(),
             component: component.clone(),
             operation: operation.clone(),
-            type_: contract.kind,
+            type_: contract.type_,
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
@@ -461,14 +461,14 @@ pub(super) fn project_routes(
             else {
                 continue;
             };
-            if contract.kind == wamn_catalog::OperationType::EventHandler {
+            if contract.type_ == wamn_catalog::OperationType::EventHandler {
                 continue;
             }
             routes.insert(ServingRoute {
                 package_id: component.package_id.clone(),
                 component: component.descriptor.component.clone(),
                 operation: operation.clone(),
-                type_: contract.kind,
+                type_: contract.type_,
                 reads: contract.reads.clone(),
                 revision: contract.revision.clone(),
                 idempotency: contract.idempotency.clone(),

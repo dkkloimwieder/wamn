@@ -22,7 +22,7 @@ pub enum AmbientCredentialState {
 
 /// The connection whose physical identity is being checked.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CredentialConnectionKind {
+pub enum CredentialConnectionType {
     Pooled,
     Listener,
 }
@@ -54,27 +54,27 @@ pub enum CredentialProbePredicate {
 pub struct CredentialProbeError {
     type_: CredentialProbeErrorType,
     predicate: CredentialProbePredicate,
-    connection_kind: Option<CredentialConnectionKind>,
+    connection_type: Option<CredentialConnectionType>,
 }
 
 impl CredentialProbeError {
-    fn source(kind: CredentialProbeErrorType, predicate: CredentialProbePredicate) -> Self {
+    fn source(type_: CredentialProbeErrorType, predicate: CredentialProbePredicate) -> Self {
         Self {
-            type_: kind,
+            type_,
             predicate,
-            connection_kind: None,
+            connection_type: None,
         }
     }
 
     fn connection(
         type_: CredentialProbeErrorType,
         predicate: CredentialProbePredicate,
-        connection_kind: CredentialConnectionKind,
+        connection_type: CredentialConnectionType,
     ) -> Self {
         Self {
             type_,
             predicate,
-            connection_kind: Some(connection_kind),
+            connection_type: Some(connection_type),
         }
     }
 
@@ -89,8 +89,8 @@ impl CredentialProbeError {
     }
 
     /// Return the checked connection class, if a connection was reached.
-    pub fn connection_kind(&self) -> Option<CredentialConnectionKind> {
-        self.connection_kind
+    pub fn connection_type(&self) -> Option<CredentialConnectionType> {
+        self.connection_type
     }
 }
 
@@ -341,7 +341,7 @@ impl CredentialExactnessProbe {
     where
         C: GenericClient + Sync,
     {
-        self.probe(client, CredentialConnectionKind::Pooled).await
+        self.probe(client, CredentialConnectionType::Pooled).await
     }
 
     /// Verify one independently-opened listener connection before `LISTEN`.
@@ -349,42 +349,42 @@ impl CredentialExactnessProbe {
     where
         C: GenericClient + Sync,
     {
-        self.probe(client, CredentialConnectionKind::Listener).await
+        self.probe(client, CredentialConnectionType::Listener).await
     }
 
     async fn probe<C>(
         &self,
         client: &C,
-        connection_kind: CredentialConnectionKind,
+        connection_type: CredentialConnectionType,
     ) -> Result<(), CredentialProbeError>
     where
         C: GenericClient + Sync,
     {
-        self.probe_queries(&PostgresQueryExecutor { client }, connection_kind)
+        self.probe_queries(&PostgresQueryExecutor { client }, connection_type)
             .await
     }
 
     async fn probe_queries(
         &self,
         queries: &impl CredentialProbeQueries,
-        connection_kind: CredentialConnectionKind,
+        connection_type: CredentialConnectionType,
     ) -> Result<(), CredentialProbeError> {
         let identity = queries
             .identity()
             .await
-            .map_err(|predicate| unavailable(connection_kind, predicate))?;
-        verify_identity(&self.expected, &identity, connection_kind)?;
+            .map_err(|predicate| unavailable(connection_type, predicate))?;
+        verify_identity(&self.expected, &identity, connection_type)?;
 
         for membership in &self.expected.memberships {
             let actual = queries
                 .membership(membership)
                 .await
-                .map_err(|predicate| unavailable(connection_kind, predicate))?;
+                .map_err(|predicate| unavailable(connection_type, predicate))?;
             verify_boolean(
                 membership.granted,
                 actual,
                 CredentialProbePredicate::Membership,
-                connection_kind,
+                connection_type,
             )?;
         }
 
@@ -392,12 +392,12 @@ impl CredentialExactnessProbe {
             let actual = queries
                 .acl(acl)
                 .await
-                .map_err(|predicate| unavailable(connection_kind, predicate))?;
+                .map_err(|predicate| unavailable(connection_type, predicate))?;
             verify_boolean(
                 acl.granted,
                 actual,
                 CredentialProbePredicate::Acl,
-                connection_kind,
+                connection_type,
             )?;
         }
         Ok(())
@@ -414,7 +414,7 @@ struct ObservedIdentity {
 fn verify_identity(
     expected: &ExpectedCredentialIdentity,
     actual: &ObservedIdentity,
-    connection_kind: CredentialConnectionKind,
+    connection_type: CredentialConnectionType,
 ) -> Result<(), CredentialProbeError> {
     for (matches, predicate) in [
         (
@@ -434,7 +434,7 @@ fn verify_identity(
             return Err(CredentialProbeError::connection(
                 CredentialProbeErrorType::PredicateMismatch,
                 predicate,
-                connection_kind,
+                connection_type,
             ));
         }
     }
@@ -445,7 +445,7 @@ fn verify_boolean(
     expected: bool,
     actual: bool,
     predicate: CredentialProbePredicate,
-    connection_kind: CredentialConnectionKind,
+    connection_type: CredentialConnectionType,
 ) -> Result<(), CredentialProbeError> {
     if expected == actual {
         Ok(())
@@ -453,19 +453,19 @@ fn verify_boolean(
         Err(CredentialProbeError::connection(
             CredentialProbeErrorType::PredicateMismatch,
             predicate,
-            connection_kind,
+            connection_type,
         ))
     }
 }
 
 fn unavailable(
-    connection_kind: CredentialConnectionKind,
+    connection_type: CredentialConnectionType,
     predicate: CredentialProbePredicate,
 ) -> CredentialProbeError {
     CredentialProbeError::connection(
         CredentialProbeErrorType::ProbeUnavailable,
         predicate,
-        connection_kind,
+        connection_type,
     )
 }
 
@@ -666,14 +666,14 @@ mod tests {
     fn assert_mismatch(
         error: CredentialProbeError,
         predicate: CredentialProbePredicate,
-        connection_kind: Option<CredentialConnectionKind>,
+        connection_type: Option<CredentialConnectionType>,
     ) {
         assert_eq!(
             error.error_type(),
             CredentialProbeErrorType::PredicateMismatch
         );
         assert_eq!(error.predicate(), predicate);
-        assert_eq!(error.connection_kind(), connection_kind);
+        assert_eq!(error.connection_type(), connection_type);
     }
 
     #[test]
@@ -766,11 +766,11 @@ mod tests {
             let queries = FakeQueries::new(actual, true, true);
             assert_mismatch(
                 probe
-                    .probe_queries(&queries, CredentialConnectionKind::Pooled)
+                    .probe_queries(&queries, CredentialConnectionType::Pooled)
                     .await
                     .unwrap_err(),
                 predicate,
-                Some(CredentialConnectionKind::Pooled),
+                Some(CredentialConnectionType::Pooled),
             );
         }
     }
@@ -782,23 +782,23 @@ mod tests {
             probe
                 .probe_queries(
                     &FakeQueries::new(observation(), false, true),
-                    CredentialConnectionKind::Pooled,
+                    CredentialConnectionType::Pooled,
                 )
                 .await
                 .unwrap_err(),
             CredentialProbePredicate::Membership,
-            Some(CredentialConnectionKind::Pooled),
+            Some(CredentialConnectionType::Pooled),
         );
         assert_mismatch(
             probe
                 .probe_queries(
                     &FakeQueries::new(observation(), true, false),
-                    CredentialConnectionKind::Pooled,
+                    CredentialConnectionType::Pooled,
                 )
                 .await
                 .unwrap_err(),
             CredentialProbePredicate::Acl,
-            Some(CredentialConnectionKind::Pooled),
+            Some(CredentialConnectionType::Pooled),
         );
     }
 
@@ -811,25 +811,25 @@ mod tests {
             probe
                 .probe_queries(
                     &FakeQueries::new(actual, true, true),
-                    CredentialConnectionKind::Listener,
+                    CredentialConnectionType::Listener,
                 )
                 .await
                 .unwrap_err(),
             CredentialProbePredicate::SessionUser,
-            Some(CredentialConnectionKind::Listener),
+            Some(CredentialConnectionType::Listener),
         );
     }
 
     #[tokio::test]
     async fn pooled_and_listener_paths_run_the_same_complete_query_contract() {
         let probe = credential_exactness_probe(source("tenant-a"), expected("tenant-a")).unwrap();
-        for connection_kind in [
-            CredentialConnectionKind::Pooled,
-            CredentialConnectionKind::Listener,
+        for connection_type in [
+            CredentialConnectionType::Pooled,
+            CredentialConnectionType::Listener,
         ] {
             let queries = FakeQueries::new(observation(), true, true);
             probe
-                .probe_queries(&queries, connection_kind)
+                .probe_queries(&queries, connection_type)
                 .await
                 .unwrap();
             assert_eq!(queries.identity_calls.load(Ordering::Relaxed), 1);

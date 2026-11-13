@@ -48,11 +48,8 @@ impl fmt::Display for SessionRoleReaderUrlError {
 
 impl std::error::Error for SessionRoleReaderUrlError {}
 
-fn refuse(kind: SessionRoleReaderUrlErrorType, reason: &'static str) -> SessionRoleReaderUrlError {
-    SessionRoleReaderUrlError {
-        type_: kind,
-        reason,
-    }
+fn refuse(type_: SessionRoleReaderUrlErrorType, reason: &'static str) -> SessionRoleReaderUrlError {
+    SessionRoleReaderUrlError { type_, reason }
 }
 
 /// A credential checked against the provisioner-controlled environment target.
@@ -116,31 +113,31 @@ pub fn parse_session_role_reader_url(
     environment: &str,
     database: &str,
 ) -> Result<SessionRoleReaderConnection, SessionRoleReaderUrlError> {
-    use SessionRoleReaderUrlErrorType as Kind;
+    use SessionRoleReaderUrlErrorType as Type;
 
     if raw.is_empty() {
         return Err(refuse(
-            Kind::Absent,
+            Type::Absent,
             "a dedicated role-reader credential is required",
         ));
     }
     let parsed =
-        Url::parse(raw).map_err(|_| refuse(Kind::Malformed, "credential must be a URL"))?;
+        Url::parse(raw).map_err(|_| refuse(Type::Malformed, "credential must be a URL"))?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         return Err(refuse(
-            Kind::Scheme,
+            Type::Scheme,
             "credential must use postgres or postgresql",
         ));
     }
     if parsed.host_str().is_none_or(str::is_empty) || raw.chars().any(char::is_whitespace) {
         return Err(refuse(
-            Kind::Malformed,
+            Type::Malformed,
             "credential must name a host without whitespace",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(refuse(
-            Kind::Extra,
+            Type::Extra,
             "credential must carry no query or fragment",
         ));
     }
@@ -149,7 +146,7 @@ pub fn parse_session_role_reader_url(
         || parsed.path().strip_prefix('/') != Some(database)
     {
         return Err(refuse(
-            Kind::Database,
+            Type::Database,
             "credential must name the trusted physical database exactly",
         ));
     }
@@ -175,7 +172,7 @@ pub fn parse_session_role_reader_url(
         }
     }
     Err(refuse(
-        Kind::Role,
+        Type::Role,
         "credential must use this environment's dedicated A/B role-reader login",
     ))
 }
@@ -283,7 +280,7 @@ mod tests {
             SCOPE,
             CredentialGeneration::A,
         );
-        for (input, kind) in [
+        for (input, type_) in [
             (String::new(), SessionRoleReaderUrlErrorType::Absent),
             (
                 "fixture-password".to_owned(),
@@ -312,7 +309,7 @@ mod tests {
             ),
         ] {
             let error = parse(&input).unwrap_err();
-            assert_eq!(error.error_type(), kind);
+            assert_eq!(error.error_type(), type_);
             assert!(!format!("{error:?} {error}").contains("fixture-password"));
         }
     }

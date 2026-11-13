@@ -249,7 +249,7 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 -- completion; `state_json` carries transient run state such as bounded-retry
 -- scheduling and execution context. `idempotency_key` dedupes at-least-once
 -- redelivery of the same trigger (a partial-unique index). `fail_type` mirrors
--- the engine `FailKind` so history can
+-- the engine `FailType` so history can
 -- flag an upstream bug (`invalid-input`) apart from a terminal error or an
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
 -- as_sql (tied to the crate by a drift-guard test).

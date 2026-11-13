@@ -9,14 +9,14 @@ use super::super::{Platform, ensure::kubectl};
 async fn get(
     platform: &Platform,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<Option<Value>> {
     wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,
-        kind,
+        type_,
         name,
     )
     .await
@@ -148,13 +148,13 @@ pub(super) async fn delete_event_certificate(
     env_key: &str,
 ) -> anyhow::Result<()> {
     let name = format!("wamn-nats-{env_key}");
-    for kind in ["certificate", "secret"] {
+    for type_ in ["certificate", "secret"] {
         kubectl(
             platform,
             &platform.target.namespace,
             &[
                 "delete",
-                kind,
+                type_,
                 &name,
                 "--ignore-not-found",
                 "--wait=true",

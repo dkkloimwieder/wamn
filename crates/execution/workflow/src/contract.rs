@@ -66,7 +66,7 @@ pub enum WorkflowErrorType {
     Storage,
 }
 
-/// A contract call failure, with its kind and context.
+/// A contract call failure, with its type and context.
 #[derive(Debug)]
 pub struct WorkflowError {
     type_: WorkflowErrorType,
@@ -75,9 +75,9 @@ pub struct WorkflowError {
 }
 
 impl WorkflowError {
-    fn new(kind: WorkflowErrorType, message: impl Into<String>) -> Self {
+    fn new(type_: WorkflowErrorType, message: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             message: message.into(),
             source: None,
         }

@@ -1,5 +1,5 @@
 use super::{
-    CredentialGeneration, Triple, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    CredentialGeneration, Triple, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType,
     cdc_object_name, project_env_database_name, workload_generation_role,
 };
 use anyhow::Context as _;
@@ -10,8 +10,8 @@ use anyhow::Context as _;
 pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
     WorkloadRoleFamily::ALL.into_iter().filter(|family| {
         matches!(
-            family.scope_kind(),
-            WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment
+            family.scope_type(),
+            WorkloadRoleScopeType::EnvKey | WorkloadRoleScopeType::ProjectEnvironment
         )
     })
 }
@@ -35,8 +35,8 @@ pub fn instance_roles(
     let database = project_env_database_name(org, project, env, instance);
     let mut roles = vec![cdc_object_name(org, project, env, instance)];
     for family in instance_families() {
-        let scope = match family.scope_kind() {
-            WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
+        let scope = match family.scope_type() {
+            WorkloadRoleScopeType::EnvKey => WorkloadRoleScope::EnvKey {
                 env_key,
                 database: &database,
             },

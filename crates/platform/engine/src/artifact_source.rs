@@ -117,7 +117,7 @@ impl fmt::Debug for ComponentArtifactFetchError {
         // safe to log without emitting response bodies or future auth context.
         formatter
             .debug_struct("ComponentArtifactFetchError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("reference", &self.reference)
             .field("refusal", &self.refusal)
             .finish_non_exhaustive()

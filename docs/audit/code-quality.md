@@ -240,7 +240,7 @@ Evidence: `crates/schema/generator/src/generate/wit.rs:1407`; `:1483`; `:1503`; 
 
 Problem: Every shared operation codec receives both envelope decoders, UUID normalization, integer support, and mutation support. A read does not use the keyed decoder, while a keyed operation does not use the read decoder. Operations without relevant fields also receive unused scalar and mutation helpers. Timestamp-column constants appear for every model, although the inspected application caller uses only the purchase-order constant.
 
-Proposal: Emit support from each operation’s declared fields and envelope kind. Emit timestamp-column metadata only for a consumer that needs it.
+Proposal: Emit support from each operation’s declared fields and envelope type. Emit timestamp-column metadata only for a consumer that needs it.
 
 The allowances on generated `run`, `validate`, `decode`, and `map_error` do not establish dead implementations. Export adapters call those functions at `crates/schema/generator/src/generate/wit_adapters.rs:176` and `:181`; generated handlers call the mapper at `crates/schema/generator/src/generate/component.rs:116`. The SQLx compile-only allowance at `crates/schema/generator/src/sqlx_metadata.rs:341` and generated blobstore bindings at `crates/platform/runtime/src/plugins/wamn_blobstore/bindings.rs:33` also have valid purposes.
 

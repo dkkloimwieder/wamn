@@ -440,7 +440,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let control_url = match run.document.provider {
         Provider::Kind => format!(
             "http://127.0.0.1:{}",
-            control.as_ref().context("kind control forward")?.port
+            control.as_ref().context("type control forward")?.port
         ),
         // The public edge serves control routes under /api.
         Provider::Gcp => format!("https://{}/api", run.document.route_hosts.control),

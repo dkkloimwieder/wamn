@@ -242,7 +242,7 @@ mod tests {
     /// The WMS label workflow's shape expression (docs/architecture/execution.md#environment-workflows
     /// ): a move row becomes one label-render request element keyed by its command,
     /// and any other row none.
-    const SHAPE: &str = r#"event = "insert" and new.kind = "move"
+    const SHAPE: &str = r#"event = "insert" and new.type = "move"
         ? [{"request_id": new.id,
             "value": {"label_key": new.idempotency_key, "movement_id": new.id,
                       "packaging_id": new.packaging_id, "location_id": new.to_location_id}}]
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn the_shape_expression_turns_a_move_row_into_one_label_request_element() {
         let row = json!({"event": "insert", "new": {
-            "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
+            "id": "m-1", "idempotency_key": "k-1", "type": "move", "packaging_id": "p-1",
             "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
         assert_eq!(
             result(SHAPE, &row),
@@ -267,13 +267,13 @@ mod tests {
 
     #[test]
     fn the_shape_expression_gives_no_request_element_for_another_movement() {
-        let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
+        let row = json!({"event": "insert", "new": {"id": "m-2", "type": "receive"}});
         assert_eq!(result(SHAPE, &row), json!([]));
     }
 
     #[test]
     fn only_an_array_fits_the_items_port() {
-        let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
+        let row = json!({"event": "insert", "new": {"id": "m-2", "type": "receive"}});
         assert!(is_request_element_array(&evaluate(SHAPE, &row).unwrap()));
         assert!(!is_request_element_array(&evaluate("new", &row).unwrap()));
         assert!(!is_request_element_array(

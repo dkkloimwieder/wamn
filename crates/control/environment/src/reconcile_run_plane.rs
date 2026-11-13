@@ -912,7 +912,7 @@ pub async fn reconcile(
             client
                 .batch_execute(&action.sql)
                 .await
-                .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
+                .with_context(|| format!("apply {:?} {}", action.type_, action.target))?;
         }
         client.batch_execute("RESET ROLE").await?;
     }

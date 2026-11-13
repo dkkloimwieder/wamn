@@ -1,4 +1,4 @@
-//! Canonical release documents shared by kind and render-only cases.
+//! Canonical release documents shared by type and render-only cases.
 
 use std::path::{Path, PathBuf};
 use wamn_environment_control::environment::{

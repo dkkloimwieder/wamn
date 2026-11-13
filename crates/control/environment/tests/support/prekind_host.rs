@@ -1,4 +1,4 @@
-//! Run the environment kind HTTP release through its render on a native host.
+//! Run the environment type HTTP release through its render on a native host.
 
 #[expect(dead_code, reason = "chart tests share these render helpers")]
 #[path = "render_check.rs"]

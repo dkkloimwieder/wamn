@@ -59,9 +59,9 @@ pub struct RouteSchemaError {
 }
 
 impl RouteSchemaError {
-    fn new(kind: RouteSchemaErrorType, subject: &str, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: RouteSchemaErrorType, subject: &str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             subject: subject.into(),
             detail: detail.into(),
             source: None,

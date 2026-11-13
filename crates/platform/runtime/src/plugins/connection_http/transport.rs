@@ -411,9 +411,9 @@ pub(crate) struct TransportError {
 }
 
 impl TransportError {
-    fn new(kind: ErrorType, phase: Phase, detail: &'static str) -> Self {
+    fn new(type_: ErrorType, phase: Phase, detail: &'static str) -> Self {
         Self {
-            type_: kind,
+            type_,
             phase,
             detail,
             source: None,
@@ -441,7 +441,7 @@ impl TransportError {
 impl fmt::Debug for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransportError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("phase", &self.phase)
             .field("detail", &self.detail)
             .finish_non_exhaustive()
@@ -475,7 +475,7 @@ fn input(detail: &'static str) -> TransportError {
 
 fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
     let mut phase = Phase::AwaitingHead;
-    let mut kind = ErrorType::Transport;
+    let mut type_ = ErrorType::Transport;
     let mut source: Option<&(dyn StdError + 'static)> = Some(&error);
     while let Some(current) = source {
         if let Some(transport) = current.downcast_ref::<TransportError>() {
@@ -483,12 +483,12 @@ fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
                 phase = Phase::BeforeDispatch;
             }
             if transport.is_timeout() {
-                kind = ErrorType::Timeout;
+                type_ = ErrorType::Timeout;
             }
         }
         source = current.source();
     }
-    TransportError::new(kind, phase, "HTTP request failed").with_source(error)
+    TransportError::new(type_, phase, "HTTP request failed").with_source(error)
 }
 
 fn target(decision: &AuthorityDecision, uri: &Uri) -> Result<Target, TransportError> {

@@ -66,7 +66,7 @@ pub(super) fn permit_raw_mutation(key: &str) -> Result<(), StoreError> {
 
 /// The category of a native storage failure, before boundary translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileStorageErrorKind {
+pub enum FileStorageErrorType {
     Refused,
     NotFound,
     Body,
@@ -76,19 +76,19 @@ pub enum FileStorageErrorKind {
 /// A storage failure with its operation and original cause.
 #[derive(Debug)]
 pub struct FileStorageError {
-    pub kind: FileStorageErrorKind,
+    pub type_: FileStorageErrorType,
     pub operation: &'static str,
     source: Box<dyn Error + Send + Sync>,
 }
 
 impl FileStorageError {
     pub(super) fn new(
-        kind: FileStorageErrorKind,
+        type_: FileStorageErrorType,
         operation: &'static str,
         source: impl Into<Box<dyn Error + Send + Sync>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             operation,
             source: source.into(),
         }
@@ -106,12 +106,12 @@ impl Error for FileStorageError {
 }
 
 fn backend(operation: &'static str, source: object_store::Error) -> FileStorageError {
-    let kind = if matches!(source, object_store::Error::NotFound { .. }) {
-        FileStorageErrorKind::NotFound
+    let type_ = if matches!(source, object_store::Error::NotFound { .. }) {
+        FileStorageErrorType::NotFound
     } else {
-        FileStorageErrorKind::Backend
+        FileStorageErrorType::Backend
     };
-    FileStorageError::new(kind, operation, source)
+    FileStorageError::new(type_, operation, source)
 }
 
 /// Metadata computed from the exact bytes sent to staging.
@@ -222,7 +222,7 @@ impl FileStore {
                 && object.path != self.path(&public_key(&object.blob_key))?)
         {
             return Err(FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "collect",
                 "listed object belongs to another prefix",
             ));
@@ -251,14 +251,14 @@ impl FileStore {
     ) -> Result<Self, FileStorageError> {
         if let Some(reason) = wamn_control_registry::identifiers::project_id_reason(environment) {
             return Err(FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "environment",
                 reason,
             ));
         }
         if generation < 1 {
             return Err(FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "open",
                 "connection generation must be positive",
             ));
@@ -271,7 +271,7 @@ impl FileStore {
                     format!("https://{host}")
                 };
                 let url = url::Url::parse(&origin).map_err(|error| {
-                    FileStorageError::new(FileStorageErrorKind::Refused, "cdn_host", error)
+                    FileStorageError::new(FileStorageErrorType::Refused, "cdn_host", error)
                 })?;
                 if !matches!(url.scheme(), "http" | "https")
                     || url.host_str().is_none()
@@ -282,7 +282,7 @@ impl FileStore {
                     || url.fragment().is_some()
                 {
                     return Err(FileStorageError::new(
-                        FileStorageErrorKind::Refused,
+                        FileStorageErrorType::Refused,
                         "cdn_host",
                         "cdn_host must be an HTTP origin",
                     ));
@@ -304,11 +304,11 @@ impl FileStore {
             .permit_connection(operation)
             .await
             .map_err(|error| {
-                FileStorageError::new(FileStorageErrorKind::Refused, operation, error)
+                FileStorageError::new(FileStorageErrorType::Refused, operation, error)
             })?;
         if write {
             self.bound.permit_write(operation).map_err(|error| {
-                FileStorageError::new(FileStorageErrorKind::Refused, operation, error)
+                FileStorageError::new(FileStorageErrorType::Refused, operation, error)
             })?;
         }
         Ok(())
@@ -317,7 +317,7 @@ impl FileStore {
     fn path(&self, key: &str) -> Result<object_store::path::Path, FileStorageError> {
         self.bound
             .path(key)
-            .map_err(|error| FileStorageError::new(FileStorageErrorKind::Refused, "key", error))
+            .map_err(|error| FileStorageError::new(FileStorageErrorType::Refused, "key", error))
     }
 
     /// Stream into staging using bounded multipart buffers and compute SHA-256.
@@ -354,7 +354,7 @@ impl FileStore {
         let mut buffer = vec![0; 64 * 1024];
         loop {
             let count = body.read(&mut buffer).await.map_err(|error| {
-                FileStorageError::new(FileStorageErrorKind::Body, "read upload", error)
+                FileStorageError::new(FileStorageErrorType::Body, "read upload", error)
             })?;
             if count == 0 {
                 break;
@@ -364,7 +364,7 @@ impl FileStore {
                 .filter(|size| i64::try_from(*size).is_ok())
                 .ok_or_else(|| {
                     FileStorageError::new(
-                        FileStorageErrorKind::Refused,
+                        FileStorageErrorType::Refused,
                         "size",
                         "file exceeds the metadata size range",
                     )
@@ -482,7 +482,7 @@ impl FileStore {
         self.permit("expose", true).await?;
         let mut url = self.cdn_host.clone().ok_or_else(|| {
             FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "expose",
                 "public exposure requires cdn_host",
             )
@@ -514,14 +514,14 @@ impl FileStore {
         self.permit("signed URL", false).await?;
         if lifetime.is_zero() {
             return Err(FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "signed URL",
                 "URL lifetime must be positive",
             ));
         }
         let signer = self.signer.as_ref().ok_or_else(|| {
             FileStorageError::new(
-                FileStorageErrorKind::Refused,
+                FileStorageErrorType::Refused,
                 "signed URL",
                 "store has no signer",
             )
@@ -624,8 +624,8 @@ mod tests {
         files.delete(&live_key("dev", id)).await.unwrap();
         files.delete(&live_key("dev", id)).await.unwrap();
         assert_eq!(
-            files.get(&live_key("dev", id)).await.unwrap_err().kind,
-            FileStorageErrorKind::NotFound
+            files.get(&live_key("dev", id)).await.unwrap_err().type_,
+            FileStorageErrorType::NotFound
         );
     }
 
@@ -655,8 +655,8 @@ mod tests {
                 .delete_collected(&objects[0], SystemTime::now() + Duration::from_secs(1))
                 .await
                 .unwrap_err()
-                .kind,
-            FileStorageErrorKind::Refused
+                .type_,
+            FileStorageErrorType::Refused
         );
         assert_eq!(
             files
@@ -724,8 +724,8 @@ mod tests {
         let (files, backend) = store(false, None);
         let id = Uuid::new_v4();
         assert_eq!(
-            files.stage(id, BrokenBody).await.unwrap_err().kind,
-            FileStorageErrorKind::Body
+            files.stage(id, BrokenBody).await.unwrap_err().type_,
+            FileStorageErrorType::Body
         );
         let (body, _sender) = tokio::io::duplex(1024);
         let operation = files.stage(id, body);
@@ -808,8 +808,8 @@ mod tests {
         let (files, backend) = store(true, Some("cdn.example.com"));
         let id = Uuid::new_v4();
         assert_eq!(
-            files.stage(id, &b"x"[..]).await.unwrap_err().kind,
-            FileStorageErrorKind::Refused
+            files.stage(id, &b"x"[..]).await.unwrap_err().type_,
+            FileStorageErrorType::Refused
         );
         assert!(files.finish(id).await.is_err());
         assert!(files.delete(&live_key("dev", id)).await.is_err());
@@ -1007,16 +1007,16 @@ mod tests {
         .unwrap();
         let id = Uuid::new_v4();
         assert_eq!(
-            files.expose(&live_key("dev", id)).await.unwrap_err().kind,
-            FileStorageErrorKind::Backend
+            files.expose(&live_key("dev", id)).await.unwrap_err().type_,
+            FileStorageErrorType::Backend
         );
         assert_eq!(
             files
                 .signed_url(&live_key("dev", id), Duration::from_secs(30))
                 .await
                 .unwrap_err()
-                .kind,
-            FileStorageErrorKind::Backend
+                .type_,
+            FileStorageErrorType::Backend
         );
         assert!(
             backend
@@ -1070,8 +1070,8 @@ mod tests {
                 .expose(&live_key("dev", Uuid::new_v4()))
                 .await
                 .unwrap_err()
-                .kind,
-            FileStorageErrorKind::Refused
+                .type_,
+            FileStorageErrorType::Refused
         );
         assert!(
             backend

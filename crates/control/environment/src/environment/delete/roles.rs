@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType,
     workload_generation_role,
 };
 use wamn_control_registry::Triple;
@@ -26,7 +26,7 @@ pub(super) async fn delete_control_roles(
     };
     let mut roles = Vec::new();
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() == WorkloadRoleScopeKind::Control)
+        .filter(|family| family.scope_type() == WorkloadRoleScopeType::Control)
     {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
             let role = workload_generation_role(family, scope, generation)?;

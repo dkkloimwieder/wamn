@@ -122,10 +122,10 @@ pub(super) async fn reconcile_definition_ownership(
                     .await
                     .context("read server-derived relation definitions")?
                 {
-                    let kind = match row.get::<_, String>(0).as_str() {
+                    let type_ = match row.get::<_, String>(0).as_str() {
                         "field" => DefinitionType::Field,
                         "constraint" => DefinitionType::Constraint,
-                        value => unreachable!("closed server definition kind {value}"),
+                        value => unreachable!("closed server definition type {value}"),
                     };
                     let definition = row.get::<_, String>(1);
                     changed |= insert_definition_owner(
@@ -133,7 +133,7 @@ pub(super) async fn reconcile_definition_ownership(
                         env_key,
                         coordinate,
                         planned,
-                        kind,
+                        type_,
                         &definition,
                         package_id,
                         false,
@@ -200,7 +200,7 @@ async fn insert_definition_owner(
     env_key: &str,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
-    kind: DefinitionType,
+    type_: DefinitionType,
     definition: &str,
     package_id: &str,
     client_field_extensible: bool,
@@ -213,7 +213,7 @@ async fn insert_definition_owner(
                 &env_key,
                 &mutation.schema(),
                 &mutation.relation(),
-                &kind.as_str(),
+                &type_.as_str(),
                 &definition,
                 &package_id,
                 &client_field_extensible,
@@ -229,7 +229,7 @@ async fn insert_definition_owner(
         env_key,
         mutation.schema(),
         mutation.relation(),
-        kind,
+        type_,
         definition,
     )
     .await?
@@ -243,7 +243,7 @@ async fn insert_definition_owner(
             ApplyPackageErrorType::DefinitionOwnerConflict,
             coordinate,
             planned,
-            kind,
+            type_,
             definition,
             Some(existing.package_id.as_str()),
             "the durable owner fact disagrees with the applying package",
@@ -257,12 +257,12 @@ pub(super) async fn load_definition_owner(
     env_key: &str,
     schema: &str,
     relation: &str,
-    kind: DefinitionType,
+    type_: DefinitionType,
     definition: &str,
 ) -> anyhow::Result<Option<StoredDefinitionOwner>> {
     tx.query_opt(
         SELECT_DEFINITION_OWNER_SQL,
-        &[&env_key, &schema, &relation, &kind.as_str(), &definition],
+        &[&env_key, &schema, &relation, &type_.as_str(), &definition],
     )
     .await
     .context("read durable definition owner")
@@ -278,10 +278,10 @@ pub(super) async fn definition_present(
     tx: &Transaction<'_>,
     schema: &str,
     relation: &str,
-    kind: DefinitionType,
+    type_: DefinitionType,
     definition: &str,
 ) -> anyhow::Result<bool> {
-    let row = match kind {
+    let row = match type_ {
         DefinitionType::Relation => {
             tx.query_one(SELECT_RELATION_PRESENT_SQL, &[&schema, &relation])
                 .await

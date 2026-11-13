@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { audienceKind } from "../src/address.js";
+import { audienceType } from "../src/address.js";
 import { SCOPE_PATH, readScope } from "../src/index.js";
 
 function answering(status: number, body: string): typeof fetch {
@@ -38,10 +38,10 @@ describe("the scope of the page", () => {
 describe("audiences of the org-only platform scope", () => {
   it("accepts projects in its org and refuses another org", () => {
     const scope = { org: "acme" };
-    expect(audienceKind("urn:wamn:control:acme", scope)).toBe("control");
-    expect(audienceKind("urn:wamn:project-env:acme:receiving:dev:suffix", scope)).toBe("application");
-    expect(audienceKind("urn:wamn:project-env:acme:wms:dev:suffix", scope)).toBe("application");
-    expect(audienceKind("urn:wamn:project-env:other:wms:dev:suffix", scope)).toBeUndefined();
-    expect(audienceKind("urn:wamn:control:other", scope)).toBeUndefined();
+    expect(audienceType("urn:wamn:control:acme", scope)).toBe("control");
+    expect(audienceType("urn:wamn:project-env:acme:receiving:dev:suffix", scope)).toBe("application");
+    expect(audienceType("urn:wamn:project-env:acme:wms:dev:suffix", scope)).toBe("application");
+    expect(audienceType("urn:wamn:project-env:other:wms:dev:suffix", scope)).toBeUndefined();
+    expect(audienceType("urn:wamn:control:other", scope)).toBeUndefined();
   });
 });

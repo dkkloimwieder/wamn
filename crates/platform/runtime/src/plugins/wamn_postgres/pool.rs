@@ -678,7 +678,7 @@ pub(super) fn credential_exactness_hook(
             // deadpool hands a `ClientWrapper`; the probe wants the
             // `tokio_postgres::Client` it derefs to.
             probe.probe_pooled(&**client).await.map_err(|error| {
-                // The error carries a predicate and a kind, never credential
+                // The error carries a predicate and a type, never credential
                 // material or server detail.
                 HookError::message(format!(
                     "credential exactness refused the connection: {error}"

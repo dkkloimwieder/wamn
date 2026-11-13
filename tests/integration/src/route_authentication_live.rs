@@ -257,7 +257,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
 fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     let definition = serde_json::json!({
         "id": ATTACHMENT_ID,
-        "kind": "http",
+        "type": "http",
         "route": {
             "host": "receiving.example.test",
             "path": "/purchase-orders/get",

@@ -253,7 +253,7 @@ pub enum Placement {
 
 impl Placement {
     /// The `placement_type` storage literal (`pooled` / `dedicated`).
-    pub fn kind_str(&self) -> &'static str {
+    pub fn type_str(&self) -> &'static str {
         match self {
             Placement::Pooled { .. } => "pooled",
             Placement::Dedicated => "dedicated",
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn cluster_of_collapses_a_pooled_org_onto_its_pool() {
         let org = Org::pooled("try", "wamn-pg");
-        assert_eq!(org.placement.kind_str(), "pooled");
+        assert_eq!(org.placement.type_str(), "pooled");
         assert_eq!(org.placement.pool(), Some("wamn-pg"));
         for policy in [EnvPolicy::dev(), EnvPolicy::prod()] {
             assert_eq!(cluster_of(&org, &policy).name, "wamn-pg");
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn dedicated_placement_has_no_pool() {
         let org = Org::dedicated("acme");
-        assert_eq!(org.placement.kind_str(), "dedicated");
+        assert_eq!(org.placement.type_str(), "dedicated");
         assert_eq!(org.placement.pool(), None);
     }
 

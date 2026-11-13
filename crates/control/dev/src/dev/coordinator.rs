@@ -38,7 +38,7 @@ use wamn_package_control::component_declaration::{
 };
 use wamn_release_control::publish_release::{self, PublishReleaseRequest};
 use wamn_release_control::release_composition::{
-    CompositionError, CompositionErrorKind, PackageInput, SelectedComponentArtifact,
+    CompositionError, CompositionErrorType, PackageInput, SelectedComponentArtifact,
     SelectedPaletteArtifact, select_component_artifacts, select_palette_artifacts,
 };
 use wamn_schema_control::BareSchemaName;
@@ -169,8 +169,8 @@ impl fmt::Display for ProductionDevStageError {
 
 impl From<CompositionError> for ProductionDevStageError {
     fn from(error: CompositionError) -> Self {
-        match (error.kind, error.source) {
-            (CompositionErrorKind::Owner, Some(source)) => Self::owner(error.operation, source),
+        match (error.type_, error.source) {
+            (CompositionErrorType::Owner, Some(source)) => Self::owner(error.operation, source),
             _ => Self::invalid(error.operation, error.detail),
         }
     }

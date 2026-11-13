@@ -34,7 +34,7 @@ interface routing {
     name: string,
   }
 
-  variant etag-kind {
+  variant etag-type {
     /// The revision field in the returned value, for a strong get tag.
     get(string),
     /// Sorted relations and wal-position, for a weak list tag.
@@ -43,7 +43,7 @@ interface routing {
 
   record etag-inputs {
     release: string,
-    kind: etag-kind,
+    %type: etag-type,
   }
 
   record band-start {
@@ -67,7 +67,7 @@ interface routing {
     body-limit: u64,
     mapped-limit: u64,
     /// The Cache-Control value of a successful response, which the host
-    /// derives from the route's operation kind and auth policy. None for a
+    /// derives from the route's operation type and auth policy. None for a
     /// route that is not a read: its responses are not stored.
     cache-control: option<string>,
     /// None for host routes and wiring attachments, which use router-delivery.

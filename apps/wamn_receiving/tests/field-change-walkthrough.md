@@ -61,7 +61,7 @@ The `wamn dev up` and `wamn dev clean-check` times are the whole command.
 The restart row comes from a later test run at source `dbfdd492bac0da4518ee7ad021b5c23cb65ee379`, from a clean worktree.
 At that source, Generate compares each generated file with the file on disk and writes only the files that differ.
 Cargo built `wamn` and `wamn-host` from that source before the test run.
-The test run used the same commands in a new environment of the same kind, with Compose project `rcv-rerun-llst8`.
+The test run used the same commands in a new environment of the same type, with Compose project `rcv-rerun-llst8`.
 One process served a first run and stopped.
 A second process then served the restart with unchanged source.
 

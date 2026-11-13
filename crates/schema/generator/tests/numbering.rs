@@ -143,8 +143,8 @@ fn a_create_that_supplies_a_number_field_is_refused() {
         json!(["status", "row_version", "created_at"]);
     manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
         json!(["stock_id", "part_code"]);
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+    let (type_, message) = refusal(&catalog(false), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
     assert!(
         message.contains("gadget.create writes gadget.part_code"),
         "{message}"
@@ -169,8 +169,8 @@ fn a_command_that_writes_an_actor_field_is_refused() {
     command["automatic_retry"] = json!(false);
     command["relations"][0]["update_fields"] = json!(["updated_by"]);
     manifest["custom_operations"] = json!({"quality.check_gadget": command});
-    let (kind, message) = refusal(&stamped_catalog(), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+    let (type_, message) = refusal(&stamped_catalog(), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
     assert!(
         message.contains("quality.check_gadget writes gadget.updated_by"),
         "{message}"
@@ -182,8 +182,8 @@ fn per_on_the_key_field_is_refused() {
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("G{seq:n,per=id}");
     manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] = json!(["stock_id"]);
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidModel);
+    let (type_, message) = refusal(&catalog(false), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidModel);
     assert!(
         message.contains("is per= the key field gadget.id"),
         "{message}"
@@ -196,8 +196,8 @@ fn reset_or_per_in_a_sequence_bound_to_the_key_is_refused() {
         let mut manifest = numbered();
         manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
         manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
-        let (kind, message) = refusal(&catalog(false), &manifest);
-        assert_eq!(kind, GenerateErrorType::InvalidModel, "{pattern}");
+        let (type_, message) = refusal(&catalog(false), &manifest);
+        assert_eq!(type_, GenerateErrorType::InvalidModel, "{pattern}");
         assert!(message.contains("gadget.id is the key"), "{message}");
     }
 }
@@ -226,8 +226,8 @@ fn an_integer_key_cannot_be_numbered_even_with_a_bare_counter() {
 fn a_numbered_field_whose_model_lacks_a_key_of_the_pattern_is_refused() {
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n,reset=facility}");
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidModel);
+    let (type_, message) = refusal(&catalog(false), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidModel);
     assert!(
         message.contains("whose pattern names key facility, but gadget has no field facility"),
         "{message}"
@@ -244,8 +244,8 @@ fn a_numbered_field_whose_model_lacks_a_key_of_the_pattern_is_refused() {
 fn an_unknown_date_format_is_refused() {
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{date:YYMM}-{seq:n}");
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidManifest);
+    let (type_, message) = refusal(&catalog(false), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidManifest);
     assert!(message.contains("date format \"YYMM\""), "{message}");
 }
 
@@ -253,8 +253,8 @@ fn an_unknown_date_format_is_refused() {
 fn a_model_on_a_local_target_is_refused() {
     let mut manifest = manifest();
     manifest["targets"] = json!(["cloud", "local"]);
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidManifest);
+    let (type_, message) = refusal(&catalog(false), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidManifest);
     assert!(message.contains("runs on cloud only"), "{message}");
 
     manifest["targets"] = json!(["cloud"]);
@@ -275,9 +275,9 @@ fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
         let catalog = actor_catalog("line_no", ty);
         for pattern in ["{seq:n,width=4}", "L{seq:n}", "{seq:n,reset=stock_id}"] {
             manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
-            let (kind, message) = refusal(&catalog, &manifest);
+            let (type_, message) = refusal(&catalog, &manifest);
             assert_eq!(
-                kind,
+                type_,
                 GenerateErrorType::InvalidModel,
                 "{pattern}: {message}"
             );
@@ -299,8 +299,8 @@ fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
 fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
     let mut manifest = manifest();
     manifest["models"]["gadget"]["fields"] = json!({"checked_by": {"role": "actor"}});
-    let (kind, message) = refusal(&actor_catalog("checked_by", SqlValueType::Uuid), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    let (type_, message) = refusal(&actor_catalog("checked_by", SqlValueType::Uuid), &manifest);
+    assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
             "gadget.checked_by is an actor field, which must be a uuid field named created_by or updated_by"
@@ -313,12 +313,12 @@ fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
     text_actor["models"]["gadget"]["fields"] = json!({"created_by": {"role": "actor"}});
     let mut base = manifest.clone();
     base["models"]["gadget"]["fields"] = text_actor["models"]["gadget"]["fields"].clone();
-    let (kind, message) = refusal_with_base(
+    let (type_, message) = refusal_with_base(
         &actor_catalog("created_by", SqlValueType::Text),
         &text_actor,
         &base,
     );
-    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
             "gadget.created_by is an actor field, which must be a uuid field named created_by or updated_by"
@@ -370,8 +370,8 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
 
     let mut own_number = numbered.clone();
     own_number["models"]["gadget"]["fields"] = json!({"note": {"number": "gadget_number"}});
-    let (kind, message) = refusal_with_base(&note, &own_number, &base);
-    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    let (type_, message) = refusal_with_base(&note, &own_number, &base);
+    assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
             "gadget.note belongs to acme_inventory, not to the relation owner platform_gadget"
@@ -384,8 +384,8 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
     own_key["models"]["gadget"]["operations"]["create"]["writable_fields"] =
         json!(["stock_id", "note"]);
     base["sequences"] = own_key["sequences"].clone();
-    let (kind, message) = refusal_with_base(&note, &own_key, &base);
-    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    let (type_, message) = refusal_with_base(&note, &own_key, &base);
+    assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
             "whose pattern names key note, but gadget.note belongs to acme_inventory, not to the relation owner platform_gadget"
@@ -434,8 +434,8 @@ fn numbered_fields_accept_only_text_int32_and_int64() {
         ) {
             run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
         } else {
-            let (kind, message) = refusal(&catalog, &manifest);
-            assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+            let (type_, message) = refusal(&catalog, &manifest);
+            assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
             assert!(
                 message.contains("a numbered field must be text, int32 or int64"),
                 "{ty:?}: {message}"
@@ -473,8 +473,8 @@ fn an_overlay_cannot_supply_inherited_number_or_actor_fields() {
                 .as_array_mut()
                 .unwrap()
                 .push(json!(field));
-            let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
-            assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+            let (type_, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+            assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
             assert!(
                 message.contains(&format!(
                     "gadget.{action} exposes server-owned field {field}"
@@ -497,8 +497,8 @@ fn an_overlay_cannot_change_or_add_the_owners_number_or_actor_declaration() {
     ] {
         let mut overlay = undeclared_overlay(&base);
         overlay["models"]["gadget"]["fields"] = json!({(field): declaration});
-        let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
-        assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+        let (type_, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+        assert_eq!(type_, GenerateErrorType::InvalidModel, "{message}");
         assert!(
             message.contains("disagrees with the number or actor declaration"),
             "{message}"
@@ -552,8 +552,8 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
         command["automatic_retry"] = json!(false);
         command["relations"][0]["update_fields"] = json!([field]);
         overlay["custom_operations"] = json!({"quality.check_gadget": command});
-        let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
-        assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+        let (type_, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+        assert_eq!(type_, GenerateErrorType::InvalidOperation, "{message}");
         assert!(
             message.contains(&format!("quality.check_gadget writes gadget.{field}")),
             "{message}"

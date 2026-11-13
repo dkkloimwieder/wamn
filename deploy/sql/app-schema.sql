@@ -172,7 +172,7 @@ $wamn_authority_bootstrap$;
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique in the database.
 --
--- `type` names the kind of principal: a user, a service (a station or an
+-- `type` names the type of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
 -- names its type. A platform row carries its `wamn:<component>` name in
 -- `display_name` and the id that `wamn-identity-protocol` derives from that name.

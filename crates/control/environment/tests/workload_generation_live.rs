@@ -9,7 +9,7 @@ use url::Url;
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
-    WorkloadRoleScopeKind, project_env_database_name, project_env_guest_secret_name, sql,
+    WorkloadRoleScopeType, project_env_database_name, project_env_guest_secret_name, sql,
     workload_generation_role,
 };
 use wamn_environment_control::provision_project_env::{
@@ -130,7 +130,7 @@ async fn fixture() -> Fixture {
              INSERT INTO registry.env_policies \
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, \
                 image, backup_cadence, wal_retention, hibernation) \
-             VALUES ('{ORG}', '{ENVIRONMENT}', '{{\"kind\":\"own\"}}', 1, 1, '1Gi', '250m', \
+             VALUES ('{ORG}', '{ENVIRONMENT}', '{{\"type\":\"own\"}}', 1, 1, '1Gi', '250m', \
                      '256Mi', 'postgres:18', '', '', 'off') \
              ON CONFLICT (org, name) DO NOTHING; \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}') \
@@ -388,7 +388,7 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
             env: ENVIRONMENT.into(),
             system_database_url: Some(system.url().into()),
             namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
-            target_admin_database_url: (family.scope_kind() != WorkloadRoleScopeKind::Control)
+            target_admin_database_url: (family.scope_type() != WorkloadRoleScopeType::Control)
                 .then(|| target.url().into()),
             cluster: None,
             cluster_namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),

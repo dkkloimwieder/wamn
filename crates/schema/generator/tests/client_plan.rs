@@ -224,10 +224,10 @@ fn revision_bindings_name_the_read_operation_that_supplies_them() {
 }
 
 #[test]
-fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
+fn each_platform_operation_takes_its_role_from_type_and_result_class() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
-    for (name, kind, result, role) in [
+    for (name, type_, result, role) in [
         ("query", "query", Some("page"), Role::Table),
         ("get", "get", Some("one"), Role::Detail),
         ("create", "create", Some("one"), Role::Form),
@@ -236,7 +236,7 @@ fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
         ("delete", "delete", Some("one"), Role::Delete),
     ] {
         let screen = screen(&plan, name);
-        assert_eq!(screen.contract.type_, kind, "{name}");
+        assert_eq!(screen.contract.type_, type_, "{name}");
         assert_eq!(screen.result_class, result, "{name}");
         assert_eq!(screen.role, role, "{name}");
         assert!(screen.role.is_supported(), "{name}");
@@ -293,21 +293,13 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
     assert_eq!(
         plan.unsupported(),
         [
-            ("platform-fixture:widget/archive@2.1.1", NoRole::UnknownKind),
+            ("platform-fixture:widget/archive@2.1.1", NoRole::UnknownType),
             (
                 "platform-fixture:widget/get@2.1.1",
                 NoRole::UnsupportedResult
             ),
         ],
         "a report names the canonical operation and why no role fits"
-    );
-    assert_eq!(
-        NoRole::UnknownKind.reason(),
-        "the operation kind has no screen role"
-    );
-    assert_eq!(
-        NoRole::UnsupportedResult.to_string(),
-        "the result class does not fit the operation kind"
     );
     assert_eq!(
         plan.screens()
@@ -589,7 +581,7 @@ fn row_links_open_the_record_read_and_the_revision_command() {
 }
 
 #[test]
-fn reads_and_confirmed_deletes_follow_from_kind_and_role() {
+fn reads_and_confirmed_deletes_follow_from_type_and_role() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
     for name in ["get", "query"] {

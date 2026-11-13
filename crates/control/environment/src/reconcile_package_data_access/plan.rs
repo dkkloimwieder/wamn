@@ -155,16 +155,16 @@ pub(super) fn desired_effective_acl(effective: &EffectiveDataAccess) -> Effectiv
 pub(super) fn render_undeclared_revocation(role: &str, residue: &UndeclaredResidue) -> String {
     let role = postgres_protocol::escape::escape_identifier(role);
     let mut targets = BTreeMap::<(&str, &str, &str), BTreeSet<&str>>::new();
-    for (schema, table, kind, column, _) in residue {
+    for (schema, table, type_, column, _) in residue {
         let columns = targets
-            .entry((schema.as_str(), table.as_str(), kind.as_str()))
+            .entry((schema.as_str(), table.as_str(), type_.as_str()))
             .or_default();
         if let Some(column) = column {
             columns.insert(column.as_str());
         }
     }
     let mut sql = String::new();
-    for ((schema, table, kind), columns) in targets {
+    for ((schema, table, type_), columns) in targets {
         let target = format!(
             "{}.{}",
             postgres_protocol::escape::escape_identifier(schema),
@@ -172,7 +172,7 @@ pub(super) fn render_undeclared_revocation(role: &str, residue: &UndeclaredResid
         );
         // A sequence carries its own privilege vocabulary, and REVOKE refuses to
         // name a sequence as a table.
-        let carrier = if kind == "S" { "SEQUENCE" } else { "TABLE" };
+        let carrier = if type_ == "S" { "SEQUENCE" } else { "TABLE" };
         writeln!(
             sql,
             "REVOKE ALL PRIVILEGES ON {carrier} {target} FROM PUBLIC, {role};"

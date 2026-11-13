@@ -248,7 +248,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         postgres,
         PROJECT,
     ));
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {
         "host": "native.example.test", "path": "/native", "method": "POST"
     }});
     let manifest = json!({
@@ -1356,7 +1356,7 @@ async fn pat_caller(
         .set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("identity reader password"))?;
     let reader = connect(reader_url.as_str()).await?;
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
     let mut manifest = serde_json::to_value(release.manifest())?;
     manifest["routes"] =
         json!([{"package-id":"root","component":"node","operation":ROOT,"type":"command"}]);

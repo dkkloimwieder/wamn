@@ -132,14 +132,14 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
                 for alias in reader {
                     match alias? {
                         ComponentAlias::InstanceExport {
-                            kind,
+                            kind: type_,
                             instance_index,
                             name,
                         } => {
                             if let Some(InstanceEntry::Statements(import)) =
                                 instances.get(usize::try_from(instance_index)?)
                                 && matches!(
-                                    kind,
+                                    type_,
                                     ComponentExternalKind::Func | ComponentExternalKind::Instance
                                 )
                             {
@@ -147,7 +147,7 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
                                     "the composition aliases {name:?} out of statements import {import:?}"
                                 );
                             }
-                            match kind {
+                            match type_ {
                                 ComponentExternalKind::Instance => {
                                     instances.push(InstanceEntry::Other);
                                 }
@@ -360,9 +360,9 @@ mod tests {
     fn functions_and_instances_cannot_be_aliased_out_of_a_named_import() {
         let import = r#"(import "sql-0" (implements "wamn:postgres/statements@0.4.0")
             (instance (export "run" (func)) (export "nested" (instance))))"#;
-        for (name, kind) in [("run", "func"), ("nested", "instance")] {
+        for (name, type_) in [("run", "func"), ("nested", "instance")] {
             refuses(
-                &format!(r#"{import} (alias export 0 "{name}" ({kind}))"#),
+                &format!(r#"{import} (alias export 0 "{name}" ({type_}))"#),
                 "composition aliases",
             );
         }

@@ -14,7 +14,7 @@ use super::{
     CredentialGeneration, DateTime, GenericClient, OrgWorkloadActionRequest, PLATFORM_GROUP_ROLE,
     PgConfig, SecondsFormat, SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome,
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
+    WorkloadRoleScope, WorkloadRoleScopeType, WorkloadSecretBody, WorkloadSecretBodyType,
     connect_config, database_host, ensure_secret_path, exact_project_database_config,
     named_database_config, project_env_database_name, read_project_env_instance,
     read_project_env_policy, render_org_workload_secret_manifest, render_workload_secret_manifest,
@@ -119,7 +119,7 @@ pub(crate) async fn restore_database_access(
             .await?;
     let env_key = wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env);
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+        .filter(|family| family.scope_type() != WorkloadRoleScopeType::Control)
     {
         let lifecycle = workload_lifecycle(
             family,
@@ -358,8 +358,8 @@ pub(crate) async fn run_workload_action_with_admin(
     // already names; every other family addresses the project environment's own
     // database, whose instance suffix is READ from the registry rather than
     // typed. One derivation over the scope grain, not a branch per family.
-    let (admin_url, database, admin_config, instance) = if family.scope_kind()
-        == WorkloadRoleScopeKind::Control
+    let (admin_url, database, admin_config, instance) = if family.scope_type()
+        == WorkloadRoleScopeType::Control
     {
         anyhow::ensure!(
             args.target_admin_database_url.is_none(),
@@ -418,14 +418,14 @@ pub(crate) async fn run_workload_action_with_admin(
                 |role, password| {
                     let credential_url =
                         workload_url(admin_url, &db_host, args.db_port, role, password, &database)?;
-                    let secret = match family.secret_body_kind() {
-                        WorkloadSecretBodyKind::Url => render_workload_secret_manifest(
+                    let secret = match family.secret_body_type() {
+                        WorkloadSecretBodyType::Url => render_workload_secret_manifest(
                             family,
                             &triple,
                             &args.namespace,
                             WorkloadSecretBody::Url(&credential_url),
                         ),
-                        WorkloadSecretBodyKind::EnvKeyUrl => {
+                        WorkloadSecretBodyType::EnvKeyUrl => {
                             anyhow::ensure!(
                                 role.contains(&key),
                                 "the minted {label} login does not carry the tenant key the RLS \
@@ -442,7 +442,7 @@ pub(crate) async fn run_workload_action_with_admin(
                                 },
                             )
                         }
-                        WorkloadSecretBodyKind::SessionTarget => {
+                        WorkloadSecretBodyType::SessionTarget => {
                             let target = SessionTarget::new(
                                 &triple,
                                 instance
@@ -511,7 +511,7 @@ pub async fn run_org_workload_action(
     } = args.action;
     let label = family.label();
     anyhow::ensure!(
-        family.scope_kind() == WorkloadRoleScopeKind::Org,
+        family.scope_type() == WorkloadRoleScopeType::Org,
         "{label} is not an org credential; provision-project-env mints it"
     );
     let admin_config = named_database_config(&args.system_database_url, &format!("{label} admin"))?;

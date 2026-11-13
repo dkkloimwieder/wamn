@@ -91,14 +91,14 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> Vec<Value> {
 /// Decode a manifest into the JSON that `kubectl create --dry-run=client --output=json`
 /// printed: empty documents are skipped, one object stays itself, and several
 /// objects become a `List`. Every object must carry one of the `expected`
-/// `apiVersion` and `kind` pairs, and every expected pair must occur.
+/// `apiVersion` and `type` pairs, and every expected pair must occur.
 fn decode_manifest(manifest: &[u8], expected: &[(&str, &str)]) -> Value {
     let mut objects = serde_yaml::Deserializer::from_slice(manifest)
         .map(|document| Value::deserialize(document).expect("Kubernetes manifest decodes as YAML"))
         .filter(|object| !object.is_null())
         .collect::<Vec<_>>();
-    let is = |object: &Value, (api_version, kind): (&str, &str)| {
-        object["apiVersion"] == api_version && object["kind"] == kind
+    let is = |object: &Value, (api_version, type_): (&str, &str)| {
+        object["apiVersion"] == api_version && object["kind"] == type_
     };
     for object in &objects {
         assert!(
@@ -108,10 +108,12 @@ fn decode_manifest(manifest: &[u8], expected: &[(&str, &str)]) -> Value {
             object["kind"]
         );
     }
-    for &(api_version, kind) in expected {
+    for &(api_version, type_) in expected {
         assert!(
-            objects.iter().any(|object| is(object, (api_version, kind))),
-            "Kubernetes manifest carries no {api_version} {kind}"
+            objects
+                .iter()
+                .any(|object| is(object, (api_version, type_))),
+            "Kubernetes manifest carries no {api_version} {type_}"
         );
     }
     match objects.len() {

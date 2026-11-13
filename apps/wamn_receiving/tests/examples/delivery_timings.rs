@@ -153,10 +153,10 @@ fn cache_entries(modules: &Path) -> anyhow::Result<usize> {
         };
         for entry in entries {
             let entry = entry?;
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
+            let type_ = entry.file_type()?;
+            if type_.is_dir() {
                 directories.push(entry.path());
-            } else if kind.is_file()
+            } else if type_.is_file()
                 && entry
                     .path()
                     .extension()

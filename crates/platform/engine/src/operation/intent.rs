@@ -1,6 +1,6 @@
 //! The intent rules of one route call (`docs/history/edge.md` 4.7).
 //!
-//! A call of a kind that changes records logs one intent for each input request element
+//! A call of a type that changes records logs one intent for each input request element
 //! before its export runs. The key is the request element field that the route names
 //! for its idempotency key, or else the request element's `request_id`. Only new
 //! request elements run, each alone, as a one request element list
@@ -47,8 +47,8 @@ pub struct IntentContext<'a> {
     /// The release that serves the call.
     pub release: &'a str,
     pub package: &'a str,
-    /// The kind of the route's operation. Only [`logs_intent`] kinds log.
-    pub kind: OperationType,
+    /// The type of the route's operation. Only [`logs_intent`] types log.
+    pub type_: OperationType,
     /// The request element field of the idempotency key, such as
     /// `value.idempotency_key`. `None` keys each request element by its `request_id`.
     pub key_field: Option<&'a str>,
@@ -61,17 +61,17 @@ impl fmt::Debug for IntentContext<'_> {
             .field("tenant", &self.tenant)
             .field("release", &self.release)
             .field("package", &self.package)
-            .field("kind", &self.kind)
+            .field("type", &self.type_)
             .field("key_field", &self.key_field)
             .finish_non_exhaustive()
     }
 }
 
-/// Whether a call of `kind` logs its intents. A read never does.
+/// Whether a call of `type` logs its intents. A read never does.
 #[must_use]
-pub fn logs_intent(kind: OperationType) -> bool {
+pub fn logs_intent(type_: OperationType) -> bool {
     matches!(
-        kind,
+        type_,
         OperationType::Create
             | OperationType::Update
             | OperationType::Delete
@@ -460,7 +460,7 @@ mod tests {
     use super::{logs_intent, request_element_hash, request_elements};
 
     #[test]
-    fn only_a_kind_that_changes_records_logs() {
+    fn only_a_type_that_changes_records_logs() {
         let logged: Vec<_> = [
             OperationType::Get,
             OperationType::Query,
@@ -472,7 +472,7 @@ mod tests {
             OperationType::EventHandler,
         ]
         .into_iter()
-        .filter(|kind| logs_intent(*kind))
+        .filter(|type_| logs_intent(*type_))
         .collect();
         assert_eq!(
             logged,

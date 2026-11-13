@@ -31,7 +31,7 @@
 //!   not cross that guard (`wamn-10yt.3.2`); it must close before any such
 //!   RLS-bearing guest API becomes reachable.
 //! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
-//!   their preconditions closed by SUBJECT-DELETION — the node-kind registry
+//!   their preconditions closed by SUBJECT-DELETION — the node-type registry
 //!   retired and no raw-SQL node surface exists to enable — so no live security
 //!   transition occurred. They re-enter only with a future raw-SQL or
 //!   custom-node surface, which would arrive through publish-time admission.
@@ -91,7 +91,7 @@ pub use claims::{
     UnprovisionedPrincipal, WamnPostgres, WiringLookup,
 };
 pub use credential_exactness::{
-    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,
+    AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionType,
     CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,

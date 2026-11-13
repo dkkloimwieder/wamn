@@ -832,9 +832,9 @@ mod tests {
         let head = history.last().map_or(0, |(position, _, _)| *position);
         let rows = history
             .iter()
-            .map(|(position, kind, before)| HistoryRow {
+            .map(|(position, type_, before)| HistoryRow {
                 position: *position,
-                type_: kind,
+                type_,
                 before,
                 current: &current,
                 head_position: head,
@@ -906,9 +906,9 @@ mod tests {
         let base_head = filtered.last().map_or(0, |(position, ..)| *position);
         let base_rows = filtered
             .iter()
-            .map(|(position, kind, before, current)| HistoryRow {
+            .map(|(position, type_, before, current)| HistoryRow {
                 position: *position,
-                type_: kind,
+                type_,
                 before,
                 current,
                 head_position: base_head,

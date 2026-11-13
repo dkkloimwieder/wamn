@@ -99,7 +99,7 @@ pub(crate) enum Piece {
     Param(usize),
 }
 
-/// Text that carries no token: the lexer must treat all four kinds as absent.
+/// Text that carries no token: the lexer must treat all four types as absent.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Inert {
     LineComment(&'static str),

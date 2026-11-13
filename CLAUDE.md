@@ -104,7 +104,7 @@ A finding **closes on a commit that removes or fixes code — never on a decisio
 Close findings in the commit that carries the finding ID (`fix(R13): ...`).
 
 ### Rust
-Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. At public, persisted, and WIT/wire boundaries, repository-defined WIT-shaped error enums and frozen serialized literals are the controlling contract. Inside implementations, use contextual error structs carrying a kind, source, and relevant context, then translate exactly once at the owning boundary. Do not create a parallel wire taxonomy or mechanically retrofit unrelated errors; retrofit existing code only when a named boundary leak requires it or when that owner is already being changed. This scoped project convention overrides conflicting skill guidance.
+Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. At public, persisted, and WIT/wire boundaries, repository-defined WIT-shaped error enums and frozen serialized literals are the controlling contract. Inside implementations, use contextual error structs carrying a type, source, and relevant context, then translate exactly once at the owning boundary. Do not create a parallel wire taxonomy or mechanically retrofit unrelated errors; retrofit existing code only when a named boundary leak requires it or when that owner is already being changed. This scoped project convention overrides conflicting skill guidance.
 
 Memory beats CPU on this platform, and a clone is never free (owner rule 2026-11-03, `wamn-inmae`). Borrow or move a value before you clone it. Spell every reference-count increment as `Arc::clone(&x)`.
 

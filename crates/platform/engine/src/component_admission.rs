@@ -69,7 +69,7 @@ pub fn validate_integration_admission(
     component_bytes: &[u8],
     label: &str,
 ) -> Result<AdmittedIntegration, ComponentAdmissionError> {
-    let refuse = |kind, source: anyhow::Error| ComponentAdmissionError::new(kind, label, source);
+    let refuse = |type_, source: anyhow::Error| ComponentAdmissionError::new(type_, label, source);
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         refuse(
             ComponentAdmissionErrorType::InvalidComponentBytes,
@@ -444,10 +444,10 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
 /// first push of a blobstore guest through `push-component` refused
 /// `wasmcloud:blobstore/*` as undeclared operation dependencies
 /// (`wamn-362o.41`). Matching is on the registered PACKAGE at any version:
-/// this asks what KIND of import it is, and refusing a version is admission's
+/// this asks what TYPE of import it is, and refusing a version is admission's
 /// job elsewhere.
 ///
-/// The `wasi` and `wamn` families are platform-kind even when unregistered
+/// The `wasi` and `wamn` families are platform-type even when unregistered
 /// (`wasi:sockets`): those imports must reach the import policy, which fails
 /// closed by ABSENCE and names them -- the raw-socket screen's contract.
 /// Classifying them as application dependencies would refuse them one step

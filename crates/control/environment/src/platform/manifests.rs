@@ -364,7 +364,7 @@ mod tests {
             .find(|object| {
                 object["kind"] == "Certificate" && object["metadata"]["name"] == "wamn-edge-tls"
             })
-            .context("kind edge certificate")?;
+            .context("type edge certificate")?;
         let dns_names: Vec<String> =
             serde_json::from_value(certificate["spec"]["dnsNames"].take())?;
         let certificate = rcgen::generate_simple_self_signed(dns_names)?;
@@ -378,7 +378,7 @@ mod tests {
         // WebPKI enforces the wildcard rule, including the two-label suffix.
         for hostname in [document.route_hosts.control.as_str(), application.as_str()] {
             verify_server_name(&parsed, &ServerName::try_from(hostname)?)
-                .with_context(|| format!("kind edge certificate must cover {hostname}"))?;
+                .with_context(|| format!("type edge certificate must cover {hostname}"))?;
         }
         Ok(())
     }

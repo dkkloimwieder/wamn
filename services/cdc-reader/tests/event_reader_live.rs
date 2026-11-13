@@ -423,7 +423,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         &[
             &ORG,
             &ENV,
-            &r#"{"kind":"pool"}"#,
+            &r#"{"type":"pool"}"#,
             &0i32,
             &1i32,
             &"1Gi",

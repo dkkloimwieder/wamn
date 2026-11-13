@@ -99,10 +99,10 @@ pub struct StoreError {
 }
 
 impl StoreError {
-    /// Build a failure of `kind` for the named `operation`.
-    pub fn new(kind: StoreErrorType, operation: &'static str, detail: impl Into<String>) -> Self {
+    /// Build a failure of `type` for the named `operation`.
+    pub fn new(type_: StoreErrorType, operation: &'static str, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             operation,
             detail: detail.into(),
         }

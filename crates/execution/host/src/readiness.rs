@@ -87,14 +87,14 @@ pub fn synchronous_route_count(manifest: &ServingManifest) -> usize {
     manifest
         .attachments
         .values()
-        .filter(|attachment| synchronous_request_kind(attachment.type_))
+        .filter(|attachment| synchronous_request_type(attachment.type_))
         .count()
 }
 
-/// Whether an attachment of this kind serves a synchronous request.
-pub fn synchronous_request_kind(kind: AttachmentType) -> bool {
+/// Whether an attachment of this type serves a synchronous request.
+pub fn synchronous_request_type(type_: AttachmentType) -> bool {
     matches!(
-        kind,
+        type_,
         AttachmentType::Http | AttachmentType::Internal | AttachmentType::Studio
     )
 }

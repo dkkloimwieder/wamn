@@ -168,15 +168,15 @@ pub(in super::super) fn verify_audit_retention_grants(
         }
     }
     let actual = acl_tuples(grants);
-    for (kind, schema, object, privilege) in actual.iter().chain(&expected) {
+    for (type_, schema, object, privilege) in actual.iter().chain(&expected) {
         anyhow::ensure!(
-            matches!(kind.as_str(), "schema" | "relation" | "column"),
-            "stable role {role:?} carries non-retention {kind} ACL in database {database:?}"
+            matches!(type_.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-retention {type_} ACL in database {database:?}"
         );
         anyhow::ensure!(
             (schema == "platform"
                 && matches!(
-                    (kind.as_str(), object.as_str(), privilege.as_str()),
+                    (type_.as_str(), object.as_str(), privilege.as_str()),
                     ("schema", "platform", "USAGE")
                         | ("relation", "write_log", "DELETE")
                         | (
@@ -205,7 +205,7 @@ pub(in super::super) fn verify_audit_retention_grants(
     Ok(())
 }
 
-/// The `aclexplode` grants as `(kind, schema, object, privilege)` tuples.
+/// The `aclexplode` grants as `(type, schema, object, privilege)` tuples.
 pub(super) fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> {
     grants
         .iter()

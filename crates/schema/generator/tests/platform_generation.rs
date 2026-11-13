@@ -724,7 +724,7 @@ fn composition_is_exact_and_carries_its_contract() {
     );
 
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    for (field, value, kind) in [
+    for (field, value, type_) in [
         (
             "field_owners",
             json!({"missing": "decorator_fixture"}),
@@ -752,7 +752,7 @@ fn composition_is_exact_and_carries_its_contract() {
             fixture::try_generate_with(&fixture::catalog(), &invalid)
                 .expect_err(field)
                 .error_type(),
-            kind
+            type_
         );
     }
     assert_eq!(

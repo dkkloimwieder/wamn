@@ -247,13 +247,13 @@ async fn target_status(
 async fn observe_workload(
     target: &Target,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
     observations: &mut Vec<Observation>,
 ) -> Option<Value> {
-    let result = get(target, namespace, kind, name).await;
+    let result = get(target, namespace, type_, name).await;
     observations.push(resource(
-        &format!("{namespace}/{kind}/{name}"),
+        &format!("{namespace}/{type_}/{name}"),
         result.as_ref().map(Option::as_ref).map_err(|_| ()),
     ));
     result.ok().flatten()
@@ -396,7 +396,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     let control_http = format!("{control}-http");
     let control_certificate = format!("wamn-nats-control-{}", document.org);
     let operator_certificate = format!("operator-{}", document.org);
-    for (namespace, kind, name) in [
+    for (namespace, type_, name) in [
         ("cert-manager", "Deployment", "cert-manager"),
         ("cert-manager", "Deployment", "cert-manager-cainjector"),
         ("cert-manager", "Deployment", "cert-manager-webhook"),
@@ -423,8 +423,8 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "ClusterIssuer", "wamn-selfsigned"),
         ("platform", "ClusterIssuer", "wasmcloud-ca"),
     ] {
-        let result = get(target, namespace, kind, name).await;
-        let source = format!("{namespace}/{kind}/{name}");
+        let result = get(target, namespace, type_, name).await;
+        let source = format!("{namespace}/{type_}/{name}");
         observations.push(resource(
             &source,
             result.as_ref().map(Option::as_ref).map_err(|_| ()),
@@ -565,12 +565,12 @@ async fn helm_json(target: &Target, arguments: &[&str]) -> anyhow::Result<Value>
 async fn get(
     target: &Target,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<Option<Value>> {
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        kubectl::get(&target.kubeconfig, &target.context, namespace, kind, name),
+        kubectl::get(&target.kubeconfig, &target.context, namespace, type_, name),
     )
     .await?;
     match result {
@@ -583,10 +583,10 @@ async fn get(
 async fn list(
     target: &Target,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     extra: &[&str],
 ) -> anyhow::Result<Value> {
-    let mut arguments = vec!["get", kind, "-o", "json"];
+    let mut arguments = vec!["get", type_, "-o", "json"];
     arguments.extend_from_slice(extra);
     let body = tokio::time::timeout(
         Duration::from_secs(15),
@@ -762,7 +762,7 @@ fn resource(source: &str, response: Result<Option<&Value>, ()>) -> Observation {
 
 fn classify(object: &Value) -> Category {
     let status = &object["status"];
-    let kind = object["kind"].as_str().unwrap_or_default();
+    let type_ = object["kind"].as_str().unwrap_or_default();
     if !object["metadata"]["deletionTimestamp"].is_null() {
         return Category::Incomplete;
     }
@@ -800,7 +800,7 @@ fn classify(object: &Value) -> Category {
     }) {
         return Category::Failed;
     }
-    if kind == "Pod" {
+    if type_ == "Pod" {
         if status["phase"] == "Failed" {
             return Category::Failed;
         }
@@ -824,7 +824,7 @@ fn classify(object: &Value) -> Category {
     {
         return Category::Unknown;
     }
-    match kind {
+    match type_ {
         "Deployment" | "StatefulSet" => {
             let desired = object["spec"]["replicas"].as_u64().unwrap_or(1);
             let current = observed
@@ -835,7 +835,7 @@ fn classify(object: &Value) -> Category {
                 && status["updatedReplicas"].as_u64().unwrap_or(0) >= desired;
             if current
                 && ready
-                && (kind == "StatefulSet"
+                && (type_ == "StatefulSet"
                     || status["availableReplicas"].as_u64().unwrap_or(0) >= desired)
             {
                 Category::Ready
@@ -862,7 +862,7 @@ fn classify(object: &Value) -> Category {
                 .iter()
                 .any(|condition| condition["type"] == "Ready" && condition["status"] == "True");
             if ready
-                && (kind != "Cluster"
+                && (type_ != "Cluster"
                     || (status["currentPrimary"]
                         .as_str()
                         .is_some_and(|name| !name.is_empty())
@@ -1304,9 +1304,9 @@ mod tests {
 
     #[test]
     fn certificate_and_workload_conditions_do_not_reuse_stale_success_or_failure() {
-        for kind in ["Certificate", "WorkloadDeployment"] {
+        for type_ in ["Certificate", "WorkloadDeployment"] {
             let mut object = json!({
-                "kind":kind,"metadata":{"generation":2},"spec":{"replicas":1},
+                "kind":type_,"metadata":{"generation":2},"spec":{"replicas":1},
                 "status":{"replicas":{"ready":1,"current":1,"expected":1},
                     "conditions":[{"type":"Ready","status":"True","observedGeneration":2}]}
             });

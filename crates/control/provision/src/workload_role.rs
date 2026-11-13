@@ -82,7 +82,7 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// `wamn-0h0g.13.63` is the fourth deliberate expansion, from ten to twelve,
 /// admitting the two CONTROL-scoped reader families the T1 system database's
 /// two purported read-only consumers need. Scope follows the RESOURCE PLANE,
-/// not the consumer's home, so both are [`WorkloadRoleScopeKind::Control`] and
+/// not the consumer's home, so both are [`WorkloadRoleScopeType::Control`] and
 /// neither may reuse the project-environment-scoped
 /// [`WorkloadRoleFamily::ServiceReader`]. TWO families, not one, because the
 /// two grant sets are disjoint and must stay so: `wamn-0h0g.12.116`'s consumer
@@ -180,30 +180,30 @@ impl WorkloadRoleFamily {
     }
 
     /// Exact scope class used to derive generation identities.
-    pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
+    pub const fn scope_type(self) -> WorkloadRoleScopeType {
         match self {
-            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::EnvKey,
+            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeType::EnvKey,
             Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
             | Self::EventMaterializer
-            | Self::Administration => WorkloadRoleScopeKind::ProjectEnvironment,
+            | Self::Administration => WorkloadRoleScopeType::ProjectEnvironment,
             // Scope follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
             Self::RegistryReader | Self::IdentityReader | Self::ConnectionReader => {
-                WorkloadRoleScopeKind::Control
+                WorkloadRoleScopeType::Control
             }
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
-            Self::Control => WorkloadRoleScopeKind::Org,
+            Self::Control => WorkloadRoleScopeType::Org,
         }
     }
 
     /// Whether `provision-project-env` mints this family. An org-scoped
     /// family belongs to `provision-org` instead.
     pub const fn is_project_env_provisioned(self) -> bool {
-        !matches!(self.scope_kind(), WorkloadRoleScopeKind::Org)
+        !matches!(self.scope_type(), WorkloadRoleScopeType::Org)
     }
 
     /// The families `provision-project-env` mints, in declaration order.
@@ -221,7 +221,7 @@ impl WorkloadRoleFamily {
     /// * [`Self::App`] is the GUEST. The floor exists to admit it, and a
     ///   platform arm would hand it every tenant's rows — the exact
     ///   cross-tenant read `wamn-0h0g.22.6` closed.
-    /// * A [`WorkloadRoleScopeKind::Control`] or [`WorkloadRoleScopeKind::Org`]
+    /// * A [`WorkloadRoleScopeType::Control`] or [`WorkloadRoleScopeType::Org`]
     ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
     ///   on any relation carrying the project-plane floor, so membership would
@@ -246,8 +246,8 @@ impl WorkloadRoleFamily {
     pub const fn is_platform_grain(self) -> bool {
         !matches!(self, Self::App | Self::AuditRetention)
             && !matches!(
-                self.scope_kind(),
-                WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org
+                self.scope_type(),
+                WorkloadRoleScopeType::Control | WorkloadRoleScopeType::Org
             )
     }
 
@@ -297,14 +297,14 @@ impl WorkloadRoleFamily {
     /// A closed vocabulary of SHAPES, not a per-family list: an
     /// admitted family lands on the plain single-`url` Secret every consumer
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
-    pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
+    pub fn secret_body_type(self) -> WorkloadSecretBodyType {
         match self {
             // The guest credential IS the tenant authority, so its Secret
             // carries the tenant key that keys every governed predicate.
-            Self::App => WorkloadSecretBodyKind::EnvKeyUrl,
+            Self::App => WorkloadSecretBodyType::EnvKeyUrl,
             // The credential and trusted target coordinates publish atomically.
-            Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
-            _ => WorkloadSecretBodyKind::Url,
+            Self::SessionRoleReader => WorkloadSecretBodyType::SessionTarget,
+            _ => WorkloadSecretBodyType::Url,
         }
     }
 
@@ -364,7 +364,7 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
 
 /// The closed set of credential-Secret body shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadSecretBodyKind {
+pub enum WorkloadSecretBodyType {
     /// One `url` key.
     Url,
     /// One `url` key, plus the tenant key label and env_key annotation.
@@ -375,7 +375,7 @@ pub enum WorkloadSecretBodyKind {
 
 /// The four admitted provisioning scope shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadRoleScopeKind {
+pub enum WorkloadRoleScopeType {
     EnvKey,
     ProjectEnvironment,
     Control,
@@ -383,7 +383,7 @@ pub enum WorkloadRoleScopeKind {
     Org,
 }
 
-impl WorkloadRoleScopeKind {
+impl WorkloadRoleScopeType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::EnvKey => "env_key",
@@ -430,12 +430,12 @@ impl<'a> WorkloadRoleScope<'a> {
         }
     }
 
-    const fn scope_type(self) -> WorkloadRoleScopeKind {
+    const fn scope_type(self) -> WorkloadRoleScopeType {
         match self {
-            Self::EnvKey { .. } => WorkloadRoleScopeKind::EnvKey,
-            Self::ProjectEnvironment { .. } => WorkloadRoleScopeKind::ProjectEnvironment,
-            Self::Control { .. } => WorkloadRoleScopeKind::Control,
-            Self::Org { .. } => WorkloadRoleScopeKind::Org,
+            Self::EnvKey { .. } => WorkloadRoleScopeType::EnvKey,
+            Self::ProjectEnvironment { .. } => WorkloadRoleScopeType::ProjectEnvironment,
+            Self::Control { .. } => WorkloadRoleScopeType::Control,
+            Self::Org { .. } => WorkloadRoleScopeType::Org,
         }
     }
 }
@@ -444,8 +444,8 @@ impl<'a> WorkloadRoleScope<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkloadRoleScopeError {
     family: WorkloadRoleFamily,
-    expected: WorkloadRoleScopeKind,
-    actual: WorkloadRoleScopeKind,
+    expected: WorkloadRoleScopeType,
+    actual: WorkloadRoleScopeType,
 }
 
 impl fmt::Display for WorkloadRoleScopeError {
@@ -468,7 +468,7 @@ pub fn workload_role_scope_hash(
     scope: WorkloadRoleScope<'_>,
 ) -> Result<String, WorkloadRoleScopeError> {
     let actual = scope.scope_type();
-    let expected = family.scope_kind();
+    let expected = family.scope_type();
     if actual != expected {
         return Err(WorkloadRoleScopeError {
             family,
@@ -482,7 +482,7 @@ pub fn workload_role_scope_hash(
     // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
         let WorkloadRoleScope::EnvKey { env_key, database } = scope else {
-            unreachable!("scope kind was checked above")
+            unreachable!("scope type was checked above")
         };
         return Ok(app_scope_hash(env_key, database));
     }
@@ -642,8 +642,8 @@ mod tests {
             CredentialGeneration::A,
         )
         .expect_err("a tenant family accepted a control scope");
-        assert_eq!(error.expected, WorkloadRoleScopeKind::EnvKey);
-        assert_eq!(error.actual, WorkloadRoleScopeKind::Control);
+        assert_eq!(error.expected, WorkloadRoleScopeType::EnvKey);
+        assert_eq!(error.actual, WorkloadRoleScopeType::Control);
     }
 
     #[test]
@@ -844,8 +844,8 @@ mod tests {
             assert_eq!(family.acl_role(), acl_role, "{family:?}");
             assert_eq!(family.scope_domain(), scope_domain, "{family:?}");
             assert_eq!(
-                family.scope_kind(),
-                WorkloadRoleScopeKind::ProjectEnvironment,
+                family.scope_type(),
+                WorkloadRoleScopeType::ProjectEnvironment,
                 "{family:?}"
             );
             let derived = workload_generation_role(
@@ -916,16 +916,16 @@ mod tests {
             WorkloadRoleFamily::IdentityReader,
         ] {
             assert_eq!(
-                family.scope_kind(),
-                WorkloadRoleScopeKind::Control,
+                family.scope_type(),
+                WorkloadRoleScopeType::Control,
                 "{family:?}: scope follows the resource plane, and that plane is control"
             );
             workload_generation_role(family, FROZEN_SCOPE, CredentialGeneration::A)
                 .expect("a control reader derives under control scope");
         }
         assert_eq!(
-            WorkloadRoleFamily::ServiceReader.scope_kind(),
-            WorkloadRoleScopeKind::ProjectEnvironment,
+            WorkloadRoleFamily::ServiceReader.scope_type(),
+            WorkloadRoleScopeType::ProjectEnvironment,
             "ServiceReader is the project-environment reader; that is why it is not reusable"
         );
         let error = workload_generation_role(
@@ -935,8 +935,8 @@ mod tests {
         )
         .expect_err("ServiceReader accepted a control scope");
         assert_eq!(error.family, WorkloadRoleFamily::ServiceReader);
-        assert_eq!(error.expected, WorkloadRoleScopeKind::ProjectEnvironment);
-        assert_eq!(error.actual, WorkloadRoleScopeKind::Control);
+        assert_eq!(error.expected, WorkloadRoleScopeType::ProjectEnvironment);
+        assert_eq!(error.actual, WorkloadRoleScopeType::Control);
     }
 
     /// The two control readers' frozen strings and identities.
@@ -1000,7 +1000,7 @@ mod tests {
         assert_eq!(family.acl_role(), "wamn_audit_retention");
         assert_eq!(family.label(), "audit-retention");
         assert_eq!(family.scope_domain(), b"wamn.audit-retention.scope.v0.1");
-        assert_eq!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey);
+        assert_eq!(family.scope_type(), WorkloadRoleScopeType::EnvKey);
         assert_eq!(family.generation_prefix(), family.acl_role());
         assert!(!family.is_platform_grain());
         let derived = workload_generation_role(
@@ -1027,10 +1027,10 @@ mod tests {
         assert_eq!(family.acl_role(), "wamn_administration");
         assert_eq!(family.label(), "administration");
         assert_eq!(family.secret_prefix(), "wamn-administration-");
-        assert_eq!(family.secret_body_kind(), WorkloadSecretBodyKind::Url);
+        assert_eq!(family.secret_body_type(), WorkloadSecretBodyType::Url);
         assert_eq!(
-            family.scope_kind(),
-            WorkloadRoleScopeKind::ProjectEnvironment
+            family.scope_type(),
+            WorkloadRoleScopeType::ProjectEnvironment
         );
         assert_eq!(family.generation_prefix(), family.acl_role());
         assert!(family.is_platform_grain());
