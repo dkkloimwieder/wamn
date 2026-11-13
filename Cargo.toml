@@ -19,7 +19,7 @@ default-members = [
   "services/scenario-worker",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
-exclude = ["apps", "vendor/pg-walstream"]
+exclude = ["apps"]
 
 [workspace.package]
 version = "0.1.0"
@@ -129,9 +129,9 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.12.1"
 wasmtime = { version = "=48.0.8", default-features = false, features = ["cache", "parallel-compilation"] }
 wasmtime-wasi = "=48.0.8"
 wasmtime-wasi-http = "=48.0.8"
-# Released pg_walstream 0.9.0 with the local typed-keepalive patch.
+# pg_walstream 0.10.0 with the typed keepalive patch.
 # Upstream already contains the FAILOVER syntax fix.
-pg_walstream = { path = "vendor/pg-walstream", version = "=0.9.0" }
+pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "2f6697e4e761565ed366b94f43a6f29b2287d67a" }
 anyhow = "1"
 argon2 = { version = "0.6.0", features = ["zeroize"] }
 zeroize = "1"

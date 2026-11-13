@@ -31,7 +31,6 @@ FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY wit ./wit
-COPY vendor ./vendor
 # Native packages use shared guest libraries under apps/platform.
 COPY apps ./apps
 COPY services ./services
@@ -117,7 +116,6 @@ COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
 COPY wit /build/wit
-COPY vendor /build/vendor
 COPY apps /build/apps
 COPY tools/guest-rustflags /build/tools/guest-rustflags
 WORKDIR /build/apps
