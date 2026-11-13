@@ -1,7 +1,7 @@
 use super::{Duration, Triple, ensure, materializer_consumer_config, pull};
 use anyhow::Context as _;
 
-pub(crate) fn validate_inputs(
+pub fn validate_inputs(
     scope: &Triple,
     replicas: usize,
     duplicate_window: Duration,

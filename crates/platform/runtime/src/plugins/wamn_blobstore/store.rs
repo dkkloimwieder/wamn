@@ -388,7 +388,7 @@ mod tests {
         .unwrap();
         Arc::new(crate::connection_facts::ConnectionFacts::new(
             Arc::new(crate::connection_memory::ConnectionMemory::default()),
-            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            wamn_broker::Publisher::default(),
             Arc::new(reader),
             Arc::new(postgres),
             &format!("acme--{project}--dev"),

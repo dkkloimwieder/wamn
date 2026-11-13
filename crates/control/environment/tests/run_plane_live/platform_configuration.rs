@@ -19,7 +19,7 @@ use super::{
     seed_system_env_policy, workload_generation_role,
 };
 use serde_json::json;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_broker::Publisher;
 use wamn_platform_identity::configuration::PlatformConfiguration;
 
 #[path = "../support/platform_configuration.rs"]
@@ -87,7 +87,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
     reset(&target).await;
     seed_system_env_policy(su, "standard").await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.clone(),
         org: CLI_ORG.to_string(),
@@ -225,7 +225,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     reset(&target).await;
     seed_system_env_policy(&su, "standard").await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         system_database_url: url.to_string(),
         admin_database_url: target_url.clone(),
         org: CLI_ORG.to_string(),

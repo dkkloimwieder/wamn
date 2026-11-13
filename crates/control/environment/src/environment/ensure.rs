@@ -155,7 +155,7 @@ pub async fn provision_resources(
     )
     .await
     .context("give the environment the rows of the current administrators")?;
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     for row in transaction
         .query(
             "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",
@@ -170,26 +170,18 @@ pub async fn provision_resources(
         .await
         .context("commit the administrator rows")?;
     platform.auth_changes().await?.publish(drops).await;
-    let authorization = crate::kubectl::get::<serde_json::Value>(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        "platform",
-        "secret",
-        crate::platform::broker::AUTHORIZATION,
+    for mut object in wamn_broker::authorization::update_authorization(
+        &platform.target,
+        &document.org,
+        Some(&document.triple()),
     )
     .await?
-    .context("missing event broker authorization Secret")?;
-    for mut object in crate::platform::broker::environment_objects(&authorization, document)? {
-        let object_namespace = if object["kind"] == "Certificate" {
-            namespace
-        } else {
-            "platform"
-        };
-        object["metadata"]["namespace"] = object_namespace.into();
-        crate::kubectl::apply(
+    {
+        object["metadata"]["namespace"] = namespace.into();
+        wamn_kubernetes::kubectl::apply(
             &platform.target.kubeconfig,
             &platform.target.context,
-            object_namespace,
+            namespace,
             &object,
         )
         .await?;
@@ -215,7 +207,7 @@ pub(super) async fn resources_in_place(
     if !super::analyse::release_present(platform, &name).await? {
         return Ok(false);
     }
-    let workload: Option<serde_json::Value> = crate::kubectl::get(
+    let workload: Option<serde_json::Value> = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.target.namespace,
@@ -229,7 +221,7 @@ pub(super) async fn resources_in_place(
 }
 
 pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
-    Ok(wamn_control_provision::environment_state::environment_resource_name(org, project, env)?)
+    Ok(wamn_control_provision::environment_names::environment_resource_name(org, project, env)?)
 }
 
 /// Render the shared host without application release arguments or labels.
@@ -343,7 +335,7 @@ pub fn materializer_host_values(
         "roles": [],
         "runtime-operator": {"runtime": {
             "terminationGracePeriodSeconds": drain_bound_seconds,
-            "serviceAccount": {"create":false, "name": wamn_credential_store::kubernetes::service_account_name(&document.org, &document.project, &document.env)},
+            "serviceAccount": {"create":false, "name": wamn_control_registry::service_account_name(&document.org, &document.project, &document.env)},
             "automountServiceAccountToken": true,
             "hostGroups": [group]
         }},
@@ -376,7 +368,7 @@ pub fn materializer_workload(
                 project: document.project.clone(),
                 environment: document.env.clone(),
             },
-            event_stream: wamn_control_provision::event_stream_name(
+            event_stream: wamn_event_wire::stream_name(
                 &document.org,
                 &document.project,
                 &document.env,
@@ -450,7 +442,7 @@ pub(super) async fn provision_materializer(
         &image,
         platform.insecure_registry,
     )?;
-    crate::kubectl::apply(
+    wamn_kubernetes::kubectl::apply(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.target.namespace,
@@ -650,7 +642,7 @@ pub(super) async fn prepare_cdc(
         &document.project,
         &document.env,
     );
-    let replication_password = match crate::kubectl::get::<serde_json::Value>(
+    let replication_password = match wamn_kubernetes::kubectl::get::<serde_json::Value>(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,
@@ -866,7 +858,7 @@ pub(crate) async fn ensure_cdc_inputs(
             .await?;
         deployment["spec"]["replicas"] = 0.into();
     }
-    crate::kubectl::apply(
+    wamn_kubernetes::kubectl::apply(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,
@@ -905,7 +897,7 @@ async fn ensure_streams(
         return Ok(());
     };
     let triple = document.triple();
-    let consumers = wamn_control_provision::events::entity_consumers(
+    let consumers = wamn_broker::events::entity_consumers(
         &triple,
         manifests
             .iter()
@@ -918,7 +910,7 @@ async fn ensure_streams(
             .await
             .context("connect the event provisioning credential")?,
     );
-    crate::event_streams::provision(
+    wamn_broker::streams::provision(
         &broker,
         &triple,
         events.stream_replicas,
@@ -1086,7 +1078,7 @@ pub(crate) async fn kubectl(
     arguments: &[&str],
     input: Option<&[u8]>,
 ) -> anyhow::Result<String> {
-    crate::kubectl::kubectl(
+    wamn_kubernetes::kubectl::kubectl(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,
@@ -1205,12 +1197,12 @@ async fn ensure_credential_access(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
-    let account = wamn_credential_store::kubernetes::service_account_name(
+    let account = wamn_control_registry::service_account_name(
         &document.org,
         &document.project,
         &document.env,
     );
-    let secret = wamn_credential_store::kubernetes::secret_name(
+    let secret = wamn_control_registry::credential_secret_name(
         &document.org,
         &document.project,
         &document.env,
@@ -1251,7 +1243,7 @@ mod tests {
 
     #[test]
     fn fresh_shared_host_consumes_installed_provider_runtime() -> anyhow::Result<()> {
-        use crate::platform::{control, document::ClusterDocument, resources};
+        use crate::platform::{control, document::ClusterDocument};
         use serde_json::json;
         let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -1278,7 +1270,7 @@ mod tests {
                 "version":crate::platform::artifact_plan::select(&chart.0)?.version,
                 "name":environment_host_name(&document.org, &document.project, &document.env)?,
                 "namespace":"hosts", "values":desired});
-            let objects = resources::helm_template(&entry)?;
+            let objects = wamn_kubernetes::helm::template(&entry)?;
             let deployment = objects
                 .iter()
                 .find(|object| object["kind"] == "Deployment")
@@ -1365,7 +1357,7 @@ mod tests {
         let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
             "name":environment_host_name(&document.org, &document.project, &document.env)?,
             "namespace":"hosts", "values":reapplied});
-        let objects = crate::platform::resources::helm_template(&entry)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
         let host = objects
             .iter()
             .find(|object| object["kind"] == "Deployment")
@@ -1535,7 +1527,7 @@ mod credential_access_tests {
 
     #[test]
     fn colliding_coordinates_read_only_their_own_secret() {
-        use wamn_credential_store::kubernetes::{secret_name, service_account_name};
+        use wamn_control_registry::{credential_secret_name as secret_name, service_account_name};
 
         let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
         let accounts =

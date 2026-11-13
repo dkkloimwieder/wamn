@@ -99,7 +99,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
         ),
         "unknown application operation"
     );
-    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+    let coordinate = wamn_control_provision::environment_names::environment_resource_name(
         request.org,
         request.project,
         request.env,
@@ -129,7 +129,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
             .into(),
     );
     platform.target.namespace = "hosts".into();
-    let object: Value = crate::kubectl::get(
+    let object: Value = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         "hosts",

@@ -47,3 +47,12 @@ pub use types::{
     SecretRef, Triple, cluster_of, control_nats_user, environment_nats_user, project_env_key,
 };
 pub use validate::{Issue, Severity, validate, validate_org_id};
+
+/// The Secret that stores an environment's credential values.
+pub fn credential_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("wamn-credential-{}", project_env_key(org, project, env))
+}
+/// The account used by the environment's hosts.
+pub fn service_account_name(org: &str, project: &str, env: &str) -> String {
+    format!("wamn-host-{}", project_env_key(org, project, env))
+}

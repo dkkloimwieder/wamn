@@ -13,8 +13,9 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-broker = { workspace = true }
 wamn-platform-identity = { workspace = true }
-wamn-credential-store = { workspace = true }
+wamn-kubernetes = { workspace = true, features = ["test-util"] }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 anyhow = { workspace = true }

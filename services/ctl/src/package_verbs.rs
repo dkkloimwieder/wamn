@@ -203,10 +203,8 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     );
     let request = ApplyPackageRequest {
         component_source,
-        changes: wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?,
+        changes: wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?)
+            .await?,
         package: opened.package_root(),
         database_url: args.database_url,
         org: args.org.clone(),

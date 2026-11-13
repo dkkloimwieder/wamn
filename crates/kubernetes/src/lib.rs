@@ -1,8 +1,15 @@
-//! Store credential values outside the database.
+//! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
-pub mod file;
+pub mod environment_state;
+pub mod forward;
+pub mod helm;
+pub mod job;
+pub mod kubectl;
 pub mod kubernetes;
 pub mod kubernetes_api;
+pub mod secret;
+#[cfg(feature = "test-util")]
+pub mod test_util;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -25,7 +32,11 @@ pub struct Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} credential {} failed", self.operation, self.reference)
+        write!(
+            f,
+            "{} Kubernetes operation on {} failed",
+            self.operation, self.reference
+        )
     }
 }
 
@@ -47,25 +58,26 @@ pub(crate) fn failure(
     }
 }
 
-/// A store scoped to one environment. Values never enter database columns.
+/// Credential storage. Each write names its environment; values stay outside the database.
 #[async_trait::async_trait]
 pub trait Store: Send + Sync + fmt::Debug {
-    async fn put(&self, credential_id: uuid::Uuid, value: &[u8]) -> Result<StoreVersion, Error>;
+    async fn put(
+        &self,
+        scope: &wamn_control_registry::Triple,
+        credential_id: uuid::Uuid,
+        value: &[u8],
+    ) -> Result<StoreVersion, Error>;
     async fn get(&self, reference: &str, version: &str) -> Result<Vec<u8>, Error>;
     async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error>;
 }
 
-/// Select the backend named by a persisted credential reference.
-pub fn open(store: &str) -> Result<Box<dyn Store>, Error> {
-    match store {
-        "file" => {
-            let directory = std::env::var_os("WAMN_CREDENTIAL_DIR")
-                .ok_or_else(|| failure("open", "file", "WAMN_CREDENTIAL_DIR is absent"))?;
-            Ok(Box::new(file::FileStore::new(directory.into())))
-        }
-        "k8s" => Ok(Box::new(kubernetes::KubernetesStore::in_cluster(
-            "", "", "",
-        )?)),
-        _ => Err(failure("open", store, "unknown credential store")),
-    }
+/// A selected cluster and namespace for command line operations.
+#[derive(Clone, Debug)]
+pub struct Target {
+    pub kubeconfig: std::path::PathBuf,
+    pub context: String,
+    pub namespace: String,
 }
+
+#[cfg(test)]
+mod tests;

@@ -10,7 +10,7 @@ use wamn_control_provision::operation_grants::{
 pub(super) async fn ensure_admin_role(
     tx: &Transaction<'_>,
     env_key: &str,
-    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
+    drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<bool> {
     tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&env_key])
         .await

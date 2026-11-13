@@ -209,7 +209,7 @@ pub struct ProvisionProjectEnvRequest {
     pub pat_issuer: PatIssuerConfig,
 
     /// Publisher for committed principal and project-role changes.
-    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+    pub changes: wamn_broker::Publisher,
 
     /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
     pub emit_management_author_pat_secret: Option<PathBuf>,

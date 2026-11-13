@@ -7,7 +7,8 @@
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_platform_identity::{Principal, create_user};
 
 use crate::provision_project_env::provisioning_transaction;
@@ -31,7 +32,7 @@ pub struct CreateUserRequest {
 /// Create the user principal and return it as the system database stored it.
 pub async fn create_user_principal(
     args: CreateUserRequest,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<Principal> {
     let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
         .await

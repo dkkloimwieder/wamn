@@ -11,13 +11,13 @@ use hyper::body::Frame;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
+use wamn_broker::Publisher;
 use wamn_catalog::HostRouteSet;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
-use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -149,14 +149,14 @@ impl FileHost {
         }
         let credentials = Arc::new(
             ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG).with_store(
-                Arc::<wamn_test_infrastructure::credentials::LocalCredentials>::clone(
+                Arc::<wamn_test_infrastructure::credentials::MemoryStore>::clone(
                     &registry.credentials,
                 ),
             ),
         );
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             credentials,
             Arc::clone(&postgres),
             ENV_KEY,
@@ -191,7 +191,7 @@ impl FileHost {
                 postgres: Arc::clone(&postgres),
                 project: PROJECT.into(),
                 identity: None,
-                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+                changes: wamn_broker::Publisher::default(),
             },
             None,
         )
@@ -893,8 +893,8 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
         ORG,
         "connection.disable",
         &json!({"project":PROJECT,"env":"dev","name":files::STORE_NAME}).to_string(),
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     tx.commit().await?;
@@ -1324,7 +1324,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         Arc::new(HttpTransport::new()?),
         Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             Arc::new(ConnectionCredentials::from_database(
                 Arc::clone(&fixture.registry.reader),
                 ORG,

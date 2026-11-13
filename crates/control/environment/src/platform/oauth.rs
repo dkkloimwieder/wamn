@@ -113,7 +113,7 @@ pub(super) async fn ensure_key(
     if document.provider == Provider::Gcp {
         return Ok(false);
     }
-    let existing: Option<Value> = crate::kubectl::get(
+    let existing: Option<Value> = wamn_kubernetes::kubectl::get(
         &target.kubeconfig,
         &target.context,
         "hosts",
@@ -128,7 +128,7 @@ pub(super) async fn ensure_key(
     let key = new_key()?;
     // A concurrent create keeps the winner's key.
     for object in key_objects(&key, "hosts") {
-        if let Err(error) = crate::kubectl::kubectl(
+        if let Err(error) = wamn_kubernetes::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
             "hosts",
@@ -137,7 +137,7 @@ pub(super) async fn ensure_key(
         )
         .await
         {
-            let winner: Option<Value> = crate::kubectl::get(
+            let winner: Option<Value> = wamn_kubernetes::kubectl::get(
                 &target.kubeconfig,
                 &target.context,
                 "hosts",

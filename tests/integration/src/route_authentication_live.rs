@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
 
 use anyhow::Context as _;
 use tokio_postgres::Client;
@@ -19,6 +20,7 @@ use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
+
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, RouteAuthentication,
@@ -211,7 +213,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     let args = || ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: wamn_package_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
@@ -372,7 +374,7 @@ async fn issue_scoped_token(
         admin,
         &subject,
         &format!("operator {project}/{environment}"),
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .context("create wrong-scope operator service")?;
@@ -382,7 +384,7 @@ async fn issue_scoped_token(
         ORG,
         project,
         ADMIN_ROLE,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .context("assign wrong-scope operator role")?;
@@ -550,7 +552,7 @@ async fn assert_user_environment_membership(
         ORG,
         PROJECT,
         ADMIN_ROLE,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
@@ -762,7 +764,7 @@ async fn assert_user_environment_membership(
     for _ in 0..2 {
         fixture_membership::revoke(
             membership(ORG, ENVIRONMENT, user.id().as_str()),
-            &AuthChanges::default(),
+            &Publisher::default(),
         )
         .await?;
         assert_eq!(
@@ -1080,7 +1082,7 @@ async fn production_operator_authentication(root: &Path) {
             org,
             project,
             role,
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
         )
         .await
         .expect("assign a role that cannot authorize this route");
@@ -1102,7 +1104,7 @@ async fn production_operator_authentication(root: &Path) {
         ORG,
         PROJECT,
         ADMIN_ROLE,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("restore the admin project role");

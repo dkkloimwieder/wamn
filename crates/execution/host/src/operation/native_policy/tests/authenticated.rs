@@ -1283,6 +1283,7 @@ async fn pat_caller(
     release: &LoadedRelease,
 ) -> anyhow::Result<AuthenticatedCaller> {
     use wamn_platform_identity::{create_user, grant_project_env_membership, issue_pat};
+
     use wamn_runtime::plugins::route_authentication::RouteAuthentication;
 
     let system_database = wamn_control_provision::test_database::system();

@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-broker = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }

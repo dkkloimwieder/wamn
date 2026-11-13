@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::{Value, json};
@@ -36,6 +36,7 @@ use wamn_platform_identity::{
     Principal, create_service, create_user, disable_principal, grant_project_env_membership,
     issue_pat, revoke_pat, revoke_project_env_membership,
 };
+
 use wamn_session::keys::SessionJwks;
 use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionClaims, SessionScope, session_key_id, verify_session_token,
@@ -175,7 +176,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         system,
         "session-machine",
         "Session Machine",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_redacted("service fixture");
@@ -231,7 +232,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         "demo",
         "widgets",
         "admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_redacted("management-role negative control");

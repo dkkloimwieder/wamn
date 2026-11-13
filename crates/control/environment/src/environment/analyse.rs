@@ -17,7 +17,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
-use tokio::process::Command;
 use tokio_postgres::Client;
 use wamn_catalog::ServingManifest;
 use wamn_package_control::database::connect;
@@ -504,7 +503,7 @@ pub fn application_release_name(
     application: &str,
 ) -> anyhow::Result<String> {
     Ok(
-        wamn_control_provision::environment_state::application_release_name(
+        wamn_control_provision::environment_names::application_release_name(
             &document.org,
             &document.project,
             &document.env,
@@ -526,17 +525,19 @@ async fn helm_in(
     target: &release_chart::Target,
     arguments: &[&str],
 ) -> anyhow::Result<std::process::Output> {
-    Command::new("helm")
-        .args(arguments)
-        .arg("--kubeconfig")
-        .arg(&target.kubeconfig)
-        .args(["--kube-context", &target.context])
-        .args(["--namespace", &target.namespace])
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start helm")
+    let mut args = arguments
+        .iter()
+        .map(std::ffi::OsStr::new)
+        .collect::<Vec<_>>();
+    args.extend([
+        std::ffi::OsStr::new("--kubeconfig"),
+        target.kubeconfig.as_os_str(),
+        std::ffi::OsStr::new("--kube-context"),
+        std::ffi::OsStr::new(&target.context),
+        std::ffi::OsStr::new("--namespace"),
+        std::ffi::OsStr::new(&target.namespace),
+    ]);
+    wamn_kubernetes::helm::output(&args).await
 }
 
 /// The newest revision whose status is `deployed` or `superseded`, with its
@@ -662,7 +663,7 @@ pub(crate) async fn application_releases(
         .env
         .as_str()
         .chars()
-        .take(wamn_control_provision::environment_state::SLUG_LEN)
+        .take(wamn_control_provision::environment_names::SLUG_LEN)
         .collect();
     let filter = format!("^r-{slug}-");
     let mut entries = Vec::new();
@@ -706,7 +707,7 @@ pub(crate) async fn application_releases(
             "release {name} does not belong to one application"
         );
         let (application, _) = membership.into_iter().next().expect("one application");
-        let expected = wamn_control_provision::environment_state::application_release_name(
+        let expected = wamn_control_provision::environment_names::application_release_name(
             &triple.org,
             &triple.project,
             triple.env.as_str(),
@@ -754,27 +755,18 @@ pub(crate) async fn read_live_set(
 /// The host pods of the environment's host group, as `kubectl get pods -o json`.
 pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {
     let selector = format!("wasmcloud.com/hostgroup={release_name}");
-    let output = Command::new("kubectl")
-        .arg("--kubeconfig")
-        .arg(&platform.target.kubeconfig)
-        .args(["--context", &platform.target.context])
-        .args(["--namespace", &platform.target.namespace])
-        .args(["get", "pods", "-l", &selector, "-o", "json"])
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start kubectl")?;
-    ensure!(
-        output.status.success(),
-        "kubectl get pods -l {selector} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).context("decode the pod list")
+    let output = wamn_kubernetes::kubectl::kubectl(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        &["get", "pods", "-l", &selector, "-o", "json"],
+        None,
+    )
+    .await?;
+    serde_json::from_str(&output).context("decode the pod list")
 }
 
-pub(crate) use wamn_control_provision::environment_state::live_set;
+pub(crate) use wamn_kubernetes::environment_state::live_set;
 
 /// Refuse cloud exclusive bindings unless the supplied host group names one replica.
 ///

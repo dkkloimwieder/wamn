@@ -1,38 +1,6 @@
-//! Test credential values and immutable database references.
-
-use wamn_credential_store::{Error, Store, StoreVersion, file::FileStore};
-
-/// A private file store whose directory lives as long as its readers.
-#[derive(Debug)]
-pub struct LocalCredentials {
-    directory: crate::scratch::ScratchRoot,
-    file: FileStore,
-}
-
-impl LocalCredentials {
-    pub fn create() -> anyhow::Result<Self> {
-        let directory = crate::scratch::ScratchRoot::create()?;
-        let file = FileStore::new(directory.path().to_owned());
-        Ok(Self { directory, file })
-    }
-
-    pub fn directory(&self) -> &std::path::Path {
-        self.directory.path()
-    }
-}
-
-#[async_trait::async_trait]
-impl Store for LocalCredentials {
-    async fn put(&self, id: uuid::Uuid, value: &[u8]) -> Result<StoreVersion, Error> {
-        self.file.put(id, value).await
-    }
-    async fn get(&self, reference: &str, version: &str) -> Result<Vec<u8>, Error> {
-        self.file.get(reference, version).await
-    }
-    async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error> {
-        self.file.destroy(reference, version).await
-    }
-}
+//! Test credentials held outside the database.
+pub use wamn_kubernetes::test_util::MemoryStore;
+use wamn_kubernetes::{Error, Store, StoreVersion};
 
 /// A reference to material that the fixture already wrote outside Postgres.
 #[derive(Debug)]
@@ -40,7 +8,12 @@ pub struct ReferencedCredentials<'a>(pub &'a StoreVersion);
 
 #[async_trait::async_trait]
 impl Store for ReferencedCredentials<'_> {
-    async fn put(&self, _: uuid::Uuid, _: &[u8]) -> Result<StoreVersion, Error> {
+    async fn put(
+        &self,
+        _: &wamn_control_registry::Triple,
+        _: uuid::Uuid,
+        _: &[u8],
+    ) -> Result<StoreVersion, Error> {
         Ok(StoreVersion {
             store: self.0.store,
             reference: self.0.reference.clone(),
@@ -63,7 +36,8 @@ pub async fn define(
     store: &dyn Store,
 ) -> anyhow::Result<()> {
     use serde_json::json;
-    use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
+    use wamn_broker::auth_changes::AuthDrops;
+    use wamn_platform_identity::connections::administration;
     let mut drops = AuthDrops::default();
     if let Some(name) = request["external_system"].as_str() {
         administration::execute(
@@ -72,14 +46,14 @@ pub async fn define(
             "external_system.write",
             &json!({"project":request["project"],"name":name}).to_string(),
             &mut drops,
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
         .await?;
     }
     administration::execute(tx,org,"integration.write",&json!({
         "project":request["project"],"name":request["name"],"integration_type":request["integration_type"],
         "auth_type":request["auth_type"],"external_system":request["external_system"],
-    }).to_string(),&mut drops, &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()).await?;
+    }).to_string(),&mut drops, &mut wamn_broker::connection_changes::ConnectionDrops::default()).await?;
     let mut connection = json!({"project":request["project"],"env":request["env"],"name":request["name"],"parameters":request["parameters"]});
     if request["auth_type"] != "none" {
         connection["credential"] = request
@@ -93,7 +67,7 @@ pub async fn define(
         "connection.write",
         &connection.to_string(),
         &mut drops,
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         Some(store),
     )
     .await?;
@@ -115,8 +89,8 @@ pub async fn set_reference(
         "connection.set_credential",
         &serde_json::json!({"project":project,"env":environment,"name":name,"credential":"{}"})
             .to_string(),
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         Some(&ReferencedCredentials(stored)),
     )
     .await?;

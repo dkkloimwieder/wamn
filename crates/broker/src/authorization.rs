@@ -1,21 +1,20 @@
 //! Event broker users and credential Secrets for the declared environments.
 
-use std::collections::BTreeMap;
 use std::time::Duration;
 
+use crate::events::{advisory_stream_config, source_stream_config};
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 
-use crate::environment::document::EnvironmentDocument;
+use wamn_control_registry::Triple;
 
 /// The Secret that holds the authorization file of the one NATS.
-pub(crate) const AUTHORIZATION: &str = "wamn-nats-authorization";
+pub const AUTHORIZATION: &str = "wamn-nats-authorization";
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct Authorization {
+struct Authorization {
     users: Vec<Account>,
 }
 
@@ -43,39 +42,6 @@ struct Subjects {
     deny: Vec<String>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Secret {
-    api_version: &'static str,
-    kind: &'static str,
-    metadata: Metadata,
-    #[serde(rename = "type")]
-    content_type: &'static str,
-    data: BTreeMap<String, String>,
-}
-
-#[derive(Serialize)]
-struct Metadata {
-    name: String,
-    namespace: String,
-}
-
-fn secret(namespace: &str, name: &str, data: BTreeMap<String, String>) -> Secret {
-    Secret {
-        api_version: "v1",
-        kind: "Secret",
-        metadata: Metadata {
-            name: name.into(),
-            namespace: namespace.into(),
-        },
-        content_type: "Opaque",
-        data: data
-            .into_iter()
-            .map(|(key, value)| (key, STANDARD.encode(value)))
-            .collect(),
-    }
-}
-
 /// The certificate users of the platform clients (docs/plan/alignment.md R4).
 ///
 /// The operator and the host scheduler connection reach only the wasmCloud
@@ -99,8 +65,8 @@ fn platform_users() -> Vec<Account> {
         },
     };
     let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
-    // Identity owns both memory buckets (docs/plan/alignment.md R7). Making a
-    // bucket reads the account limits first ($JS.API.INFO).
+    // Identity connects through the broker, which creates both memory buckets.
+    // Creating a bucket reads the account limits first ($JS.API.INFO).
     let identity = [
         "$JS.API.INFO",
         "$KV.wamn-auth.>",
@@ -129,7 +95,7 @@ fn platform_users() -> Vec<Account> {
         "$JS.API.CONSUMER.DELETE.>",
     ];
     // A stream name is one subject token, so the grant above names every
-    // stream. The memory buckets stay identity's.
+    // stream. Only the identity connection may change memory bucket settings.
     let manager = |name: &str| {
         let mut account = user(name, &manage, &["_INBOX.>"]);
         for operation in ["CREATE", "UPDATE", "DELETE", "PURGE"] {
@@ -167,35 +133,9 @@ fn keep_platform_users(authorization: &mut Authorization) {
     }
 }
 
-/// Ensure platform and initial-org users while preserving existing application users.
-///
-/// # Errors
-/// Returns an error if the live authorization Secret cannot be decoded.
-pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<Value>> {
-    let mut authorization = read_authorization(live)?;
-    keep_platform_users(&mut authorization);
-    let (control, certificate) = control_user(org);
-    keep_user(&mut authorization, control);
-    Ok(vec![
-        certificate,
-        serde_json::to_value(secret(
-            "platform",
-            AUTHORIZATION,
-            [(
-                "authorization.conf".into(),
-                format!("authorization: {}\n", json!(authorization)),
-            )]
-            .into(),
-        ))?,
-    ])
-}
-
-fn read_authorization(live: Option<&Value>) -> anyhow::Result<Authorization> {
+fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
     Ok(match live {
-        Some(live) => {
-            let encoded = live["data"]["authorization.conf"]
-                .as_str()
-                .context("the broker Secret has no authorization.conf")?;
+        Some(encoded) => {
             let bytes = STANDARD
                 .decode(encoded)
                 .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
@@ -211,70 +151,6 @@ fn read_authorization(live: Option<&Value>) -> anyhow::Result<Authorization> {
     })
 }
 
-/// Add one environment's broker user and Certificate without replacing other users.
-pub fn environment_objects(
-    live: &Value,
-    document: &EnvironmentDocument,
-) -> anyhow::Result<Vec<Value>> {
-    let mut authorization = read_authorization(Some(live))?;
-    let mut objects = render(&document.triple(), &mut authorization);
-    objects.push(serde_json::to_value(secret(
-        "platform",
-        AUTHORIZATION,
-        [(
-            "authorization.conf".into(),
-            format!("authorization: {}\n", json!(authorization)),
-        )]
-        .into(),
-    ))?);
-    Ok(objects)
-}
-
-/// The NATS objects of a cluster that runs the platform in one `namespace`, as
-/// the kind tests do: the authorization Secret with the platform users, the
-/// control host user of `org` and one user per environment of `environments`,
-/// and each user's Certificate.
-///
-/// # Errors
-///
-/// Returns an error when an object does not render.
-pub fn single_namespace_nats(
-    namespace: &str,
-    org: &str,
-    environments: &[wamn_control_registry::Triple],
-) -> anyhow::Result<Vec<Value>> {
-    let mut authorization = Authorization {
-        users: platform_users(),
-    };
-    let (control, certificate) = control_user(org);
-    keep_user(&mut authorization, control);
-    let mut objects = vec![certificate];
-    for scope in environments {
-        objects.extend(render(scope, &mut authorization));
-    }
-    objects.push(serde_json::to_value(secret(
-        "platform",
-        AUTHORIZATION,
-        [(
-            "authorization.conf".into(),
-            format!("authorization: {}\n", json!(authorization)),
-        )]
-        .into(),
-    ))?);
-    objects
-        .into_iter()
-        .map(|object| super::manifests::in_namespace(object, namespace))
-        .collect()
-}
-
-/// Render the environment's NATS objects without a cluster or a live broker.
-pub fn render_event_secrets(document: &EnvironmentDocument) -> anyhow::Result<Vec<Value>> {
-    render(&document.triple(), &mut Authorization { users: Vec::new() })
-        .into_iter()
-        .map(|object| serde_json::to_value(object).context("encode event object"))
-        .collect()
-}
-
 fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
     let env_key =
         wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str());
@@ -284,7 +160,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
     // wildcard. The materializer creates application consumers with filters
-    // confined to this environment. Provisioning owns the streams.
+    // confined to this environment. The broker owns the streams.
     let mut publish = vec![source.subjects[0].clone()];
     for name in [&source.name, &advisory.name] {
         publish.push(format!("$JS.API.STREAM.INFO.{name}"));
@@ -303,7 +179,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
     }
     publish.push(format!(
         "$JS.API.CONSUMER.CREATE.KV_wamn-auth.*.$KV.wamn-auth.{}.>",
-        wamn_platform_identity::auth_changes::IDENTITY_TOKEN
+        crate::auth_changes::IDENTITY_TOKEN
     ));
     keep_user(
         authorization,
@@ -406,17 +282,60 @@ fn control_user(org: &str) -> (Account, Value) {
     )
 }
 
+/// Merge platform or environment users through the single authorization Secret writer.
+pub async fn update_authorization(
+    target: &wamn_kubernetes::Target,
+    org: &str,
+    scope: Option<&Triple>,
+) -> anyhow::Result<Vec<Value>> {
+    let mut certificates = Vec::new();
+    wamn_kubernetes::secret::update(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        AUTHORIZATION,
+        |secret| {
+            let live = if secret.data.is_empty() {
+                None
+            } else {
+                Some(
+                    secret
+                        .data
+                        .get("authorization.conf")
+                        .context("the broker Secret has no authorization.conf")?
+                        .as_str(),
+                )
+            };
+            anyhow::ensure!(
+                scope.is_none() || secret.metadata.resource_version.is_some(),
+                "missing event broker authorization Secret"
+            );
+            let mut authorization = read_authorization(live)?;
+            if let Some(scope) = scope {
+                certificates = render(scope, &mut authorization);
+            } else {
+                keep_platform_users(&mut authorization);
+                let (user, certificate) = control_user(org);
+                keep_user(&mut authorization, user);
+                certificates = vec![certificate];
+            }
+            secret.data.insert(
+                "authorization.conf".into(),
+                STANDARD.encode(format!("authorization: {}\n", json!(authorization))),
+            );
+            Ok(())
+        },
+    )
+    .await?;
+    Ok(certificates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn document(project: &str) -> EnvironmentDocument {
-        let mut document = EnvironmentDocument::from_json(
-            br#"{"org":"test","project":"one","env":"dev","target":"cloud","policy":"dev","applications": {}}"#,
-        )
-        .unwrap();
-        document.project = project.into();
-        document
+    fn document(project: &str) -> Triple {
+        Triple::new("test", project, "dev")
     }
 
     #[test]
@@ -435,126 +354,10 @@ mod tests {
     }
 
     #[test]
-    fn provisioning_an_environment_preserves_existing_broker_users() {
-        let first = document("one");
-        let second = document("two");
-        let objects = single_namespace_nats("platform", "test", &[first.triple()]).unwrap();
-        let live = objects
-            .iter()
-            .find(|object| object["kind"] == "Secret")
-            .unwrap();
-        let added = environment_objects(live, &second).unwrap();
-        let updated = added
-            .iter()
-            .find(|object| object["kind"] == "Secret")
-            .unwrap();
-        let before = serde_json::to_value(read_authorization(Some(live)).unwrap()).unwrap();
-        let after = serde_json::to_value(read_authorization(Some(updated)).unwrap()).unwrap();
-        for user in before["users"].as_array().unwrap() {
-            assert!(after["users"].as_array().unwrap().contains(user));
-        }
-        assert_eq!(environment_objects(updated, &second).unwrap(), added);
-        assert!(
-            after["users"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|user| user["user"]
-                    == wamn_control_registry::environment_nats_user(
-                        &wamn_control_registry::project_env_key(
-                            &second.org,
-                            &second.project,
-                            &second.env
-                        )
-                    ))
-        );
-    }
-
-    #[test]
-    fn platform_reapply_preserves_application_users_without_rendering_applications() {
-        let scope = document("one").triple();
-        let existing = single_namespace_nats("platform", "test", &[scope]).unwrap();
-        let live = existing
-            .iter()
-            .find(|object| object["kind"] == "Secret")
-            .unwrap();
-        let objects = platform_objects(Some(live), "test").unwrap();
-        let updated = objects
-            .iter()
-            .find(|object| object["kind"] == "Secret")
-            .unwrap();
-        let decode = |object: &Value| {
-            let bytes = STANDARD
-                .decode(object["data"]["authorization.conf"].as_str().unwrap())
-                .unwrap();
-            let text = std::str::from_utf8(&bytes).unwrap();
-            serde_json::from_str::<Value>(text.strip_prefix("authorization: ").unwrap()).unwrap()
-        };
-        assert_eq!(decode(updated), decode(live));
-        let repeated = platform_objects(Some(updated), "test").unwrap();
-        assert_eq!(repeated, objects);
-        for object in objects
-            .iter()
-            .filter(|object| object["kind"] == "Certificate")
-        {
-            assert_eq!(object["metadata"]["name"], "wamn-nats-control-test");
-        }
-        let fresh = platform_objects(None, "test").unwrap();
-        let authorization = decode(
-            fresh
-                .iter()
-                .find(|object| object["kind"] == "Secret")
-                .unwrap(),
-        );
-        for user in platform_users()
-            .into_iter()
-            .chain(std::iter::once(control_user("test").0))
-        {
-            assert!(
-                authorization["users"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|actual| actual == &json!(user))
-            );
-        }
-    }
-
-    #[test]
-    fn repeated_render_keeps_one_certificate_user_per_environment() {
-        let mut authorization = Authorization {
-            users: platform_users(),
-        };
-        let platform = authorization.users.len();
-        let first = render(&document("one").triple(), &mut authorization);
-        let users = serde_json::to_value(&authorization).unwrap();
-        let repeated = render(&document("one").triple(), &mut authorization);
-        assert_eq!(first, repeated);
-        assert_eq!(users, serde_json::to_value(&authorization).unwrap());
-        assert_eq!(authorization.users.len(), platform + 1);
-        render(&document("two").triple(), &mut authorization);
-        assert_eq!(authorization.users.len(), platform + 2);
-        // R4: no user has a password.
-        assert!(
-            !serde_json::to_string(&authorization)
-                .unwrap()
-                .contains("password")
-        );
-        let certificate = &first[0];
-        assert_eq!(certificate["kind"], "Certificate");
-        assert_eq!(certificate["metadata"]["name"], "wamn-nats-test--one--dev");
-        assert_eq!(
-            certificate["spec"]["dnsNames"],
-            json!(["wamn-env-test--one--dev"])
-        );
-        assert_eq!(certificate["spec"]["issuerRef"]["name"], "wasmcloud-ca");
-    }
-
-    #[test]
     fn an_environment_user_reaches_no_subject_of_another() {
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one").triple(), &mut authorization);
-        render(&document("two").triple(), &mut authorization);
+        render(&document("one"), &mut authorization);
+        render(&document("two"), &mut authorization);
         let subjects = |user: &Account| {
             let mut all = user.permissions.publish.allow.clone();
             all.extend(user.permissions.subscribe.allow.clone());
@@ -588,8 +391,7 @@ mod tests {
         }
         // Routing can create filtered consumers inside this environment.
         // Unfiltered consumers, foreign filters and stream mutations stay refused.
-        let stream =
-            source_stream_config(&document("one").triple(), 1, Duration::from_secs(120)).name;
+        let stream = source_stream_config(&document("one"), 1, Duration::from_secs(120)).name;
         for subject in [
             format!("$JS.API.CONSUMER.CREATE.{stream}.mat"),
             format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.two.dev.>"),
@@ -640,7 +442,7 @@ mod tests {
             .unwrap()
             .port();
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one").triple(), &mut authorization);
+        render(&document("one"), &mut authorization);
         authorization.users.push(control_user("test").0);
         authorization.users.push(Account {
             user: "admin".into(),
@@ -686,9 +488,7 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
-        wamn_platform_identity::kv_memory::create_buckets(&admin)
-            .await
-            .unwrap();
+        crate::kv_memory::create_buckets(&admin).await.unwrap();
         let env_key = wamn_control_registry::project_env_key("test", "one", "dev");
         for (user, scope) in [
             (
@@ -801,9 +601,9 @@ mod tests {
             }
         };
         let identity = connect("wamn-identity").await;
-        let made = wamn_platform_identity::kv_memory::create_buckets(&identity).await;
+        let made = crate::kv_memory::create_buckets(&identity).await;
         let ctl = connect("wamn-ctl").await;
-        let opened = wamn_platform_identity::auth_changes::auth_bucket(&ctl).await;
+        let opened = crate::auth_changes::auth_bucket(&ctl).await;
         let deleted = match &opened {
             Ok(bucket) => bucket
                 .delete("identity.someone")

@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-broker = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["time", "io-util", "net", "rt-multi-thread", "macros", "signal", "sync"] }

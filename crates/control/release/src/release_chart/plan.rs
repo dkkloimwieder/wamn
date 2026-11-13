@@ -12,7 +12,7 @@ pub fn release_name(
     env: &str,
     application: &str,
 ) -> anyhow::Result<String> {
-    wamn_control_provision::environment_state::application_release_name(
+    wamn_control_provision::environment_names::application_release_name(
         org,
         project,
         env,
@@ -86,8 +86,7 @@ pub(super) fn applications_argument(
 /// `workloadConfig: deny` keeps every connection key and grant here.
 pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
     let scope = wamn_control_registry::Triple::new(org, project, env);
-    let source =
-        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120));
+    let source = wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
     let env_key = wamn_control_registry::project_env_key(org, project, env);
     let config = mapping([
         (
@@ -262,12 +261,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut account = Mapping::new();
     account.insert(
         "name".into(),
-        wamn_credential_store::kubernetes::service_account_name(
-            &input.org,
-            &input.project,
-            &input.env,
-        )
-        .into(),
+        wamn_control_registry::service_account_name(&input.org, &input.project, &input.env).into(),
     );
     account.insert("create".into(), false.into());
     runtime.insert("serviceAccount".into(), Value::Mapping(account));

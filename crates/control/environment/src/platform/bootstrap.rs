@@ -1,6 +1,7 @@
 //! System initialization Jobs and redacted Kubernetes credential decoding.
 
 use std::path::Path;
+use wamn_kubernetes::job;
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -16,8 +17,8 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;
-use super::job::{self, Secret};
-use crate::kubectl;
+use wamn_kubernetes::job::Secret;
+use wamn_kubernetes::kubectl;
 
 pub(super) fn database_host() -> String {
     crate::provision_project_env::database_host(None, "wamn-pg", "platform").into_owned()

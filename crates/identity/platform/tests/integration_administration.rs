@@ -3,8 +3,9 @@
 use std::sync::Mutex;
 
 use serde_json::{Value, json};
-use wamn_credential_store::{Store, StoreVersion};
-use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_kubernetes::{Store, StoreVersion};
+use wamn_platform_identity::connections::administration;
 
 #[derive(Debug, Default)]
 struct RecordingStore(Mutex<Vec<Vec<u8>>>);
@@ -13,20 +14,21 @@ struct RecordingStore(Mutex<Vec<Vec<u8>>>);
 impl Store for RecordingStore {
     async fn put(
         &self,
+        _scope: &wamn_control_registry::Triple,
         id: uuid::Uuid,
         value: &[u8],
-    ) -> Result<StoreVersion, wamn_credential_store::Error> {
+    ) -> Result<StoreVersion, wamn_kubernetes::Error> {
         self.0.lock().unwrap().push(value.to_vec());
         Ok(StoreVersion {
-            store: "file",
+            store: "k8s",
             reference: format!("private-{id}"),
             version: "1".into(),
         })
     }
-    async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_credential_store::Error> {
+    async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_kubernetes::Error> {
         Ok(Vec::new())
     }
-    async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_credential_store::Error> {
+    async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_kubernetes::Error> {
         Ok(())
     }
 }
@@ -52,7 +54,7 @@ async fn execute(
         operation,
         &request.to_string(),
         &mut AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         Some(store),
     )
     .await
@@ -310,7 +312,7 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
             "connection.write",
             &request.to_string(),
             &mut AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
             Some(&store),
         )
         .await;

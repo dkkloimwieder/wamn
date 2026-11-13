@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use wamn_credential_store::Store as _;
+use wamn_kubernetes::Store as _;
 
 use anyhow::Context as _;
 use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
@@ -172,8 +172,7 @@ async fn credential_fixture(
         )
         .await?;
     admin.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
-    let credential_store =
-        Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?);
+    let credential_store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
     let tx = admin.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -184,7 +183,11 @@ async fn credential_fixture(
         let (_, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let stored = credential_store
-            .put(uuid::Uuid::new_v4(), secret.as_bytes())
+            .put(
+                &wamn_control_registry::Triple::new("acme", PROJECT, ENVIRONMENT),
+                uuid::Uuid::new_v4(),
+                secret.as_bytes(),
+            )
             .await?;
         wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":name,"integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":upstream,"tls-verification":"disabled"},"credential":secret}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
     }
@@ -311,7 +314,7 @@ async fn build_with_credentials(
 
     let facts = Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
         Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(credentials),
         Arc::clone(&postgres),
         ENV_KEY,
@@ -994,8 +997,8 @@ mod tests {
             },
             &serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1"})
                 .to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
         .await?;
         tx.commit().await?;
@@ -1011,14 +1014,13 @@ mod tests {
             wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
                 .await?;
         let row=tx.query_one("SELECT g.credential_id::text,k.store,k.ref,k.version FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) JOIN identity.credential k ON k.id=g.credential_id WHERE i.org='acme' AND i.project=$1 AND i.name=$2",&[&PROJECT,&name]).await?;
-        assert_eq!(row.get::<_, String>(1), "file");
-        let stored = wamn_credential_store::StoreVersion {
-            store: "file",
+        let stored = wamn_kubernetes::StoreVersion {
+            store: "k8s",
             reference: row.get(2),
             version: row.get(3),
         };
         tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
-        wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_platform_identity::auth_changes::AuthDrops::default(), &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
+        wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_broker::auth_changes::AuthDrops::default(), &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
         tx.commit().await?;
         let actual: i64=client.query_one("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.project=$1 AND i.name='upstream-v1'",&[&PROJECT]).await?.get(0);
         assert_eq!(actual, generation);

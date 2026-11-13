@@ -2,8 +2,8 @@
 
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::Client;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{identity_issuer::grant_identity_issuer_surface_sql, test_database};
-use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::password_login::{self as login, Renewal};
 use wamn_platform_identity::{PrincipalId, create_user, disable_principal};
 

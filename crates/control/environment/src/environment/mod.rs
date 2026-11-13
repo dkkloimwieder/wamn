@@ -26,7 +26,7 @@ mod admin_sql_tests;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 
 use analyse::Analysis;
 use document::EnvironmentDocument;
@@ -73,19 +73,10 @@ pub struct Platform {
     /// it, `apply` issues no PAT.
     pub pat_issuer: PatIssuerConfig,
     /// The event broker for application capture and entity consumers.
-    pub events: Option<EventBroker>,
+    pub events: Option<wamn_broker::EventBroker>,
     /// The scheduler NATS the verbs publish their auth changes on.
     /// [`Platform::from_env`] requires it. A test without hosts sets `None`.
-    pub auth_nats: Option<wamn_platform_identity::nats::PlatformNats>,
-}
-
-/// The event broker inputs of CDC (`enable-cdc-project-env`).
-#[derive(Debug, Clone)]
-pub struct EventBroker {
-    /// The NATS connection with the client certificate (docs/plan/alignment.md R4).
-    pub nats: wamn_platform_identity::nats::PlatformNats,
-    pub stream_replicas: usize,
-    pub dup_window_secs: u64,
+    pub auth_nats: Option<wamn_broker::nats::PlatformNats>,
 }
 
 impl Platform {
@@ -221,7 +212,7 @@ impl Platform {
             auth_nats: if project_schema {
                 None
             } else {
-                Some(wamn_platform_identity::nats::PlatformNats::from_env()?)
+                Some(wamn_broker::nats::PlatformNats::from_env()?)
             },
             target,
         })
@@ -272,14 +263,10 @@ impl Platform {
     }
 
     /// The publisher of the auth changes of a verb.
-    pub async fn auth_changes(
-        &self,
-    ) -> anyhow::Result<wamn_platform_identity::auth_changes::AuthChanges> {
+    pub async fn auth_changes(&self) -> anyhow::Result<wamn_broker::Publisher> {
         match &self.auth_nats {
-            Some(connection) => {
-                wamn_platform_identity::auth_changes::AuthChanges::connect(connection).await
-            }
-            None => Ok(wamn_platform_identity::auth_changes::AuthChanges::default()),
+            Some(connection) => wamn_broker::Publisher::connect(connection).await,
+            None => Ok(wamn_broker::Publisher::default()),
         }
     }
 }
@@ -292,29 +279,10 @@ pub fn kubernetes_target(namespace: String) -> anyhow::Result<release_chart::Tar
             .join(".kube/config"),
     };
     Ok(release_chart::Target {
-        context: current_context(&kubeconfig)?,
+        context: wamn_kubernetes::kubectl::current_context(&kubeconfig)?,
         kubeconfig,
         namespace,
     })
-}
-
-fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
-    let output = std::process::Command::new("kubectl")
-        .args(["config", "current-context", "--kubeconfig"])
-        .arg(kubeconfig)
-        .output()
-        .context("start kubectl")?;
-    if !output.status.success() {
-        bail!(
-            "{} has no current context: {}",
-            kubeconfig.display(),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        );
-    }
-    Ok(String::from_utf8(output.stdout)
-        .context("kubectl wrote a context that is not UTF-8")?
-        .trim()
-        .to_owned())
 }
 
 /// `env apply <file> --dry-run`: analyse without the lock and return the
@@ -524,11 +492,11 @@ async fn apply_selection(
 }
 
 /// Read event broker inputs for both deployed and local workflow verbs.
-pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
+pub fn event_broker_from_env() -> anyhow::Result<Option<wamn_broker::EventBroker>> {
     Ok(match std::env::var_os("WAMN_NATS_URL") {
         None => None,
-        Some(_) => Some(EventBroker {
-            nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
+        Some(_) => Some(wamn_broker::EventBroker {
+            nats: wamn_broker::nats::PlatformNats::from_env()?,
             stream_replicas: std::env::var("WAMN_EVENT_STREAM_REPLICAS")
                 .ok()
                 .map(|count| count.parse().context("WAMN_EVENT_STREAM_REPLICAS"))

@@ -2,8 +2,8 @@
 
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, test_database};
-use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::password::{
     Password, PasswordErrorType, RefusalCause, authenticate_password, enroll_password,
     issue_invitation, password_work,
@@ -253,7 +253,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         &client,
         "password-service",
         "Service",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();
@@ -369,6 +369,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         password::{issue_reset, reset_password},
         password_login,
     };
+
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url()).await;

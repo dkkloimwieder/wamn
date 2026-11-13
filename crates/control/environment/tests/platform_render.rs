@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use std::path::Path;
-use wamn_environment_control::platform::{identity, resources};
+use wamn_environment_control::platform::identity;
 
 #[test]
 fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
@@ -30,7 +30,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
             invite_url: "",
             mode,
         })?;
-        let rendered = resources::helm_template(&entry)?;
+        let rendered = wamn_kubernetes::helm::template(&entry)?;
         assert_eq!(entry["values"]["authNats"]["url"], "");
         assert_eq!(
             entry["values"]["sessionTargetSecrets"],
@@ -92,7 +92,7 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             "registry.invalid/edge@sha256:fixture",
             &document,
         )?;
-        let objects = resources::helm_template(&entry)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
         let certificates = edge::certificates(&repository.join("deploy/gcp"), &document)?;
         let certificate = certificates
             .iter()

@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
 use wamn_platform_identity::PrincipalId;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
-use wamn_platform_identity::nats::PlatformNats;
+use wamn_broker::{Publisher, auth_changes::AuthDrops};
+use wamn_broker::nats::PlatformNats;
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -950,7 +950,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
     // A caller without a role holds no operation, and the denial names the
     // route's own operation.
-    let auth = AuthChanges::connect(&PlatformNats {
+    let auth = Publisher::connect(&PlatformNats {
         nats_url: inputs.auth_nats.url.clone(),
         nats_tls_ca: inputs.auth_nats.ca.clone(),
         nats_tls_cert: inputs.auth_nats.cert.clone(),
@@ -1038,7 +1038,7 @@ async fn holds_org_admin(inputs: &Inputs, principal: &PrincipalId) -> Result<boo
 /// application authority into the environment.
 async fn project_admin(
     inputs: &Inputs,
-    auth: &AuthChanges,
+    auth: &Publisher,
     principal: &PrincipalId,
     org_admin: bool,
     grant: bool,

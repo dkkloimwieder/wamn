@@ -1,34 +1,32 @@
 //! Provision declared event streams and materializer consumers.
 
-pub(super) mod plan;
-pub(crate) use plan::validate_inputs;
+mod plan;
+pub use plan::validate_inputs;
 
 use std::time::Duration;
 
+use crate::events::{
+    advisory_stream_config, consumer_config_matches, materializer_consumer_config,
+    source_stream_config, stream_config_matches,
+};
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::Context;
 use async_nats::jetstream::consumer::pull;
 use async_nats::jetstream::context::ConsumerInfoErrorKind;
-use wamn_control_provision::events::{
-    advisory_stream_config, consumer_config_matches, materializer_consumer_config,
-    source_stream_config, stream_config_matches,
-};
 use wamn_control_registry::Triple;
 
 /// Read the publication-order boundary from stream info without changing broker state.
 pub async fn last_published_sequence(
-    events: &crate::environment::EventBroker,
+    connection: &crate::nats::PlatformNats,
     scope: &Triple,
 ) -> anyhow::Result<u64> {
     let broker = async_nats::jetstream::new(
-        events
-            .nats
+        connection
             .connect()
             .await
             .context("connect to the environment event broker")?,
     );
-    let name =
-        wamn_control_provision::event_stream_name(&scope.org, &scope.project, scope.env.as_str());
+    let name = wamn_event_wire::stream_name(&scope.org, &scope.project, scope.env.as_str());
     let mut stream = broker
         .get_stream(&name)
         .await
@@ -44,7 +42,7 @@ pub async fn last_published_sequence(
 /// Discard only the stopped environment's backlog, retaining its stream declarations.
 /// The caller excludes writers and waits for CDC publishers before this operation.
 pub async fn discard(context: &Context, scope: &Triple) -> anyhow::Result<()> {
-    let source = wamn_control_provision::event_stream_name(&scope.org, &scope.project, &scope.env);
+    let source = wamn_event_wire::stream_name(&scope.org, &scope.project, &scope.env);
     for name in [wamn_event_wire::delivery_advisory_stream(&source), source] {
         let stream = context
             .get_stream(&name)
@@ -107,6 +105,18 @@ pub async fn provision(
         );
     }
     Ok(())
+}
+
+/// Delete one stream. An absent stream already satisfies deletion.
+pub async fn delete(context: &Context, name: &str) -> anyhow::Result<bool> {
+    use async_nats::jetstream::{ErrorCode, context::GetStreamErrorKind};
+    match context.delete_stream(name).await {
+        Ok(_) => Ok(true),
+        Err(error) if matches!(error.kind(), GetStreamErrorKind::JetStream(error) if error.error_code() == ErrorCode::STREAM_NOT_FOUND) => {
+            Ok(false)
+        }
+        Err(error) => Err(error).with_context(|| format!("delete stream {name}")),
+    }
 }
 
 #[cfg(test)]

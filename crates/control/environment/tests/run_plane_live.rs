@@ -12,7 +12,7 @@ mod run_history;
 #[path = "run_plane_live/target_identity.rs"]
 mod target_identity;
 
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_broker::Publisher;
 
 use catalog::{capture_mode_security_leg, two_plane_residency_leg};
 use run_history::persisted_literal_leg;
@@ -255,7 +255,7 @@ async fn env_key_identity_leg(su: &Client) {
 async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
     let reconcile = async || {
         reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
             system_database_url: system_url.to_string(),
             admin_database_url: target_url.to_string(),
             org: "acme".to_string(),
@@ -715,7 +715,7 @@ async fn environment_identity_leg(
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -756,7 +756,7 @@ async fn environment_identity_leg(
     .await
     .expect("remove the local policy before testing projection repair");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -783,7 +783,7 @@ async fn environment_identity_leg(
         "dry-run projected the missing local policy"
     );
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),

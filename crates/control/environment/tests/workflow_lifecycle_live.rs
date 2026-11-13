@@ -614,8 +614,8 @@ async fn event_authorship_requires_a_captured_application_model() {
 #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn event_enable_records_stream_tail_and_requires_admin() {
     use std::time::Duration;
-    use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
-    use wamn_environment_control::environment::EventBroker;
+    use wamn_broker::EventBroker;
+    use wamn_broker::events::{materializer_consumer_config, source_stream_config};
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
@@ -668,7 +668,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .grant(&wamn_project_state::workflow_user_id().to_string(), "admin")
         .await;
     let events = EventBroker {
-        nats: wamn_platform_identity::nats::PlatformNats::from_env().unwrap(),
+        nats: wamn_broker::nats::PlatformNats::from_env().unwrap(),
         stream_replicas: 1,
         dup_window_secs: 120,
     };

@@ -261,7 +261,7 @@ pub fn render_host_values(
     // as the release chart declares it: the environment's stream, subjects
     // and inbox, and no `servers`, so it inherits the data connection
     // (docs/plan/alignment.md R6).
-    let source = wamn_control_provision::events::source_stream_config(
+    let source = wamn_broker::events::source_stream_config(
         &wamn_control_registry::Triple::new(
             input.event.org.as_str(),
             input.event.project.as_str(),

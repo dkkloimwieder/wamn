@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 
-use crate::kubectl;
+use wamn_kubernetes::kubectl;
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
@@ -373,7 +373,7 @@ pub(super) fn resource_entry(
 /// Returns a forwarding, HTTP, or authorization-boundary failure.
 pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
     let service = format!("service/c-{}-http", document.org);
-    let forward = super::resources::port_forward(target, "hosts", &service, 80).await?;
+    let forward = wamn_kubernetes::forward::port_forward(target, "hosts", &service, 80).await?;
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -423,7 +423,7 @@ mod tests {
             values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image
         );
-        let objects = super::super::resources::helm_template(&entry)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
         let deployment = objects
             .iter()
             .find(|object| object["kind"] == "Deployment")

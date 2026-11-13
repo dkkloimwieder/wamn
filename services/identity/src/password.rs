@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 use tokio_postgres::Client;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
-use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::{
     IdentityErrorType, PrincipalId,
     control::{control_audience, control_audience_org, control_orgs_page},
@@ -30,6 +30,7 @@ use wamn_platform_identity::{
     password_login,
     session_token::{IssuedSessionToken, sign_session_token_in_transaction},
 };
+
 use zeroize::Zeroizing;
 
 use crate::{
@@ -1010,7 +1011,7 @@ fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
 async fn create_user(
     client: &mut Client,
     request: &UserRequest,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> Response<Full<Bytes>> {
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
     let Ok(tx) = client.transaction().await else {
@@ -1547,7 +1548,7 @@ mod tests {
         wamn_platform_identity::disable_principal(
             &admin.client,
             bob.id(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
         )
         .await
         .unwrap();

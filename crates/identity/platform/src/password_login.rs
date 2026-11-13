@@ -13,10 +13,10 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Row, Transaction};
 use zeroize::Zeroizing;
 
-use crate::auth_changes::AuthDrops;
 use crate::{
     AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
+use wamn_broker::auth_changes::AuthDrops;
 
 const PREFIX: &str = "wamn_renew_";
 /// Maximum login duration from password authentication, in seconds.

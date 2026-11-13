@@ -13,7 +13,7 @@ use wamn_release_control::release_chart::Target;
 
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::{artifact_plan, resources};
-use crate::kubectl;
+use wamn_kubernetes::kubectl;
 
 /// A current observation, never a persisted deployment record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1006,7 +1006,9 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
             "Inspect the CNPG cluster and restore its superuser Secret before reading system initialization",
         ));
     };
-    let forward = resources::port_forward(target, "platform", "service/wamn-pg-rw", 5432).await?;
+    let forward =
+        wamn_kubernetes::forward::port_forward(target, "platform", "service/wamn-pg-rw", 5432)
+            .await?;
     let mut configuration = tokio_postgres::Config::new();
     configuration
         .host("127.0.0.1")
@@ -1092,8 +1094,13 @@ async fn probe(
             "Rerun platform deploy to create this service",
         ));
     }
-    let forward =
-        resources::port_forward(target, namespace, &format!("service/{service}"), port).await?;
+    let forward = wamn_kubernetes::forward::port_forward(
+        target,
+        namespace,
+        &format!("service/{service}"),
+        port,
+    )
+    .await?;
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(5))

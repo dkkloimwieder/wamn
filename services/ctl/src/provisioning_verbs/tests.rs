@@ -756,7 +756,7 @@ mod enable_cdc {
 
     #[test]
     fn cdc_command_accepts_native_consumer_declarations() {
-        let consumer = wamn_control_provision::events::materializer_consumer_config(
+        let consumer = wamn_broker::events::materializer_consumer_config(
             "mat_t_pkg_r1",
             "evt.acme.billing.dev.invoice.>",
             Duration::from_secs(30),

@@ -185,10 +185,7 @@ pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
             system_database_url: args.system_database_url,
             identity: args.pat_issuer.into(),
         },
-        &wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?,
+        &wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?,
     )
     .await?;
     match outcome.invitation {

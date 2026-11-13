@@ -640,7 +640,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
     let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#;
     let document = EnvironmentDocument::from_json(text.as_bytes())?;
     // The deployed environment ConfigMap is the document authority.
-    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+    let coordinate = wamn_control_provision::environment_names::environment_resource_name(
         "dep5", "fixture", "dev",
     )?;
     let authority = format!("configmap/{coordinate}");

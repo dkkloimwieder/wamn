@@ -11,11 +11,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use wamn_broker::Publisher;
 
 use anyhow::Context as _;
 use moka::policy::EvictionPolicy;
 use moka::sync::Cache;
-use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
+use wamn_broker::connection_changes::ConnectionDrops;
 
 use crate::connection_credentials::{
     ConnectionCredentials, ConnectionGeneration, IntegrationVersion,
@@ -60,7 +61,7 @@ impl std::fmt::Debug for Secret {
 pub struct ConnectionFacts {
     oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
-    changes: ConnectionChanges,
+    changes: Publisher,
     reader: Arc<ConnectionCredentials>,
     postgres: Arc<WamnPostgres>,
     env_key: String,
@@ -85,7 +86,7 @@ impl std::fmt::Debug for ConnectionFacts {
 impl ConnectionFacts {
     pub fn new(
         memory: Arc<ConnectionMemory>,
-        changes: ConnectionChanges,
+        changes: Publisher,
         reader: Arc<ConnectionCredentials>,
         postgres: Arc<WamnPostgres>,
         env_key: &str,

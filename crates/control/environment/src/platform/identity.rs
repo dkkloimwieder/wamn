@@ -1,17 +1,18 @@
 //! Identity service rendering and key setup.
 
 use std::path::Path;
+use wamn_kubernetes::job;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 
-use crate::kubectl;
+use wamn_kubernetes::kubectl;
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{SecretData, database_host, secret_text};
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
-use super::job::{self, Secret};
+use wamn_kubernetes::job::Secret;
 
 /// The platform broker Service used by in-cluster clients.
 pub(crate) const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";

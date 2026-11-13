@@ -1,11 +1,12 @@
 //! Provisioning PAT issuance, revocation, and Secret documents.
 
+use wamn_broker::Publisher;
 pub(super) mod plan;
 pub use plan::parse_pat_prefix;
 pub(super) use plan::render_pat_secret;
 
 use anyhow::Context as _;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_broker::auth_changes::AuthDrops;
 
 use super::{
     Client, Duration, IdentityErrorType, NoTls, PatClient, Path, PathBuf, Principal,
@@ -39,7 +40,7 @@ pub(super) async fn issue_pat_secrets(
     namespace: &str,
     management_author_path: Option<&Path>,
     operator_path: Option<&Path>,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<Vec<IssuedPatSecret>> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -90,7 +91,7 @@ async fn issue_pat_secret(
     namespace: &str,
     purpose: PatPurpose,
     path: &Path,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<IssuedPatSecret> {
     let (principal, issued) = mint_pat(client, pat_client, triple, purpose, changes).await?;
     let secret = render_pat_secret(
@@ -114,7 +115,7 @@ pub async fn mint_pat(
     pat_client: &PatClient,
     triple: &Triple,
     purpose: PatPurpose,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<(Principal, wamn_identity_client::PatResponse)> {
     let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
@@ -177,7 +178,7 @@ pub async fn mint_management_author_pat(
     system_url: &str,
     issuer: &wamn_identity_client::PatIssuerConfig,
     triple: &Triple,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<wamn_identity_client::PatResponse> {
     let pat_client = PatClient::new(issuer)?;
     super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
@@ -201,7 +202,7 @@ pub async fn resolve_or_create_service(
     client: &mut Client,
     subject: &str,
     display_name: &str,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<Principal> {
     let (principal, drops) = resolve_or_create_service_drops(client, subject, display_name).await?;
     changes.publish(drops).await;
@@ -248,7 +249,7 @@ async fn resolve_or_create_service_drops(
 pub async fn revoke_provisioning_pat(
     system_url: &str,
     prefix: &str,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -256,7 +257,7 @@ pub async fn revoke_provisioning_pat(
     let connection_task = tokio::spawn(connection);
     let result = async {
         let transaction = provisioning_transaction(&mut client).await?;
-        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let mut drops = wamn_broker::auth_changes::AuthDrops::default();
         revoke_pat(&transaction, prefix, &mut drops)
             .await
             .context("revoke PAT by prefix")?;

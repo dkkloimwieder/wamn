@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::Publisher;
 use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION,
     ServingManifest, WiringDocument,
@@ -45,7 +46,6 @@ use wamn_environment_control::author_workflow::{
 use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope};
 use wamn_platform_identity::PrincipalId;
-use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
@@ -504,7 +504,7 @@ fn host(postgres: &Arc<WamnPostgres>, release: &Arc<LoadedRelease>) -> HostRoute
             postgres: Arc::clone(postgres),
             project: PROJECT.to_owned(),
             identity: None,
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     )
@@ -519,7 +519,7 @@ impl Fixture {
                 Arc::new(HttpTransport::new().unwrap()),
                 Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
                     Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-                    wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+                    wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     Arc::clone(&self.postgres),
                     release.scope().env_key.as_str(),

@@ -9,7 +9,8 @@ license.workspace = true
 default = []
 
 [dependencies]
-wamn-credential-store = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
 hex = { workspace = true }

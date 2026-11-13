@@ -298,7 +298,7 @@ async fn watch(
     filters: &[String],
     memory: &dyn Watched,
 ) -> anyhow::Result<()> {
-    let store = wamn_platform_identity::kv_memory::open_bucket(client, bucket).await?;
+    let store = wamn_broker::kv_memory::open_bucket(client, bucket).await?;
     let mut watches = Vec::with_capacity(filters.len());
     for filter in filters {
         watches.push(filtered_watch(client, &store, filter).await?);

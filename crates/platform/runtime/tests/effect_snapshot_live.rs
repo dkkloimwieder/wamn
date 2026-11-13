@@ -197,10 +197,10 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         candidate_binding: None,
     };
     let memory = std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default());
-    let broker = wamn_platform_identity::nats::PlatformNats::from_env()?
+    let broker = wamn_broker::nats::PlatformNats::from_env()?
         .connect()
         .await?;
-    wamn_platform_identity::kv_memory::create_buckets(&broker).await?;
+    wamn_broker::kv_memory::create_buckets(&broker).await?;
     let changes = wamn_runtime::connection_memory::replicate(
         &broker,
         Some(ENV_KEY),

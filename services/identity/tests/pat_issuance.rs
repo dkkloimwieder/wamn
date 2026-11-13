@@ -7,7 +7,7 @@ use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -36,6 +36,7 @@ use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
     PrincipalId, authenticate_pat, create_service, create_user, disable_principal, revoke_pat,
 };
+
 use wamn_session::token::SessionClaims;
 
 const ISSUER: &str = "https://identity.pat-test.internal";
@@ -210,7 +211,7 @@ async fn operator_pat_issuance_over_https() {
         &system,
         "pat-machine",
         "PAT Machine",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_redacted("service fixture");

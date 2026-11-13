@@ -17,6 +17,7 @@ use wamn_platform_identity::{
     has_project_env_membership,
     session_token::{IssuedSessionToken, sign_session_token},
 };
+
 use wamn_session::token::{SessionAuthority, SessionClaims};
 
 use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, unavailable};

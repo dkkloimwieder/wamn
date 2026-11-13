@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
+use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ComponentSqlField,
     ComponentSqlStatement, ComponentSqlValueType, PackageCoordinate,
@@ -17,7 +18,6 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
@@ -781,7 +781,7 @@ impl Fixture {
         });
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
             "tenant-a",

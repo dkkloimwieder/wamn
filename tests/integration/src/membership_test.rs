@@ -10,9 +10,10 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::nats::PlatformNats;
 use wamn_platform_identity::application;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
-use wamn_platform_identity::nats::PlatformNats;
 
 use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
 use anyhow::{Context as _, anyhow, ensure};
@@ -76,9 +77,9 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         .context("invalid membership test scope")?;
     // The benchmark seeds a fresh identity without invoking a host.
     let auth = if args.throughput_pat_file.is_some() {
-        AuthChanges::default()
+        Publisher::default()
     } else {
-        AuthChanges::connect(&PlatformNats::from_env()?).await?
+        Publisher::connect(&PlatformNats::from_env()?).await?
     };
     let http = reqwest::Client::builder()
         .timeout(OPERATION_TIMEOUT)
@@ -222,7 +223,7 @@ async fn exercise(
     project: &mut Client,
     principal: &PrincipalId,
     role: &str,
-    auth: &AuthChanges,
+    auth: &Publisher,
 ) -> anyhow::Result<()> {
     let token = issue_pat(
         system,
@@ -238,7 +239,7 @@ async fn exercise(
         &args.org,
         &args.project,
         "admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .context("assign the project role that must not imply membership")?;
@@ -260,7 +261,7 @@ async fn exercise(
             )
             .await?
             .get(0);
-        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let mut drops = wamn_broker::auth_changes::AuthDrops::default();
         let outcome = wamn_platform_identity::application::mutate_grant(
             &tx,
             &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
@@ -293,7 +294,7 @@ async fn exercise(
             )
             .await?
             .get(0);
-        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let mut drops = wamn_broker::auth_changes::AuthDrops::default();
         let outcome = wamn_platform_identity::application::mutate_grant(
             &tx,
             &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
@@ -325,7 +326,7 @@ async fn seed_env_key_role(
     project: &mut Client,
     principal: &PrincipalId,
     role: &str,
-    auth: &AuthChanges,
+    auth: &Publisher,
 ) -> anyhow::Result<()> {
     // The fixture writes as the test user, whose row stamps itself. Both
     // bindings stay on this session for the cleanup.
@@ -392,7 +393,7 @@ async fn membership(
     args: &MembershipTestArgs,
     principal: &PrincipalId,
     verb: &str,
-    auth: &AuthChanges,
+    auth: &Publisher,
 ) -> anyhow::Result<()> {
     let arguments = MembershipRequest {
         org: args.org.clone(),
@@ -483,7 +484,7 @@ async fn cleanup(
     env_key: &str,
     principal: &PrincipalId,
     role: &str,
-    auth: &AuthChanges,
+    auth: &Publisher,
 ) -> anyhow::Result<()> {
     let project_result: anyhow::Result<()> = async {
         let tx = project.transaction().await?;

@@ -23,14 +23,10 @@ use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 use wamn_session::PAT_TOKEN_PREFIX;
 
 pub mod application;
-pub mod auth_changes;
 pub mod configuration;
-pub mod connection_changes;
 pub mod connection_projection;
 pub mod connections;
 pub mod control;
-pub mod kv_memory;
-pub mod nats;
 pub mod org;
 pub mod paging;
 pub mod password;
@@ -38,7 +34,7 @@ pub mod password_login;
 pub mod session_keys;
 pub mod session_token;
 
-use auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 #[cfg(test)]
 const PRINCIPAL_COLUMNS: &str = "id::text, type, subject, display_name, status";

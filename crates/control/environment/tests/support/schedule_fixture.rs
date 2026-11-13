@@ -552,7 +552,7 @@ impl Fixture {
                 Arc::new(HttpTransport::new().unwrap()),
                 Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
                     Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-                    wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+                    wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     Arc::clone(&self.postgres),
                     self.release.scope().env_key.as_str(),

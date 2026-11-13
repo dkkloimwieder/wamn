@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
-use wamn_control_provision::environment_state::{environment_state, observe, release_digest};
 use wamn_control_registry::Triple;
+use wamn_kubernetes::environment_state::{environment_state, observe, release_digest};
 
 use super::Platform;
 use super::analyse::read_revision;
@@ -17,7 +17,7 @@ use super::drain::{Stranded, stranded};
 use super::ensure::{kubectl, project_url};
 use wamn_package_control::database::connect;
 
-pub use wamn_control_provision::environment_state::DeploymentStatus;
+pub use wamn_kubernetes::environment_state::DeploymentStatus;
 
 /// The status of one environment.
 #[derive(Debug, Clone, PartialEq, Serialize)]

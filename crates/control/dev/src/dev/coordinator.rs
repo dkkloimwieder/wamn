@@ -408,7 +408,7 @@ impl ProductionDevStageRunner {
         for package in package_inputs {
             let outcome = Box::pin(apply_package::apply_local_package(
                 ApplyPackageRequest {
-                    changes: wamn_platform_identity::auth_changes::AuthChanges::new(
+                    changes: wamn_broker::Publisher::new(
                         self.config.nats().connect().await.map_err(|source| {
                             ProductionDevStageError::owner("connect auth changes", source)
                         })?,
@@ -1702,7 +1702,7 @@ async fn prepare_local_bindings(
         environment,
     )
     .await?;
-    wamn_platform_identity::auth_changes::AuthChanges::new(config.nats().connect().await?)
+    wamn_broker::Publisher::new(config.nats().connect().await?)
         .publish(drops)
         .await;
 
@@ -1908,7 +1908,7 @@ async fn resolve_local_bindings(
             let mut project =
                 wamn_package_control::database::connect(config.target_database_url()).await?;
             let tx = project.transaction().await?;
-            let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+            let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
             wamn_environment_control::environment::bindings::write(
                 &tx,
                 &config.activation_identity().env_key(),
@@ -1919,11 +1919,9 @@ async fn resolve_local_bindings(
             )
             .await?;
             tx.commit().await?;
-            wamn_platform_identity::connection_changes::ConnectionChanges::new(
-                config.nats().connect().await?,
-            )
-            .publish(drops)
-            .await;
+            wamn_broker::Publisher::new(config.nats().connect().await?)
+                .publish(drops)
+                .await;
         }
         Ok::<_, anyhow::Error>(bindings)
     }

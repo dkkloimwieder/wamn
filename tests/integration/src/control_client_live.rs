@@ -8,7 +8,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_broker::Publisher;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -20,6 +20,7 @@ use wamn_engine::router_delivery::RouteDelivery;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 use wamn_platform_identity::{PrincipalId, create_or_reuse_user};
+
 use wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator;
 use wash_runtime::wasmtime::component::Component;
 
@@ -224,7 +225,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             writer,
             identity: None,
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     ));

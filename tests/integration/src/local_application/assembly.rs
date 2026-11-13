@@ -22,6 +22,7 @@ use wamn_execution_host::{
 use wamn_package_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
+
 use wamn_release_control::publish_release::package_route;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
@@ -88,7 +89,7 @@ pub(super) async fn assemble(
         &system,
         &subject,
         "local application operator",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     assign_project_role(
@@ -97,7 +98,7 @@ pub(super) async fn assemble(
         input.org,
         input.project,
         input.caller_role,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     let issued = issue_pat(
@@ -212,7 +213,7 @@ pub(super) async fn assemble(
         let applied = apply_package(ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: wamn_package_control::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),
                 artifact_digest: Some(
@@ -372,7 +373,7 @@ pub(super) async fn assemble(
         Arc::new(HttpTransport::new()?),
         Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
             &release.scope().env_key,
@@ -414,7 +415,7 @@ pub(super) async fn assemble(
             postgres: Arc::clone(&postgres),
             project: input.project.into(),
             identity: None,
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
         },
         Some(bridge),
     ));

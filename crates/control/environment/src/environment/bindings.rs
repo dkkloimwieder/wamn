@@ -203,7 +203,7 @@ pub async fn write(
     digest: &str,
     document: &EnvironmentDocument,
     bindings: &[Binding],
-    drops: &mut wamn_platform_identity::connection_changes::ConnectionDrops,
+    drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
     let mut changed = 0;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -273,7 +273,7 @@ pub async fn contract(
     declared: &wamn_catalog::EnvironmentApplications,
     retired: &[&str],
     live: &[&str],
-    drops: &mut wamn_platform_identity::connection_changes::ConnectionDrops,
+    drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<Vec<String>> {
     anyhow::ensure!(
         !live.contains(&"unlabelled"),
@@ -342,7 +342,7 @@ pub async fn project_authority(
     system_url: &str,
     project_url: &str,
     document: &EnvironmentDocument,
-) -> anyhow::Result<wamn_platform_identity::auth_changes::AuthDrops> {
+) -> anyhow::Result<wamn_broker::auth_changes::AuthDrops> {
     let mut system = wamn_package_control::database::connect(system_url).await?;
     let source = system.transaction().await?;
     let mut project = super::analyse::connect_project(project_url).await?;

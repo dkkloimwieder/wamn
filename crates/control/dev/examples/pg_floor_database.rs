@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: PackageRoot {
                 path: package.clone(),
                 artifact_digest: None,

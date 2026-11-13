@@ -206,7 +206,7 @@ impl WamnJetstream {
                 .fetch()
                 .max_messages(64)
                 .max_bytes(
-                    usize::try_from(wamn_control_provision::events::MATERIALIZER_MAX_PULL_BYTES)
+                    usize::try_from(wamn_broker::events::MATERIALIZER_MAX_PULL_BYTES)
                         .expect("bounded pull size fits usize"),
                 )
                 .expires(Duration::from_millis(100))

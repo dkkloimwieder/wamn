@@ -11,6 +11,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+wamn-kubernetes = { workspace = true, optional = true }
 # The edge links the engine and run-state and never wamn-runtime. The
 # dependency test measures what these bring.
 wamn-engine = { workspace = true }
@@ -60,7 +61,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [features]
-web = ["dep:object_store"]
+web = ["dep:object_store", "dep:wamn-kubernetes"]
 
 [dev-dependencies]
 wamn-test-postgres = { workspace = true }

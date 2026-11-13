@@ -445,7 +445,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         "demo",
         "widgets",
         "project-admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_redacted("project-admin");

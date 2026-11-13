@@ -315,7 +315,7 @@ pub(super) async fn require_chart_references(
     values: &impl serde::Serialize,
 ) -> anyhow::Result<()> {
     let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
-    let objects = resources::helm_template(&json!({
+    let objects = wamn_kubernetes::helm::template(&json!({
         "chart":chart, "version":metadata["version"], "name":name,
         "namespace":target.namespace, "values":values,
     }))?;
@@ -323,7 +323,14 @@ pub(super) async fn require_chart_references(
         &target.namespace,
         &objects,
         async |namespace, kind, name| {
-            crate::kubectl::get(&target.kubeconfig, &target.context, namespace, kind, name).await
+            wamn_kubernetes::kubectl::get(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                kind,
+                name,
+            )
+            .await
         },
     )
     .await
@@ -676,7 +683,7 @@ mod tests {
             &private.path("chart"),
         )?;
         let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
-        let objects = resources::helm_template(&json!({
+        let objects = wamn_kubernetes::helm::template(&json!({
             "chart":chart, "version":metadata["version"], "name":"orders",
             "namespace":"hosts", "values":values,
         }))?;

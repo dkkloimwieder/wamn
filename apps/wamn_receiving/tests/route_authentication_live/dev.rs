@@ -47,7 +47,7 @@ impl DevJourneyInputs {
                     bindings: None,
                 },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
-                nats: wamn_platform_identity::nats::PlatformNats {
+                nats: wamn_broker::nats::PlatformNats {
                     nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
                     nats_tls_ca: required_journey_path("WAMN_DEV_ENV_NATS_TLS_CA")?,
                     nats_tls_cert: required_journey_path("WAMN_DEV_ENV_NATS_TLS_CERT")?,
@@ -417,7 +417,7 @@ pub(super) async fn assert_dev_command(
         project: environment.identity.project.clone(),
         env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
     };
-    wamn_environment_control::event_streams::provision(
+    wamn_broker::streams::provision(
         &async_nats::jetstream::new(event_provisioning.clone()),
         &event_scope,
         inputs.environment.stream_replicas,

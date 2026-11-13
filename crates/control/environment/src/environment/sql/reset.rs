@@ -690,7 +690,7 @@ async fn recreate(
     .await?;
     let name = database(document, &instance);
     let cluster = recorded_cluster(platform, document).await?;
-    let resource: Value = crate::kubectl::get(
+    let resource: Value = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.database_namespace,
@@ -836,7 +836,7 @@ async fn reconnect(
         .as_ref()
         .context("reset requires the environment event broker")?;
     let broker = async_nats::jetstream::new(broker.nats.connect().await?);
-    crate::event_streams::discard(&broker, &document.triple()).await?;
+    wamn_broker::streams::discard(&broker, &document.triple()).await?;
     completed.push("old event backlog discarded");
     registry::finish_database(&mut system, &document.triple(), &pending_value).await?;
     completed.push("reset complete");

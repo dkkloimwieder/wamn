@@ -7,13 +7,9 @@ pub mod create_user;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
 pub mod environment;
-#[cfg(feature = "ops")]
-pub mod event_advisories;
-pub mod event_streams;
 pub mod ident;
 pub mod identity_issuer;
 pub mod invite;
-pub mod kubectl;
 pub mod org_connection;
 pub mod platform;
 pub mod platform_build;

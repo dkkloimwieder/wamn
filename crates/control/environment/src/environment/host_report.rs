@@ -42,7 +42,7 @@ use plan::PodReport;
 pub use plan::Report;
 
 async fn kubectl(target: &Target, arguments: &[&str]) -> anyhow::Result<String> {
-    crate::kubectl::kubectl(
+    wamn_kubernetes::kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
         &target.namespace,

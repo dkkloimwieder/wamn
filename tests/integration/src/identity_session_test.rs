@@ -18,6 +18,7 @@ use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_platform_identity::{create_service, create_user, issue_pat};
+
 use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
@@ -377,7 +378,7 @@ pub async fn fixture(args: IdentitySessionFixtureArgs) -> anyhow::Result<()> {
                 "revoked",
                 membership::revoke(
                     membership_request(args, raw),
-                    &wamn_platform_identity::auth_changes::AuthChanges::default(),
+                    &wamn_broker::Publisher::default(),
                 )
                 .await?,
             ),
@@ -454,7 +455,7 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
         let user_email = format!("{user_subject}@example.invalid");
         let user = create_user(&transaction, &user_subject, &user_email, "Disposable session test user").await
             .map_err(|_| anyhow!("create identity session fixture user failed"))?;
-        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service", &mut wamn_platform_identity::auth_changes::AuthDrops::default()).await
+        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service", &mut wamn_broker::auth_changes::AuthDrops::default()).await
             .map_err(|_| anyhow!("create identity session fixture service failed"))?;
         let user_pat = issue_pat(&transaction, user.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture user PAT failed"))?;

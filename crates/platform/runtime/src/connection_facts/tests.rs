@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use serde_json::json;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_platform_identity::connections::administration;
 
 use super::*;
@@ -45,7 +45,7 @@ async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
 
 async fn setup(
     memory: Arc<ConnectionMemory>,
-    changes: ConnectionChanges,
+    changes: Publisher,
 ) -> (Fixture, ConnectionFacts, uuid::Uuid) {
     let mut fixture = Fixture::new().await;
     fixture

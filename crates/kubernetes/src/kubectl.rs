@@ -1,6 +1,6 @@
 //! Shared kubectl execution and typed object operations.
 
-pub(super) mod plan;
+mod plan;
 use plan::{apply_request, decode_object, get_arguments, unreachable, wait_arguments};
 
 use std::path::Path;
@@ -27,7 +27,7 @@ impl std::error::Error for Unreachable {}
 
 /// The API server refused a stale resource version or a concurrent creation.
 #[derive(Debug)]
-pub(crate) struct Conflict;
+pub struct Conflict;
 
 impl std::fmt::Display for Conflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -67,7 +67,7 @@ pub async fn kubectl(
 ///
 /// # Errors
 /// Returns the operation error or a timeout error.
-pub(crate) async fn with_timeout(
+pub async fn with_timeout(
     deadline: tokio::time::Instant,
     kubeconfig: &Path,
     context: &str,
@@ -246,9 +246,28 @@ pub async fn wait(
         .map(drop)
 }
 
+pub fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
+    let output = std::process::Command::new("kubectl")
+        .args(["config", "current-context", "--kubeconfig"])
+        .arg(kubeconfig)
+        .output()
+        .context("start kubectl")?;
+    if !output.status.success() {
+        bail!(
+            "{} has no current context: {}",
+            kubeconfig.display(),
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        );
+    }
+    Ok(String::from_utf8(output.stdout)
+        .context("kubectl wrote a context that is not UTF-8")?
+        .trim()
+        .to_owned())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{apply_request, decode_object, unreachable};
+    use super::{decode_object, unreachable};
 
     #[test]
     fn only_a_transport_failure_is_unreachable() {
@@ -273,25 +292,6 @@ mod tests {
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Metadata {
         name: String,
-    }
-
-    #[test]
-    fn apply_serializes_one_typed_object_to_standard_input() {
-        let object = Object {
-            kind: "Namespace".into(),
-            metadata: Metadata {
-                name: "platform".into(),
-            },
-        };
-        let (_, input) = apply_request(&object).unwrap();
-        assert_eq!(
-            input,
-            br#"{"kind":"Namespace","metadata":{"name":"platform"}}"#
-        );
-        assert_eq!(
-            decode_object::<Object>(std::str::from_utf8(&input).unwrap()).unwrap(),
-            Some(object)
-        );
     }
 
     #[test]

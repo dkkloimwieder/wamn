@@ -1,9 +1,10 @@
 //! Apply refusals against project integrations and environment connections.
 
 use serde_json::json;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::manifest::PackageManifest;
 use wamn_environment_control::environment::{analyse, bindings, document::EnvironmentDocument};
-use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
+use wamn_platform_identity::connections::administration;
 
 async fn connect(url: &str) -> tokio_postgres::Client {
     let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
@@ -47,7 +48,7 @@ async fn seed(client: &mut tokio_postgres::Client) {
     ))
     .await
     .unwrap();
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
 }
@@ -165,7 +166,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
         "connection.disable",
         &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
         &mut AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap();
@@ -236,7 +237,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
     ))
     .await
     .unwrap();
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").await.unwrap();
@@ -321,7 +322,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         "connection.write",
         &request,
         &mut AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap_err();
@@ -367,7 +368,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         "connection.write",
         &request,
         &mut AuthDrops::default(),
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap();
@@ -423,7 +424,7 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
     ))
     .await
     .unwrap();
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
         &tx,
         "acme",
@@ -489,7 +490,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     ))
     .await
     .unwrap();
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
     client
@@ -553,7 +554,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     ))
     .await
     .unwrap();
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
         &tx,
         "acme",

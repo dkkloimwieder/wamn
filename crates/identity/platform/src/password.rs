@@ -18,8 +18,8 @@ use tokio::sync::Semaphore;
 use tokio_postgres::{Client, GenericClient, Transaction};
 use zeroize::Zeroizing;
 
-use crate::auth_changes::AuthDrops;
 use crate::{AuthenticatedPrincipal, PrincipalId, decode_principal};
+use wamn_broker::auth_changes::AuthDrops;
 
 /// Maximum UTF-8 password input; at least 64 Unicode characters fit.
 pub const MAX_PASSWORD_BYTES: usize = 1024;

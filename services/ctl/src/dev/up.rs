@@ -105,7 +105,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     let config = provision_environment(DevUpRequest {
         system_database_url: args.system_database_url,
         root: args.root,
-        nats: wamn_platform_identity::nats::PlatformNats {
+        nats: wamn_broker::nats::PlatformNats {
             nats_url: args.nats_url,
             nats_tls_ca: args.nats_tls_ca,
             nats_tls_cert: args.nats_tls_cert,

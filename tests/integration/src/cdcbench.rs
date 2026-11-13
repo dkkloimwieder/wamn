@@ -56,7 +56,7 @@ use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::measurement_schema;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, cdc_object_name,
-    event_stream_name, sql as provision_sql, workload_generation_role,
+    sql as provision_sql, workload_generation_role,
 };
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -345,7 +345,7 @@ fn parse_rates(s: &str) -> anyhow::Result<Vec<f64>> {
 /// entity map + grants. NO slot — each axis creates it at its own moment.
 async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, PROJECT, ENV);
+    let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
     let app_role = app_generation_role()?;
 
     // Hermetic preamble (leftovers mask): slot, database, role.
@@ -528,7 +528,7 @@ async fn teardown(admin_url: &str, nats_url: &str) {
     }
     if let Ok(nats) = async_nats::connect(nats_url).await {
         let js = async_nats::jetstream::new(nats);
-        let source = event_stream_name(ORG, PROJECT, ENV);
+        let source = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
         let _ = js.delete_stream(&source).await;
         let _ = js
             .delete_stream(wamn_event_wire::delivery_advisory_stream(&source))
@@ -579,7 +579,7 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
          spill counters = the logical_decoding_work_mem evidence (wamn-mu4h)"
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, PROJECT, ENV);
+    let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
     let (_admin, db) = provision(admin_url).await?;
     let app = connect_app(admin_url).await?;
     let nats = async_nats::connect(&args.nats_url)
@@ -657,7 +657,7 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
         let _ = js
             .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
             .await;
-        wamn_environment_control::event_streams::provision(
+        wamn_broker::streams::provision(
             &js,
             &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
             1,
@@ -844,7 +844,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
         args.lag_step_secs, args.lag_writers
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, PROJECT, ENV);
+    let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
     let (_admin, db) = provision(admin_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
@@ -854,7 +854,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
     let _ = js
         .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
         .await;
-    wamn_environment_control::event_streams::provision(
+    wamn_broker::streams::provision(
         &js,
         &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
         1,

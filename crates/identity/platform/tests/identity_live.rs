@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test for the platform identity core.
 
 use std::time::Duration;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
@@ -95,7 +95,7 @@ async fn platform_identity_round_trip_on_postgres() {
         &client,
         "agent-ci",
         "CI Agent",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");
@@ -104,7 +104,7 @@ async fn platform_identity_round_trip_on_postgres() {
         &client,
         "agent-ci",
         "Second CI Agent",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect_err("one subject admits one service");
@@ -122,7 +122,7 @@ async fn platform_identity_round_trip_on_postgres() {
         "demo",
         "widgets",
         "project-author",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign author role");
@@ -132,7 +132,7 @@ async fn platform_identity_round_trip_on_postgres() {
         "demo",
         "widgets",
         "project-promoter",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign promoter role");
@@ -241,7 +241,7 @@ async fn project_delete_removes_its_roles_and_memberships(
         "demo",
         "inventory",
         "project-author",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign a role on the project to delete");
@@ -383,7 +383,7 @@ async fn project_environment_membership_round_trip(
         "demo",
         "widgets",
         "operator",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("assign the service operator role");

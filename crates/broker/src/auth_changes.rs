@@ -3,7 +3,7 @@
 //!
 //! Every function of this crate that writes a fact a host keeps takes an
 //! [`AuthDrops`] and records the fact in it. Its caller publishes the list
-//! with [`AuthChanges::publish`] after the commit, which deletes the keys of
+//! with [`crate::Publisher::publish`] after the commit, which deletes the keys of
 //! the facts from the NATS KV bucket [`BUCKET`]. Every host watches the
 //! bucket and keeps the values as its memory. The facts are the users
 //! rows, roles, permissions and user roles of an environment, its
@@ -12,7 +12,6 @@
 use std::collections::BTreeSet;
 
 use crate::kv_memory::Deletion;
-use crate::nats::PlatformNats;
 
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,7 +28,7 @@ pub enum AuthChange {
 }
 
 /// The changes of one transaction, published after its commit.
-#[must_use = "publish the drops with AuthChanges::publish after the commit"]
+#[must_use = "publish the drops with Publisher::publish after the commit"]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuthDrops(BTreeSet<AuthChange>);
 
@@ -95,46 +94,20 @@ pub async fn auth_bucket(
     crate::kv_memory::open_bucket(client, BUCKET).await
 }
 
-/// Deletes the keys of the changes of a commit from the bucket. A writer
-/// without a scheduler NATS client deletes nothing, and the TTL of the memory
-/// applies.
-#[derive(Debug, Clone, Default)]
-pub struct AuthChanges(Option<async_nats::Client>);
-
-impl AuthChanges {
-    pub fn new(client: async_nats::Client) -> Self {
-        Self(Some(client))
-    }
-
-    /// Connect to the NATS that `connection` names.
-    pub async fn connect(connection: &PlatformNats) -> anyhow::Result<Self> {
-        Ok(Self::new(connection.connect().await?))
-    }
-
-    /// Delete the keys of `drops` after the commit that made them. A failed
-    /// delete is logged, because the commit stands and the TTL bounds it.
-    pub async fn publish(&self, drops: AuthDrops) {
-        let Some(client) = &self.0 else {
-            return;
-        };
-        let deletions = drops
-            .0
-            .into_iter()
-            .map(|change| match change {
-                AuthChange::Principal { env_key, principal } => {
-                    Deletion::Key(principal_key(&env_key, &principal))
-                }
-                AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
-                // Every key of the environment: the grants of each principal,
-                // which hold the role, and the environment status.
-                AuthChange::EnvKey(env_key) => Deletion::Under(env_key),
-            })
-            .collect();
-        crate::kv_memory::delete(client, BUCKET, deletions).await;
-    }
-
-    /// The scheduler NATS client, for the writer of another memory.
-    pub fn client(&self) -> Option<&async_nats::Client> {
-        self.0.as_ref()
+impl crate::Changes for AuthDrops {
+    fn into_deletions(self) -> (&'static str, Vec<Deletion>) {
+        (
+            BUCKET,
+            self.0
+                .into_iter()
+                .map(|change| match change {
+                    AuthChange::Principal { env_key, principal } => {
+                        Deletion::Key(principal_key(&env_key, &principal))
+                    }
+                    AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
+                    AuthChange::EnvKey(env_key) => Deletion::Under(env_key),
+                })
+                .collect(),
+        )
     }
 }

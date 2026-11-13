@@ -5,19 +5,16 @@ use wamn_control_registry::Triple;
 
 use super::{CONTROL_TABLES, delete_control_rows_sql};
 
-/// Destroy credential files and remove the environment's registry rows last.
+/// Remove the environment's registry rows last.
 /// The caller holds the lifecycle lock and removes external resources first.
-/// SQL changes roll back if file cleanup fails or this operation is cancelled.
-/// Without a supplied file store, open the configured store when files exist.
 ///
 /// # Errors
 ///
-/// Returns an error if a database operation or credential file removal fails.
+/// Returns an error if a database operation or row removal fails.
 pub async fn delete_registry_rows(
     system: &mut tokio_postgres::Client,
     triple: &Triple,
     instance: &str,
-    file_store: Option<&dyn wamn_credential_store::Store>,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -41,35 +38,14 @@ pub async fn delete_registry_rows(
                 .with_context(|| format!("delete the control rows of {table}"))?;
         }
     }
-    let credentials = transaction
-        .query(
+    let credentials: i64 = transaction
+        .query_one(
             wamn_control_registry::sql::delete_environment_connections_sql(),
             &[&org, &project, &env],
         )
         .await
-        .context("delete the environment's connections")?;
-    let files = super::plan::credential_files(
-        credentials
-            .iter()
-            .map(|row| (row.get(1), row.get(2), row.get(3))),
-    );
-    if !files.is_empty() {
-        let configured;
-        let store = if let Some(store) = file_store {
-            store
-        } else {
-            configured =
-                wamn_credential_store::open("file").context("open the file credential store")?;
-            configured.as_ref()
-        };
-        for (reference, version) in &files {
-            store
-                .destroy(reference, version)
-                .await
-                .with_context(|| format!("destroy credential file {reference}"))?;
-        }
-        lines.push(format!("destroyed {} credential files", files.len()));
-    }
+        .context("delete the environment's connections")?
+        .get(0);
     let env_key_table: bool = transaction
         .query_one(
             "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL",
@@ -108,8 +84,7 @@ pub async fn delete_registry_rows(
         .await
         .context("commit the row delete")?;
     lines.push(format!(
-        "deleted the control rows of tenant {env_key}, {} connection credentials and the environment row of {triple}",
-        credentials.len()
+        "deleted the control rows of tenant {env_key}, {credentials} connection credentials and the environment row of {triple}"
     ));
     Ok(lines)
 }

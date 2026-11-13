@@ -89,9 +89,7 @@ use pg_walstream::{
 };
 use tokio_postgres::NoTls;
 
-use wamn_control_provision::events::{
-    advisory_stream_config, source_stream_config, stream_config_matches,
-};
+use wamn_broker::events::{advisory_stream_config, source_stream_config, stream_config_matches};
 use wamn_control_provision::{SystemReader, parse_system_reader_url};
 use wamn_control_registry::Triple;
 use wamn_control_registry::sql::{select_capture_gap_sql, select_event_reader_sql};
@@ -1070,19 +1068,6 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
     run_with_shutdown(args, shutdown).await
 }
 
-/// The NATS options of the reader: its client certificate when the arguments
-/// name one.
-fn event_nats_options(args: &EventReaderArgs) -> async_nats::ConnectOptions {
-    let options = async_nats::ConnectOptions::new();
-    match (&args.nats_tls_ca, &args.nats_tls_cert, &args.nats_tls_key) {
-        (Some(ca), Some(cert), Some(key)) => options
-            .require_tls(true)
-            .add_root_certificates(ca.clone())
-            .add_client_certificate(cert.clone(), key.clone()),
-        _ => options,
-    }
-}
-
 /// The service body, shutdown injected — the live gate drives this directly
 /// (abort = the crash drill, shutdown = clean stop).
 pub async fn run_with_shutdown(
@@ -1090,7 +1075,13 @@ pub async fn run_with_shutdown(
     shutdown: ReaderShutdown,
 ) -> anyhow::Result<()> {
     let token = shutdown.token;
-    let nats_options = event_nats_options(&args);
+    let nats_options = wamn_broker::nats::tls_options(
+        async_nats::ConnectOptions::new(),
+        args.nats_tls_ca.as_deref(),
+        args.nats_tls_cert.as_deref(),
+        args.nats_tls_key.as_deref(),
+        None,
+    )?;
     let mut reg = read_registration(&args).await?;
     check_registration(&args, &reg)?;
     tracing::info!(
@@ -1100,10 +1091,12 @@ pub async fn run_with_shutdown(
         "registration loaded"
     );
 
-    let client = nats_options
-        .connect(&args.nats_url)
-        .await
-        .context("connect to the data-plane NATS broker")?;
+    let client = wamn_broker::nats::connect(
+        nats_options,
+        &args.nats_url,
+        wamn_broker::nats::InitialConnect::Once,
+    )
+    .await?;
     let js = jetstream::new(client);
     let scope = Triple::new(&args.org, &args.project, args.env.as_str());
     let source_config = source_stream_config(

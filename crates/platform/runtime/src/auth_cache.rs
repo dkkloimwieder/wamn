@@ -8,7 +8,7 @@
 //! fact from Postgres puts it with the revision of the key from before the
 //! read, so a delete in between refuses the put. Every host watches the keys
 //! of its tenant and keeps each value it sees. Every writer of a fact deletes
-//! its key after the commit ([`wamn_platform_identity::auth_changes`]). The
+//! its key after the commit ([`wamn_broker::auth_changes`]). The
 //! bucket keeps a value for at most [`MEMORY_TTL`], and so does the replica.
 //!
 //! An admitted PAT and an active session stay in the host that read them,
@@ -21,19 +21,20 @@
 //! bucket, such as a test host, or with a broken watch, keeps no fact and
 //! reads every request from Postgres.
 //!
-//! [`BUCKET`]: wamn_platform_identity::auth_changes::BUCKET
+//! [`BUCKET`]: wamn_broker::auth_changes::BUCKET
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
 use sha2::{Digest as _, Sha256};
-use wamn_platform_identity::AuthenticatedPrincipal;
-use wamn_platform_identity::auth_changes::{
-    AuthChanges, BUCKET, IDENTITY_TOKEN, env_key as environment_status_key, principal_key,
+use wamn_broker::auth_changes::{
+    BUCKET, IDENTITY_TOKEN, env_key as environment_status_key, principal_key,
 };
-pub use wamn_platform_identity::kv_memory::MEMORY_TTL;
+pub use wamn_broker::kv_memory::MEMORY_TTL;
+use wamn_platform_identity::AuthenticatedPrincipal;
 
 pub use crate::kv_memory::Ticket;
 use crate::kv_memory::{KvMemory, SWEEP_AT, Watched};
@@ -320,7 +321,7 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
     env_key: Option<&str>,
     holder: Arc<H>,
-) -> AuthChanges {
+) -> Publisher {
     let filters = match env_key {
         Some(env_key) => vec![format!("{env_key}.>"), format!("{IDENTITY_TOKEN}.>")],
         None => vec![">".to_owned()],
@@ -328,7 +329,7 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
         (*holder).as_ref() as &dyn Watched
     });
-    AuthChanges::new(client.clone())
+    Publisher::new(client.clone())
 }
 
 /// Live auth-cache fixtures shared by writer tests.
@@ -429,7 +430,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
-        use wamn_platform_identity::auth_changes::AuthDrops;
+        use wamn_broker::auth_changes::AuthDrops;
         wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
         let (_server, client) = nats().await;

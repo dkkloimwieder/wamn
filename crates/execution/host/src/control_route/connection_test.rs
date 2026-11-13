@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
+use wamn_kubernetes::Store as _;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::connections::administration;
 
@@ -137,14 +138,8 @@ impl ControlRoutes<'_> {
             ),
             None if context["credential"].is_object() => {
                 let stored = &context["credential"];
-                let store = administration::open_environment_store(
-                    stored["store"]
-                        .as_str()
-                        .ok_or_else(|| invalid("credential"))?,
-                    self.org,
-                    project,
-                    env,
-                )?;
+                let store = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()
+                    .map_err(|_| invalid("credential"))?;
                 let bytes = store
                     .get(
                         stored["ref"]

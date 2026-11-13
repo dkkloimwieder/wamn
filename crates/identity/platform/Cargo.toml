@@ -6,13 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-credential-store = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
-# The publication of auth changes on the scheduler NATS (src/auth_changes.rs).
-async-nats = { workspace = true, features = ["jetstream", "kv"] }
-futures-util = { workspace = true }
-rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 tracing = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }

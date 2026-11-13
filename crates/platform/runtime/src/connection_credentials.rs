@@ -12,7 +12,7 @@ use anyhow::Context as _;
 pub struct ConnectionCredentials {
     org: Option<String>,
     oauth_pool: Option<deadpool_postgres::Pool>,
-    store: Option<Arc<dyn wamn_credential_store::Store>>,
+    store: Option<Arc<dyn wamn_kubernetes::Store>>,
     database: Option<Arc<tokio_postgres::Client>>,
 }
 
@@ -60,8 +60,8 @@ impl ConnectionCredentials {
         self.org.as_deref().context("connection reader has no org")
     }
 
-    /// Supply the environment store, including in tests with private files.
-    pub fn with_store(mut self, store: Arc<dyn wamn_credential_store::Store>) -> Self {
+    /// Supply the environment store, including isolated test fixtures.
+    pub fn with_store(mut self, store: Arc<dyn wamn_kubernetes::Store>) -> Self {
         self.store = Some(store);
         self
     }
@@ -88,14 +88,17 @@ impl ConnectionCredentials {
     }
 
     async fn material(&self, row: &tokio_postgres::Row) -> anyhow::Result<Option<String>> {
-        let Some(store) = row.get::<_, Option<String>>(0) else {
+        if row.get::<_, Option<&str>>(0).is_none() {
             return Ok(None);
-        };
+        }
         let reference: String = row.get(1);
         let version: String = row.get(2);
-        let backend = match &self.store {
-            Some(backend) => std::sync::Arc::clone(backend),
-            None => std::sync::Arc::from(wamn_credential_store::open(&store)?),
+        let configured;
+        let backend: &dyn wamn_kubernetes::Store = if let Some(backend) = self.store.as_deref() {
+            backend
+        } else {
+            configured = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()?;
+            &configured
         };
         let value = backend.get(&reference, &version).await?;
         Ok(Some(

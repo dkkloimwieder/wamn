@@ -297,10 +297,7 @@ pub(super) fn require_stopped(
     }
 }
 
-pub(super) fn host_process_spec(
-    request: &DevActivationRequest<'_>,
-    credential_directory: Option<String>,
-) -> HostProcessSpec {
+pub(super) fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     let platform: serde_yaml::Value = serde_yaml::from_str(include_str!(
         "../../../../../../deploy/platform/release/values.yaml"
     ))
@@ -476,9 +473,6 @@ pub(super) fn host_process_spec(
                 str::to_owned,
             ),
         ));
-    }
-    if let Some(directory) = credential_directory {
-        env.push(("WAMN_CREDENTIAL_DIR".to_owned(), directory));
     }
     if let Some(url) = request.config.connection_database_url() {
         env.push(("WAMN_CONNECTION_STORE_URL".to_owned(), url.to_owned()));

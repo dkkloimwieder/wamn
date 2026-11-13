@@ -18,10 +18,12 @@
 //! the workflow names.
 
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_broker::Publisher;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, gate_workflow_document,
     resolve_workflow_components, sealed_operation_reference,
@@ -34,7 +36,6 @@ use wamn_platform_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
 use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -48,7 +49,7 @@ pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
     pub(crate) project: &'a str,
     /// Publishes each role or permission change.
-    pub(crate) changes: &'a AuthChanges,
+    pub(crate) changes: &'a Publisher,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering check of an `admin` revoke.

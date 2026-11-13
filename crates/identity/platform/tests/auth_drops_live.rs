@@ -4,14 +4,15 @@
 //! takes an `AuthDrops`, so it does not compile until it joins this list.
 
 use std::time::Duration;
+use wamn_broker::Publisher;
 
 use tokio_postgres::Client;
+use wamn_broker::auth_changes::{AuthChange, AuthDrops};
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_platform_identity::application::{
     ApplicationUser, create_role, delete_role, remove_admin, remove_user, write_admin,
     write_environment_status, write_service, write_user,
 };
-use wamn_platform_identity::auth_changes::{AuthChange, AuthDrops};
 use wamn_platform_identity::org::{
     EnvironmentStatus, activate_org_membership, deactivate_org_membership, grant_member,
     grant_org_admin, grant_project_admin, revoke_member, revoke_org_admin, revoke_project_admin,
@@ -404,20 +405,20 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
-    use wamn_platform_identity::auth_changes::{AuthChanges, auth_bucket};
+    use wamn_broker::auth_changes::auth_bucket;
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
-    let broker = wamn_platform_identity::nats::PlatformNats::from_env()
+    let broker = wamn_broker::nats::PlatformNats::from_env()
         .unwrap()
         .connect()
         .await
         .unwrap();
-    wamn_platform_identity::kv_memory::create_buckets(&broker)
+    wamn_broker::kv_memory::create_buckets(&broker)
         .await
         .unwrap();
     let bucket = auth_bucket(&broker).await.unwrap();
-    let publisher = AuthChanges::new(broker);
+    let publisher = Publisher::new(broker);
     let database = wamn_project_state::test_database::tenant_platform();
     let client = connect(database.url(), None).await;
     client

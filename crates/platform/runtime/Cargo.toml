@@ -18,7 +18,8 @@ wasm_component_model_implements = [
 ]
 
 [dependencies]
-wamn-credential-store = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
 object_store = { workspace = true, features = ["gcp"] }
@@ -87,6 +88,7 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+wamn-kubernetes = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-schema-control = { workspace = true }

@@ -1195,7 +1195,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "abcd1234",
         Some(false),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .unwrap();
@@ -1235,7 +1235,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "efgh5678",
         Some(true),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .unwrap();
@@ -1260,7 +1260,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "efgh5678",
         Some(true),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .unwrap_err();
@@ -1279,7 +1279,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "efgh5678",
         Some(true),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .unwrap_err();
@@ -1446,7 +1446,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
             Some("system"),
             "abcd1234",
             disposable,
-            &wamn_platform_identity::auth_changes::AuthChanges::default(),
+            &wamn_broker::Publisher::default(),
         )
         .await
         .unwrap();
@@ -1481,7 +1481,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
 async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
     for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
         let error = provision_project_env(&ProvisionProjectEnvRequest {
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             org: "acme".into(),
             project: "billing".into(),
             env: "dev".into(),

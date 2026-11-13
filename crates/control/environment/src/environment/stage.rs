@@ -169,9 +169,9 @@ pub async fn materialize_application_principals(
     env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
-    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_broker::auth_changes::AuthDrops;
     use wamn_project_state::PlatformComponent;
 
     let applications = packages
@@ -260,7 +260,7 @@ pub async fn write_runtime_grants(
     env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
-    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
+    drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
     let dependency_manifests = packages
         .iter()
@@ -422,7 +422,7 @@ pub async fn retire(
         super::drain::settled(&live, target),
         "application hosts changed during retirement"
     );
-    let mut connections = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    let mut connections = wamn_broker::connection_changes::ConnectionDrops::default();
     let retired = super::bindings::contract(
         &tx,
         &env_key,
@@ -447,15 +447,13 @@ pub async fn retire(
         needed.insert(target.to_owned());
     }
     releases.retain(|digest, _| retired.contains(digest) || needed.contains(digest));
-    let mut auth = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut auth = wamn_broker::auth_changes::AuthDrops::default();
     let system = connect(&platform.system_database_url).await?;
     retire_runtime_grants(&system, &tx, &env_key, &releases, &retired, &mut auth).await?;
     tx.commit().await?;
     let changes = platform.auth_changes().await?;
     changes.publish(auth).await;
-    wamn_platform_identity::connection_changes::ConnectionChanges::from(&changes)
-        .publish(connections)
-        .await;
+    changes.publish(connections).await;
     Ok(())
 }
 
@@ -467,7 +465,7 @@ pub async fn retire_runtime_grants(
     env_key: &str,
     releases: &BTreeMap<String, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
     retired: &[String],
-    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
+    drops: &mut wamn_broker::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
     use std::collections::BTreeSet;
     let mut removed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();

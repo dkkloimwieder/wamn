@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use tokio_postgres::Client;
+use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
 use wamn_control_registry::Triple;
 use wamn_environment_control::{
     environment::{
@@ -12,11 +13,7 @@ use wamn_environment_control::{
     },
     provision_project_env::provisioning_transaction,
 };
-use wamn_platform_identity::{
-    auth_changes::{AuthChanges, AuthDrops},
-    connection_changes::ConnectionDrops,
-    connections::administration,
-};
+use wamn_platform_identity::connections::administration;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[tokio::test]
@@ -120,7 +117,7 @@ esac
         env: triple.env.to_string(),
         schema: "wamn_run".into(),
         dry_run: false,
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
     })
     .await?;
     // The database-owner policy membership installed by environment::ensure.
@@ -145,7 +142,7 @@ esac
         .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
         .await?
         .get(0);
-    let release = wamn_control_provision::environment_state::application_release_name(
+    let release = wamn_control_provision::environment_names::application_release_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -266,8 +263,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
          UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')",
     ).await?;
-    let scratch = ScratchRoot::create()?;
-    let store = wamn_credential_store::file::FileStore::new(scratch.path().to_path_buf());
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     let mut auth = AuthDrops::default();
     let mut changes = ConnectionDrops::default();
     for (operation, request) in [
@@ -322,7 +318,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let deleting_triple = triple.clone();
     let task = tokio::spawn(async move {
         LifecycleLock::hold(&url, &deleting_triple, async |_| {
-            delete_registry_rows(&mut deleting, &deleting_triple, "aaaaaaa1", Some(&store)).await
+            delete_registry_rows(&mut deleting, &deleting_triple, "aaaaaaa1").await
         })
         .await
     });
@@ -343,7 +339,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         }
     })
     .await??;
-    assert!(!scratch.path().join(&reference).exists());
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     held.rollback().await?;
@@ -374,10 +369,9 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     assert_eq!(retained.get::<_, String>(0), reference);
     assert_eq!(retained.get::<_, String>(1), version);
     assert_control_facts(&mut system, &triple, true).await?;
-    let store = wamn_credential_store::file::FileStore::new(scratch.path().to_path_buf());
     for _ in 0..2 {
         LifecycleLock::hold(database.url(), &triple, async |_| {
-            delete_registry_rows(&mut system, &triple, "aaaaaaa1", Some(&store)).await
+            delete_registry_rows(&mut system, &triple, "aaaaaaa1").await
         })
         .await?;
     }

@@ -279,7 +279,7 @@ async fn sql_pages_keep_order_scope_and_current_authority() {
         caller,
         "acme",
         "c",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();

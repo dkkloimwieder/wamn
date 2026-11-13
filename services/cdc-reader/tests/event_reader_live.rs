@@ -38,8 +38,8 @@ use tokio_postgres::NoTls;
 
 use wamn_cdc_reader::{EventReaderArgs, ReaderShutdown, run_with_shutdown};
 use wamn_control_provision::{
-    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, event_stream_name,
-    sql, system_reader_generation_role,
+    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, sql,
+    system_reader_generation_role,
 };
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
@@ -307,7 +307,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .to_owned();
 
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, PROJECT, ENV);
+    let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------
     let admin = connect(&super_url).await;
@@ -580,8 +580,8 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     );
     let scope = wamn_control_registry::Triple::new(ORG, PROJECT, ENV);
     let source_config =
-        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120));
-    let advisory_config = wamn_control_provision::events::advisory_stream_config(&scope, 1);
+        wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
+    let advisory_config = wamn_broker::events::advisory_stream_config(&scope, 1);
     let advisory_name = advisory_config.name.clone();
     let _ = js.delete_stream(&advisory_name).await;
     js.create_stream(source_config)

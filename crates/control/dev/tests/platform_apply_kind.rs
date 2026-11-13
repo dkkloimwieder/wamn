@@ -16,7 +16,7 @@ use wamn_dev_control::owned_command;
 use wamn_environment_control::platform::{
     artifact_plan,
     document::{ClusterDocument, Provider},
-    provider, resources,
+    provider,
 };
 use wamn_release_control::release_chart::Target;
 
@@ -757,7 +757,9 @@ async fn password_session(
 }
 
 async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> {
-    let forward = resources::port_forward(&run.target, "identity", "service/identity", 443).await?;
+    let forward =
+        wamn_kubernetes::forward::port_forward(&run.target, "identity", "service/identity", 443)
+            .await?;
     let tls = get(run, "identity", "secret", "identity-tls").await?;
     let ca = base64::engine::general_purpose::STANDARD
         .decode(tls["data"]["ca.crt"].as_str().context("identity CA")?)?;
@@ -783,7 +785,7 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
     let token = login["access_token"]
         .as_str()
         .context("identity access token")?;
-    let control = resources::port_forward(
+    let control = wamn_kubernetes::forward::port_forward(
         &run.target,
         "hosts",
         &format!("service/c-{}-http", run.document.org),

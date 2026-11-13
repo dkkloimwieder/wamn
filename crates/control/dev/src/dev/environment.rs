@@ -49,7 +49,7 @@ pub struct DevEnvironmentInputs {
     pub local_artifacts: super::config::LocalArtifacts,
     pub host_binary: PathBuf,
     /// The one local NATS and the development certificate.
-    pub nats: wamn_platform_identity::nats::PlatformNats,
+    pub nats: wamn_broker::nats::PlatformNats,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
     pub otel_exporter_otlp_endpoint: String,
@@ -291,7 +291,7 @@ fn provisioning_args(
     management_secret: Option<&Path>,
 ) -> ProvisionProjectEnvRequest {
     ProvisionProjectEnvRequest {
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         org: scope.org.clone(),
         project: scope.project.clone(),
         env: scope.environment.clone(),
@@ -732,7 +732,7 @@ pub async fn grant_operator_admin_role(
         .await?
         .context("the operator service does not exist")?;
         let authority = provision_project_env::provisioning_transaction(&mut system).await?;
-        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let mut drops = wamn_broker::auth_changes::AuthDrops::default();
         wamn_platform_identity::assign_project_role(
             &authority,
             principal.id(),
@@ -792,7 +792,7 @@ pub async fn reconcile_journey_run_plane(
         schema: "wamn_run".to_owned(),
         dry_run: false,
         // A journey reconciles before its host serves.
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
     })
     .await
     .context("reconcile the journey run plane")?;

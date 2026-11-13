@@ -5,7 +5,7 @@
 //! ServiceAccount from the release namespace `hosts`: the digest of
 //! the host Deployment's pod template, its rollout, the conditions of the
 //! release's WorkloadDeployments and the live set. The reader is
-//! [`wamn_control_provision::environment_state`], the one `wamn-ctl env
+//! [`wamn_kubernetes::environment_state`], the one `wamn-ctl env
 //! status` uses. No Helm revision or history; the role in
 //! `deploy/platform/control-status-rbac.yaml` grants only get, list and watch
 //! on pods, deployments and workloaddeployments. Credential access grants
@@ -19,10 +19,10 @@ use wash_runtime::washlet::{rpc_subject, types::v2};
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_control_provision::environment_state::{
+use wamn_kubernetes::environment_state::{
     DeploymentStatus, EnvironmentState, application_states, observe_environment,
 };
-use wamn_credential_store::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::kubernetes_api::KubernetesApi;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -181,7 +181,7 @@ fn local_value(digest: Option<&str>, workloads: &[(String, bool)]) -> Value {
 /// is null and the rollout counts are zero.
 fn status_value(state: &EnvironmentState) -> Value {
     let deployment = state.deployment.as_ref();
-    let count = |read: fn(&wamn_control_provision::environment_state::DeploymentStatus) -> u64| {
+    let count = |read: fn(&wamn_kubernetes::environment_state::DeploymentStatus) -> u64| {
         deployment.map_or(0, read)
     };
     json!({
@@ -214,7 +214,7 @@ fn status_value(state: &EnvironmentState) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_control_provision::environment_state::{Observed, environment_state};
+    use wamn_kubernetes::environment_state::{Observed, environment_state};
 
     #[test]
     fn local_source_reports_the_selected_release_and_observed_workloads() {

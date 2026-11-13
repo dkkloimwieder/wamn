@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair};
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use wamn_platform_identity::nats::PlatformNats;
+use wamn_broker::nats::PlatformNats;
 
 /// The scheduler connection and its owned local process.
 #[derive(Debug)]

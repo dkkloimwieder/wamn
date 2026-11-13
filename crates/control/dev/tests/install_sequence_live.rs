@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::Publisher;
 use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::sql;
 use wamn_environment_control::environment::{
@@ -22,7 +23,6 @@ use wamn_environment_control::provision_system::{ProvisionSystemRequest, provisi
 use wamn_environment_control::reconcile_run_plane;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
-use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_test_infrastructure::{locked_database, scratch::ScratchRoot};
 
 #[path = "../../environment/tests/support/install_invitation.rs"]
@@ -152,7 +152,7 @@ async fn step_4_7_provision(system_url: &str, work: &Path) -> anyhow::Result<Str
 
 async fn provision_project(system_url: &str, admin: &Client) -> anyhow::Result<String> {
     let outcome = provision_project_env(&ProvisionProjectEnvRequest {
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),
@@ -221,7 +221,7 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
         package: package.clone(),
         database_url: project_url.into(),
         component_source: None,
-        changes: AuthChanges::default(),
+        changes: Publisher::default(),
         org: ORG.into(),
         project: PROJECT.into(),
         environment: ENV.into(),

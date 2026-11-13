@@ -85,9 +85,8 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                 .with_root_certificates(rustls::RootCertStore::empty()).with_no_client_auth())
             .https_or_http().enable_http1().build();
         let releases = Releases {
-            client: Client::builder(TokioExecutor::new()).build(connector),
-            endpoint,
-            token: "/dev/null".into(),
+            api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
+                Client::builder(TokioExecutor::new()).build(connector), endpoint, String::new(), "hosts".into()),
         };
         let web = Web { store: None, files: RwLock::new(BTreeMap::new()) };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

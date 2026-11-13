@@ -15,7 +15,7 @@ pub(in crate::environment) const JOB_DOCUMENT: &str = "/environment/environment.
 
 fn name(document: &EnvironmentDocument) -> anyhow::Result<String> {
     Ok(
-        wamn_control_provision::environment_state::environment_resource_name(
+        wamn_control_provision::environment_names::environment_resource_name(
             &document.org,
             &document.project,
             &document.env,
@@ -24,7 +24,7 @@ fn name(document: &EnvironmentDocument) -> anyhow::Result<String> {
 }
 
 async fn read(platform: &Platform, name: &str) -> anyhow::Result<Option<Value>> {
-    crate::kubectl::get(
+    wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         DEFAULT_NAMESPACE,
@@ -131,7 +131,7 @@ async fn save(
             } else {
                 "create"
             };
-            crate::kubectl::kubectl(
+            wamn_kubernetes::kubectl::kubectl(
                 &platform.target.kubeconfig,
                 &platform.target.context,
                 DEFAULT_NAMESPACE,
@@ -202,7 +202,8 @@ async fn update(
         match write(&object_to_write).await {
             Ok(()) => return Ok(document),
             Err(error)
-                if error.is::<crate::kubectl::Conflict>() && attempt + 1 < WRITE_ATTEMPTS =>
+                if error.is::<wamn_kubernetes::kubectl::Conflict>()
+                    && attempt + 1 < WRITE_ATTEMPTS =>
             {
                 object = read().await?;
             }
@@ -299,7 +300,7 @@ mod tests {
         let mut write = async |candidate: &Value| {
             let mut server = server.borrow_mut();
             if candidate["metadata"]["resourceVersion"] != server["metadata"]["resourceVersion"] {
-                return Err(crate::kubectl::Conflict.into());
+                return Err(wamn_kubernetes::kubectl::Conflict.into());
             }
             let next = server["metadata"]["resourceVersion"]
                 .as_str()

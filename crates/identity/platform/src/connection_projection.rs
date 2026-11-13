@@ -3,8 +3,8 @@
 use anyhow::Context as _;
 use tokio_postgres::Transaction;
 
-use crate::auth_changes::AuthDrops;
 use crate::configuration::{Connection, ExternalSystem, Integration, PlatformConfiguration};
+use wamn_broker::auth_changes::AuthDrops;
 
 /// A failed projection with its project environment and original cause.
 #[derive(Debug)]

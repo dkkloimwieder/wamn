@@ -13,7 +13,7 @@ use tokio::process::Command;
 use super::document::{ClusterDocument, Provider};
 use super::project::ProjectDocument;
 use super::provider;
-use crate::kubectl;
+use wamn_kubernetes::kubectl;
 
 /// The pool size a verb sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

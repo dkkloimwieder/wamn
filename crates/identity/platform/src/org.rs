@@ -9,11 +9,11 @@
 
 use tokio_postgres::GenericClient;
 
-use crate::auth_changes::AuthDrops;
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, checked_scope_segment, control,
     database_error,
 };
+use wamn_broker::auth_changes::AuthDrops;
 
 /// The org role that holds every project and environment of its org.
 pub const ORG_ADMIN_ROLE: &str = "org-admin";

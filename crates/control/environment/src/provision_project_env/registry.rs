@@ -179,7 +179,7 @@ pub(super) async fn record_project_env(
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<String> {
     let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -216,7 +216,7 @@ pub(super) async fn do_record_project_env(
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<String> {
     let transaction = super::provisioning_transaction(client).await?;
     transaction
@@ -264,7 +264,7 @@ pub(super) async fn do_record_project_env(
     )
     .await
     .context("give the environment the rows of the current administrators")?;
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     for row in transaction
         .query(
             "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",

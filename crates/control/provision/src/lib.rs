@@ -54,9 +54,8 @@ pub mod audit_retention;
 pub mod backup;
 pub mod control_author;
 pub mod database;
-pub mod environment_state;
+pub mod environment_names;
 mod error;
-pub mod events;
 pub mod host_credentials;
 pub mod identity_issuer;
 pub mod management_admitter;
@@ -104,7 +103,7 @@ pub use name::{
     DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
     NAMESPACE_PREFIX, cdc_object_name, compose_url, control_administration_key,
-    control_administration_secret_name, control_author_secret_name, event_stream_name,
+    control_administration_secret_name, control_author_secret_name,
     management_admitter_secret_name, org_workload_secret_name, package_owner_role,
     project_env_cdc_secret_name, project_env_database_name, project_env_guest_secret_name,
     project_env_key, project_env_namespace, project_env_secret_name, validate_instance_suffix,

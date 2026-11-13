@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_broker::Publisher;
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::{Value, json};
@@ -324,7 +324,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: Some(identity.config.clone()),
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -579,7 +579,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -854,7 +854,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             identity: None,
             administration: Some(logins.clone()),
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -1034,7 +1034,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             identity: None,
             administration: Some(logins.clone()),
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -1272,7 +1272,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -1441,7 +1441,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
@@ -1675,7 +1675,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     )
     .await?;
     let (_nats_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
-    let bucket = wamn_platform_identity::auth_changes::auth_bucket(&nats).await?;
+    let bucket = wamn_broker::auth_changes::auth_bucket(&nats).await?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -1685,7 +1685,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: None,
             org: ORG.to_owned(),
-            changes: AuthChanges::new(nats),
+            changes: Publisher::new(nats),
         },
         None,
     );
@@ -1947,8 +1947,8 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     .await?;
     invite_member(&admin, &user, ORG, &MemberGrants::default()).await?;
     let (_server, broker) = wamn_runtime::auth_cache::test_util::nats().await;
-    let changes = AuthChanges::new(broker.clone());
-    let bucket = wamn_platform_identity::auth_changes::auth_bucket(&broker).await?;
+    let changes = Publisher::new(broker.clone());
+    let bucket = wamn_broker::auth_changes::auth_bucket(&broker).await?;
     let delivery = async || -> anyhow::Result<HostRouteDelivery> {
         Ok(HostRouteDelivery::new(
             Arc::new(LoadedRelease::control_root()),
@@ -1983,7 +1983,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
         bucket
             .put(
-                wamn_platform_identity::auth_changes::principal_key(&env_key, user.as_str()),
+                wamn_broker::auth_changes::principal_key(&env_key, user.as_str()),
                 "stale".into(),
             )
             .await?;
@@ -2025,7 +2025,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
         assert!(
             bucket
-                .get(wamn_platform_identity::auth_changes::principal_key(
+                .get(wamn_broker::auth_changes::principal_key(
                     &env_key,
                     user.as_str()
                 ))

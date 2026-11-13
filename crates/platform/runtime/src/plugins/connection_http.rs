@@ -1682,7 +1682,7 @@ mod tests {
 
     use crate::connection_credentials::ConnectionCredentials;
     use crate::connection_memory::ConnectionMemory;
-    use wamn_platform_identity::connection_changes::ConnectionChanges;
+    use wamn_broker::Publisher;
 
     mod credential_retry_tests;
     mod oauth2_tests;
@@ -2178,7 +2178,7 @@ mod tests {
         let postgres = Arc::new(offline_postgres());
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
             "tenant-a",

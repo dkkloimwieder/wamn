@@ -406,17 +406,6 @@ fn cdc_object_name_stem(org: &str, project: &str, env: &str) -> String {
     )
 }
 
-/// The source stream for one organization, project, and environment.
-/// Length prefixes keep coordinates with underscores distinct.
-pub fn event_stream_name(org: &str, project: &str, env: &str) -> String {
-    format!(
-        "EVT_{}_{org}_{}_{project}_{}_{env}",
-        org.len(),
-        project.len(),
-        env.len()
-    )
-}
-
 /// Validate that a `(org, project, env)` yields safe CDC names: the base
 /// project-env validation ([`validate_project_env`]) plus the assembled
 /// `wamn_cdc_…` object name — one prefix byte longer than the database name —
@@ -975,26 +964,6 @@ mod tests {
         assert_ne!(
             cdc_object_name("org-a", "demo", "dev", INSTANCE),
             cdc_object_name("org", "a-demo", "dev", INSTANCE)
-        );
-        assert_eq!(
-            event_stream_name("acme", "billing", "prod"),
-            "EVT_4_acme_7_billing_4_prod"
-        );
-        assert_ne!(
-            event_stream_name("acme", "billing", "prod"),
-            event_stream_name("acme", "demo", "prod")
-        );
-        assert_ne!(
-            event_stream_name("acme", "billing", "prod"),
-            event_stream_name("acme", "billing", "dev")
-        );
-        assert_ne!(
-            event_stream_name("a_b", "c", "dev"),
-            event_stream_name("a", "b_c", "dev")
-        );
-        assert_ne!(
-            event_stream_name("a", "b_c", "dev"),
-            event_stream_name("a", "b", "c_dev")
         );
     }
 

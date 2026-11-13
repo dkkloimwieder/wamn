@@ -31,7 +31,7 @@ VALUES ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-0000000
         'acme', 'app', 'dev', 'http', '00000000-0000-0000-0000-000000000051', 1, '00000000-0000-0000-0000-000000000002');
 INSERT INTO identity.credential (id, connection_id, store, ref, version, created_at, created_by)
 VALUES ('00000000-0000-0000-0000-000000000041', '00000000-0000-0000-0000-000000000031',
-        'file', 'first', '1', now(), '00000000-0000-0000-0000-000000000001'),
+        'k8s', 'first', '1', now(), '00000000-0000-0000-0000-000000000001'),
        ('00000000-0000-0000-0000-000000000042', '00000000-0000-0000-0000-000000000032',
         'k8s', 'second', '1', now(), '00000000-0000-0000-0000-000000000001');
 INSERT INTO registry.connection_generation (connection_id, generation, parameters, credential_id, created_at, created_by)

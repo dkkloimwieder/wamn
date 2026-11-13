@@ -12,6 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use wamn_broker::Publisher;
 use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -21,7 +22,6 @@ use wamn_engine::router_delivery::{
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
-use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_platform_identity::paging::Order;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
@@ -40,7 +40,7 @@ pub enum HostRouteHandlers {
         /// authenticated route has none.
         identity: Option<(Arc<tokio_postgres::Client>, String)>,
         /// Publishes each role or permission change.
-        changes: AuthChanges,
+        changes: Publisher,
     },
     /// The control routes of one org, through its `control` login.
     Control {
@@ -58,7 +58,7 @@ pub enum HostRouteHandlers {
         status: Arc<dyn crate::environment_status::StatusSource>,
         org: String,
         /// Publishes each user row and status change of an environment.
-        changes: AuthChanges,
+        changes: Publisher,
     },
 }
 
@@ -83,7 +83,7 @@ pub struct HostRouteDelivery {
     #[cfg(feature = "test-util")]
     projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
     registry_token_metadata: bool,
-    operation_jobs: Option<wamn_credential_store::kubernetes_api::KubernetesApi>,
+    operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
@@ -158,7 +158,7 @@ impl HostRouteDelivery {
     /// Use the process-owned Kubernetes client for operation Jobs.
     pub fn with_operation_jobs(
         mut self,
-        api: wamn_credential_store::kubernetes_api::KubernetesApi,
+        api: wamn_kubernetes::kubernetes_api::KubernetesApi,
     ) -> Self {
         self.operation_jobs = Some(api);
         self

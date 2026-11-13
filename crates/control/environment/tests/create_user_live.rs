@@ -17,6 +17,7 @@ use wamn_control_provision::{
 };
 use wamn_environment_control::create_user::{CreateUserRequest, create_user_principal};
 use wamn_platform_identity::{IdentityError, IdentityErrorType};
+
 use wamn_test_infrastructure::locked_database;
 
 const EMAIL: &str = "a.person@example.test";
@@ -82,7 +83,7 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
 
     let principal = create_user_principal(
         request(&url, "A.Person@Example.Test", EMAIL),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .expect("create the user principal");
@@ -105,7 +106,7 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
             "second.person@example.test",
             "Second.Person@Example.Test",
         ),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .expect("create a second user principal from a mixed-case address");
@@ -128,7 +129,7 @@ async fn one_email_address_names_one_principal() {
 
     create_user_principal(
         request(&url, "first.person@example.test", EMAIL),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .expect("create the first user principal");
@@ -136,7 +137,7 @@ async fn one_email_address_names_one_principal() {
     // A different subject and a different spelling of the same address.
     let error = create_user_principal(
         request(&url, "second.person@example.test", "A.PERSON@Example.Test"),
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await
     .expect_err("the second principal with that address is refused");

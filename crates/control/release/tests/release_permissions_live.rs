@@ -6,7 +6,7 @@
 //! installer creates cluster-wide roles.
 
 use std::collections::BTreeSet;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::application::{create_role, delete_role};

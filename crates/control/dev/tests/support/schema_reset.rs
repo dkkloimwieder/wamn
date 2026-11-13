@@ -319,7 +319,7 @@ async fn attempt(
 
 async fn stopped(journey: &Journey<'_>, status: &Value) -> anyhow::Result<()> {
     let document = EnvironmentDocument::compile(&journey.file)?;
-    let shared = wamn_control_provision::environment_state::environment_resource_name(
+    let shared = wamn_control_provision::environment_names::environment_resource_name(
         &document.org,
         &document.project,
         &document.env,
@@ -625,7 +625,7 @@ pub(super) async fn recovery(
 }
 
 async fn broker(journey: &Journey<'_>) -> anyhow::Result<async_nats::jetstream::Context> {
-    let nats = wamn_platform_identity::nats::PlatformNats {
+    let nats = wamn_broker::nats::PlatformNats {
         nats_url: journey.variables["WAMN_NATS_URL"].clone(),
         nats_tls_ca: journey.variables["WAMN_NATS_TLS_CA"].as_str().into(),
         nats_tls_cert: journey.variables["WAMN_NATS_TLS_CERT"].as_str().into(),
@@ -649,8 +649,7 @@ async fn event(
     label: &str,
 ) -> anyhow::Result<Event> {
     let document = EnvironmentDocument::compile(&journey.file)?;
-    let name =
-        wamn_control_provision::event_stream_name(&document.org, &document.project, &document.env);
+    let name = wamn_event_wire::stream_name(&document.org, &document.project, &document.env);
     let mut stream = broker.get_stream(&name).await?;
     let mut sequence = stream.info().await?.state.last_sequence + 1;
     let row = journey

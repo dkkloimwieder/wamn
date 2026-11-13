@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,17 +13,14 @@ use http_body_util::{BodyExt as _, Empty, Full, combinators::UnsyncBoxBody};
 use hyper::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST};
 use hyper::service::service_fn;
 use hyper::{Method, Response, StatusCode};
-use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use object_store::{ObjectStore, ObjectStoreExt as _};
-use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
-const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 
 #[cfg(test)]
 mod rollout_tests;
@@ -102,62 +99,20 @@ fn segment(value: &str) -> bool {
 
 #[derive(Debug)]
 struct Releases {
-    client: Client<HttpsConnector<HttpConnector>, Empty<Bytes>>,
-    endpoint: String,
-    token: PathBuf,
+    api: wamn_kubernetes::kubernetes_api::KubernetesApi,
 }
-
 impl Releases {
     fn in_cluster() -> anyhow::Result<Self> {
-        let mut roots = rustls::RootCertStore::empty();
-        for certificate in CertificateDer::pem_file_iter(Path::new(SERVICE_ACCOUNT).join("ca.crt"))?
-        {
-            roots.add(certificate?)?;
-        }
-        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(tls)
-            .https_only()
-            .enable_http1()
-            .build();
         Ok(Self {
-            client: Client::builder(TokioExecutor::new()).build(connector),
-            endpoint: "https://kubernetes.default.svc".into(),
-            token: Path::new(SERVICE_ACCOUNT).join("token"),
+            api: wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
         })
     }
-
     async fn request(&self, path: &str) -> anyhow::Result<serde_json::Value> {
-        // Kubernetes rotates projected tokens. Never retain one in memory.
-        let token = tokio::fs::read_to_string(&self.token).await?;
-        let request = hyper::Request::builder()
-            .uri(format!(
-                "{}/api/v1/namespaces/hosts/configmaps{path}",
-                self.endpoint
-            ))
-            .header(
-                hyper::header::AUTHORIZATION,
-                format!("Bearer {}", token.trim()),
-            )
-            .body(Empty::new())?;
-        let bytes = tokio::time::timeout(Duration::from_secs(10), async {
-            let response = self.client.request(request).await?;
-            ensure!(
-                response.status().is_success(),
-                "release ConfigMap read returned {}",
-                response.status()
-            );
-            Ok::<_, anyhow::Error>(response.into_body().collect().await?.to_bytes())
-        })
-        .await??;
-        Ok(serde_json::from_slice(&bytes)?)
+        Ok(self
+            .api
+            .get(format!("/api/v1/namespaces/hosts/configmaps{path}"))
+            .await?)
     }
-
     async fn routes(&self) -> anyhow::Result<BTreeMap<String, Route>> {
         let mut objects = self.request("?labelSelector=wamn.route%3Dtrue").await?;
         let objects = objects["items"]
@@ -674,9 +629,12 @@ mod tests {
             .enable_http1()
             .build();
         let releases = Releases {
-            client: Client::builder(TokioExecutor::new()).build(connector),
-            endpoint,
-            token: "/dev/null".into(),
+            api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
+                Client::builder(TokioExecutor::new()).build(connector),
+                endpoint,
+                String::new(),
+                "hosts".into(),
+            ),
         };
         let web = Web {
             store: Some(store),

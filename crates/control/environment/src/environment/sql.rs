@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use super::document::{DeclaredRelease, EnvironmentDocument};
 use super::{Platform, analyse, ensure, stage};
-use crate::platform::{bootstrap, identity, job};
+use crate::platform::{bootstrap, identity};
+use wamn_kubernetes::job;
 
 /// Database identities resolved before a Job starts, compared under its own lock.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -316,7 +317,7 @@ pub async fn run_deployed(
         | Operation::Reset { .. }
         | Operation::AdoptSchema
         | Operation::ProjectSchema { .. } => {
-            wamn_control_provision::environment_state::environment_resource_name(
+            wamn_control_provision::environment_names::environment_resource_name(
                 &document.org,
                 &document.project,
                 &document.env,
@@ -409,7 +410,7 @@ pub async fn run_deployed(
     }
     files.insert("database.json".into(), serde_json::to_string(&expected)?);
     let mut secrets = Vec::new();
-    let admin: bootstrap::SecretData = crate::kubectl::get(
+    let admin: bootstrap::SecretData = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.database_namespace,
@@ -435,7 +436,7 @@ pub async fn run_deployed(
         "url",
         admin_url.as_str(),
     ));
-    let apply: bootstrap::SecretData = crate::kubectl::get(
+    let apply: bootstrap::SecretData = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         "platform",
@@ -501,7 +502,7 @@ pub async fn run_deployed(
         if platform.registry_token_metadata {
             job::environment(&mut job, &[("WAMN_REGISTRY_TOKEN_METADATA", "true")]);
             job["spec"]["template"]["spec"]["serviceAccountName"] =
-                wamn_credential_store::kubernetes::service_account_name(
+                wamn_control_registry::service_account_name(
                     &document.org,
                     &document.project,
                     &document.env,
@@ -555,7 +556,7 @@ pub async fn run_deployed(
 
 /// Mount the authority directly. SQL Jobs need no Kubernetes API credential.
 fn environment_input(job: &mut Value, document: &EnvironmentDocument) -> anyhow::Result<()> {
-    let name = wamn_control_provision::environment_state::environment_resource_name(
+    let name = wamn_control_provision::environment_names::environment_resource_name(
         &document.org,
         &document.project,
         &document.env,
@@ -600,7 +601,7 @@ fn pod_registry_credentials(insecure_registry: bool, mut registry: Value) -> any
 fn nats_inputs(
     job: &mut Value,
     files: &mut BTreeMap<String, String>,
-    nats: &wamn_platform_identity::nats::PlatformNats,
+    nats: &wamn_broker::nats::PlatformNats,
 ) -> anyhow::Result<()> {
     // The Service hostname matches the server certificate without the native TLS override.
     job::environment(job, &[("WAMN_NATS_URL", identity::NATS_URL)]);
@@ -633,7 +634,7 @@ fn add_file(
 mod tests {
     use super::*;
     use serde::Deserialize as _;
-    use wamn_platform_identity::nats::PlatformNats;
+    use wamn_broker::nats::PlatformNats;
 
     #[test]
     fn sql_job_reads_the_canonical_configmap_without_api_credentials() -> anyhow::Result<()> {
@@ -661,7 +662,7 @@ mod tests {
             .context("environment volume")?;
         assert_eq!(
             volume["configMap"]["name"],
-            wamn_control_provision::environment_state::environment_resource_name(
+            wamn_control_provision::environment_names::environment_resource_name(
                 &document.org,
                 &document.project,
                 &document.env,

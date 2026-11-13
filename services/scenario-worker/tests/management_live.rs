@@ -38,7 +38,7 @@
 //! The recipe in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` supplies one disposable database.
 
 use std::fmt::Write as _;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use std::time::{Duration, SystemTime};
 
@@ -57,6 +57,7 @@ use wamn_platform_identity::{
     IssuedPat, assign_project_role, create_service, create_user, issue_pat, resolve_subject,
     revoke_pat,
 };
+
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_session::PAT_TOKEN_PREFIX;
 
@@ -1056,7 +1057,7 @@ async fn admitted_user(
         ORG,
         project,
         role,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     issue_pat(admin, principal.id(), "gate", TTL)
@@ -1412,7 +1413,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         &admin,
         "ci-runner",
         "CI runner",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create the service principal");
@@ -1422,7 +1423,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ORG,
         PROJECT,
         "project-author",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("admit the service principal");

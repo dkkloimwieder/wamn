@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
-use wamn_credential_store::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::kubernetes_api::KubernetesApi;
 use wamn_platform_identity::PrincipalId;
 
 use super::{ControlRoutes, Refusal};
@@ -109,7 +109,7 @@ impl ControlRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
-        let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+        let coordinate = wamn_control_provision::environment_names::environment_resource_name(
             self.org,
             &request.project,
             &request.env,

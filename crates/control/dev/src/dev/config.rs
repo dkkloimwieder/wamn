@@ -776,8 +776,8 @@ impl DevConfig {
     }
 
     /// The certificate connection of the platform processes.
-    pub fn nats(&self) -> wamn_platform_identity::nats::PlatformNats {
-        wamn_platform_identity::nats::PlatformNats {
+    pub fn nats(&self) -> wamn_broker::nats::PlatformNats {
+        wamn_broker::nats::PlatformNats {
             nats_url: self.scheduler_nats_url.to_string(),
             nats_tls_ca: self.nats_tls_ca.clone(),
             nats_tls_cert: self.nats_tls_cert.clone(),

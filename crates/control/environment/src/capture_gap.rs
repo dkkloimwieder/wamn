@@ -51,7 +51,7 @@ pub struct RecoverCaptureGapRequest {
     pub admin_database_url: String,
 
     /// The NATS of the event streams, with the client certificate.
-    pub nats: wamn_platform_identity::nats::PlatformNats,
+    pub nats: wamn_broker::nats::PlatformNats,
 }
 
 /// Inputs of one capture gap close.

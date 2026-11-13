@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
 use std::time::Duration;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
@@ -10,6 +10,7 @@ use wamn_platform_identity::{
     IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_service, create_user,
     disable_principal, issue_pat, list_pats, revoke_pat,
 };
+
 use wamn_session::PAT_TOKEN_PREFIX;
 
 const TTL: Duration = Duration::from_secs(3600);
@@ -262,7 +263,7 @@ async fn platform_pat_round_trip_on_postgres() {
         &client,
         "agent-ci",
         "CI Agent",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");

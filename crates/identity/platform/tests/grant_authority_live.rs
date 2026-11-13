@@ -1,9 +1,9 @@
 //! Membership ordering and application authority on private PostgreSQL.
 
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_platform_identity::application::{ApplicationScope, project_authority};
-use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };

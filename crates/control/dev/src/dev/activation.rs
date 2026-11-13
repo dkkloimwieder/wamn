@@ -658,7 +658,7 @@ fn materializer_request(
     };
 
     let identity = config.activation_identity();
-    let source = wamn_control_provision::events::source_stream_config(
+    let source = wamn_broker::events::source_stream_config(
         &wamn_control_registry::Triple::new(
             &identity.org,
             &identity.project,
@@ -853,7 +853,7 @@ fn staged_http_reference(request: &DevActivationRequest<'_>) -> Result<String, D
 }
 
 fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
-    plan::host_process_spec(request, std::env::var("WAMN_CREDENTIAL_DIR").ok())
+    plan::host_process_spec(request)
 }
 
 async fn activate_backend<B>(

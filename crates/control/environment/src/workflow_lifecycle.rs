@@ -190,7 +190,7 @@ pub async fn enable_workflow(
     enabler: &str,
     manifest_digest: &str,
     declared: &wamn_catalog::EnvironmentApplications,
-    events: Option<&crate::environment::EventBroker>,
+    events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     // Enable adds no declaration check: an application the environment does
     // not declare gates with no package of its own.
@@ -319,7 +319,7 @@ async fn enable_in(
     packages: &std::collections::BTreeSet<String>,
     declared: &wamn_catalog::EnvironmentApplications,
     triple: &Triple,
-    events: Option<&crate::environment::EventBroker>,
+    events: Option<&wamn_broker::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
     let env_key = workflow.env_key();
@@ -407,7 +407,7 @@ async fn enable_in(
                 "the environment has no event broker",
             )
         })?;
-        let tail = crate::event_streams::last_published_sequence(events, triple)
+        let tail = wamn_broker::streams::last_published_sequence(&events.nats, triple)
             .await
             .map_err(|error| {
                 WorkflowLifecycleError::with_source(

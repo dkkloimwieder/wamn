@@ -14,7 +14,7 @@ pub struct DevUpRequest {
     pub system_database_url: String,
     pub root: PathBuf,
     /// The one local NATS and the development certificate.
-    pub nats: wamn_platform_identity::nats::PlatformNats,
+    pub nats: wamn_broker::nats::PlatformNats,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
     pub otel_exporter_otlp_endpoint: String,
@@ -170,7 +170,7 @@ async fn enable_cdc(
         .map(|root| super::config::read_package_manifest(root))
         .collect::<Result<Vec<_>, _>>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
-    let consumers = wamn_control_provision::events::entity_consumers(&scope, entities);
+    let consumers = wamn_broker::events::entity_consumers(&scope, entities);
     let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))

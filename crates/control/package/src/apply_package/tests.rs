@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
-    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_broker::auth_changes::AuthDrops;
 
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
