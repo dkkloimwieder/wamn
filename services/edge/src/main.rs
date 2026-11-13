@@ -37,15 +37,6 @@ async fn main() -> anyhow::Result<()> {
     } else {
         std::env::var_os(CONFIG_VARIABLE).map(PathBuf::from)
     };
-    #[cfg(feature = "web")]
-    if args.as_slice() == ["web"] {
-        return wamn_edge::web::serve(path.as_deref().context("web requires --config")?).await;
-    }
-    #[cfg(feature = "web")]
-    if args.as_slice() == ["web-probe"] {
-        return wamn_edge::web::probe(path.as_deref().context("web-probe requires --config")?)
-            .await;
-    }
     let config = EdgeConfig::load(path.as_deref())?;
     match args.split_first() {
         None => {

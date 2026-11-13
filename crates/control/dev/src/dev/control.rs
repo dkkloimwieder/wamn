@@ -15,7 +15,6 @@ pub(super) fn preflight(args: &super::up::DevUpRequest) -> anyhow::Result<()> {
     );
     for package in &args.packages {
         if package.join("web").is_dir() {
-            wamn_compiler::build_record::require_current(package)?;
             let dist = wamn_package_control::web_artifact::artifact_output(package).join("dist");
             anyhow::ensure!(
                 dist.join("index.html").is_file(),

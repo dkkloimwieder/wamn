@@ -54,9 +54,6 @@ The benchmark renders and starts this collector.
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
 Supply `--materializer-component` with the absolute path to a `materializer.wasm` built with the guest RUSTFLAGS of [building](building.md#native-programs-and-app-components).
 The emitted `local_artifacts` configuration names the local output directory and these components.
-For declared connections, pass `--local-bindings` with an absolute path to the selection file.
-The emitted configuration stores that path in `local_artifacts.bindings`.
-Each selection contains `package-id`, `component`, and `store-alias`.
 The environment document supplies the integration name and version.
 The host reads credential references from Postgres and resolves values through the environment store.
 Set `WAMN_CONTROL_URL` to the control host URL and `WAMN_TOKEN` to the caller session token.
@@ -108,7 +105,7 @@ The command prints the platform UI URL and a URL for each built application clie
 `web.json` in the environment directory records those URLs.
 Each URL uses one origin for static files, `/password` requests, and `/api` requests.
 The proxy trusts the local identity certificate authority and preserves session cookies.
-The platform UI receives an org-only `config.json`, as it does after `wamn web upload --platform-ui`.
+The platform UI receives an org-only `config.json` from the web front.
 Application clients receive the org and project.
 The development loop writes `application-endpoint.json` after activation and removes it before shutdown.
 The proxy reads that file for each application request, so rebuilds can change the host port.
@@ -151,13 +148,17 @@ environment.Environment {
     org = "acme"
     project = "receiving"
     env = "dev"
-    release = "none"
-    route_host = "receiving.localhost"
+    target = "cloud"
     policy = "dev"
+    revocation_seconds = 60
     applications = {
-        receiving = {packages = ["wamn_receiving", "client_acme_receiving"]}
+        receiving = {
+            current = "none"
+            hostname = "receiving.localhost"
+            revocation_seconds = 5
+            packages = ["wamn_receiving", "client_acme_receiving"]
+        }
     }
-    connections = {}
 }
 ```
 
@@ -215,8 +216,7 @@ Warm reuse trusts only the digest of the HTTP route component staged by this dev
 Rebuild `wamn` after changing that file.
 
 The URL printed by `wamn dev` reaches the host directly.
-The [local benchmark](benchmark.md#local-run) adds the deployed nginx edge configuration with a plain HTTP listener.
-Its `--no-edge` flag uses the direct host URL for comparison.
+The [local benchmark](benchmark.md#local-run) uses the direct host URL.
 
 ## Saved changes and target state
 
@@ -231,36 +231,26 @@ A missing local catalog cache causes another database read, without authorizing 
 The loop reads `schema.mode` from the existing `environment.k` beside `dev.json`.
 An omitted mode selects `reset` only when the registry records the environment as disposable.
 
-Cargo controls which selected components need compilation.
-Generate runs the generation steps of [`wamn build`](building.md#wamn-build) for each changed package, with base packages first.
-Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
-Build compiles changed packages and dependent overlays, copies generated clients, and compiles each web client after generation.
-The Virtualize stage selects the components that each `build.json` records.
-SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
-The build inputs are the files of the package without `target`, `node_modules`, `generated` and `web/dist`, the lock file of the apps workspace, and the generator identity.
-The watcher skips each directory that the Git ignore rules cover.
-The watcher watches the package directories, `apps/platform`, the shared platform WIT sources, and the local configuration files of `dev.json`.
-Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.
-In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
-The build record contains a full digest, `inputs.digest`, and a generation digest, `inputs.generation_digest`.
-A digest identifies content through its SHA-256 hash.
-The generation digest excludes only package-local `component/`, `data/`, and `web/` trees.
-It retains the manifest, SQL, migrations, shared WIT, platform trees, lock file, and generator identity.
-Migrate reuses results when schema inputs match, and Introspect reuses existing catalogs.
-Generate, ACL, and SQLx preparation reuse results when generation inputs match.
-The build record stores no schema digest.
-Source edits in the excluded trees run Build for that package and its dependent overlays.
-Build refreshes the full digest in the same `build.json`.
-Admission and publication still refuse a build record whose full digest differs from current source.
-A missing or invalid `build.json` prevents reuse.
-Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
+The loop builds the selected packages before it compares installed SQL.
+Each build describes statements against a private database on the target server.
+The shared xtask library compiles components and writes one completed `build.json`.
+Cargo decides which guests need compilation.
+The Build stage compiles each web client. The Virtualize stage selects the recorded components.
+The loop prepares no SQLx verifier or metadata.
+The watcher watches package directories, platform guests, shared WIT and local configuration files.
+It skips paths covered by Git ignore rules.
+The build record retains package identity, dependency pins, compiler identity and output digests.
+It has no source fingerprints or freshness checks.
+Artifact readers use the captured KCL, SQL and migrations beside the generated files.
+Migrate reuses installed SQL decisions when the physical fingerprint matches.
+Introspect reuses existing catalogs. ACL reuses preparation for the same compiled manifest.
 
 In `reset` mode, a changed SQL recipe resets the owned disposable database through its existing template.
 The loop uses `environment::sql::schema::plan` and `Diff::requires_reset`, as deployment does.
 It prepares current generated output before that decision.
 Both paths read package bytes through `apply_package::read_package_root` and execute SQL through the same package owner.
 The local path opens `target_database_url` directly. The deployed path runs that owner in a Kubernetes SQL Job.
-Local source access bypasses publication, but it does not bypass generated-output freshness or create another SQL executor.
+Local source access uses the completed build output and the same SQL executor.
 It refuses a reset when the registry does not authorize data loss or a required schema source is missing.
 The loop builds the candidate before it stops the previous application for a reset.
 The reset discards all application rows and gives the database a new creation identity.
@@ -299,47 +289,9 @@ A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
-A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
-The `wamn build` of a package builds each palette component that a wiring of the package names.
-The loop admits it into the target of that package, with the platform packages that its declaration states.
-A `__STORE_ALIAS__` connection takes the `store-alias` of the component's selection in `--local-bindings`.
-The environment document binds that declared name to a project integration.
-The runtime still enforces operation grants, connection bindings, and credentials for each database role.
-
-Local preparation limits each metadata or version command to 60 seconds.
-On interruption or expiry, the loop gives each command and its child processes five seconds to stop.
-After a forced stop, it waits up to five seconds for the command to exit.
-It allows another five seconds to close and collect output.
-A cleanup timeout reports failure and retains the last diagnostic output.
-
-The local selection file contains one entry for each declared connection:
-
-```json
-[
-  {
-    "package-id": "example_app",
-    "component": "example",
-    "store-alias": "documents",
-    "instance-id": "local_documents",
-    "instance": {
-      "requirement-type": "blobstore",
-      "definition": "/absolute/path/documents.json",
-      "credential-handle": "local-documents"
-    }
-  }
-]
-```
-
-Replace the example package, component, alias, and instance with the actual declaration and target configuration.
-The optional `instance` object creates missing database records through the existing connection provisioning functions.
-It creates no external service and supplies no credential material.
-The definition file uses the existing blobstore `endpoint`, `container`, and `prefix` fields.
-The host resolves the credential handle through its normal credential source.
-
-If the instance already exists, its definition and credential handle must match exactly.
-For changed coordinates or a changed handle, select a different instance ID.
-Without the `instance` object, the selection requires an existing enabled instance and active connection generation.
-The loop watches both the selection file and its absolute definition paths.
+Platform builds publish palette components independently of application packages.
+The environment document owns connection bindings.
+The runtime enforces operation grants, connection bindings and credentials for each database role.
 
 To discard the application data manually, stop the loop and reset its target:
 
@@ -354,8 +306,7 @@ Restart the loop with the same configuration after reset.
 
 The loop does not push packages.
 To push a package that you changed, run `wamn build` for the package first, and then run `wamn-ctl push-package`.
-If the tree changed after the last build, `push-package` refuses and tells you to run `wamn build` ([building](building.md#pushing-a-package)).
-If the tree did not change, it pushes the existing build output.
+`push-package` publishes the existing completed output, including the source snapshot captured by that build ([building](building.md#pushing-a-package)).
 To see what a pushed package holds, run `wamn inspect`.
 To compare two pushed versions, run `wamn diff` ([building](building.md#reading-a-pushed-package)).
 

@@ -25,8 +25,6 @@ pub struct Args {
     #[arg(long)]
     profile: bool,
     #[arg(long)]
-    no_edge: bool,
-    #[arg(long)]
     pg_minimum: bool,
     #[arg(long, conflicts_with = "pg_minimum")]
     app_path: bool,
@@ -365,14 +363,14 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
     )
     .await?;
     let flags = crate::guest_rustflags(root).await?;
-    let route = wamn_compiler::build::build_guest(
+    let route = wamn_build::build_guest(
         root,
         &root.join("apps/Cargo.toml"),
         "http-route",
         Some(target),
     )
     .await?;
-    let materializer = wamn_compiler::build::build_guest(
+    let materializer = wamn_build::build_guest(
         root,
         &root.join("apps/Cargo.toml"),
         "materializer",
@@ -656,10 +654,8 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    let (mut url, host_name) = served.context("development host did not serve")?;
-    if !args.no_edge && !args.app_path {
-        url = edge(local, &url, &host_name).await?;
-    }
+    let (url, host_name) = served.context("development host did not serve")?;
+
     data::read(&local.work.join("env/dev.json"))?["target_database_url"]
         .as_str()
         .context("target database")?
@@ -718,13 +714,13 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
             &output,
             &http,
             &materializer_digest,
-            !args.no_edge && !args.app_path,
+            false,
             scale,
         )?;
     } else {
         data::write(
             &local.work.join("metadata.json"),
-            &json!({"concurrency":args.concurrency,"http_route_sha256":http,"materializer_sha256":materializer_digest,"edge":!args.no_edge&&!args.app_path}),
+            &json!({"concurrency":args.concurrency,"http_route_sha256":http,"materializer_sha256":materializer_digest,"edge":false}),
         )?;
         data::result(&local.work, &output, args.concurrency)?;
     }
@@ -742,78 +738,6 @@ async fn ready(root: &Path, program: &str, args: &[&str], attempts: usize) -> an
 }
 fn data_digest(path: &Path) -> anyhow::Result<String> {
     Ok(wamn_digest::bytes_sha256(&std::fs::read(path)?))
-}
-
-async fn edge(local: &mut Local<'_>, url: &str, host: &str) -> anyhow::Result<String> {
-    let identity = data::read(&local.work.join("env/dev.json"))?;
-    let identity = &identity["session_identity"];
-    let values = json!({"applications":[{"host":host,"api":url,"bucketPath":"local"}],"identity":identity["issuer"],"tlsSecret":"local","identityCaConfigMap":"local","neg":true,"web":""});
-    let values_path = local.work.join("edge-values.json");
-    data::write(&values_path, &values)?;
-    let rendered = process::output(
-        local.root,
-        "helm",
-        &[
-            "template",
-            "local-edge-1",
-            "deploy/platform/edge",
-            "--show-only",
-            "templates/configmap.yaml",
-            "-f",
-            values_path.to_str().context("edge values path")?,
-        ],
-    )
-    .await?;
-    let rendered: Value = serde_yaml::from_str(&rendered)?;
-    let configuration = rendered["data"]["nginx.conf"]
-        .as_str()
-        .context("edge configuration")?;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")?
-        .local_addr()?
-        .port();
-    let configuration = configuration
-        .replace("listen 8443 ssl;", &format!("listen 127.0.0.1:{port};"))
-        .lines()
-        .filter(|line| {
-            !line.trim().starts_with("ssl_certificate ")
-                && !line.trim().starts_with("ssl_certificate_key ")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(local.work.join("nginx.conf"), configuration)?;
-    local
-        .container(&[
-            "--name",
-            &format!("{}-edge", local.prefix),
-            "--network",
-            "host",
-            "--mount",
-            &format!(
-                "type=bind,src={},dst=/etc/nginx/nginx.conf,readonly",
-                local.work.join("nginx.conf").display()
-            ),
-            "--mount",
-            &format!(
-                "type=bind,src={},dst=/etc/wamn-edge/identity-ca/ca.crt,readonly",
-                identity["ca"].as_str().context("identity CA")?
-            ),
-            "nginx:1.27-alpine",
-        ])
-        .await?;
-    ready(
-        local.root,
-        "curl",
-        &[
-            "-fsS",
-            "-H",
-            &format!("Host: {host}"),
-            &format!("http://127.0.0.1:{port}/healthz"),
-        ],
-        30,
-    )
-    .await?;
-    Ok(format!("http://127.0.0.1:{port}/api"))
 }
 
 async fn measure_call(
@@ -1059,11 +983,16 @@ async fn pg_minimum(local: &mut Local<'_>, args: &Args) -> anyhow::Result<()> {
         .sql("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
         .await?;
     process::run(local.root, "pgbench", &[&local.database, "-i", "-s", "10"]).await?;
-    let contract =
-        data::read(&local.root.join(
-            "apps/target/wamn/wamn_receiving/contracts/purchase_order/update.operation.json",
-        ))?;
-    let operation = contract["operation"].as_str().context("update operation")?;
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_compiler::package_manifest_path(&local.root.join("apps/wamn_receiving")),
+    )?)?;
+    let operation = manifest
+        .compiled_operations
+        .get("purchase_order.update")
+        .context("compiled purchase_order.update")?
+        .operation
+        .operation
+        .as_str();
     for call in ["select-only", "simple-update", "get", "update"] {
         local.sql("SELECT pg_stat_statements_reset()").await?;
         local.profile_start(call).await?;

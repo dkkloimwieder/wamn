@@ -1,6 +1,5 @@
 //! The reset worker restores the pinned database inputs.
 
-use sqlx::Connection as _;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -104,7 +103,7 @@ async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
         "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true; COMMIT;",
         wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
     ))).execute(&mut admin).await.map(drop)?;
-    let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
     let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
         system.url(),
         &document.triple(),

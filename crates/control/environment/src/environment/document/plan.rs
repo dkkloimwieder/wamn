@@ -12,6 +12,8 @@ pub struct EnvironmentDocument {
     pub target: String,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
+    /// Maximum project credential revocation delay, in seconds.
+    pub revocation_seconds: u64,
     #[serde(default)]
     pub schema: Schema,
     /// Application name to its selection and membership.
@@ -45,6 +47,8 @@ pub struct ApplicationSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<String>,
     pub hostname: String,
+    /// Maximum application credential revocation delay, in seconds.
+    pub revocation_seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     pub packages: std::collections::BTreeSet<String>,
@@ -284,6 +288,10 @@ impl EnvironmentDocument {
         ] {
             lines.push(format!("    {key} = {}", quote(value)));
         }
+        lines.push(format!(
+            "    revocation_seconds = {}",
+            self.revocation_seconds
+        ));
         if let Some(mode) = self.schema.mode {
             let mode = serde_json::to_string(&mode).expect("a schema mode encodes");
             lines.push(format!("    schema = {{mode = {mode}}}"));
@@ -307,10 +315,11 @@ impl EnvironmentDocument {
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!(
-                "        {} = {{\n            current = {}\n            hostname = {}\n            packages = [{}]\n            connections = {{{bindings}}}",
+                "        {} = {{\n            current = {}\n            hostname = {}\n            revocation_seconds = {}\n            packages = [{}]\n            connections = {{{bindings}}}",
                 quote(name),
                 quote(&application.current.to_string()),
                 quote(&application.hostname),
+                application.revocation_seconds,
                 packages.join(", ")
             ));
             if let Some(previous) = &application.previous {

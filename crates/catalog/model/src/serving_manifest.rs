@@ -1642,6 +1642,7 @@ mod tests {
                             sql: sql.into(),
                             binds: Vec::new(),
                             columns: Vec::new(),
+                            relations: Vec::new(),
                             transactional: true,
                         },
                     )])
@@ -1692,6 +1693,7 @@ mod tests {
                     sql: sql.into(),
                     // A SELECT fixture: PostgreSQL classifies it as needing no
                     // transaction.
+                    relations: Vec::new(),
                     transactional: false,
                     binds: Vec::new(),
                     columns: Vec::new(),

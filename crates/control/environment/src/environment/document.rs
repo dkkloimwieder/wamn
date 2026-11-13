@@ -40,11 +40,53 @@ impl EnvironmentDocument {
         {
             std::fs::read(file)?
         } else {
-            wamn_compiler::compile_environment(file)?
+            crate::kcl::compile(file, "environment")?
         };
         Self::from_json(&bytes)
             .with_context(|| format!("{} is not a valid environment", file.display()))
     }
+}
+
+/// Write declared credential revocation bounds before starting an authenticated host.
+/// The caller binds the provisioning actor in its project transaction.
+///
+/// # Errors
+/// Returns an error if the project configuration cannot be written.
+pub async fn write_revocation_configuration(
+    client: &mut sqlx::PgConnection,
+    document: &EnvironmentDocument,
+) -> Result<u64, wamn_platform_identity::IdentityError> {
+    use wamn_platform_identity::configuration::{
+        PlatformConfiguration, Setting, write_configuration,
+    };
+    let settings = std::iter::once(Setting {
+        target_type: "project".into(),
+        target_id: document.project.clone(),
+        key: "revocation-seconds".into(),
+        value: document.revocation_seconds.into(),
+        locked: true,
+    })
+    .chain(
+        document
+            .applications
+            .iter()
+            .map(|(name, selection)| Setting {
+                target_type: "application".into(),
+                target_id: name.clone(),
+                key: "revocation-seconds".into(),
+                value: selection.revocation_seconds.into(),
+                locked: true,
+            }),
+    )
+    .collect();
+    write_configuration(
+        client,
+        &PlatformConfiguration {
+            settings,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// A requested change to one application's canonical selection.
@@ -150,12 +192,12 @@ mod tests {
     pub(super) fn document() -> Value {
         json!({
             "org": "acme", "project": "wms", "env": "prod",
-            "policy": "prod", "target": "cloud",
+            "policy": "prod","revocation_seconds":60, "target": "cloud",
             "schema": {"mode": "reset"},
             "applications": {
                 "wms": {
                     "current": format!("sha256:{}", "a".repeat(64)),
-                    "hostname": "wms.acme.example",
+                    "revocation_seconds":5,"hostname": "wms.acme.example",
                     "packages": ["wamn_wms"],
                     "connections": {"erp": "shared_erp", "files": "files"},
                     "client": {"package": "wamn_wms", "web": format!("sha256:{}", "b".repeat(64))}
@@ -163,7 +205,7 @@ mod tests {
                 "receiving": {
                     "current": format!("sha256:{}", "c".repeat(64)),
                     "previous": format!("sha256:{}", "d".repeat(64)),
-                    "hostname": "receiving.acme.example",
+                    "revocation_seconds":5,"hostname": "receiving.acme.example",
                     "packages": ["wamn_receiving"]
                 }
             },
@@ -462,12 +504,13 @@ mod tests {
             ("connections", json!({})),
             ("image", json!("host")),
             ("target", json!("  ")),
+            ("revocation_seconds", json!(-1)),
         ] {
             let mut input = document();
             input[field] = value;
             assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
         }
-        for field in ["target", "applications"] {
+        for field in ["target", "applications", "revocation_seconds"] {
             let mut input = document();
             input.as_object_mut().unwrap().remove(field);
             assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
@@ -476,6 +519,7 @@ mod tests {
             ("packages", json!([])),
             ("packages", json!([""])),
             ("hostname", json!("Invalid Host")),
+            ("revocation_seconds", json!(-1)),
             ("mode", json!("http")),
             ("connections", json!({"erp": "org:other:erp"})),
             (
@@ -487,6 +531,12 @@ mod tests {
             input["applications"]["wms"][field] = value;
             assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
         }
+        let mut missing_bound = document();
+        missing_bound["applications"]["wms"]
+            .as_object_mut()
+            .unwrap()
+            .remove("revocation_seconds");
+        assert!(EnvironmentDocument::from_json(missing_bound.to_string().as_bytes()).is_err());
         let mut unnamed = document();
         let application = unnamed["applications"]
             .as_object_mut()

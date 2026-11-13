@@ -92,9 +92,7 @@ impl Fixture {
             project,
             "dev",
         ));
-        let authentication = Arc::new(RouteAuthentication::new(
-            identity, postgres, "acme", project, "unused",
-        ));
+        let authentication = Arc::new(RouteAuthentication::new(identity, postgres, project));
         Arc::new(
             PlatformRouteAuthenticator::default()
                 .with_authentication(authentication)

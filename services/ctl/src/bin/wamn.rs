@@ -34,6 +34,8 @@ enum Command {
     Platform(wamn_ctl::platform_verbs::ProductPlatformCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
     Build(wamn_ctl::build_verbs::BuildArgs),
+    /// Copy a generated default into application source.
+    Eject(wamn_ctl::build_verbs::EjectArgs),
     /// Build or publish a wasm connector.
     Integration(wamn_ctl::integration_verbs::IntegrationArgs),
     /// Run the package development loop, or stand up the environment it needs.
@@ -105,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Platform(command) => {
             wamn_ctl::platform_verbs::run_product(command, std::io::stdout().lock()).await
         }
+        Command::Eject(args) => wamn_ctl::build_verbs::eject(args),
         Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
         Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,

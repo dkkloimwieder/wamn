@@ -1,4 +1,3 @@
-{{- $tlsSecret := required "Set tlsSecret to the serving certificate Secret name." .Values.tlsSecret -}}
 {{- $identityCa := required "Set identityCaConfigMap to the ConfigMap with the identity ca.crt." .Values.identityCaConfigMap -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -23,75 +22,31 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ .Release.Name }}
-      automountServiceAccountToken: false
       containers:
-        - name: edge
-          image: {{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+        - name: web
+          image: {{ required "Set web.image to the selected Rust web front image." .Values.web.image | quote }}
+          args: ["--config", "/etc/wamn-edge/web.json"]
           ports:
-            - name: https
-              containerPort: 8443
+            - name: http
+              containerPort: 8080
           readinessProbe:
             httpGet:
               path: /healthz
-              port: https
-              scheme: HTTPS
+              port: http
           volumeMounts:
             - name: config
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
-              readOnly: true
-            - name: serving-tls
-              mountPath: /etc/wamn-edge/tls
+              mountPath: /etc/wamn-edge/web.json
+              subPath: web.json
               readOnly: true
             - name: identity-ca
               mountPath: /etc/wamn-edge/identity-ca
               readOnly: true
           resources:
 {{ toYaml .Values.resources | indent 12 }}
-        - name: routes
-          image: {{ required "Set web.image to the selected Rust edge image." .Values.web.image | quote }}
-          args: ["--config", "/etc/wamn-edge/web.json", "web"]
-          ports:
-            - name: routes
-              containerPort: 8080
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: routes
-          volumeMounts:
-            - name: config
-              mountPath: /etc/wamn-edge/web.json
-              subPath: web.json
-              readOnly: true
-            - name: discovery
-              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-              readOnly: true
-          resources:
-{{ toYaml .Values.resources | indent 12 }}
       volumes:
-        - name: discovery
-          projected:
-            sources:
-              - serviceAccountToken:
-                  path: token
-              - configMap:
-                  name: kube-root-ca.crt
-                  items:
-                    - key: ca.crt
-                      path: ca.crt
         - name: config
           configMap:
             name: {{ .Release.Name }}
-        - name: serving-tls
-          secret:
-            secretName: {{ $tlsSecret | quote }}
-            optional: false
-            items:
-              - key: tls.crt
-                path: tls.crt
-              - key: tls.key
-                path: tls.key
         - name: identity-ca
           configMap:
             name: {{ $identityCa | quote }}

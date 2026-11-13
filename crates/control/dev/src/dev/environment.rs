@@ -1,4 +1,4 @@
-//! The disposable development environment the ten-stage `wamn dev` loop runs
+//! The disposable development environment the `wamn dev` loop runs
 //! against.
 //!
 //! `wamn dev` was testable before it was startable: every value its strict
@@ -769,8 +769,8 @@ mod tests {
     #[test]
     fn activation_uses_the_authored_coordinate() {
         let document = serde_json::from_value(serde_json::json!({
-            "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev",
-            "applications": {"stock":{"current": "none", "hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
+            "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "applications": {"stock":{"current": "none", "revocation_seconds":5,"hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
         .unwrap();
         let identity = dev_activation_identity(&document);
         assert_eq!(identity.org, "other");

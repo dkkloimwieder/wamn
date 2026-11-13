@@ -73,14 +73,6 @@ pub struct SelectedComponentArtifact {
     pub digest: Box<str>,
 }
 
-/// A palette component admitted into the target of the package whose wiring
-/// names it.
-#[derive(Clone, Debug)]
-pub struct SelectedPaletteArtifact {
-    pub artifact: SelectedComponentArtifact,
-    pub declaration: PathBuf,
-}
-
 #[derive(Clone, Debug)]
 pub struct PackageInput {
     pub root: PathBuf,
@@ -93,41 +85,10 @@ pub fn select_component_artifacts(
     let mut selected = Vec::with_capacity(packages.len());
     for package in packages {
         let component = plan::selected_component(package)?;
-        wamn_compiler::build_record::require_current(&package.root)
-            .map_err(|source| CompositionError::owner("read the package build", source))?;
         let build_record =
             wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
                 .map_err(|source| CompositionError::owner("read the package build", source))?;
         selected.push(built_component(package, component, &build_record)?);
-    }
-    Ok(selected)
-}
-
-/// The palette components selected by the package build.
-pub fn select_palette_artifacts(
-    packages: &[PackageInput],
-) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
-    let mut selected = Vec::new();
-    for package in packages {
-        wamn_compiler::build_record::require_current(&package.root)
-            .map_err(|source| CompositionError::owner("read the package build", source))?;
-        let build_record =
-            wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
-                .map_err(|source| CompositionError::owner("read the package build", source))?;
-        for entry in &build_record.outputs.components {
-            if package.manifest.components.contains_key(&entry.name) {
-                continue;
-            }
-            let (declaration, _) = wamn_package_control::package_artifact::platform_template(
-                &package.root,
-                &entry.name,
-            )
-            .map_err(|source| CompositionError::owner("find palette declaration", source))?;
-            selected.push(SelectedPaletteArtifact {
-                artifact: built_component(package, &entry.name, &build_record)?,
-                declaration,
-            });
-        }
     }
     Ok(selected)
 }

@@ -3853,13 +3853,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
             })
         })
         .connect_lazy_with(wamn_postgres::connect_options(system.url()).await.unwrap());
-    let authentication = RouteAuthentication::new(
-        identity_reader,
-        Arc::clone(&pg),
-        "org",
-        "project",
-        principal.subject(),
-    );
+    let authentication = RouteAuthentication::new(identity_reader, Arc::clone(&pg), "project");
     let route = crate::plugins::route_authentication::tests::routing(&serde_json::json!(["pat"]))
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),

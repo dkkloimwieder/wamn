@@ -369,44 +369,6 @@ pub async fn schema_operation(
         .into_iter()
         .map(|candidate| candidate.root.path)
         .collect::<Vec<_>>();
-    let current = wamn_environment_control::environment::sql::schema::database_state(
-        config.target_database_url(),
-        &identity.project_env_key(),
-    )
-    .await?;
-    let mut grant_roots = roots
-        .iter()
-        .zip(&manifests)
-        .filter(|(_, manifest)| current.packages.contains_key(&manifest.package.id))
-        .map(|(root, _)| root.clone())
-        .collect::<Vec<_>>();
-    let output = wamn_compiler::build::default_output_root(root);
-    for (id, installed) in &current.packages {
-        if manifests.iter().any(|manifest| manifest.package.id == *id) {
-            continue;
-        }
-        let retained = wamn_compiler::build_record::source_root(&output.join(id))?;
-        let candidate =
-            wamn_environment_control::environment::sql::schema::Candidate::source(PackageRoot {
-                path: retained.clone(),
-                artifact_digest: None,
-            })?;
-        ensure!(
-            candidate.fingerprint == installed.physical_schema_fingerprint,
-            "retained package {id} differs from its installed local schema source"
-        );
-        grant_roots.push(retained);
-    }
-    let grants =
-        wamn_environment_control::reconcile_package_data_access::prepare_local(&grant_roots)?;
-    wamn_environment_control::reconcile_package_data_access::reconcile_local(
-        &grants,
-        config.target_database_url(),
-        &identity.project_env_key(),
-        &identity.environment,
-        true,
-    )
-    .await?;
     schema_changes(&config, &document, &roots).await
 }
 
@@ -1199,7 +1161,11 @@ mod tests {
         std::fs::create_dir_all(root.join("migrations"))?;
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../package/tests/fixtures/component_package");
-        std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))?;
+        std::fs::create_dir_all(root.join("generated"))?;
+        std::fs::copy(
+            source.join("generated/wamn.json"),
+            root.join("generated/wamn.json"),
+        )?;
         std::fs::write(
             root.join("migrations/0001_item.sql"),
             "CREATE TABLE inventory.item (id uuid NOT NULL, CONSTRAINT item_pkey PRIMARY KEY (id));",
@@ -1239,8 +1205,8 @@ mod tests {
         .await
         .map(drop)?;
         let mut document = EnvironmentDocument::from_json(br#"{
-            "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev",
-            "applications":{"alpha":{"current":"none","hostname":"alpha.invalid","packages":["source_fixture"]}}
+            "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev","revocation_seconds":60,
+            "applications":{"alpha":{"current":"none","revocation_seconds":5,"hostname":"alpha.invalid","packages":["source_fixture"]}}
         }"#)?;
         let roots = [root.clone()];
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
@@ -1249,8 +1215,9 @@ mod tests {
             fixture_digest::write_build_record(&root);
             assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
         }
-        let manifest = std::fs::read_to_string(root.join("wamn.json"))?.replace("1.0.0", "9.0.0");
-        std::fs::write(root.join("wamn.json"), manifest)?;
+        let manifest =
+            std::fs::read_to_string(root.join("generated/wamn.json"))?.replace("1.0.0", "9.0.0");
+        std::fs::write(root.join("generated/wamn.json"), manifest)?;
         fixture_digest::write_build_record(&root);
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
         document.schema.mode = Some(SchemaMode::Migrate);

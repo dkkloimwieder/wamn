@@ -265,66 +265,30 @@ pub(super) fn run_with_bases(
         catalog,
         &bytes,
         sources,
-        &StatementTransactionality::default(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
 }
 
-pub(super) fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {
-    serde_json::from_slice(package.file(path).unwrap().bytes()).unwrap()
+pub(super) fn description_json(package: &GeneratedPackage, local: &str, part: &str) -> Value {
+    serde_json::to_value(&package.operations()[local]).unwrap()[part].clone()
 }
 
-pub(super) fn accessor_bind(
-    parameter: &str,
-    postgres: &str,
-    nullable: bool,
-    native_rust: &str,
-    wamn_rust: &str,
-) -> Value {
-    json!({
-        "parameter": parameter,
-        "postgres": postgres,
-        "nullable": nullable,
-        "native_rust": native_rust,
-        "wamn_rust": wamn_rust,
-    })
-}
-
-pub(super) fn assert_native_fixtures_match_wamn_api(package: &GeneratedPackage, model: &str) {
-    let source_map = artifact_json(package, &format!("generated/source-map/{model}.json"));
-    let accessors = source_map["wamn_api"]["accessors"].as_array().unwrap();
-    let accessor_binds = accessors
-        .iter()
-        .flat_map(|accessor| {
-            accessor["binds"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(move |bind| (accessor["name"].as_str().unwrap(), bind))
-        })
-        .collect::<Vec<_>>();
-    let fixtures = source_map["native_bind_fixtures"].as_array().unwrap();
-    assert_eq!(fixtures.len(), accessor_binds.len());
-    for (accessor, bind) in accessor_binds {
-        let parameter = bind["parameter"].as_str().unwrap();
-        let fixture = fixtures
-            .iter()
-            .find(|fixture| fixture["accessor"] == accessor && fixture["parameter"] == parameter)
-            .unwrap();
-        assert_eq!(
-            fixture,
-            &json!({
-                "accessor": accessor,
-                "parameter": parameter,
-                "function": format!("{accessor}_{parameter}_bind_fixture"),
-                "visibility": "crate",
-                "type": bind["native_rust"],
-            })
-        );
-    }
-}
-
-pub(super) fn object_named<'a>(values: &'a [Value], field: &str, name: &str) -> &'a Value {
-    values.iter().find(|value| value[field] == name).unwrap()
+pub(super) fn published_input(package: &GeneratedPackage, local: &str) -> Value {
+    let identity = &package.operations()[local].operation.operation;
+    let attachments: Value = serde_json::from_slice(
+        package
+            .file(wamn_compiler::publication::ATTACHMENTS)
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    attachments
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|attachment| attachment["registered-operation"] == *identity)
+        .unwrap()["definition"]["input-schema"]
+        .clone()
 }
 
 pub(super) fn parsed_manifest(value: &Value) -> PackageManifest {

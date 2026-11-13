@@ -247,18 +247,6 @@ fn package(
         root.join("generated/physical-schema.json"),
         serde_json::to_vec(&physical)?,
     )?;
-    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
-        &[wamn_compiler::DataAccessRelationFields::new(
-            name,
-            "data",
-            vec!["id".into(), "value".into()],
-        )],
-        &bytes,
-    )?;
-    std::fs::write(
-        root.join("generated/platform-policy/data-access.json"),
-        overlay.canonical_bytes(),
-    )?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let packed = wamn_package_control::package_artifact::pack_package(&root)?;
     let tag = packed.tag();
@@ -310,9 +298,9 @@ fn release(
 
 fn document(a: &ServingManifest, b: &ServingManifest) -> anyhow::Result<EnvironmentDocument> {
     EnvironmentDocument::from_json(&serde_json::to_vec(
-        &json!({"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","integrations":{"erp":{"version":1}},"applications":{
-            "a":{"current":a.digest().as_str(),"hostname":"a.example","packages":["a","wamn_integration"],"connections":{"upstream":"erp"}},
-            "b":{"current":b.digest().as_str(),"hostname":"b.example","packages":["b","wamn_integration"],"connections":{"upstream":"erp"}}
+        &json!({"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{"erp":{"version":1}},"applications":{
+            "a":{"current":a.digest().as_str(),"revocation_seconds":5,"hostname":"a.example","packages":["a","wamn_integration"],"connections":{"upstream":"erp"}},
+            "b":{"current":b.digest().as_str(),"revocation_seconds":5,"hostname":"b.example","packages":["b","wamn_integration"],"connections":{"upstream":"erp"}}
         }}),
     )?)
 }
@@ -583,6 +571,28 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .to_string(),
     )
     .await?;
+    for (target_type, target_id, seconds) in [
+        (
+            "project",
+            document.project.as_str(),
+            document.revocation_seconds,
+        ),
+        (
+            "application",
+            "a",
+            document.applications["a"].revocation_seconds,
+        ),
+        (
+            "application",
+            "b",
+            document.applications["b"].revocation_seconds,
+        ),
+    ] {
+        let row = sqlx::query(
+            "SELECT value FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'",
+        ).bind(target_type).bind(target_id).fetch_one(&mut observer).await?;
+        assert_eq!(row.get::<serde_json::Value, _>(0).as_u64(), Some(seconds));
+    }
     sqlx::raw_sql("INSERT INTO a.data(value) VALUES ('authored'); INSERT INTO b.data(value) VALUES ('other');").execute(&mut observer).await.map(drop)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; {} SELECT platform.bump_counter(id, 'number', '') FROM platform.number_sequence; COMMIT;",
@@ -1644,7 +1654,7 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
         events: None,
         auth_nats: None,
     };
-    let document = EnvironmentDocument::from_json(br#"{"org":"reset","project":"substrate","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    let document = EnvironmentDocument::from_json(br#"{"org":"reset","project":"substrate","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET disposable=true WHERE org='reset' AND project='substrate' AND env='dev'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let name =
         wamn_control_provision::project_env_database_name("reset", "substrate", "dev", "aaaaaaa1");

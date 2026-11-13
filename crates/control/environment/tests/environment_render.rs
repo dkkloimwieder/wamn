@@ -98,13 +98,13 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         });
         applications.insert(application.into(), json!({
             "packages":[application], "current":release.digest().as_str(),
-            "hostname":format!("{application}.example"),
+            "revocation_seconds":5,"hostname":format!("{application}.example"),
             "client":{"package":application, "web":wamn_digest::bytes_sha256(application.as_bytes())}
         }));
         releases.insert(application, release);
     }
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":ORG,"project":PROJECT,"env":"dev","target":"cloud","policy":"dev",
+        "org":ORG,"project":PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":applications
     }))?)?;
     let group = work.path().join("host.yaml");
@@ -590,7 +590,7 @@ mod shared_resources {
     #[test]
     fn shared_materializer_has_stable_placement_outside_application_releases() -> anyhow::Result<()>
     {
-        let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#)?;
         let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
         let workload = ensure::materializer_workload(&document, "hosts", &image, false)?;
         let resources = &workload["spec"]["template"]["spec"]["service"]["localResources"];
@@ -606,8 +606,8 @@ mod shared_resources {
         }
         let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false, None)?;
         document.applications = serde_json::from_value(json!({
-            "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"hostname":"a.example.com"},
-            "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"hostname":"b.example.com"}
+            "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"revocation_seconds":5,"hostname":"a.example.com"},
+            "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"revocation_seconds":5,"hostname":"b.example.com"}
         }))?;
         assert_eq!(
             workload,

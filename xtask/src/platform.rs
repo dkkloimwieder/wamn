@@ -43,22 +43,41 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         .transpose()?
         .is_some_and(|cluster| !cluster.buckets.web.is_empty());
     let components = tempfile::tempdir()?;
+    let mut palette_pins = std::collections::BTreeMap::new();
     if !args.stamp_only {
         // Both roles use the same component build and validation path as packages.
         for (package, role) in ROLES {
-            let path = wamn_compiler::build::build_guest(
-                &root,
-                &root.join("apps/Cargo.toml"),
-                package,
-                None,
-            )
-            .await?;
+            let path = wamn_build::build_guest(&root, &root.join("apps/Cargo.toml"), package, None)
+                .await?;
             let bytes = std::fs::read(path)?;
             std::fs::write(components.path().join(format!("{role}.wasm")), &bytes)?;
             if role == "http" {
                 let entry = wamn_component_composer::compose_control_entry(bytes)?;
                 std::fs::write(components.path().join("control-http.wasm"), entry)?;
             }
+        }
+        for component in wamn_build::palette::build(&root).await? {
+            let bytes = std::fs::read(&component.file)?;
+            let repository = format!("{}/wamn/palette/{}", args.registry, component.name);
+            let reference = format!("{repository}:{version}");
+            wash_runtime::oci::push_component(
+                &reference,
+                &bytes,
+                wash_runtime::oci::OciConfig {
+                    insecure: loopback(&args.registry),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await?;
+            let digest = inspect(&root, &reference).await?;
+            palette_pins.insert(
+                component.name,
+                serde_json::json!({
+                    "artifact": format!("{repository}@{digest}"),
+                    "declaration": component.declaration,
+                }),
+            );
         }
         if ui {
             process::run(&root, "pnpm", &["--filter", "@wamn/platform-ui", "build"]).await?;
@@ -119,6 +138,18 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 None,
             )
             .await?;
+        }
+    }
+    if args.stamp_only {
+        for declaration in wamn_build::palette::declarations(&root)? {
+            let repository = format!("{}/wamn/palette/{}", args.registry, declaration.component);
+            let digest = inspect(&root, &format!("{repository}:{version}")).await?;
+            palette_pins.insert(
+                declaration.component.clone(),
+                serde_json::json!({
+                    "artifact": format!("{repository}@{digest}"), "declaration": declaration,
+                }),
+            );
         }
     }
     let mut images = std::collections::BTreeMap::new();
@@ -205,6 +236,12 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     std::fs::write(path, serde_yaml::to_string(&values)?)?;
     wamn_environment_control::platform::artifact_plan::prepare_payload(&root, &stamped)?;
     println!("{}", stamped.display());
+    if !palette_pins.is_empty() {
+        std::fs::write(
+            args.out.join("palette.json"),
+            wamn_digest::canonical_json_bytes(&serde_json::to_value(palette_pins)?),
+        )?;
+    }
     Ok(())
 }
 

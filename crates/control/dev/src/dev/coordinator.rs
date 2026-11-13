@@ -10,7 +10,7 @@ use wamn_scalar::SqlValueType;
 pub(super) mod plan;
 use plan::{
     base_digests_stage_error, declaration_stage_error, project_catalog_for_package,
-    require_admitted_identity, require_command_success, require_wiring_store_alias,
+    require_admitted_identity,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,24 +22,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
-use serde::Deserialize;
-use tokio::process::Command;
 use wamn_catalog::PackageCoordinate;
 use wamn_compiler::manifest::PackageManifest;
-use wamn_environment_control::reconcile_package_data_access;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
 use wamn_package_control::component_declaration::{
     ComponentDeclarationError, ComponentDeclarationErrorType, PACKAGE_MANIFEST,
-    authored_base_digests, declared_platform_packages, render_declaration_document,
-    render_palette_declaration,
+    authored_base_digests, render_package_declaration,
 };
 use wamn_release_control::publish_release::{self, PublishReleaseRequest};
 use wamn_release_control::release_composition::{
     CompositionError, CompositionErrorType, PackageInput, SelectedComponentArtifact,
-    SelectedPaletteArtifact, select_component_artifacts, select_palette_artifacts,
+    select_component_artifacts,
 };
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_introspection::ir::CatalogIr;
@@ -57,7 +53,6 @@ const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
 pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
-pub(super) const PACKAGE_COMPONENTS: &str = "publication/components";
 pub(super) const NODE_CAPABILITY: &str = "wamn:node";
 pub(super) const POSTGRES_CAPABILITY: &str = "wamn:postgres";
 
@@ -185,11 +180,10 @@ impl Error for ProductionDevStageError {
 #[derive(Debug)]
 struct PreparedLocalGrants {
     target: target_database::PreparedConfiguration,
-    data_access: reconcile_package_data_access::PreparedLocalDataAccess,
     inputs: Vec<String>,
 }
 
-/// Concrete runner carrying production-owner outputs through all ten stages.
+/// Concrete runner carrying production-owner outputs through the stages.
 pub struct ProductionDevStageRunner {
     config: DevConfig,
     pub(super) environment_file: PathBuf,
@@ -199,7 +193,6 @@ pub struct ProductionDevStageRunner {
     packages: Option<ResolvedDevPackages>,
     catalogs: BTreeMap<String, CatalogIr>,
     artifacts: Vec<SelectedComponentArtifact>,
-    palette_artifacts: Vec<SelectedPaletteArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
     admissions: Vec<ComponentAdmission>,
     target_instance: Option<String>,
@@ -217,10 +210,8 @@ pub struct ProductionDevStageRunner {
     /// The candidate schema inputs last compared with installed SQL.
     prepared_schema_inputs: Option<Vec<String>>,
     /// Packages whose generation still needs component compilation.
-    pending_builds: BTreeSet<String>,
     composed_entry: Option<publish_release::ComposedApplication>,
     /// Inputs of each verifier's last successful SQLx preparation; `None` while unknown.
-    sqlx_metadata_inputs: BTreeMap<String, Option<SqlxMetadataInputs>>,
     /// The build inputs whose grants Activate last applied.
     acl_inputs: Option<Vec<String>>,
     read_publisher: DevReadPublisher,
@@ -241,7 +232,6 @@ impl fmt::Debug for ProductionDevStageRunner {
             )
             .field("catalog_count", &self.catalogs.len())
             .field("artifact_count", &self.artifacts.len())
-            .field("palette_artifact_count", &self.palette_artifacts.len())
             .field(
                 "verified_base_digest_count",
                 &self.verified_base_digests.len(),
@@ -280,7 +270,6 @@ impl ProductionDevStageRunner {
             packages: None,
             catalogs: BTreeMap::new(),
             artifacts: Vec::new(),
-            palette_artifacts: Vec::new(),
             verified_base_digests: Vec::new(),
             admissions: Vec::new(),
             target_instance: None,
@@ -294,9 +283,7 @@ impl ProductionDevStageRunner {
             build_inputs: None,
             schema_inputs: None,
             prepared_schema_inputs: None,
-            pending_builds: BTreeSet::new(),
             composed_entry: None,
-            sqlx_metadata_inputs: BTreeMap::new(),
             acl_inputs: None,
             read_publisher,
             read_handle,
@@ -492,114 +479,31 @@ impl ProductionDevStageRunner {
     }
 
     async fn prepare_generation(&mut self) -> Result<(), ProductionDevStageError> {
-        // `wamn build` of each package, bases first, without its components:
-        // an overlay's build reads the build.json of each of its bases. Every
-        // build describes its statements against its own fresh database on the
-        // target's server. The Build stage compiles the components.
-        let packages = self.package_inputs()?;
-        let current = current_package_builds(&packages);
-        self.pending_builds.extend(
-            current
-                .iter()
-                .filter_map(|(id, build)| build.is_none().then_some(id.clone())),
-        );
-        let database_url = self.config.target_database_url();
-        generate_changed_packages(packages, &current, |package| async move {
-            let output_root = wamn_compiler::build::default_output_root(&package.root);
-            wamn_compiler::build::generate_package(&wamn_compiler::build::BuildRequest::new(
+        for package in self.package_inputs()? {
+            let output = wamn_build::default_output_root(&package.root);
+            let mut request = wamn_build::BuildRequest::new(
                 &package.root,
-                &output_root,
-                database_url,
-            ))
-            .await
-            .map_err(|source| ProductionDevStageError::owner("build package", source))
-        })
-        .await?;
-        Ok(())
-    }
-
-    async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Generate);
-        let selected = self
-            .package_inputs()?
-            .into_iter()
-            .filter(|package| self.pending_builds.contains(&package.manifest.package.id))
-            .collect::<Vec<_>>();
-        if selected.iter().any(|package| {
-            wamn_release_control::delivery::sqlx::requires_verifier(&package.manifest)
-        }) {
-            let output = super::execute_preparation(
-                Command::new("cargo").args(["sqlx", "--version"]),
-                super::INPUT_COMMAND_TIMEOUT,
-            )
-            .await
-            .map_err(|source| ProductionDevStageError::owner("read SQLx CLI version", source))?;
-            require_command_success("read SQLx CLI version", &output)?;
-            wamn_release_control::delivery::sqlx::require_cli_version(&output.stdout).map_err(
-                |source| ProductionDevStageError::owner("require pinned SQLx CLI", source),
-            )?;
-        }
-        for package in selected {
-            let package_id = &package.manifest.package.id;
-            if wamn_release_control::delivery::sqlx::requires_verifier(&package.manifest) {
-                let built =
-                    wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
-                        .map_err(|source| {
-                        ProductionDevStageError::owner("read generated package", source)
-                    })?;
-                let current = SqlxMetadataInputs::of(&built);
-                if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
-                    self.sqlx_metadata_inputs
-                        .insert(package_id.clone(), Some(current));
-                    continue;
-                }
-                // Until a preparation succeeds, the metadata on disk is unknown.
-                self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                wamn_release_control::delivery::sqlx::prepare(
-                    &package.root,
-                    self.config.target_database_url(),
-                )
+                &output,
+                self.config.target_database_url(),
+            );
+            request.allow_stale_base_pins = true;
+            wamn_build::build_package(&request)
                 .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("refresh selected SQLx metadata", source)
-                })?;
-                self.sqlx_metadata_inputs
-                    .insert(package_id.clone(), Some(current));
-            }
+                .map_err(|source| ProductionDevStageError::owner("build package", source))?;
         }
+        self.packages
+            .as_mut()
+            .expect("package closure is resolved")
+            .read_compiled_manifests()
+            .map_err(|source| {
+                ProductionDevStageError::owner("read compiled operations", source.into())
+            })?;
         Ok(())
     }
 
     async fn build(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Build);
-        self.packages
-            .as_mut()
-            .expect("Generate resolved the package closure")
-            .read_compiled_manifests()
-            .map_err(|source| {
-                ProductionDevStageError::owner("read generated package manifests", source.into())
-            })?;
-        let packages = self.package_inputs()?;
-        self.pending_builds.extend(
-            package_builds(&packages, wamn_compiler::build::current_build)
-                .into_iter()
-                .filter_map(|(id, build)| build.is_none().then_some(id)),
-        );
-        // Build each changed package, bases first, including dependent overlays.
-        for package in packages {
-            if !self.pending_builds.contains(&package.manifest.package.id) {
-                continue;
-            }
-            let output_root = wamn_compiler::build::default_output_root(&package.root);
-            let mut request = wamn_compiler::build::BuildRequest::new(
-                &package.root,
-                &output_root,
-                self.config.target_database_url(),
-            );
-            request.allow_stale_base_pins = true;
-            wamn_compiler::build::build_components(&request, &package.manifest.package.id)
-                .await
-                .map_err(|source| ProductionDevStageError::owner("build components", source))?;
+        for package in self.package_inputs()? {
             if package.root.join("web/package.json").is_file() {
                 wamn_package_control::web_artifact::build_web_artifact(&package.root)
                     .await
@@ -607,7 +511,6 @@ impl ProductionDevStageRunner {
                         ProductionDevStageError::owner("build web artifact", source.into())
                     })?;
             }
-            self.pending_builds.remove(&package.manifest.package.id);
         }
         Ok(())
     }
@@ -617,7 +520,6 @@ impl ProductionDevStageRunner {
         // The Build stage virtualized each component; this stage selects the
         // components that each package's build.json records.
         self.artifacts = select_component_artifacts(&self.package_inputs()?)?;
-        self.palette_artifacts = select_palette_artifacts(&self.package_inputs()?)?;
 
         let packages = self
             .packages
@@ -653,17 +555,14 @@ impl ProductionDevStageRunner {
         }
         for artifact in self.artifacts.clone() {
             let package = self.package_input(&artifact.package_id)?;
-            let template = package
-                .root
-                .join(PACKAGE_COMPONENTS)
-                .join(format!("{}.json.in", artifact.component));
             // ONE authored site (wamn-10yt.50): the manifest pin. The run then
             // layers the digest it actually BUILT over it (wamn-10yt.48).
             let mut base_digests =
                 authored_base_digests(&package.root).map_err(base_digests_stage_error)?;
             base_digests.extend(self.built_base_digests());
             let declaration = render_component_declaration(
-                &template,
+                &package.root,
+                &artifact.component,
                 &self.config.activation_identity().project_env_key(),
             )?;
             let admission = admit_component(AdmitComponentRequest {
@@ -682,58 +581,15 @@ impl ProductionDevStageRunner {
             require_admitted_identity(&admission, &artifact)?;
             self.admissions.push(admission);
         }
-        // Each palette component a wiring names, admitted into the target of
-        // its package with the packages its own declaration states, as the
-        // cluster path pushes it (wamn-hw3n).
-        for palette in self.palette_artifacts.clone() {
-            let artifact = palette.artifact;
-            let package = self.package_input(&artifact.package_id)?;
-            let target = wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: self.config.activation_identity().project_env_key(),
-                package_id: artifact.package_id.to_string(),
-                package_version: artifact.package_version.to_string(),
-            };
-            let store_alias = selected_store_alias(&self.config, &artifact)
-                .map_err(|source| ProductionDevStageError::owner("read store alias", source))?;
-            let components = wamn_package_control::package_artifact::wiring_components(
-                &package.root,
-            )
-            .map_err(|source| ProductionDevStageError::owner("read connection aliases", source))?;
-            require_wiring_store_alias(&components, &artifact, store_alias.as_deref())?;
-            let document =
-                render_palette_declaration(&palette.declaration, &target, store_alias.as_deref())
-                    .map_err(declaration_stage_error)?;
-            let admitted_platform_packages =
-                declared_platform_packages(&palette.declaration, &document)
-                    .map_err(declaration_stage_error)?;
-            let rendered = serde_json::to_vec(&document).map_err(|source| {
-                ProductionDevStageError::owner("serialize palette declaration", source.into())
-            })?;
-            let declaration = TemporaryFile::write(&rendered).map_err(|source| {
-                ProductionDevStageError::owner("write rendered palette declaration", source)
-            })?;
-            let admission = admit_component(AdmitComponentRequest {
-                package: package.root,
-                component_bytes: artifact.path.clone(),
-                declaration: declaration.path().to_owned(),
-                admitted_platform_packages,
-                base_digests: BTreeSet::new(),
-            })
-            .map_err(|source| {
-                ProductionDevStageError::owner("admit exact palette component bytes", source)
-            })?;
-            require_admitted_identity(&admission, &artifact)?;
-            self.admissions.push(admission);
-        }
         Ok(())
     }
 
     fn condition(&mut self) -> impl Future<Output = Result<(), ProductionDevStageError>> {
         self.clear_after(DevStage::Condition);
-        if self.admissions.len() != self.artifacts.len() + self.palette_artifacts.len() {
+        if self.admissions.len() != self.artifacts.len() {
             return std::future::ready(Err(ProductionDevStageError::invalid(
                 "condition package admissions",
-                "every package and palette component must carry one exact admission before Condition",
+                "every package component must carry one exact admission before Condition",
             )));
         }
         std::future::ready(Ok(()))
@@ -741,21 +597,11 @@ impl ProductionDevStageRunner {
 
     async fn acl(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Acl);
-        let packages = self
-            .package_inputs()?
-            .into_iter()
-            .map(|package| package.root)
-            .collect::<Vec<_>>();
         let inputs = build_inputs(&self.package_inputs()?)?;
         let prepared = PreparedLocalGrants {
             target: target_database::prepare_configuration(&self.config).map_err(|source| {
                 ProductionDevStageError::owner("prepare local target privileges", source)
             })?,
-            data_access: reconcile_package_data_access::prepare_local(&packages).map_err(
-                |source| {
-                    ProductionDevStageError::owner("prepare generated package data access", source)
-                },
-            )?,
             inputs,
         };
         self.reconcile_local_grants(&prepared, false).await?;
@@ -782,17 +628,6 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("reconcile local target privileges", source)
             })?;
-        reconcile_package_data_access::reconcile_local(
-            &prepared.data_access,
-            self.config.target_database_url(),
-            &self.config.activation_identity().project_env_key(),
-            &self.config.activation_identity().environment,
-            apply,
-        )
-        .await
-        .map_err(|source| {
-            ProductionDevStageError::owner("reconcile generated package data access", source)
-        })?;
         // A recreated local target loses its replica identities.
         let packages = self
             .package_inputs()?
@@ -964,11 +799,7 @@ impl ProductionDevStageRunner {
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
-        for artifact in self.artifacts.iter().chain(
-            self.palette_artifacts
-                .iter()
-                .map(|palette| &palette.artifact),
-        ) {
+        for artifact in &self.artifacts {
             let bytes = fs::read(&artifact.path).map_err(|source| {
                 ProductionDevStageError::owner("read local component", source.into())
             })?;
@@ -1251,14 +1082,12 @@ impl ProductionDevStageRunner {
             DevStage::Migrate | DevStage::Introspect => {
                 self.catalogs.clear();
                 self.artifacts.clear();
-                self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.release = None;
             }
-            DevStage::Generate | DevStage::Build | DevStage::Virtualize => {
+            DevStage::Build | DevStage::Virtualize => {
                 self.artifacts.clear();
-                self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.release = None;
@@ -1280,7 +1109,8 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
     packages
         .iter()
         .map(|package| {
-            wamn_compiler::build_record::generation_digest(&package.root)
+            wamn_compiler::build_record::read(&wamn_compiler::output_root(&package.root))
+                .map(|record| record.outputs.manifest)
                 .map_err(|source| ProductionDevStageError::owner("read the build inputs", source))
         })
         .collect()
@@ -1297,98 +1127,6 @@ fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDev
             .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
         })
         .collect()
-}
-
-/// Reuse generation digests and output completeness rules, bases first.
-/// An unreadable build selects rebuilding, including each dependent overlay.
-fn current_package_builds(
-    packages: &[PackageInput],
-) -> BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> {
-    package_builds(packages, wamn_compiler::build::current_generation)
-}
-
-fn package_builds(
-    packages: &[PackageInput],
-    mut current: impl FnMut(
-        &Path,
-        &Path,
-    ) -> anyhow::Result<Option<wamn_compiler::build_record::BuildRecord>>,
-) -> BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> {
-    let mut builds: BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>> =
-        BTreeMap::new();
-    for package in packages {
-        let base_changed = package
-            .manifest
-            .base_dependencies
-            .values()
-            .any(|base| builds.get(&base.package).is_some_and(Option::is_none));
-        let build = if base_changed {
-            None
-        } else {
-            current(
-                &package.root,
-                &wamn_compiler::build::default_output_root(&package.root),
-            )
-            .ok()
-            .flatten()
-        };
-        builds.insert(package.manifest.package.id.clone(), build);
-    }
-    builds
-}
-
-async fn generate_changed_packages<F, Fut>(
-    packages: Vec<PackageInput>,
-    current: &BTreeMap<String, Option<wamn_compiler::build_record::BuildRecord>>,
-    mut generate: F,
-) -> Result<BTreeMap<String, wamn_compiler::build_record::BuildRecord>, ProductionDevStageError>
-where
-    F: FnMut(PackageInput) -> Fut,
-    Fut: std::future::Future<
-            Output = Result<wamn_compiler::build_record::BuildRecord, ProductionDevStageError>,
-        >,
-{
-    let mut built = BTreeMap::new();
-    for package in packages {
-        let id = package.manifest.package.id.clone();
-        if current[&id].is_none() {
-            built.insert(id, generate(package).await?);
-        }
-    }
-    Ok(built)
-}
-
-/// What a verifier's SQLx metadata was prepared from: the generation digest of the
-/// package's build.json and the digests of its base packages.
-///
-/// The verifier's statements and the schema they run against both come from
-/// these inputs, so equal inputs give equal metadata. A component Rust edit
-/// does not reach here, because Generate does not run for it.
-#[derive(Debug, PartialEq, Eq)]
-struct SqlxMetadataInputs {
-    inputs: String,
-    dependencies: Vec<wamn_compiler::build_record::BuildDependency>,
-}
-
-impl SqlxMetadataInputs {
-    fn of(build_record: &wamn_compiler::build_record::BuildRecord) -> Self {
-        Self {
-            inputs: build_record.inputs.generation_digest.clone(),
-            dependencies: build_record.dependencies.clone(),
-        }
-    }
-}
-
-/// Whether the verifier's SQLx metadata was prepared for `current`.
-///
-/// The last preparation in this session answers, and an unfinished one never
-/// matches. A new session prepares once, because the metadata lies in build
-/// output that no commit records.
-fn sqlx_metadata_is_current(
-    prepared: Option<&Option<SqlxMetadataInputs>>,
-    current: &SqlxMetadataInputs,
-) -> bool {
-    prepared.is_some_and(|prepared| prepared.as_ref() == Some(current))
 }
 
 impl DevStageRunner for ProductionDevStageRunner {
@@ -1416,28 +1154,15 @@ impl DevStageRunner for ProductionDevStageRunner {
                   reads build.json synchronously"
     )]
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
-        match stage {
+        Ok(match stage {
             DevStage::Migrate => {
-                // Generation can change package registration without changing physical SQL.
-                return Ok(self.pending_builds.is_empty()
-                    && self.prepared_schema_inputs.is_some()
-                    && self.prepared_schema_inputs == self.schema_inputs);
+                self.prepared_schema_inputs.is_some()
+                    && self.prepared_schema_inputs == self.schema_inputs
             }
-            DevStage::Introspect => {
-                return Ok(self.catalogs.len() == self.package_inputs()?.len());
-            }
-            DevStage::Acl => {
-                return Ok(self.acl_inputs.is_some() && self.acl_inputs == self.build_inputs);
-            }
-            _ => {}
-        }
-        if stage != DevStage::Generate {
-            return Ok(false);
-        }
-        Ok(self.pending_builds.is_empty()
-            && current_package_builds(&self.package_inputs()?)
-                .values()
-                .all(Option::is_some))
+            DevStage::Introspect => self.catalogs.len() == self.package_inputs()?.len(),
+            DevStage::Acl => self.acl_inputs.is_some() && self.acl_inputs == self.build_inputs,
+            _ => false,
+        })
     }
 
     fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
@@ -1491,7 +1216,6 @@ impl DevStageRunner for ProductionDevStageRunner {
             packages.iter().map(|package| &package.manifest),
         )
         .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
-        let inputs = build_inputs(&packages)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
@@ -1509,6 +1233,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             })?;
         // Build in disposable databases before comparing the selected physical SQL.
         self.prepare_generation().await?;
+        let inputs = build_inputs(&self.package_inputs()?)?;
         let schema_inputs = schema_inputs(&packages)?;
         let roots = packages
             .iter()
@@ -1607,7 +1332,6 @@ impl DevStageRunner for ProductionDevStageRunner {
         match stage {
             DevStage::Migrate => self.migrate().await,
             DevStage::Introspect => self.introspect().await,
-            DevStage::Generate => self.generate().await,
             DevStage::Build => self.build().await,
             DevStage::Virtualize => self.virtualize(),
             DevStage::Admit => self.admit().await,
@@ -1619,33 +1343,12 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct LocalBindingSelection {
-    package_id: String,
-    component: String,
-    store_alias: String,
-}
-
 #[derive(Debug)]
 struct PreparedLocalBinding {
     package_id: String,
     read_only: bool,
     requirement: wamn_catalog::ComponentConnectionRequirement,
     instance_id: String,
-}
-
-fn read_local_binding_selections(config: &DevConfig) -> anyhow::Result<Vec<LocalBindingSelection>> {
-    Ok(config
-        .local_artifacts()
-        .bindings
-        .as_ref()
-        .map(|path| -> anyhow::Result<_> {
-            serde_json::from_slice(&fs::read(path).context("read local connection selections")?)
-                .context("parse strict local connection selections")
-        })
-        .transpose()?
-        .unwrap_or_default())
 }
 
 async fn prepare_local_bindings(
@@ -1950,11 +1653,12 @@ async fn reconcile_local_replica_identity(
 }
 
 fn render_component_declaration(
-    template: &Path,
+    package: &Path,
+    component: &str,
     project_env_key: &str,
 ) -> Result<TemporaryFile, ProductionDevStageError> {
-    let document =
-        render_declaration_document(template, project_env_key).map_err(declaration_stage_error)?;
+    let document = render_package_declaration(package, component, project_env_key)
+        .map_err(declaration_stage_error)?;
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;
@@ -1994,16 +1698,6 @@ impl Drop for TemporaryFile {
     }
 }
 
-/// The store alias that the binding selections give a component: the one name
-/// the operator passes as the environment document in the cluster.
-fn selected_store_alias(
-    config: &DevConfig,
-    artifact: &SelectedComponentArtifact,
-) -> anyhow::Result<Option<String>> {
-    let selections = read_local_binding_selections(config)?;
-    plan::selected_store_alias(&selections, artifact)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2024,332 +1718,6 @@ mod tests {
         PackageInput {
             root: PathBuf::from(format!("/packages/{id}")),
             manifest,
-        }
-    }
-
-    struct PackageBuildFixture {
-        directory: PathBuf,
-        packages: Vec<PackageInput>,
-    }
-
-    impl PackageBuildFixture {
-        fn new() -> Self {
-            let directory = std::env::temp_dir().join(format!(
-                "wamn-dev-package-builds-{}-{}",
-                std::process::id(),
-                TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            ));
-            let mut packages = ["base", "other", "overlay"].map(|id| {
-                let mut package = package(id, "1.0.0", "application");
-                package.root = directory.join(id);
-                package
-            });
-            packages[2].manifest.base_dependencies.insert(
-                "base".to_owned(),
-                wamn_compiler::manifest::BaseDependencyRequirement {
-                    package: "base".to_owned(),
-                    version: "1.0.0".to_owned(),
-                    digest: format!("sha256:{}", "a".repeat(64)),
-                    operations: Vec::new(),
-                },
-            );
-            for package in &packages {
-                fs::create_dir_all(&package.root).unwrap();
-                fs::write(
-                    package.root.join("wamn.json"),
-                    serde_json::to_vec(&package.manifest).unwrap(),
-                )
-                .unwrap();
-                fs::write(package.root.join("input.txt"), "original").unwrap();
-                fs::create_dir_all(package.root.join("component/src")).unwrap();
-                fs::write(
-                    package.root.join("component/src/lib.rs"),
-                    "pub fn original() {}",
-                )
-                .unwrap();
-                write_package_build(package);
-            }
-            Self {
-                directory,
-                packages: packages.into(),
-            }
-        }
-    }
-
-    impl Drop for PackageBuildFixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.directory).unwrap();
-        }
-    }
-
-    fn write_package_build(package: &PackageInput) -> wamn_compiler::build_record::BuildRecord {
-        use wamn_compiler::build_record;
-
-        let output = wamn_compiler::output_root(&package.root);
-        fs::create_dir_all(&output).unwrap();
-        let manifest = fs::read(package.root.join("wamn.json")).unwrap();
-        let inputs = build_record::input_digest(&package.root).unwrap();
-        fs::write(output.join("wamn.json"), &manifest).unwrap();
-        fs::write(output.join("generated.txt"), &inputs).unwrap();
-        let dependencies = package
-            .manifest
-            .base_dependencies
-            .values()
-            .map(|base| {
-                let built =
-                    build_record::read(&output.parent().unwrap().join(&base.package)).unwrap();
-                build_record::BuildDependency {
-                    id: base.package.clone(),
-                    version: base.version.clone(),
-                    digest: built.outputs.manifest,
-                }
-            })
-            .collect::<Vec<_>>();
-        let built: build_record::BuildRecord = serde_json::from_value(serde_json::json!({
-            "schema": build_record::BUILD_RECORD_SCHEMA,
-            "package": {"id": package.manifest.package.id, "version": "1.0.0"},
-            "inputs": {"digest": inputs, "generation_digest": build_record::generation_digest(&package.root).unwrap(), "files": {}},
-            "dependencies": dependencies,
-            "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
-            "outputs": {
-                "manifest": wamn_digest::bytes_sha256(&manifest),
-                "files": {"wamn.json": "manifest", "generated.txt": "generated"},
-                "components": []
-            },
-        }))
-        .unwrap();
-        fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            built.to_bytes(),
-        )
-        .unwrap();
-        built
-    }
-
-    fn package_output_snapshot(
-        package: &PackageInput,
-    ) -> BTreeMap<PathBuf, (Vec<u8>, std::time::SystemTime)> {
-        fs::read_dir(wamn_compiler::output_root(&package.root))
-            .unwrap()
-            .map(|entry| {
-                let path = entry.unwrap().path();
-                (
-                    path.clone(),
-                    (
-                        fs::read(&path).unwrap(),
-                        fs::metadata(path).unwrap().modified().unwrap(),
-                    ),
-                )
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn a_save_preserves_other_package_build_records_and_outputs() {
-        let fixture = PackageBuildFixture::new();
-        let before = [
-            package_output_snapshot(&fixture.packages[0]),
-            package_output_snapshot(&fixture.packages[2]),
-        ];
-        let other_before = package_output_snapshot(&fixture.packages[1]);
-        fs::write(fixture.packages[1].root.join("input.txt"), "saved").unwrap();
-        let current = current_package_builds(&fixture.packages);
-        let built =
-            generate_changed_packages(fixture.packages.clone(), &current, |package| async move {
-                Ok(write_package_build(&package))
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            built.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["other"]
-        );
-        assert_eq!(
-            before,
-            [
-                package_output_snapshot(&fixture.packages[0]),
-                package_output_snapshot(&fixture.packages[2])
-            ]
-        );
-        assert_ne!(other_before, package_output_snapshot(&fixture.packages[1]));
-    }
-
-    #[tokio::test]
-    async fn source_edits_skip_generation_and_build_only_changed_packages_and_overlays() {
-        use wamn_compiler::{build, build_record};
-
-        for changed in ["other", "base"] {
-            let fixture = PackageBuildFixture::new();
-            let before = fixture
-                .packages
-                .iter()
-                .map(package_output_snapshot)
-                .collect::<Vec<_>>();
-            let generation_inputs = build_inputs(&fixture.packages).unwrap();
-            let package = fixture
-                .packages
-                .iter()
-                .find(|package| package.manifest.package.id == changed)
-                .unwrap();
-            fs::write(
-                package.root.join("component/src/lib.rs"),
-                "pub fn changed() {}",
-            )
-            .unwrap();
-            assert!(build_record::require_current(&package.root).is_err());
-            assert_eq!(generation_inputs, build_inputs(&fixture.packages).unwrap());
-            let current = current_package_builds(&fixture.packages);
-            assert!(current.values().all(Option::is_some));
-            let generated =
-                generate_changed_packages(fixture.packages.clone(), &current, |_| async {
-                    panic!("source edits must keep generated output")
-                })
-                .await
-                .unwrap();
-            assert!(generated.is_empty());
-            let pending = package_builds(&fixture.packages, build::current_build);
-            let selected = pending
-                .iter()
-                .filter_map(|(id, build)| build.is_none().then_some(id.as_str()))
-                .collect::<Vec<_>>();
-            assert_eq!(
-                selected,
-                if changed == "base" {
-                    vec!["base", "overlay"]
-                } else {
-                    vec!["other"]
-                }
-            );
-            for package in &fixture.packages {
-                if pending[&package.manifest.package.id].is_none() {
-                    build::build_components(
-                        &build::BuildRequest::new(
-                            &package.root,
-                            &build::default_output_root(&package.root),
-                            "",
-                        ),
-                        &package.manifest.package.id,
-                    )
-                    .await
-                    .unwrap();
-                    build_record::require_current(&package.root).unwrap();
-                }
-            }
-            for (index, package) in fixture.packages.iter().enumerate() {
-                if pending[&package.manifest.package.id].is_some() {
-                    assert_eq!(before[index], package_output_snapshot(package));
-                }
-            }
-            let rebuilt = build_record::read_current(
-                &package.root,
-                &wamn_compiler::output_root(&package.root),
-            )
-            .unwrap();
-            assert_eq!(
-                rebuilt.inputs.digest,
-                build_record::input_digest(&package.root).unwrap()
-            );
-            assert!(
-                package_builds(&fixture.packages, build::current_build)
-                    .values()
-                    .all(Option::is_some)
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn unchanged_packages_do_no_generation_or_output_writes() {
-        let fixture = PackageBuildFixture::new();
-        for package in &fixture.packages {
-            for path in package_output_snapshot(package).keys() {
-                fs::File::options()
-                    .write(true)
-                    .open(path)
-                    .unwrap()
-                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
-                    .unwrap();
-            }
-        }
-        let before = fixture
-            .packages
-            .iter()
-            .map(package_output_snapshot)
-            .collect::<Vec<_>>();
-        let current = current_package_builds(&fixture.packages);
-        let built = generate_changed_packages(fixture.packages.clone(), &current, |_| async {
-            panic!("unchanged packages must not generate")
-        })
-        .await
-        .unwrap();
-        assert!(built.is_empty());
-        assert_eq!(
-            before,
-            fixture
-                .packages
-                .iter()
-                .map(package_output_snapshot)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[tokio::test]
-    async fn base_edits_rebuild_overlays_and_overlay_edits_keep_bases() {
-        let fixture = PackageBuildFixture::new();
-        fs::write(fixture.packages[2].root.join("input.txt"), "overlay saved").unwrap();
-        let current = current_package_builds(&fixture.packages);
-        let built =
-            generate_changed_packages(fixture.packages.clone(), &current, |package| async move {
-                Ok(write_package_build(&package))
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            built.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["overlay"]
-        );
-        fs::write(fixture.packages[0].root.join("input.txt"), "base saved").unwrap();
-        let current = current_package_builds(&fixture.packages);
-        let built =
-            generate_changed_packages(fixture.packages.clone(), &current, |package| async move {
-                Ok(write_package_build(&package))
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            built.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["base", "overlay"]
-        );
-    }
-
-    #[tokio::test]
-    async fn stale_absent_and_invalid_build_records_select_rebuilding() {
-        let fixture = PackageBuildFixture::new();
-        let package = &fixture.packages[1];
-        let path = wamn_compiler::output_root(&package.root).join("build.json");
-        for state in ["stale", "absent", "invalid"] {
-            match state {
-                "stale" => fs::write(package.root.join("input.txt"), "changed").unwrap(),
-                "absent" => fs::remove_file(&path).unwrap(),
-                _ => fs::write(&path, "invalid JSON").unwrap(),
-            }
-            let current = current_package_builds(&fixture.packages);
-            let built = generate_changed_packages(
-                fixture.packages.clone(),
-                &current,
-                |package| async move { Ok(write_package_build(&package)) },
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                built.keys().map(String::as_str).collect::<Vec<_>>(),
-                ["other"],
-                "{state}"
-            );
-            assert!(
-                current_package_builds(&fixture.packages)
-                    .values()
-                    .all(Option::is_some)
-            );
         }
     }
 
@@ -2379,59 +1747,6 @@ mod tests {
                 .to_string(),
             "dev-stage-owner-failed while introspect package: one line",
             "a cause with no context keeps the line it always printed"
-        );
-    }
-
-    #[test]
-    fn sqlx_preparation_is_keyed_on_the_generation_digest() {
-        let build_record = |inputs: &str, base: &str| {
-            let build_record: wamn_compiler::build_record::BuildRecord =
-                serde_json::from_value(serde_json::json!({
-                    "schema": wamn_compiler::build_record::BUILD_RECORD_SCHEMA,
-                    "package": {"id": "demo", "version": "1.0.0"},
-                    "inputs": {"digest": "full", "generation_digest": inputs, "files": {}},
-                    "dependencies": [{"id": "base", "version": "1.0.0", "digest": base}],
-                    "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
-                    "outputs": {"manifest": "m", "files": {}, "components": []},
-                }))
-                .unwrap();
-            let expected = SqlxMetadataInputs::of(&build_record);
-            let mut source_edit = build_record;
-            source_edit.inputs.digest.push_str("-source-edit");
-            assert_eq!(expected, SqlxMetadataInputs::of(&source_edit));
-            expected
-        };
-        let prepared = build_record("sha256:a", "sha256:base");
-        assert!(
-            !sqlx_metadata_is_current(None, &prepared),
-            "a new session prepares once"
-        );
-        assert!(
-            sqlx_metadata_is_current(
-                Some(&Some(prepared)),
-                &build_record("sha256:a", "sha256:base")
-            ),
-            "an unchanged build input digest keeps the prepared SQLx metadata"
-        );
-        let prepared = build_record("sha256:a", "sha256:base");
-        assert!(
-            !sqlx_metadata_is_current(
-                Some(&Some(prepared)),
-                &build_record("sha256:b", "sha256:base")
-            ),
-            "a changed build input digest prepares"
-        );
-        let prepared = build_record("sha256:a", "sha256:base");
-        assert!(
-            !sqlx_metadata_is_current(
-                Some(&Some(prepared)),
-                &build_record("sha256:a", "sha256:other")
-            ),
-            "a changed base package prepares"
-        );
-        assert!(
-            !sqlx_metadata_is_current(Some(&None), &build_record("sha256:a", "sha256:base")),
-            "an unfinished preparation runs again"
         );
     }
 
@@ -2611,7 +1926,7 @@ mod tests {
             .operations
             .retain(|action, _| *action == wamn_compiler::manifest::CrudAction::Get);
         let bytes = serde_json::to_vec(&manifest).unwrap();
-        let transactional = wamn_compiler::StatementTransactionality::unclassified();
+        let transactional = wamn_compiler::StatementTransactionality::from_paths(BTreeMap::new());
         let generate = |catalog| {
             wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
                 catalog,
@@ -2653,11 +1968,7 @@ mod tests {
                     id: id.to_owned(),
                     version: version.to_owned(),
                 },
-                inputs: build_record::BuildInputs {
-                    digest: "sha256:inputs".to_owned(),
-                    generation_digest: "sha256:generation".to_owned(),
-                    files: BTreeMap::new(),
-                },
+
                 dependencies: Vec::new(),
                 generator: build_record::BuildGenerator {
                     id: "generator".to_owned(),
@@ -2696,32 +2007,5 @@ mod tests {
             .to_string();
         assert!(refusal.contains("build.json records"), "{refusal}");
         fs::remove_dir_all(directory).expect("remove fixture directory");
-    }
-
-    /// The binding store alias must be the one the wiring node names
-    /// (wamn-qj68).
-    #[test]
-    fn a_binding_store_alias_that_differs_from_the_wiring_node_is_refused() {
-        let components = std::collections::BTreeMap::from([(
-            "blob-put".to_owned(),
-            BTreeSet::from(["labels".to_owned()]),
-        )]);
-        let artifact = SelectedComponentArtifact {
-            package_id: "wamn_wms".into(),
-            package_version: "0.1.0".into(),
-            component: "blob-put".into(),
-            path: PathBuf::new(),
-            digest: "sha256:fixture".into(),
-        };
-
-        require_wiring_store_alias(&components, &artifact, Some("labels"))
-            .expect("the wiring alias is accepted");
-        let refusal = require_wiring_store_alias(&components, &artifact, Some("archive"))
-            .expect_err("another alias is refused")
-            .to_string();
-        assert!(
-            refusal.contains("\"archive\"") && refusal.contains("\"labels\""),
-            "the refusal names both aliases: {refusal}"
-        );
     }
 }

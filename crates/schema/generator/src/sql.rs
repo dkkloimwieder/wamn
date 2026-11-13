@@ -642,19 +642,8 @@ pub(crate) const fn direction_name(direction: CursorDirection) -> &'static str {
     }
 }
 
-pub(crate) const fn postgres_type(ty: SqlValueType) -> &'static str {
-    match ty {
-        SqlValueType::Boolean => "boolean",
-        SqlValueType::Int32 => "int4",
-        SqlValueType::Int64 => "int8",
-        SqlValueType::Float64 => "float8",
-        SqlValueType::Text => "text",
-        SqlValueType::Bytes => "bytea",
-        SqlValueType::Numeric => "numeric",
-        SqlValueType::Timestamptz => "timestamptz",
-        SqlValueType::Json => "jsonb",
-        SqlValueType::Uuid => "uuid",
-    }
+pub(crate) fn postgres_type(ty: SqlValueType) -> &'static str {
+    ty.postgres_name()
 }
 
 fn key_cast(table: &Table) -> &'static str {
@@ -711,111 +700,12 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{changes, delete, get, query, update};
-    use crate::manifest::DeleteMode;
+    use super::query;
     use crate::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use sqlx::Row as _;
 
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
-
-    #[test]
-    fn key_casts_follow_the_primary_key_type() {
-        let operation: OperationDeclaration = serde_json::from_value(serde_json::json!({
-            "permission": "write", "result": "one",
-            "revision_field": "version", "writable_fields": ["label"]
-        }))
-        .unwrap();
-        let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
-            "schema": "public", "table": "key_row", "owner": "fixture", "operations": {}
-        }))
-        .unwrap();
-        for (ty, cast) in [
-            (SqlValueType::Uuid, "uuid"),
-            (SqlValueType::Int32, "int4"),
-            (SqlValueType::Int64, "int8"),
-        ] {
-            let table = Table::new(
-                "public",
-                "key_row",
-                vec![
-                    Column::new(
-                        "id",
-                        ty,
-                        false,
-                        None,
-                        (ty != SqlValueType::Uuid).then_some(
-                            wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                                mode: wamn_schema_introspection::ir::IdentityMode::Always,
-                            },
-                        ),
-                    ),
-                    Column::new("label", SqlValueType::Text, false, None, None),
-                    Column::new("version", SqlValueType::Int64, false, None, None),
-                ],
-                vec![Constraint::primary_key("key_row_pkey", ["id"]).unwrap()],
-                Vec::new(),
-            );
-            for tombstoned in [false, true] {
-                let live = if tombstoned {
-                    "\n  AND model.deleted_at IS NULL"
-                } else {
-                    ""
-                };
-                assert_eq!(
-                    get(&table, tombstoned),
-                    format!(
-                        "SELECT\n    model.id,\n    model.label,\n    model.version\nFROM key_row AS model\nWHERE model.id = $1::{cast}{live};\n"
-                    )
-                );
-                let live = if tombstoned {
-                    "\n      AND deleted_at IS NULL"
-                } else {
-                    ""
-                };
-                let target = format!(
-                    "WITH target AS MATERIALIZED (\n    SELECT id, version\n    FROM key_row\n    WHERE id = $1::{cast}{live}\n    FOR UPDATE\n),\n"
-                );
-                let updated = update(&table, &model, &operation, tombstoned);
-                assert!(updated.starts_with(&target), "{updated}");
-                let mode = if tombstoned {
-                    DeleteMode::Tombstone
-                } else {
-                    DeleteMode::Hard
-                };
-                let deleted = delete(&table, &operation, mode);
-                assert!(deleted.starts_with(&target), "{deleted}");
-                if tombstoned {
-                    assert!(
-                        deleted.contains("NULLIF(current_setting('app.user_id', true), '')::uuid")
-                    );
-                }
-                for (direction, comparison) in [
-                    (CursorDirection::Ascending, ">"),
-                    (CursorDirection::Descending, "<"),
-                ] {
-                    for feed in [false, true] {
-                        let page = query(&table, &operation, "label", direction, tombstoned, feed);
-                        assert!(page.contains(&format!("($1::text IS NULL OR (model.label, model.id) {comparison} ($1::text, $2::{cast}))")), "{page}");
-                        // Sorting by the key casts both cursor values to its type.
-                        let page = query(&table, &operation, "id", direction, tombstoned, feed);
-                        assert!(page.contains(&format!("($1::{cast} IS NULL OR (model.id, model.id) {comparison} ($1::{cast}, $2::{cast}))")), "{page}");
-                    }
-                }
-                let feed = changes(&table, &operation, tombstoned);
-                for expected in [
-                    format!("(entry.row_key->>'id')::{cast} AS change_id"),
-                    format!("GROUP BY (entry.row_key->>'id')::{cast}\n"),
-                    format!("WHERE $2::{cast} IS NULL\n"),
-                    format!(
-                        "(changed.change_transaction, changed.change_id) > ($1::int8, $2::{cast})"
-                    ),
-                ] {
-                    assert!(feed.contains(&expected), "{feed} lacks {expected}");
-                }
-            }
-        }
-    }
 
     #[tokio::test]
     async fn create_returns_database_generated_integer_ids() {

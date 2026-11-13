@@ -213,7 +213,11 @@ async fn install_project_and_reconcile(
     let package = scratch.path().join("package");
     let source = package_root();
     std::fs::create_dir_all(package.join("migrations"))?;
-    std::fs::copy(source.join("wamn.json"), package.join("wamn.json"))?;
+    std::fs::create_dir_all(package.join("generated"))?;
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        package.join("generated/wamn.json"),
+    )?;
     for entry in std::fs::read_dir(source.join("migrations"))? {
         let entry = entry?;
         std::fs::copy(
@@ -348,13 +352,7 @@ async fn routing(
         FlowHttpRouting::new(Some(loaded_release), RouteInFlightLimit::default())
             .with_authenticator(Arc::new(
                 PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                    RouteAuthentication::new(
-                        identity_reader,
-                        postgres,
-                        ORG,
-                        PROJECT,
-                        operator_subject(ORG, PROJECT, ENVIRONMENT)?,
-                    ),
+                    RouteAuthentication::new(identity_reader, postgres, PROJECT),
                 )),
             )),
     )

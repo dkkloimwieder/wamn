@@ -137,12 +137,14 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
         project: PROJECT.to_owned(),
         env: env.to_owned(),
         policy: POLICY.to_owned(),
+        revocation_seconds: 60,
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
             environment::document::ApplicationSelection {
                 current: DeclaredRelease::Digest(digest.to_owned()),
                 previous: None,
                 hostname: route_host.to_owned(),
+                revocation_seconds: 5,
                 client: None,
                 connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
                 packages: std::collections::BTreeSet::from([
@@ -164,15 +166,16 @@ pub fn fixture_http_entry(
 )> {
     let package = repository.join("apps").join(PACKAGE);
     let output = wamn_compiler::output_root(&package);
-    let build_record = wamn_compiler::build_record::read_current(&package, &output)?;
+    let build_record = wamn_compiler::build_record::read(&output)?;
     let component = build_record
         .outputs
         .components
         .iter()
         .find(|component| component.name == "device")
         .context("the fixture build contains its device component")?;
-    let declaration = wamn_package_control::component_declaration::render_declaration_document(
-        &package.join("publication/components/device.json.in"),
+    let declaration = wamn_package_control::component_declaration::render_package_declaration(
+        &package,
+        "device",
         &wamn_registry::project_env_key(ORG, PROJECT, "http"),
     )?;
     let declaration_path = work.join("device-declaration.json");
@@ -1026,6 +1029,7 @@ pub mod workflow {
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
             policy: POLICY.into(),
+            revocation_seconds: 60,
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.
             applications: BTreeMap::from([(
@@ -1034,6 +1038,7 @@ pub mod workflow {
                     current: DeclaredRelease::None,
                     previous: None,
                     hostname: "integration.orders.example".into(),
+                    revocation_seconds: 5,
                     client: None,
                     connections: std::collections::BTreeMap::new(),
                     packages: [connector, "wamn_integration", CONSUMER]

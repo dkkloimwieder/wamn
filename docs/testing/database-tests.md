@@ -8,10 +8,8 @@ This page defines the assertions at the database boundary.
 SQLx tests SQL and type compatibility against the selected schema.
 It does not establish permissions, business behavior, rollback, or locking.
 The complete generated and authored application SQL corpus must match the SQL used during execution.
-Use the platform verifier and committed application SQLx metadata through the documented commands.
-
-The [platform verifier](../../crates/schema/generator/src/sqlx_metadata.rs) compiles the exact authored and generated SQL files.
-Its successful compilation does not mean that the application command executed.
+The [compiler](../../crates/schema/generator/src/describe.rs) describes the exact authored and generated SQL files with SQLx.
+A successful description does not mean that the application command executed.
 Guest tests must cross the real capability and transaction paths when those paths are the subject.
 
 ## Authority and observations
@@ -30,8 +28,7 @@ Establish whether a failure occurred before commit, after commit with a lost res
 A timeout alone does not establish that boundary.
 For rollback, observe an intermediate write before forcing failure and then inspect the final business state.
 
-The [statement planner test](../../crates/schema/generator/tests/statement_admission_live.rs) uses one exact runtime schema without an added `public` fallback.
-It requires planning to preserve grants, session authority, and the caller's surrounding transaction.
+The [generated CRUD test](../../crates/schema/generator/tests/statement_admission_live.rs) checks operation outcomes under column grants.
 
 ## Runtime lease coverage
 

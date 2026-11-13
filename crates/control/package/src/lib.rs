@@ -12,4 +12,3 @@ pub mod sql_params;
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_support;
 pub mod web_artifact;
-pub mod web_config;

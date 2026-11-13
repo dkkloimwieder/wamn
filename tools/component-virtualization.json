@@ -1,7 +1,0 @@
-{
-  "output_subdirectory": "virtualized/std-empty-environment",
-  "packages": [
-    "blob-put",
-    "jsonata-expression"
-  ]
-}

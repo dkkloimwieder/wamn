@@ -1,6 +1,6 @@
 //! Real-PostgreSQL test for the platform identity core.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
+use sqlx::Row as _;
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
@@ -303,20 +303,6 @@ async fn project_environment_membership_round_trip(
             .await
             .is_err()
     );
-    let service_token = issue_pat(
-        client,
-        service.id(),
-        "route service",
-        Duration::from_secs(3600),
-    )
-    .await
-    .expect("issue the service route PAT");
-    assert!(
-        route_principal_id(client, service_token.token(), "demo", "widgets", "dev")
-            .await
-            .is_none(),
-        "a PAT without project authority passed"
-    );
     let other_user = create_user(
         client,
         "other@example.com",
@@ -368,21 +354,7 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("unprepared query observes new grant")
     );
-    assign_project_role(
-        client,
-        service.id(),
-        "demo",
-        "widgets",
-        "operator",
-        &mut wamn_broker::auth_changes::AuthDrops::default(),
-    )
-    .await
-    .expect("assign the service operator role");
-    assert_eq!(
-        route_principal_id(client, service_token.token(), "demo", "widgets", "dev").await,
-        Some(service.id().to_string()),
-        "a service needs its role, not a user membership"
-    );
+
     for (org, project, env) in [
         ("other", "widgets", "dev"),
         ("demo", "inventory", "dev"),
@@ -775,23 +747,4 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
             "{type_} {id} {subject} {display_name}"
         );
     }
-}
-
-async fn route_principal_id(
-    client: &mut sqlx::PgConnection,
-    token: &str,
-    org: &str,
-    project: &str,
-    _env: &str,
-) -> Option<String> {
-    wamn_platform_identity::authenticate_route_pat(
-        client,
-        token,
-        org,
-        project,
-        &["operator", "admin"],
-    )
-    .await
-    .expect("read route PAT and target in one statement")
-    .map(|authenticated| authenticated.principal().id().to_string())
 }

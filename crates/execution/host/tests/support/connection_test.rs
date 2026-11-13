@@ -1,6 +1,5 @@
 //! Candidate tests through the real control route, TLS and Modbus stores.
 
-use sqlx::{Connection as _, Row as _};
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
 use super::*;

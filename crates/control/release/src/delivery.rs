@@ -1,10 +1,8 @@
-//! Shared release fixture identity and SQLx verification for local generation.
+//! Shared release fixture identity for local generation.
 
 use std::collections::BTreeSet;
 
 use wamn_catalog::PackageCoordinate;
-
-pub mod sqlx;
 
 /// The release inputs that an application fixture provisions and publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]

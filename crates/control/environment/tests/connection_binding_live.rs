@@ -197,7 +197,12 @@ async fn provision_project(project: &mut Client, project_url: &str) -> Vec<Admit
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let package = scratch.path().join("package");
     std::fs::create_dir_all(package.join("migrations")).unwrap();
-    std::fs::copy(source.join("wamn.json"), package.join("wamn.json")).unwrap();
+    std::fs::create_dir_all(package.join("generated")).unwrap();
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        package.join("generated/wamn.json"),
+    )
+    .unwrap();
     for entry in std::fs::read_dir(source.join("migrations")).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(
@@ -359,8 +364,8 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
-        "applications": {PACKAGE:{"current": digest, "hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+        serde_json::from_value(json!({"org":"connection-binding-project","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60, "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        "applications": {PACKAGE:{"current": digest, "revocation_seconds":5,"hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
     }
     async fn apply(
         &mut self,

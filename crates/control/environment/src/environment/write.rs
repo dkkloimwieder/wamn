@@ -216,8 +216,8 @@ mod tests {
         let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
         let digest = format!("sha256:{}", "c".repeat(64));
         let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev",
-            "applications":{"alpha":{"packages":["alpha"],"current":digest,"hostname":"alpha.example"}}
+            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
+            "applications":{"alpha":{"packages":["alpha"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"}}
         }))?)?;
         let manifest = serde_json::from_value(json!({
             "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,

@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
-use super::{CatalogIr, Projection, insert_bytes, sql};
+use super::{CatalogIr, insert_bytes, sql};
 use crate::ManifestError as GenerateError;
 use crate::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
 use crate::manifest::{
@@ -21,16 +21,14 @@ fn value(name: &str, ty: SqlValueType, nullable: bool) -> StaticSqlValueDeclarat
 }
 
 /// Add the snapshot statements and the host data function for one authored read.
-pub(super) fn prepare(
-    files: &mut BTreeMap<String, Vec<u8>>,
+pub(super) fn prepare_sql(
     corpus: &mut BTreeMap<String, Vec<u8>>,
     catalog: &CatalogIr,
-    manifest: &crate::manifest::PackageManifest,
     name: &str,
     operation: &CustomOperationDeclaration,
-) -> Result<Option<CustomOperationDeclaration>, GenerateError> {
+) -> Option<CustomOperationDeclaration> {
     if operation.feed != Some(true) {
-        return Ok(None);
+        return None;
     }
     let source = operation
         .feed_source
@@ -41,9 +39,7 @@ pub(super) fn prepare(
         .values()
         .next()
         .expect("validated authored statement");
-    let text = std::str::from_utf8(&corpus[&statement.path])
-        .expect("validated authored SQL")
-        .to_owned();
+    let text = std::str::from_utf8(&corpus[&statement.path]).expect("validated authored SQL");
     let fields = statement
         .row
         .iter()
@@ -64,23 +60,22 @@ pub(super) fn prepare(
     let page_path = format!("generated/sql/{stem}/feed_page.sql");
     let changes_path = format!("generated/sql/{stem}/feed_changes.sql");
     for (path, text) in [
-        (&page_path, sql::authored_page(&text, &fields)),
+        (&page_path, sql::authored_page(text, &fields)),
         (
             &changes_path,
             sql::authored_changes(
                 catalog,
                 source,
-                &text,
+                text,
                 key,
                 &fields,
                 statement.parameters.len() + 1,
             ),
         ),
     ] {
-        insert_bytes(files, path, text.as_bytes().to_vec())?;
         corpus.insert(path.clone(), text.into_bytes());
     }
-    let mut prepared = contract(operation);
+    let mut prepared = operation.clone();
     prepared.statements.clear();
     let nullable = statement
         .row
@@ -125,9 +120,22 @@ pub(super) fn prepare(
             .collect(),
         },
     );
-    emit_data(files, &manifest.package, name, operation, key_type)?;
-    emit_component(files, &manifest.package.id, name, operation, key_type)?;
-    Ok(Some(prepared))
+    Some(prepared)
+}
+
+pub(super) fn emit(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &crate::manifest::PackageManifest,
+    name: &str,
+    compiled: &super::operations::CustomDescription<'_>,
+) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
+    if operation.feed != Some(true) {
+        return Ok(());
+    }
+    let key_type = compiled.feed_key.expect("compiled feed key");
+    emit_data(files, &manifest.package, name, compiled, key_type)?;
+    emit_component(files, &manifest.package.id, name, compiled, key_type)
 }
 
 fn member(name: &str) -> String {
@@ -138,9 +146,10 @@ fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
     package: &crate::manifest::PackageIdentity,
     name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let statement = operation
         .statements
@@ -150,7 +159,7 @@ fn emit_data(
     let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
     let permission = crate::manifest::canonical_operation_identity(package, name)?;
-    let result = operation.result.as_ref().expect("validated feed result");
+    let result = compiled.result.as_ref().expect("compiled feed result");
     let row_fields = result
         .fields
         .iter()
@@ -159,7 +168,7 @@ fn emit_data(
                 fields,
                 "pub {}: {},",
                 member(&field.path),
-                projected_rust_type(field.ty, Projection::Wamn, field.nullable)
+                projected_rust_type(field.ty, field.nullable)
             )
             .expect("writing to a String cannot fail");
             fields
@@ -311,9 +320,10 @@ fn emit_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     namespace: &str,
     name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let (group, local) = name.split_once('.').expect("validated operation");
     let namespace = namespace.replace('-', "_");
@@ -366,28 +376,4 @@ codec::export_operation!(crate::Component, contract, crate::wamn::node::types, C
         &format!("generated/component/{stem}.rs"),
         text.into_bytes(),
     )
-}
-
-/// WIT and codecs see the same derived snapshot field and expiry refusal.
-pub(super) fn contract(operation: &CustomOperationDeclaration) -> CustomOperationDeclaration {
-    let mut result = operation.clone();
-    if operation.feed == Some(true) {
-        if !result.errors.iter().any(|error| error == "cursor_expired") {
-            result.errors.push("cursor_expired".to_owned());
-        }
-        let fields = &mut result
-            .result
-            .as_mut()
-            .expect("validated feed result")
-            .fields;
-        if !fields.iter().any(|field| field.path == "row_version") {
-            fields.push(
-                serde_json::from_value(
-                    serde_json::json!({"path": "row_version", "type": "int64", "nullable": false}),
-                )
-                .expect("snapshot field"),
-            );
-        }
-    }
-    result
 }

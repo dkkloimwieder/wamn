@@ -25,7 +25,7 @@ use oci_client::client::{
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::{
@@ -42,7 +42,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_schema_control::plan_package_migrations;
 
-use wamn_component_policy::sql as declared_sql;
+use wamn_compiler::declared_sql;
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -114,35 +114,13 @@ impl fmt::Display for ComponentProjectionError {
 impl std::error::Error for ComponentProjectionError {}
 
 #[derive(Debug, Deserialize)]
-struct GeneratedOperationContract {
-    operation: String,
-    statements: Vec<GeneratedStatementContract>,
-    #[serde(
-        rename = "sql_files",
-        default,
-        deserialize_with = "reject_retired_sql_files"
-    )]
-    _retired_sql_files: (),
-    #[serde(flatten)]
-    _operation_contract: BTreeMap<String, serde_json::Value>,
-}
-
-fn reject_retired_sql_files<'de, D>(_deserializer: D) -> Result<(), D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Err(<D::Error as serde::de::Error>::custom(
-        "sql_files is retired; generated operation contracts carry statements",
-    ))
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GeneratedStatementContract {
     name: String,
     path: String,
     binds: Vec<ComponentSqlField>,
     columns: Vec<ComponentSqlField>,
+    relations: Vec<wamn_catalog::profile::RelationProfile>,
     /// PostgreSQL's own verdict from the generic plan at generation time.
     transactional: bool,
 }
@@ -273,20 +251,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .context("refuse application-owned entry authority")?;
     let declaration_bytes = std::fs::read(&args.declaration)
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
-    let mut document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
+    let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
-    // An input port can name its package's generated route schema instead of
-    // copying it, so the reference resolves against the package it belongs to.
-    let files = wamn_compiler::route_schema::PackageFiles::open(&args.package)?;
-    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
-        files.schema(reference)
-    })
-    .with_context(|| {
-        format!(
-            "resolve the input ports of component declaration {}",
-            args.declaration.display()
-        )
-    })?;
     let declaration: ComponentDeclaration = serde_json::from_value(document)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
 
@@ -332,7 +298,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 
 #[derive(Debug)]
 struct ExpectedOperationContract {
-    relative_path: String,
+    local_operation: String,
     component: String,
     public: bool,
 }
@@ -359,12 +325,6 @@ fn load_package_statements(
     manifest: &wamn_compiler::manifest::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
-    wamn_compiler::build_record::require_current(package_root).map_err(|error| {
-        ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementContractInvalid,
-            format!("{error:#}"),
-        )
-    })?;
     let expected = expected_operation_contracts(manifest)?;
     let expected_component_operations = component
         .map(|component| validate_component_operation_assignment(manifest, component, &expected))
@@ -381,39 +341,55 @@ fn load_package_statements(
     let mut all_statements = BTreeMap::new();
     let mut corpus = BTreeMap::<String, Vec<u8>>::new();
     for (operation, expected_contract) in &expected {
-        let contract_path = &expected_contract.relative_path;
-        let contract_bytes = read_package_owned_file(
-            package_root,
-            &canonical_root,
-            &format!("operation {operation:?} contract"),
-            contract_path,
-            "json",
-        )?;
-        let contract: GeneratedOperationContract = serde_json::from_slice(&contract_bytes)
-            .map_err(|error| {
+        let description = manifest
+            .compiled_operations
+            .get(&expected_contract.local_operation)
+            .ok_or_else(|| {
                 ComponentProjectionError::new(
                     ComponentProjectionErrorType::StatementContractInvalid,
-                    format!(
-                        "generated operation contract {} has invalid statement shape: {error}",
-                        package_root.join(contract_path).display()
-                    ),
+                    format!("operation {operation} has no compiled description"),
                 )
             })?;
-        if contract.operation != *operation {
+        if description.operation.operation != *operation {
             return Err(ComponentProjectionError::new(
                 ComponentProjectionErrorType::StatementOperationMismatch,
-                format!(
-                    "generated operation contract {} names {:?}, expected {operation:?}",
-                    package_root.join(contract_path).display(),
-                    contract.operation,
-                ),
+                format!("compiled operation {operation} has a different identity"),
             ));
         }
+        let statements = description
+            .operation
+            .statements
+            .iter()
+            .map(|statement| GeneratedStatementContract {
+                name: statement.name.clone(),
+                path: statement.path.clone(),
+                binds: statement
+                    .binds
+                    .iter()
+                    .map(|field| ComponentSqlField {
+                        name: field.name.clone(),
+                        value_type: field.ty,
+                        nullable: field.nullable,
+                    })
+                    .collect(),
+                columns: statement
+                    .columns
+                    .iter()
+                    .map(|field| ComponentSqlField {
+                        name: field.name.clone(),
+                        value_type: field.ty,
+                        nullable: field.nullable,
+                    })
+                    .collect(),
+                relations: statement.relations.clone(),
+                transactional: statement.transactional,
+            })
+            .collect();
         let operation_statements = load_operation_statements(
             package_root,
             &canonical_root,
             operation,
-            contract.statements,
+            statements,
             &mut corpus,
         )?;
         all_statements.insert(operation.clone(), operation_statements);
@@ -477,6 +453,7 @@ fn load_operation_statements(
             sql,
             binds: statement.binds,
             columns: statement.columns,
+            relations: statement.relations,
             transactional: statement.transactional,
         };
         admitted.insert(statement.path.clone(), fact);
@@ -545,7 +522,19 @@ fn read_package_owned_file(
             })?;
             (output_root.join(output), owner)
         }
-        Err(_) => (package_root.join(path), canonical_root.to_owned()),
+        Err(_) if package_root.join("generated").is_dir() => {
+            (package_root.join(path), canonical_root.to_owned())
+        }
+        Err(_) => {
+            let output = wamn_compiler::output_root(package_root);
+            let owner = output.canonicalize().map_err(|source| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorType::StatementPathInvalid,
+                    source.to_string(),
+                )
+            })?;
+            (output.join(path), owner)
+        }
     };
     let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
         ComponentProjectionError::new(
@@ -796,7 +785,7 @@ mod tests {
         let package_root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let manifest = wamn_compiler::manifest::PackageManifest::from_slice(include_bytes!(
-            "../tests/fixtures/component_package/wamn.json"
+            "../tests/fixtures/component_package/generated/wamn.json"
         ))
         .expect("fixture package manifest parses");
         let mut component = fixture_component();
@@ -855,7 +844,8 @@ mod tests {
             std::process::id(),
             line!()
         ));
-        std::fs::create_dir_all(&package_root).expect("create the package root");
+        std::fs::create_dir_all(package_root.join("generated/sql"))
+            .expect("create the package root");
         let canonical_root = package_root.canonicalize().expect("package root resolves");
         for (sql, refused) in [
             ("SELECT id FROM item WHERE id = $1", false),
@@ -871,12 +861,14 @@ mod tests {
             ("UPDATE platform.setting SET value = $1", true),
             ("DO $$ BEGIN EXECUTE 'SELECT 1'; END $$", true),
         ] {
-            std::fs::write(package_root.join("q.sql"), sql).expect("write the statement");
+            std::fs::write(package_root.join("generated/sql/q.sql"), sql)
+                .expect("write the statement");
             let statement = GeneratedStatementContract {
                 name: "q".to_owned(),
-                path: "q.sql".to_owned(),
+                path: "generated/sql/q.sql".to_owned(),
                 binds: Vec::new(),
                 columns: Vec::new(),
+                relations: Vec::new(),
                 transactional: false,
             };
             let result = load_operation_statements(
@@ -916,7 +908,6 @@ mod tests {
         roots.sort();
         let mut statements = 0;
         for root in &roots {
-            wamn_compiler::build_record::require_current(root).unwrap();
             let manifest_path = wamn_compiler::package_manifest_path(root);
             let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
                 panic!(
@@ -935,21 +926,11 @@ mod tests {
     }
 
     #[test]
-    fn retired_sql_file_lists_are_not_an_alternate_statement_contract() {
-        let contract = serde_json::json!({
-            "operation": "source-fixture:item/get@1.0.0",
-            "statements": [],
-            "sql_files": ["generated/sql/item/get.sql"]
-        });
-
-        assert!(serde_json::from_value::<GeneratedOperationContract>(contract).is_err());
-    }
-
-    #[test]
     fn private_manifest_operation_cannot_cross_component_ownership() {
-        let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
-                .expect("fixture observer manifest is JSON");
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/observer_package/generated/wamn.json"
+        ))
+        .expect("fixture observer manifest is JSON");
         let primary = "observer_fixture";
         for model in document["models"]
             .as_object_mut()
@@ -1077,8 +1058,10 @@ mod tests {
     }
 
     fn overlay_manifest() -> wamn_compiler::manifest::PackageManifest {
-        serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
-            .expect("fixture observer manifest parses")
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/observer_package/generated/wamn.json"
+        ))
+        .expect("fixture observer manifest parses")
     }
 
     /// A component absent from the manifest, exporting one handler and

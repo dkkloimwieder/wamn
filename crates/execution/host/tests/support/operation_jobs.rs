@@ -2,7 +2,6 @@
 
 use super::*;
 use anyhow::Context as _;
-use sqlx::Row as _;
 use std::collections::BTreeMap;
 use wamn_catalog::HostHandler;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;

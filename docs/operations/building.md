@@ -70,12 +70,11 @@ Cargo combines dependency features within each invocation, which can change arti
 A package build compiles these guests:
 
 - each component that the package owns.
-- each palette component that a wiring of the package names. The build finds it by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
 
 A package outside a Cargo workspace, with no `../Cargo.toml`, has no component to compile.
 Cargo writes the guests to `CARGO_TARGET_DIR`. If that variable is unset, it writes them to `apps/target`.
 
-[`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
+`cargo xtask guest-rustflags` prints the RUSTFLAGS used by the shared xtask build library.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
 `wamn build` calls it. The platform producer uses that same component builder.
@@ -95,18 +94,10 @@ The workload guests `http-route` and `materializer` belong to no package.
 The Docker `roles` target exports the control HTTP entry as `http_route.wasm`.
 It composes the pinned route guest with an empty dispatcher at platform build time.
 The publisher image retains the raw route guest for application composition.
-To build the control entry locally from that raw guest, run:
-
-```bash
-cargo run --offline -p wamn-component-composer -- \
-  --control-route "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  --output "$CARGO_TARGET_DIR/control_http.wasm"
-```
-
 Local development composes the same control entry before it starts the host.
 It names the entry with an absolute `file:` reference to its digest-named artifact.
 
-The build virtualizes each component that the package owns and each crate that [`tools/component-virtualization.json`](../../tools/component-virtualization.json) lists under `packages`.
+The xtask build library virtualizes application components and the platform guests `blob-put` and `jsonata-expression`.
 It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.
 The list is an allowlist, not discovery: a std guest that it does not name stays raw and fails its own admission.
 
@@ -120,10 +111,10 @@ The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.
 The composed component replaces the overlay's virtualized output.
-`wamn build` compares each base component's bytes with the digest pin in `wamn.json` before compilation and before reporting a package as current.
+`wamn build` compares each base component's bytes with the digest pin in `wamn.json` before compilation.
 Publication repeats this comparison.
 
-Last, the build copies each component that the package owns and each palette component that its wirings name to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
+Last, the build copies each component that the package owns to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
 `wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.
 `push-package` refuses a component without an entry, and a file whose digest differs from its entry.
 For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).
@@ -166,6 +157,7 @@ cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp
 Stamping reads every selected digest from the registry and refuses a missing artifact.
 The chart holds the pinned images and role components in `values.yaml`.
 The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
+`palette.json` records platform palette artifact pins and declarations. Packages no longer bundle palette guests.
 Transfer the whole output directory to another deployment machine.
 [Local deployment](deployment.md#local-platform) consumes it through `--chart`.
 
@@ -191,10 +183,13 @@ A package that holds `wamn.k` authors its manifest in KCL.
 Every reader reads that compiled file.
 A package that holds both `wamn.k` and an authored `wamn.json` is refused.
 
-The compile runs the KCL CLI that [`tools/install-kcl`](../../tools/install-kcl) installs.
-That script pins the version and digest, and installs the binary under `.tools/kcl/`.
-The generator runs the script itself, so you do not install KCL by hand.
-If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
+`cargo xtask install-kcl` installs the KCL CLI under `.tools/kcl/`.
+It reads the version, URL and checksum from `mise.toml`.
+Package builds install it when it is absent.
+Set `WAMN_KCL` to use another binary of the pinned version.
+The compiler runs KCL and never installs tools.
+Platform document schemas live with their document types in `crates/control/environment/kcl/`.
+The OpenTofu renderer reads `ProjectDocument` in that same crate.
 The compiler owns the authored model in `crates/schema/generator/src/manifest.rs`. It checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
 
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
@@ -205,7 +200,7 @@ An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a
 
 ## wamn build
 
-`wamn build` builds packages in two passes.
+`wamn build` compiles each package through one SQL corpus.
 It needs a PostgreSQL server, which it does not start.
 Give a superuser URL of the server in `DATABASE_URL` or `--database-url`.
 The build creates its own verification database on that server and drops it at the end.
@@ -217,10 +212,20 @@ DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
   apps/wamn_receiving apps/client_acme_receiving
 ```
 
-Pass one compiles `wamn.k` and migrates the verification database.
+The build compiles `wamn.k` and migrates the verification database.
 The migrations of each base package run first, then the package's own migrations, then the history tables.
-The build then describes every authored statement through SQLx and writes the canonical `wamn.json`.
-Pass two generates every other output from those `wamn.json` bytes.
+SQLx describes authored statements to fill their declared value types.
+The compiler derives relations and feed sources, then generates the remaining SQL once.
+SQLx describes every generated statement, including each fixed list sort and each feed statement.
+The compiler checks each accessor's parameters and selected columns against those descriptions before it writes consumers.
+One type table in `wamn-scalar` maps PostgreSQL names for build and runtime.
+
+The build classifies writes and row locks from PostgreSQL plans.
+A call to an authored routine also counts as a write and retains the command transaction.
+It generates no application grant contribution and plans without installing derived grants.
+Deployable routine support remains incomplete.
+The build also emits history DDL at `record-history.sql` separately from authored migrations until the migration runner owns it.
+The existing `physical-schema.json` remains until that runner replaces its readers.
 
 A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
 A stated type that differs from the type SQLx gives is refused.
@@ -237,67 +242,46 @@ A consuming workspace package lists application clients in its `package.json` fi
 If the build cannot produce a requested client, it fails and names the consuming package and application.
 
 The build writes each package to `<output root>/<package id>/`.
-The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
+Package builds write to the workspace output root, `apps/target/wamn` for applications.
+There is no custom-output option: guest includes and artifact readers use this same path.
 Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
 Git holds no build output, and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
-Generation removes obsolete output files and keeps SQLx metadata prepared after generation.
-Authored publication references use the current source manifest, even when an earlier build output exists.
+Generation replaces obsolete output files.
+The output includes copies of the authored KCL, SQL and migrations used by this build.
 Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
 `build.json` is the build record, schema `wamn.build/v1`, in canonical JSON.
-It records input files, both input digests, base packages, generator identity, and output digests.
-A digest identifies content through its SHA-256 hash.
-`inputs.digest` covers all build inputs.
-`inputs.generation_digest` excludes only the package-local `component/`, `data/`, and `web/` trees.
-Both digests cover the manifest, authored SQL, migrations, generator identity, and every other build input.
-The development loop reads the physical SQL fingerprint from `physical-schema.json` after preparing generation.
-It uses the same schema planner and installed SQL records as deployment.
-The build record stores no installed scheman identity.
-A query edit reruns Generate and keeps Migrate and existing introspection results.
-The input files include the package's own files and `apps/Cargo.lock`.
-They also include `apps/platform/data`, `crates/platform/digest`, `crates/platform/scalar`, and `apps/platform/execution/jsonata`.
-The build derives shared WIT inputs from `wit_bindgen::generate!` paths across the guest workspace, including their dependencies.
-It excludes generated WIT under `target` or `generated` because build records track those outputs.
-A change in a shared WIT input or platform tree makes every package stale.
-The input digest also covers the generator source, KCL templates, embedded SQL, Cargo manifest, and build script through `wamn_compiler::build_record::GENERATOR_FINGERPRINT`.
-Both input digests cover these generator inputs, shared WIT, platform trees, and the lock file.
-A change to these inputs requires generation and compilation again without a version bump.
-If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
-It leaves the output files and `build.json` unchanged.
-An overlay reads the `build.json` of each base package, so build the base first.
-Package readers of `apps/target/wamn` call `wamn_compiler::build_record::read_current` first, as `push-package` does.
-If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
-If only the full digest changes, the build reuses generated output and rebuilds the package components.
-Build records the new full digest, so readers accept the rebuilt output.
-A reader still refuses changed source until Build refreshes the build record.
-After generation and component compilation, the build copies generated clients to their consumers.
+It records the package, base packages, compiler identity and output digests.
+The build writes it once, after component compilation and client materialization finish.
+The compiler derives its identity from Cargo, the toolchain file and the dependency lock.
+Cargo decides whether guest code needs compilation.
+Every package build regenerates its compiler output without source freshness checks.
+Artifact readers take every file from this output tree.
+An older completed build publishes its older inputs and outputs together.
+An overlay reads each base package's completed record, so build bases first.
+The build calls the composer library directly.
+The separate virtualizer remains until the typed invocation change.
 `wamn build` does not run Vite or record browser files in `build.json`.
-The build compiles the package's components as [above](#native-programs-and-app-components) describes.
 
 `wamn web build` builds a standalone web artifact against the recorded package contract.
 It permits web source changes and requires the compiled manifest to match `outputs.manifest`.
 See [web clients](web-upload.md#build-and-push) for its output, metadata, and registry commands.
 
-### Package digest records
+### Ejecting defaults
 
-Removing the web layer changes existing package digests.
-After rebuilding the packages, refresh their records with `wamn build --record-digest` before the package digest test.
-No version or format bump accompanies this greenfield change.
+`wamn eject action apps/wamn_receiving purchase_order.create` replaces the empty action implementation with an authored module.
+The module contains the current default body.
+Its WIT, SQL and input validation stay generated.
+The command refuses an existing implementation or output file.
 
-Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again.
-
-When you change such a package, bump its version in `wamn.k`. Then write the file again and commit it with the change:
-
-```bash
-wamn build --record-digest apps/<package>
-```
+`wamn eject component apps/wamn_receiving purchase_order path/to/purchase_order.ts` copies one browser component to an authored file.
+Import that file through normal application composition.
+Generated client copies stay under `src/generated/`.
 
 ## Pushing a package
 
 `wamn-ctl push-package --package <package root>` pushes one package artifact.
-First it compares the `inputs.digest` of the package's `build.json` with the digest of the package tree.
-If they are equal, it pushes the build output as it is.
-If they differ, or the package has no `build.json`, `push-package` refuses and pushes nothing.
-The refusal tells you to run `wamn build`.
+The command requires a completed `build.json` and reads the compiled package output.
+It verifies component bytes and publishes the recorded build without comparing source files.
 `push-package` never builds, and it never compares file times.
 
 ## Reading a pushed package
@@ -327,17 +311,17 @@ A package artifact has the tag `<package_id>-<version>`. Its image manifest has 
 |---|---|---|---|
 | 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
 | 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
-| 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `publication/`: `attachments.json`, `wirings/`, `components/<name>.json.in`, including the declaration of each palette component a wiring names |
-| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
-| 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
+| 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `generated/publication/`: final attachments and component declarations |
+| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/required-schema-contract.json`, `generated/physical-schema.json`, `generated/sql/`, `generated/routes/` |
+| 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per package-owned component, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
 
 The package artifact contains three tar layers and no browser files.
 A web source or output edit leaves the packed package digest unchanged.
 `wamn web build` and `wamn web push` own the separate [web artifact](web-upload.md#build-and-push).
 
-The `generated/` paths of layer 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
+The `generated/` paths of layers 2 and 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. A palette component's store alias comes from the `params.store_alias` of the wiring nodes that name it, and two aliases refuse. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
 
 The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
@@ -351,10 +335,10 @@ The name `wamn_control` selects the application route client, and `wamn_control_
 A consuming package imports the copy from `src/generated/<name>`, which Git ignores.
 
 The web scripts write the clients before they read them.
-`pnpm -r build`, `pnpm run lint`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:
+`pnpm -r build`, `pnpm run lint`, `pnpm test` and `pnpm run dev` run this command first:
 
 ```bash
-cargo run --locked --offline -p wamn-compiler --example materialize_host_route_client
+cargo xtask host-route-clients
 ```
 
 The command writes only a changed file, and it removes a file that the contracts no longer generate.
@@ -371,7 +355,7 @@ docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha2
 The result is one stripped file, `$CARGO_TARGET_DIR/edge/wamn-edge`.
 The target compiles with the Debian trixie cross compiler.
 The cluster image `edge-web` is a different build.
-The Dockerfile stage `build-edge-web` builds `wamn-edge` with the `web` feature for linux/amd64.
+The Dockerfile stage `build-edge-web` builds the separate `wamn-web-front` service for linux/amd64.
 
 ## Isolated worktrees
 

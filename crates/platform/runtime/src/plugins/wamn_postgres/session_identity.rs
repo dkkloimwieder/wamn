@@ -812,7 +812,7 @@ enum EffectRead {
 
 /// Apply the shared parsed SQL policy before running guest SQL.
 pub(super) fn reject_identity_mutation(sql: &str) -> Result<(), PgError> {
-    wamn_component_policy::sql::require_declared_statement(sql)
+    wamn_compiler::declared_sql::require_declared_statement(sql)
         .map_err(|error| PgError::QueryError(("WAMN0".into(), error.to_string())))
 }
 
@@ -997,6 +997,38 @@ impl WamnPostgres {
             auth: crate::auth_cache::AuthCache::default(),
             hierarchy_reader: std::sync::RwLock::default(),
         }
+    }
+
+    /// Read the revocation bounds stated by this project and its applications.
+    /// Shared auth facts use the shortest bound, so every application stays within its contract.
+    pub async fn configure_revocation(
+        &mut self,
+        project: &str,
+        applications: &[&str],
+    ) -> anyhow::Result<()> {
+        let (mut connection, _) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let mut bound = std::time::Duration::MAX;
+        for (target_type, target_id) in std::iter::once(("project", project)).chain(
+            applications
+                .iter()
+                .map(|application| ("application", *application)),
+        ) {
+            let row = sqlx::query(sqlx::AssertSqlSafe(("SELECT value::text FROM platform.setting WHERE target_type=$1 AND target_id=$2 AND key='revocation-seconds'").to_string())).bind(&target_type).bind(&target_id).fetch_optional(&mut *connection).await.context("read revocation configuration")?
+                .with_context(|| format!("{target_type} {target_id} must state revocation-seconds"))?;
+            let value: String = row.try_get(0)?;
+            let seconds: u64 = serde_json::from_str(&value).with_context(|| {
+                format!(
+                    "{target_type} {target_id} revocation-seconds must be a nonnegative integer"
+                )
+            })?;
+            bound = bound.min(std::time::Duration::from_secs(seconds));
+        }
+        drop(connection);
+        self.auth = crate::auth_cache::AuthCache::with_ttl(bound);
+        Ok(())
     }
 
     /// Bind the host's existing identity reader for inherited authorization.

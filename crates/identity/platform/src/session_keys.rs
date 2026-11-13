@@ -66,9 +66,23 @@ pub async fn activate_session_key(
     issuer: &str,
     kid: &str,
 ) -> Result<(), IdentityError> {
+    activate_session_key_if_current(client, issuer, kid, None).await
+}
+
+async fn activate_session_key_if_current(
+    client: &mut Client,
+    issuer: &str,
+    kid: &str,
+    expected: Option<&str>,
+) -> Result<(), IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
     bind_provisioning(&mut transaction).await?;
     let active = lock_issuer(&mut transaction, issuer).await?;
+    // Scheduled publication must not undo a removal or an explicit activation.
+    if expected.is_some_and(|expected| active.as_deref() != Some(expected)) {
+        transaction.commit().await.map_err(key_database_error)?;
+        return Ok(());
+    }
     let row = sqlx::query(
         "SELECT signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
          FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
@@ -89,6 +103,58 @@ pub async fn activate_session_key(
         sqlx::query("UPDATE identity.session_signing_state SET active_kid = $2::text::uuid WHERE issuer = $1").bind(issuer).bind(kid).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
     }
     transaction.commit().await.map_err(key_database_error)
+}
+
+/// Rotate a due issuer with the same publication, activation and retirement commands.
+/// A session lock serializes schedulers in different identity replicas.
+/// An issuer without an active key still requires explicit activation.
+pub async fn rotate_session_keys(
+    client: &mut Client,
+    issuer: &str,
+    interval: std::time::Duration,
+) -> Result<(), IdentityError> {
+    validate_issuer(issuer)?;
+    let seconds =
+        i64::try_from(interval.as_secs()).map_err(|_| invalid("invalid signing key interval"))?;
+    if seconds == 0 {
+        return Err(invalid("signing key interval must be positive"));
+    }
+    let locked: bool = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT pg_try_advisory_lock(hashtextextended($1, 0))").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut *client)
+    .await
+    .map_err(key_database_error)?
+    .get(0);
+    if !locked {
+        return Ok(());
+    }
+    let result: Result<(), IdentityError> = async {
+        let due = sqlx::query(sqlx::AssertSqlSafe(("SELECT s.active_kid::text FROM identity.session_signing_state s \
+             JOIN identity.session_keys k ON k.issuer=s.issuer AND k.kid=s.active_kid \
+             WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()").to_string())).bind(&issuer).bind(&seconds).fetch_optional(&mut *client).await.map_err(key_database_error)?;
+        if let Some(due) = due {
+            let expected: String = due.get(0);
+            let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
+                 AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
+                 ORDER BY published_at DESC LIMIT 1").to_string())).bind(&issuer).fetch_optional(&mut *client).await.map_err(key_database_error)?;
+            let kid = if let Some(row) = pending { row.get(0) } else { publish_session_key(client, issuer).await?.kid };
+            activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
+        }
+        retire_session_keys(client, issuer).await?;
+        Ok(())
+    }.await;
+    let unlock = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT pg_advisory_unlock(hashtextextended($1, 0))").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut *client)
+    .await
+    .map_err(key_database_error);
+    result?;
+    unlock?;
+    Ok(())
 }
 
 /// Read only the public projection, excluding keys at their retirement deadline.
@@ -127,6 +193,11 @@ pub async fn remove_compromised_session_key(
 ) -> Result<bool, IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
     bind_provisioning(&mut transaction).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(issuer)
+        .execute(&mut *transaction)
+        .await
+        .map_err(key_database_error)?;
     lock_issuer(&mut transaction, issuer).await?;
     sqlx::query(
         "UPDATE identity.session_signing_state SET active_kid = NULL \

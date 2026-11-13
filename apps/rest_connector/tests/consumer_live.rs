@@ -9,9 +9,6 @@ use serde_json::json;
 use sqlx::PgConnection as Client;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_environment_control::reconcile_package_data_access::{
-    ReconcilePackageDataAccessRequest, reconcile_package_data_access,
-};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_package_control::component_admission::ComponentAdmission;
@@ -350,7 +347,6 @@ pub async fn install(
     let packages = roots
         .iter()
         .map(|root| {
-            wamn_compiler::build_record::require_current(root)?;
             Ok(PackageRoot {
                 path: root.clone(),
                 artifact_digest: Some(
@@ -372,14 +368,6 @@ pub async fn install(
         })
         .await?;
     }
-    reconcile_package_data_access(ReconcilePackageDataAccessRequest {
-        packages,
-        database_url: database.url().into(),
-        org: "rest".into(),
-        project: "publication".into(),
-        environment: "test".into(),
-    })
-    .await?;
     let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -580,12 +568,9 @@ pub async fn invoke(
     let source_id = source(&mut admin, "rest-fixture").await?.to_string();
     // The rest_connector item is an environment workflow, authored, enabled and
     // admitted at one due moment (docs/architecture/execution.md#workflows).
-    let document: wamn_catalog::WiringDocument =
-        serde_json::from_value(wamn_compiler::operation_reference::read_authored_document(
-            &super::support::repository()
-                .join("apps/rest_connector/publication/wirings/rest_item.json"),
-            wamn_compiler::operation_reference::AuthoredDocument::Wiring,
-        )?)?;
+    let document: wamn_catalog::WiringDocument = serde_json::from_slice(&std::fs::read(
+        super::support::repository().join("apps/rest_connector/tests/workflows/rest_item.json"),
+    )?)?;
     let workflow_host = workflow_host(&mut admin, database, manifest).await?;
     let run = schedule_run(
         database,

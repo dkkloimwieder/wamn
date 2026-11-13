@@ -40,6 +40,7 @@ required-features = ["ops"]
 [dependencies]
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
@@ -81,13 +82,13 @@ wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }
 # The `workflow` verbs call the workflow contract over a project-admin
 # connection.
 wamn-workflow = { workspace = true }
 
 [dev-dependencies]
-wamn-identity-protocol = { workspace = true }
 wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }

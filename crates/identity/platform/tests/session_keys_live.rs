@@ -501,3 +501,78 @@ fn now() -> i64 {
         .try_into()
         .unwrap()
 }
+
+#[tokio::test]
+async fn scheduled_rotation_keeps_the_previous_verification_key() {
+    let _serialized = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let (_, mut admin) = prepare_database(database.url()).await;
+    let issuer = "https://identity.schedule.internal";
+    let interval = Duration::from_secs(3600);
+    let first = publish_session_key(&mut admin, issuer).await.unwrap();
+    activate_session_key(&mut admin, issuer, &first.kid)
+        .await
+        .unwrap();
+    let initial: String = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT active_kid::text FROM identity.session_signing_state WHERE issuer=$1").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut admin)
+    .await
+    .unwrap()
+    .get(0);
+    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+        .await
+        .unwrap();
+    let unchanged: String = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT active_kid::text FROM identity.session_signing_state WHERE issuer=$1").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut admin)
+    .await
+    .unwrap()
+    .get(0);
+    assert_eq!(unchanged, initial);
+    let mut tx = admin.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
+    ))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(("UPDATE identity.session_keys SET published_at=clock_timestamp()-interval '2 hours' WHERE issuer=$1").to_string())).bind(&issuer).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+        .await
+        .unwrap();
+    let current: String = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT active_kid::text FROM identity.session_signing_state WHERE issuer=$1").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut admin)
+    .await
+    .unwrap()
+    .get(0);
+    assert_ne!(current, initial);
+    let public = session_jwks(&mut admin, issuer).await.unwrap();
+    assert!(public.keys.iter().any(|key| key.kid == initial));
+    assert!(public.keys.iter().any(|key| key.kid == current));
+    remove_compromised_session_key(&mut admin, issuer, &current)
+        .await
+        .unwrap();
+    wamn_platform_identity::session_keys::rotate_session_keys(&mut admin, issuer, interval)
+        .await
+        .unwrap();
+    let active: Option<String> = sqlx::query(sqlx::AssertSqlSafe(
+        ("SELECT active_kid::text FROM identity.session_signing_state WHERE issuer=$1").to_string(),
+    ))
+    .bind(&issuer)
+    .fetch_one(&mut admin)
+    .await
+    .unwrap()
+    .get(0);
+    assert!(active.is_none());
+}

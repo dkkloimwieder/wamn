@@ -1,19 +1,18 @@
-//! `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
+//! Compile package declarations and described SQL to one output tree.
 //!
 //! Pass one compiles `wamn.k` to its authored form, migrates a fresh
-//! verification database, describes every authored statement through SQLx,
+//! verification database, describes every statement through SQLx,
 //! derives the statement types and relations, and emits the canonical
 //! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
-//! those bytes and writes them, with `build.json`, to the package's build
+//! those bytes and writes them to the package's build
 //! output directory. Step 7 compiles the package's components
-//! ([`build_components`]). `wamn web build` builds browser files separately.
+//! in xtask. `wamn web build` builds browser files separately.
 //!
 //! The verification database is created on the PostgreSQL server that the
 //! request names and dropped when the build ends. The server keeps the
 //! cluster-wide roles `wamn_app` and `wamn_db_owner` that the build creates
 //! when they are absent.
 
-use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -22,39 +21,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
+use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_digest::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
 use crate::AuthoredSql;
-use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest, is_authored};
+use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest};
 use crate::build_record::{
-    BUILD_RECORD_FILE, BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage,
-    BuildRecord,
+    BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage, BuildRecord,
 };
-pub use crate::components::{build_components, build_guest};
-use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
+use crate::materialize::application_schemas;
 use crate::materialize::{
-    classify_statements, client_bindings, expected_files, generate_from_manifest,
-    introspect_with_manifest, statement_corpus_from_manifest, write_files,
+    classify_statements, client_bindings, expected_files, introspect_with_manifest, write_files,
 };
 use wamn_digest::bytes_sha256;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
     include_str!("../../../../deploy/sql/record-history-app-grants.sql");
-/// The hand-written manifest of a package that is not authored in `wamn.k`.
-const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
-/// The web client's source directory, relative to the package root.
-const WEB_SOURCE: &str = "web";
 
 /// One package build.
 #[derive(Debug, Clone)]
 pub struct BuildRequest {
-    pub(crate) package_root: PathBuf,
-    pub(crate) output_root: PathBuf,
+    pub package_root: PathBuf,
+    pub output_root: PathBuf,
     database_url: String,
     /// Allow dev composition with a built base that differs from its authored pin.
     /// Publication builds must leave this false.
@@ -93,145 +86,24 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
     output_root.join(package)
 }
 
-/// Build one package and return its build record, which is also written to
-/// `build.json` in the package's build output directory: [`generate_package`],
-/// then [`build_components`].
-///
-/// # Errors
-///
-/// When [`generate_package`] or [`build_components`] refuses.
-pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
-    if let Some(build_record) = current_build(&request.package_root, &request.output_root)? {
-        crate::materialize::materialize_client_consumers(
-            &request.package_root,
-            &build_record.package.id,
-            &package_output(&request.output_root, &build_record.package.id).join("client-ts"),
-        )?;
-        eprintln!("{} is current", build_record.package.id);
-        return Ok(build_record);
-    }
-    let build_record = match current_generation(&request.package_root, &request.output_root)? {
-        Some(build_record) => build_record,
-        None => generate_package(request).await?,
-    };
-    build_components(request, &build_record.package.id).await
-}
-
-/// Find a complete build with matching inputs without compilation or writes.
-///
-/// # Errors
-///
-/// When the inputs, output directory, manifest, or base components cannot be read.
-pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<BuildRecord>> {
-    current_build_inputs(package_root, output_root, false)
-}
-
-/// Find complete output with matching generation inputs, even after source edits.
-///
-/// # Errors
-///
-/// When the inputs, outputs, manifest, or base components cannot be read.
-pub fn current_generation(package_root: &Path, output_root: &Path) -> Result<Option<BuildRecord>> {
-    current_build_inputs(package_root, output_root, true)
-}
-
-fn current_build_inputs(
-    package_root: &Path,
-    output_root: &Path,
-    generation_only: bool,
-) -> Result<Option<BuildRecord>> {
-    let directories = match fs::read_dir(output_root) {
-        Ok(directories) => directories,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("read the package build output root"),
-    };
-    let inputs = crate::build_record::inputs(package_root)?;
-    for directory in directories {
-        let output = directory?.path();
-        let Ok(build_record) = crate::build_record::read(&output) else {
-            continue;
-        };
-        let matches = if generation_only {
-            build_record.inputs.generation_digest == inputs.generation_digest
-        } else {
-            build_record.inputs.digest == inputs.digest
-        };
-        if !matches
-            || !build_record
-                .outputs
-                .files
-                .keys()
-                .all(|path| output.join(path).is_file())
-            || !build_record
-                .outputs
-                .components
-                .iter()
-                .all(|component| output.join(&component.path).is_file())
-            || !build_record.dependencies.iter().all(|dependency| {
-                let read = if generation_only {
-                    crate::build_record::read_generated
-                } else {
-                    crate::build_record::read_current
-                };
-                read(
-                    &crate::output::dependency_root(package_root, &dependency.id),
-                    &package_output(output_root, &dependency.id),
-                )
-                .is_ok_and(|base| {
-                    base.package.version == dependency.version
-                        && base.outputs.manifest == dependency.digest
-                })
-            })
-        {
-            continue;
-        }
-        // Generation writes a build record before component compilation. Do not
-        // accept that intermediate result after a failed component build.
-        if crate::output::package_workspace(package_root)
-            .join("Cargo.toml")
-            .is_file()
-        {
-            let manifest =
-                PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
-            if !manifest.components.keys().all(|name| {
-                build_record
-                    .outputs
-                    .components
-                    .iter()
-                    .any(|component| &component.name == name)
-            }) {
-                continue;
-            }
-            if !generation_only {
-                crate::components::base_components(
-                    &BuildRequest::new(package_root, output_root, ""),
-                    &manifest,
-                )?;
-            }
-        }
-        return Ok(Some(build_record));
-    }
-    Ok(None)
-}
-
 /// Generate package output before component compilation.
 /// The build record contains no compiled components.
 ///
 /// # Errors
 ///
-/// When the manifest does not compile, when a base package has no current
+/// When the manifest does not compile, when a base package has no completed
 /// build record, when the verification database cannot be created or migrated, when
 /// a statement does not describe or a declared statement type is wider than
 /// the described one, when generation refuses, or when the output cannot be
 /// written.
 pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
-    let package_root = request.package_root.as_path();
-    let inputs = crate::build_record::inputs(package_root)?;
+    let (source, source_paths) = snapshot_source(&request.package_root)?;
+    let package_root = source.path();
     let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)
         .context("parse the authored manifest")?;
     let provisional =
         ManifestSources::from_document(&authored).context("parse the authored manifest")?;
-    let dependencies = dependencies(package_root, &request.output_root, &provisional)?;
+    let dependencies = dependencies(&request.output_root, &provisional)?;
     let bases = crate::inheritance::load_base_manifests(
         &request.output_root,
         &provisional.base_dependencies,
@@ -244,10 +116,17 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
         &provisional,
         &mut authored,
         &bases,
+        &request.output_root,
     )
     .await;
     database.drop().await?;
-    let (canonical, files) = built?;
+    let (canonical, mut files) = built?;
+    for path in source_paths {
+        if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(path) {
+            let bytes = fs::read(source.path().join(entry.key()))?;
+            entry.insert(bytes);
+        }
+    }
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
     let outputs = write_outputs(&package_output, &canonical, &files)?;
@@ -257,15 +136,68 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
             id: provisional.package.id.clone(),
             version: provisional.package.version.clone(),
         },
-        inputs,
         dependencies,
-        generator: crate::build_record::generator(),
+        generator: crate::build_record::generator()?,
         outputs,
     };
-    let path = package_output.join(BUILD_RECORD_FILE);
-    fs::write(&path, build_record.to_bytes())
-        .with_context(|| format!("write {}", path.display()))?;
     Ok(build_record)
+}
+
+/// Freeze the non-Rust inputs before compiling or applying migrations.
+fn snapshot_source(root: &Path) -> Result<(tempfile::TempDir, Vec<PathBuf>)> {
+    ensure!(
+        !root.join("wamn.json").exists(),
+        "{}: author the package in wamn.k",
+        root.display()
+    );
+    let snapshot = tempfile::tempdir()?;
+    let mut directories = vec![PathBuf::new()];
+    let mut paths = Vec::new();
+    while let Some(relative) = directories.pop() {
+        for entry in fs::read_dir(root.join(&relative))? {
+            let entry = entry?;
+            let path = relative.join(entry.file_name());
+            let type_ = entry.file_type()?;
+            let authored_tree = path.starts_with("migrations")
+                || path.starts_with("command")
+                || path.starts_with("query");
+            if type_.is_dir() {
+                if !matches!(
+                    entry.file_name().to_str(),
+                    Some(
+                        "target"
+                            | "node_modules"
+                            | ".git"
+                            | "web"
+                            | "component"
+                            | "data"
+                            | "tests"
+                            | "generated"
+                    )
+                ) {
+                    directories.push(path);
+                }
+            } else if authored_tree
+                || path.extension().is_some_and(|extension| extension == "k")
+                || matches!(path.to_str(), Some("kcl.mod" | "kcl.mod.lock"))
+            {
+                ensure!(
+                    type_.is_file(),
+                    "authored input must be a regular file: {}",
+                    entry.path().display()
+                );
+                let destination = snapshot.path().join(&path);
+                paths.push(path);
+                fs::create_dir_all(
+                    destination
+                        .parent()
+                        .context("source input has no directory")?,
+                )?;
+                fs::write(destination, fs::read(entry.path())?)?;
+            }
+        }
+    }
+    Ok((snapshot, paths))
 }
 
 /// The two passes against the migrated verification database: the canonical
@@ -277,29 +209,33 @@ async fn pass_one_and_two(
     provisional: &ManifestSources,
     authored: &mut Value,
     bases: &[PackageManifest],
+    output_root: &Path,
 ) -> Result<(Vec<u8>, BTreeMap<PathBuf, Vec<u8>>)> {
     // Pass one.
-    migrate(database_url, package_root, provisional).await?;
+    migrate(database_url, package_root, provisional, bases, output_root).await?;
     let sources = provisional.load_sql(package_root)?;
-    let corpus = sources
-        .iter()
-        .map(|source| (source.path.clone(), source.bytes.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let described = describe_statements(database_url, &corpus).await?;
+    let described = describe_statements(
+        database_url,
+        sources
+            .iter()
+            .map(|source| (&source.path, &source.bytes))
+            .collect::<Vec<_>>(),
+    )
+    .await?;
     apply_statement_types(authored, &described)?;
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
     let mut manifest =
         PackageManifest::parse_authored(&typed).context("parse the typed manifest")?;
-    let catalog = introspect_with_manifest(database_url, &manifest).await?;
+    let authored_sql = sources
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+    let catalog = introspect_with_manifest(database_url, &manifest, &authored_sql).await?;
     // The build refuses correctness only (owner ruling 2026-10-18): a missing
     // pagination index is a warning.
     for warning in missing_paged_query_indexes(database_url, &catalog, &manifest).await? {
         eprintln!("warning: {warning}");
     }
-    let authored_sql = sources
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
     crate::generate::derive_model(&catalog, &mut manifest, &authored_sql, bases)
         .context("derive the statement relations")?;
     let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
@@ -312,35 +248,71 @@ async fn pass_one_and_two(
             }
         }
     }
-    let (corpus, grants) =
-        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root)?;
+    let preliminary = crate::StatementTransactionality::from_paths(BTreeMap::new());
+    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &preliminary);
+    let corpus = crate::generate::sql_corpus(&input, &manifest)?;
+    let remaining = corpus
+        .statements
+        .iter()
+        .filter(|(path, _)| !described.contains_key(*path))
+        .collect::<Vec<_>>();
+    let remaining = describe_statements(database_url, remaining).await?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
-    let mut client = wamn_postgres::connect(database_url)
-        .await
-        .context("connect to plan the package statements")?;
-
-    let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
-    drop(client);
-
-    let package =
-        generate_from_manifest(&catalog, &canonical, &manifest, package_root, &verdicts?)?;
-    let mut client = client_bindings(package_root, &manifest, &package)?;
+    let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
+    verdicts.described = described;
+    verdicts.described.extend(remaining);
+    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts);
+    let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
+    let client = client_bindings(&manifest, &package)?;
+    manifest.compiled_operations = package.take_operations();
+    let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
     let mut files = expected_files(&package)?
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    for file in &mut client {
+    for file in &client {
         let relative = Path::new(file.path())
             .strip_prefix("generated")
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
-    record_view_columns(&mut files, &described)?;
     let physical = physical_schema(database_url, package_root, &manifest).await?;
+    if !physical.columns.is_empty() {
+        let history = wamn_schema_control::physical_schema::render(
+            &(&manifest).into(),
+            &[],
+            &physical.columns,
+        )?;
+        let history = history
+            .into_iter()
+            .map(|statement| statement.sql)
+            .collect::<Vec<_>>()
+            .join(";\n");
+        files.insert(PathBuf::from("record-history.sql"), history.into_bytes());
+    }
     files.insert(
         PathBuf::from("physical-schema.json"),
         canonical_json_bytes(&serde_json::to_value(physical)?),
     );
+    files.insert(
+        PathBuf::from("wamn.k"),
+        fs::read(package_root.join(crate::AUTHORED_MANIFEST))?,
+    );
+    for source in sources {
+        files.insert(PathBuf::from(source.path), source.bytes);
+    }
+    let migrations = package_root.join("migrations");
+    if migrations.is_dir() {
+        for entry in fs::read_dir(migrations)? {
+            let path = entry?.path();
+            if path.is_file() {
+                files.insert(
+                    PathBuf::from("migrations").join(path.file_name().context("migration name")?),
+                    fs::read(path)?,
+                );
+            }
+        }
+    }
     Ok((canonical, files))
 }
 
@@ -368,19 +340,19 @@ async fn physical_schema(
             }
         }
     }
-    let mut client = wamn_postgres::connect(database_url).await?;
-
+    let client = wamn_postgres::pool(database_url, 4).await?;
     let result = async {
         let mut columns = BTreeMap::new();
         for (id, model) in &manifest.models {
             if model.owner != manifest.package.id {
                 continue;
             }
-            let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
-                .bind(&model.schema)
-                .bind(&model.table)
-                .fetch_all(&mut client)
-                .await?;
+            let rows =
+                sqlx::query(AssertSqlSafe((SELECT_RELATION_COLUMNS_SQL).to_owned()).into_sql_str())
+                    .bind(&model.schema)
+                    .bind(&model.table)
+                    .fetch_all(&client)
+                    .await?;
             columns.insert(
                 id.clone(),
                 rows.iter()
@@ -399,52 +371,8 @@ async fn physical_schema(
         })
     }
     .await;
-    drop(client);
+    client.close().await;
     result
-}
-
-fn record_view_columns(
-    files: &mut BTreeMap<PathBuf, Vec<u8>>,
-    described: &BTreeMap<String, DescribedStatement>,
-) -> Result<()> {
-    for (path, bytes) in files {
-        if !path.starts_with("source-map") {
-            continue;
-        }
-        let mut map: Value = serde_json::from_slice(bytes)?;
-        let columns = map
-            .get("statements")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .filter_map(|(name, statement)| {
-                let description = described.get(statement.get("path")?.as_str()?)?;
-                let columns = description
-                    .columns
-                    .iter()
-                    .filter(|column| column.view_column)
-                    .map(|column| column.name.clone())
-                    .collect::<Vec<_>>();
-                (!columns.is_empty()).then(|| (name.clone(), columns))
-            })
-            .collect::<BTreeMap<_, _>>();
-        if columns.is_empty() {
-            continue;
-        }
-        if let Some(accessors) = map.get_mut("wamn_accessors").and_then(Value::as_array_mut) {
-            for accessor in accessors {
-                if let Some(columns) = accessor
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .and_then(|name| columns.get(name))
-                {
-                    accessor["sqlx_view_columns"] = serde_json::to_value(columns)?;
-                }
-            }
-        }
-        *bytes = canonical_json_bytes(&map);
-    }
-    Ok(())
 }
 
 /// One warning for each allowed sort of a paged query without its
@@ -498,21 +426,19 @@ async fn missing_paged_query_indexes(
             }
             // The normalized IR sorts columns by name. PostgreSQL retains the
             // definition order that the authored naming rule requires.
-            let mut client = wamn_postgres::connect(database_url)
+            let client = wamn_postgres::pool(database_url, 4)
                 .await
                 .context("connect to name the missing pagination index")?;
-
-            let columns = sqlx::query("SELECT attribute.attname::text
+            let columns = sqlx::query(AssertSqlSafe(("SELECT attribute.attname::text
                      FROM pg_catalog.pg_attribute AS attribute
                      JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
                      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
                      WHERE namespace.nspname = $1 AND relation.relname = $2
                        AND attribute.attnum > 0 AND NOT attribute.attisdropped
                        AND attribute.attname::text = ANY($3::text[])
-                     ORDER BY attribute.attnum").bind(&model.schema).bind(&model.table).bind(vec![field, tie_breaker]).fetch_all(&mut client)
+                     ORDER BY attribute.attnum").to_owned()).into_sql_str()).bind(&model.schema).bind(&model.table).bind(vec![field, tie_breaker]).fetch_all(&client)
                 .await;
-            drop(client);
-
+            client.close().await;
             let columns = columns
                 .context("read the pagination index columns in table-definition order")?
                 .iter()
@@ -532,31 +458,19 @@ async fn missing_paged_query_indexes(
     Ok(warnings)
 }
 
-/// The authored manifest bytes: `wamn.k` compiled, or a hand-written `wamn.json`.
+/// The authored manifest bytes compiled from `wamn.k`.
 fn authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
-    if is_authored(package_root) {
-        compile_authored_manifest(package_root)
-    } else {
-        let path = package_root.join(HAND_WRITTEN_MANIFEST);
-        fs::read(&path).with_context(|| format!("read {}", path.display()))
-    }
+    compile_authored_manifest(package_root)
 }
 
 /// The base packages of an overlay, from the build records of their builds.
-fn dependencies(
-    package_root: &Path,
-    output_root: &Path,
-    manifest: &ManifestSources,
-) -> Result<Vec<BuildDependency>> {
+fn dependencies(output_root: &Path, manifest: &ManifestSources) -> Result<Vec<BuildDependency>> {
     manifest
         .base_dependencies
         .values()
         .map(|dependency| {
-            let base = crate::build_record::read_current(
-                &crate::output::dependency_root(package_root, &dependency.package),
-                &package_output(output_root, &dependency.package),
-            )
-            .with_context(|| format!("build the base package {} first", dependency.package))?;
+            let base = crate::build_record::read(&package_output(output_root, &dependency.package))
+                .with_context(|| format!("build the base package {} first", dependency.package))?;
             ensure!(
                 base.package.id == dependency.package && base.package.version == dependency.version,
                 "the base build is {} {}, and the package pins {} {}",
@@ -749,24 +663,22 @@ async fn migrate(
     database_url: &str,
     package_root: &Path,
     manifest: &ManifestSources,
+    bases: &[PackageManifest],
+    output_root: &Path,
 ) -> Result<()> {
     let mut schemas = manifest.schemas();
     let mut directories = Vec::new();
-    for dependency in manifest.base_dependencies.values() {
-        let root = crate::output::dependency_root(package_root, &dependency.package);
-        let authored: Value = serde_json::from_slice(&authored_manifest(&root)?)?;
-        let base = ManifestSources::from_document(&authored)?;
-        schemas.extend(base.schemas());
-        directories.push(root.join("migrations"));
+    for base in bases {
+        schemas.extend(base.models.values().map(|model| model.schema.clone()));
+        directories.push(package_output(output_root, &base.package.id).join("migrations"));
     }
     schemas.sort();
     schemas.dedup();
     directories.push(package_root.join("migrations"));
 
-    let mut client = wamn_postgres::connect(database_url)
+    let client = wamn_postgres::pool(database_url, 4)
         .await
         .context("connect to the verification database")?;
-
     let result = async {
         if !schemas.is_empty() {
             let quoted = schemas
@@ -784,12 +696,13 @@ async fn migrate(
                 quoted.join(", ")
             )
             .expect("writing to a String cannot fail");
-            sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut client).await.map(drop)
+            sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
+                .await
                 .context("create the package schemas")?;
         }
         // Public platform identity keys support application foreign keys.
         // These verification relations contain no system database or registry data.
-        sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").execute(&mut client).await.map(drop).context("create platform references for package verification")?;
+        sqlx::raw_sql(AssertSqlSafe(("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").to_owned()).into_sql_str()).execute(&client).await.context("create platform references for package verification")?;
         for directory in directories {
             if !directory.exists() {
                 continue;
@@ -804,23 +717,20 @@ async fn migrate(
             for file in files {
                 let sql = fs::read_to_string(&file)
                     .with_context(|| format!("read migration {}", file.display()))?;
-                sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut client).await.map(drop)
+                sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
+                    .await
                     .with_context(|| format!("apply migration {}", file.display()))?;
             }
         }
-        create_history_tables(&mut client, manifest).await
+        create_history_tables(&client, manifest).await
     }
     .await;
-    drop(client);
-
+    client.close().await;
     result
 }
 
 /// Create the history table of each relation the package keeps a log of.
-async fn create_history_tables(
-    client: &mut sqlx::PgConnection,
-    manifest: &ManifestSources,
-) -> Result<()> {
+async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources) -> Result<()> {
     let logged = manifest
         .models
         .values()
@@ -829,23 +739,24 @@ async fn create_history_tables(
     if logged.is_empty() {
         return Ok(());
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DO $application_role$ BEGIN \
+    sqlx::raw_sql(
+        AssertSqlSafe(
+            ("DO $application_role$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
                END IF; \
              EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
              END $application_role$")
-            .to_string(),
-    ))
-    .execute(&mut *client)
+                .to_owned(),
+        )
+        .into_sql_str(),
+    )
+    .execute(client)
     .await
-    .map(drop)
     .context("create the application role")?;
-    let history = sqlx::raw_sql(RECORD_HISTORY_SQL)
-        .execute(&mut *client)
-        .await
-        .map(drop);
+    let history = sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
+        .execute(client)
+        .await;
     // The frozen bootstrap's advisory lock is database-local, but roles are
     // cluster-wide. A concurrent creator has committed before this collision
     // returns; the failed implicit transaction left no history DDL behind.
@@ -858,34 +769,33 @@ async fn create_history_tables(
                 && error.constraint() == Some("pg_authid_rolname_index")
         })
     {
-        sqlx::raw_sql(RECORD_HISTORY_SQL)
-            .execute(&mut *client)
+        sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
+            .execute(client)
             .await
-            .map(drop)
     } else {
         history
     }
     .context("apply record-history.sql")?;
-    sqlx::raw_sql(RECORD_HISTORY_APP_GRANTS_SQL)
-        .execute(&mut *client)
+    sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_APP_GRANTS_SQL).to_owned()).into_sql_str())
+        .execute(client)
         .await
-        .map(drop)
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_schema_control::physical_schema::history_table_sql(&model.into()),
-        ))
-        .execute(&mut *client)
+        sqlx::raw_sql(
+            AssertSqlSafe(wamn_schema_control::physical_schema::history_table_sql(
+                &model.into(),
+            ))
+            .into_sql_str(),
+        )
+        .execute(client)
         .await
-        .map(drop)
         .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }
     Ok(())
 }
 
 fn database_name(database_url: &str) -> Result<String> {
-    let url = url::Url::parse(database_url).context("parse the database URL")?;
-    Ok(url.path().trim_start_matches('/').to_owned())
+    Ok(wamn_postgres::identity(database_url)?.1)
 }
 
 /// A database that one build creates on the server and drops at its end.
@@ -907,8 +817,7 @@ impl VerificationDatabase {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
-        let mut url = url::Url::parse(server_url).context("parse the PostgreSQL server URL")?;
-        url.set_path(&name);
+        let url = wamn_postgres::database_configuration(server_url, &name)?;
         execute_on_server(
             server_url,
             &format!(
@@ -921,7 +830,7 @@ impl VerificationDatabase {
         Ok(Self {
             server_url: server_url.to_owned(),
             name,
-            url: url.into(),
+            url,
         })
     }
 
@@ -939,23 +848,19 @@ impl VerificationDatabase {
 }
 
 async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
-    let mut client = wamn_postgres::connect(server_url)
+    let client = wamn_postgres::pool(server_url, 4)
         .await
         .context("connect to the PostgreSQL server")?;
-
-    let result = sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string()))
-        .execute(&mut client)
-        .await
-        .map(drop);
-    drop(client);
-
-    result.with_context(|| format!("execute {sql}"))
+    let result = sqlx::raw_sql(AssertSqlSafe((sql).to_owned()).into_sql_str())
+        .execute(&client)
+        .await;
+    client.close().await;
+    result.map(|_| ()).with_context(|| format!("execute {sql}"))
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
-/// and nothing else except the SQLx metadata. A file whose bytes are unchanged
-/// keeps its modification time. The build record goes first, so an interrupted
-/// build leaves none.
+/// and the captured authored inputs. The completed record is written by xtask
+/// after component compilation.
 fn write_outputs(
     package_output: &Path,
     canonical: &[u8],
@@ -983,44 +888,12 @@ fn write_outputs(
     })
 }
 
-/// Build the package's web client with Vite into `dist`.
-///
-/// # Errors
-///
-/// Refuses a missing web source, a failed process, or an unreadable output path.
-pub async fn build_web_client(package_root: &Path, dist: &Path) -> Result<()> {
-    let source = package_root.join(WEB_SOURCE);
-    ensure!(
-        source.join("package.json").is_file(),
-        "{} has no web/package.json",
-        package_root.display()
-    );
-    let web = std::path::absolute(dist).with_context(|| format!("resolve {}", dist.display()))?;
-    let output = tokio::process::Command::new("pnpm")
-        .current_dir(&source)
-        .args(["run", "build", "--outDir"])
-        .arg(&web)
-        .arg("--emptyOutDir")
-        .output()
-        .await
-        .with_context(|| format!("run pnpm build in {}", source.display()))?;
-    ensure!(
-        output.status.success(),
-        "pnpm build in {} failed:\n{}{}",
-        source.display(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::describe::DescribedColumn;
-    use crate::materialize::existing_files;
 
     #[tokio::test]
     async fn verification_migration_accepts_a_platform_file_reference() {
@@ -1046,16 +919,17 @@ mod tests {
             database.url(),
             &root,
             &ManifestSources::from_document(&serde_json::to_value(&manifest).unwrap()).unwrap(),
+            &[],
+            &default_output_root(&root),
         )
         .await;
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
-        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
-
-        wamn_schema_introspection::postgres::read_catalog(&mut client, &["files_fixture"])
+        let client = wamn_postgres::pool(database.url(), 4).await.unwrap();
+        wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
             .await
             .unwrap();
-        let error = sqlx::raw_sql("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").execute(&mut client).await.map(drop).unwrap_err();
+        let error = sqlx::raw_sql(AssertSqlSafe(("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").to_owned()).into_sql_str()).execute(&client).await.unwrap_err();
         assert_eq!(
             error
                 .as_database_error()
@@ -1063,111 +937,7 @@ mod tests {
                 .as_deref(),
             Some("23503")
         );
-        drop(client);
-    }
-
-    #[tokio::test]
-    async fn current_build_preserves_files_and_changed_inputs_rebuild() {
-        // Use the package built by the pagination-index test below.
-        let manifest = json!({
-            "package": {"id": "sort_fixture", "version": "0.1.0"},
-            "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
-            "connections": {},
-            "components": {"fixture": {"connections": ["postgres"]}},
-            "models": {"order_row": {
-                "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
-                "server_owned_fields": [],
-                "audit_log": {"columns": ["created_at"], "retention": "none"},
-                "operations": {"query": {
-                    "feed": false,
-                    "permission": "order_row.query", "result": "page",
-                    "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
-                    "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},
-                    "limit": {"default": 100, "minimum": 1, "maximum": 100}
-                }}
-            }}
-        });
-        let manifest = serde_json::to_vec(&manifest).unwrap();
-        PackageManifest::from_slice(&manifest).expect("parse the test manifest");
-        let database = wamn_test_postgres::database();
-        let root = std::env::temp_dir().join(format!("wamn-current-build-{}", std::process::id()));
-        fs::create_dir_all(root.join("package")).unwrap();
-        let package = root.join("package");
-        fs::write(package.join("wamn.json"), manifest).unwrap();
-        fs::create_dir(package.join("migrations")).unwrap();
-        fs::write(
-            package.join("migrations/0001_initial.sql"),
-            "CREATE TABLE receiving.order_row (
-                 id uuid CONSTRAINT order_row_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-                 status text NOT NULL DEFAULT 'open',
-                 created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
-             );",
-        )
-        .unwrap();
-        fs::write(
-            package.join("migrations/0002_default_index.sql"),
-            "CREATE INDEX order_row_id_created_at_idx ON receiving.order_row (created_at, id);",
-        )
-        .unwrap();
-        let request = BuildRequest::new(&package, &root.join("target"), database.url());
-        let first = build_package(&request).await.expect("build the package");
-        let output = package_output(&request.output_root, &first.package.id);
-        let snapshot = || {
-            existing_files(&output)
-                .unwrap()
-                .into_iter()
-                .map(|relative| {
-                    let path = output.join(&relative);
-                    (
-                        relative,
-                        (
-                            fs::read(&path).unwrap(),
-                            fs::metadata(path).unwrap().modified().unwrap(),
-                        ),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>()
-        };
-        // Fix old mtimes so even an immediate identical rewrite fails the test.
-        for relative in existing_files(&output).unwrap() {
-            fs::File::options()
-                .write(true)
-                .open(output.join(relative))
-                .unwrap()
-                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
-                .unwrap();
-        }
-        let before = snapshot();
-        let second = build_package(&request)
-            .await
-            .expect("reuse the current build");
-        assert_eq!(first, second);
-        assert_eq!(before, snapshot(), "a current build wrote an output file");
-        fs::write(package.join("input.txt"), "changed input").unwrap();
-        let rebuilt = build_package(&request)
-            .await
-            .expect("rebuild the changed input");
-        assert_ne!(first.inputs.digest, rebuilt.inputs.digest);
-        assert_ne!(
-            before[Path::new(BUILD_RECORD_FILE)],
-            snapshot()[Path::new(BUILD_RECORD_FILE)]
-        );
-        fs::remove_file(output.join(COMPILED_MANIFEST_NAME)).unwrap();
-        build_package(&request)
-            .await
-            .expect("replace a missing output");
-        assert!(output.join(COMPILED_MANIFEST_NAME).is_file());
-        fs::create_dir(package.join("web")).unwrap();
-        fs::write(package.join("web/package.json"), "{}").unwrap();
-        let mut with_web_source = crate::build_record::read(&output).unwrap();
-        with_web_source.inputs = crate::build_record::inputs(&package).unwrap();
-        fs::write(output.join(BUILD_RECORD_FILE), with_web_source.to_bytes()).unwrap();
-        assert!(
-            current_build(&request.package_root, &request.output_root)
-                .unwrap()
-                .is_some()
-        );
-        fs::remove_dir_all(root).unwrap();
+        client.close().await;
     }
 
     #[tokio::test]
@@ -1247,10 +1017,12 @@ mod tests {
             database.url(),
             root,
             &ManifestSources::from_document(&serde_json::to_value(manifest).unwrap()).unwrap(),
+            &[],
+            &default_output_root(root),
         )
         .await
         .expect("migrate the test package");
-        let catalog = introspect_with_manifest(database.url(), manifest)
+        let catalog = introspect_with_manifest(database.url(), manifest, &[])
             .await
             .expect("introspect the migrated package");
         missing_paged_query_indexes(database.url(), &catalog, manifest)
@@ -1377,31 +1149,6 @@ mod tests {
                 "{error:#}"
             );
         }
-    }
-
-    #[test]
-    fn view_column_evidence_reaches_only_its_statement_accessor() {
-        let path = PathBuf::from("source-map/adjust.json");
-        let mut files = BTreeMap::from([(
-            path.clone(),
-            serde_json::to_vec(&json!({
-                "statements": {
-                    "select_quantity": {"path": "command/adjust/select_quantity.sql"},
-                    "table_read": {"path": "query/table.sql"}
-                },
-                "wamn_accessors": [{"name": "select_quantity"}, {"name": "table_read"}]
-            }))
-            .unwrap(),
-        )]);
-        let mut description = described(Some(true));
-        description.values_mut().next().unwrap().columns[0].view_column = true;
-        record_view_columns(&mut files, &description).unwrap();
-        let map: Value = serde_json::from_slice(&files[&path]).unwrap();
-        assert_eq!(
-            map["wamn_accessors"][0]["sqlx_view_columns"],
-            json!(["quantity"])
-        );
-        assert!(map["wamn_accessors"][1].get("sqlx_view_columns").is_none());
     }
 }
 

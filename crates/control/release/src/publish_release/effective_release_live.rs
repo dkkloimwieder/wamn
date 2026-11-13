@@ -35,7 +35,7 @@ struct PackageInput {
     id: &'static str,
     version: &'static str,
     root: PathBuf,
-    component_declaration: PathBuf,
+    component: &'static str,
     component_bytes: PathBuf,
     expected_component_digest: Option<String>,
 }
@@ -60,7 +60,7 @@ fn packages() -> [PackageInput; 2] {
         PackageInput {
             id: wamn_fixture_package::PACKAGE_ID,
             version: package_version(),
-            component_declaration: base.join("publication/components/fixture.json.in"),
+            component: "fixture",
             root: base,
             component_bytes: std::env::var_os(BASE_WASM_ENV)
                 .map(PathBuf::from)
@@ -70,8 +70,7 @@ fn packages() -> [PackageInput; 2] {
         PackageInput {
             id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
             version: package_version(),
-            component_declaration: overlay
-                .join("publication/components/fixture_overlay.json.in"),
+            component: "fixture_overlay",
             root: overlay,
             component_bytes: std::env::var_os(OVERLAY_WASM_ENV)
                 .map(PathBuf::from)
@@ -93,13 +92,12 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                 .unwrap_or_else(|error| {
                     panic!("read {}@{} base pins: {error}", input.id, input.version)
                 });
-        let declaration = wamn_package_control::component_declaration::render_declaration_document(
-            &input.component_declaration,
+        let declaration = wamn_package_control::component_declaration::render_package_declaration(
+            &input.root,
+            input.component,
             PROJECT_ENV_KEY,
         )
-        .unwrap_or_else(|error| {
-            panic!("render {}: {error}", input.component_declaration.display())
-        });
+        .unwrap_or_else(|error| panic!("render {}: {error}", input.component));
         let declaration: ComponentDeclaration = serde_json::from_value(declaration)
             .expect("the package-owned component declaration is strict");
         let bytes = std::fs::read(&input.component_bytes)
@@ -160,10 +158,6 @@ fn base_and_overlay_project_admitted_routes() {
         .collect::<Vec<_>>();
     let (manifests, types) = read_package_manifests(&roots)
         .expect("consume exact package manifests and package contracts");
-    let manifest_paths = inputs
-        .iter()
-        .map(|input| wamn_compiler::package_manifest_path(&input.root))
-        .collect::<Vec<_>>();
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
@@ -171,11 +165,8 @@ fn base_and_overlay_project_admitted_routes() {
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.
     let read = |input: &PackageInput| {
-        read_package_attachments(
-            &[input.root.join("publication/attachments.json")],
-            &manifest_paths,
-        )
-        .expect("read the package attachment document")
+        read_package_attachments(&[input.root.join("publication/attachments.json")])
+            .expect("read the package attachment document")
     };
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));

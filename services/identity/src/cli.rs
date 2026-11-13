@@ -3,6 +3,7 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use serde_json::json;
@@ -83,7 +84,7 @@ enum Command {
     /// Serve public keys and configured user authentication endpoints over HTTPS.
     Serve {
         #[command(flatten)]
-        mail: MailArgs,
+        mail: Box<MailArgs>,
         #[arg(long, env = "WAMN_IDENTITY_BIND", default_value = "0.0.0.0:8443")]
         bind: SocketAddr,
         #[arg(long, env = "WAMN_IDENTITY_TLS_CERT")]
@@ -96,6 +97,9 @@ enum Command {
         /// Mounted provisioner-generated target file; repeat for each admitted audience.
         #[arg(long)]
         session_target: Vec<PathBuf>,
+        /// Rotate signing keys at this interval. The default is 30 days.
+        #[arg(long, default_value_t = crate::DEFAULT_KEY_ROTATION.as_secs())]
+        key_rotation_seconds: u64,
     },
     /// Commit a new public generation without activating it.
     Publish,
@@ -130,6 +134,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         tls_key,
         operator_ca,
         session_target,
+        key_rotation_seconds,
     } = cli.command
     {
         let config = if let Some(path) = mail.local_mail {
@@ -173,7 +178,9 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
                     .map_err(|_| IdentityServiceError::new("identity session target refused"))?,
             );
         }
-        let config = config.with_session_targets(targets)?;
+        let config = config
+            .with_session_targets(targets)?
+            .with_key_rotation(std::time::Duration::from_secs(key_rotation_seconds))?;
         let certificate = tokio::fs::read(tls_cert)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;
@@ -210,6 +217,20 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             .cloned()
             .map(wamn_broker::kv_memory::keep_buckets);
         let service = IdentityService::connect(config.with_auth_changes(changes)).await?;
+        let rotation_state = Arc::clone(&service.inner);
+        rotation_state.rotate_keys().await?;
+        let rotation = async {
+            let mut poll = tokio::time::interval(
+                std::time::Duration::from_secs(60).min(rotation_state.key_rotation),
+            );
+            poll.tick().await;
+            loop {
+                poll.tick().await;
+                if let Err(error) = rotation_state.rotate_keys().await {
+                    tracing::error!(%error, "scheduled signing key rotation failed");
+                }
+            }
+        };
         let listener = TcpListener::bind(bind)
             .await
             .map_err(|_| IdentityServiceError::new("bind identity HTTPS listener failed"))?;
@@ -224,6 +245,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         }
         return tokio::select! {
             result = serve(listener, service, tls) => result,
+            () = rotation => unreachable!("rotation runs until shutdown"),
             result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),
         };
     }

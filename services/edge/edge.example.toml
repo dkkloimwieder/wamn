@@ -29,7 +29,7 @@ db = "/var/lib/wamn-edge/edge.db"
 
 [http]
 route_host = "edge.localhost"
-listen = "0.0.0.0:8080"
+listen = "127.0.0.1:8080"
 
 # The device loop. Leave out this section to serve routes only.
 [device]

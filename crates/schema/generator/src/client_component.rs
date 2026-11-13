@@ -26,12 +26,6 @@ pub struct ClientComponentError {
 pub enum ClientComponentErrorType {
     /// A screen has a shape that wfe cannot describe.
     UnwrittenRole,
-    /// A table column that a table definition cannot state: it is not a member
-    /// of its row, or its type is not one of the frozen `sql-value` names.
-    UnwrittenColumn,
-    /// A revision input of a form that no declared path supplies: no read is
-    /// bound to it, and it names no reference input whose record it guards.
-    UnsuppliedRevision,
     /// An input declares a narrowing that no served list of its model takes.
     UnsatisfiedNarrowing,
 }
@@ -42,8 +36,6 @@ impl ClientComponentErrorType {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnwrittenRole => "unwritten_role",
-            Self::UnwrittenColumn => "unwritten_column",
-            Self::UnsuppliedRevision => "unsupplied_revision",
             Self::UnsatisfiedNarrowing => "unsatisfied_narrowing",
         }
     }

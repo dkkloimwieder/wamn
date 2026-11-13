@@ -40,6 +40,21 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::counter::get::Action for Component {}
+impl generated::counter::query::Action for Component {}
+impl generated::counter::create::Action for Component {}
+impl generated::counter::update::Action for Component {}
+impl generated::counter::delete::Action for Component {}
+impl generated::numbered_label::create::Action for Component {}
+impl generated::widget::get::Action for Component {}
+impl generated::widget::query::Action for Component {}
+impl generated::widget::create::Action for Component {}
+impl generated::widget::update::Action for Component {}
+impl generated::widget::delete::Action for Component {}
+impl generated::widget_maker::get::Action for Component {}
+impl generated::widget_maker::query::Action for Component {}
+impl generated::widget_tag::update::Action for Component {}
+
 export!(Component);
 
 /// One declared detail member of a refusal, spelled as the codecs read it.

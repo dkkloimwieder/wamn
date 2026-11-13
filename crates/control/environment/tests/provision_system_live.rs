@@ -120,7 +120,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     .map(drop)
     .unwrap();
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
-        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
+        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{},"applications": {}}"#,
     ).unwrap();
     let platform = wamn_environment_control::environment::Platform {
         system_database_url: apply_input,
@@ -1274,7 +1274,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         events: None,
         auth_nats: None,
     };
-    let document = EnvironmentDocument::from_json(br#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#).unwrap();
+    let document = EnvironmentDocument::from_json(br#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"applications":{}}"#).unwrap();
     let mut databases = Vec::new();
     for env in ["dev", "other"] {
         let name =

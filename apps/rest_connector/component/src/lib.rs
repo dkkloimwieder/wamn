@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn the_authored_mapping_preserves_due_even_without_items() {
         let wiring: Value =
-            serde_json::from_str(include_str!("../../publication/wirings/rest_item.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/workflows/rest_item.json")).unwrap();
         let due = "2026-10-21T12:00:00Z";
         for items in [json!([]), json!([{"id": "1", "name": "one"}])] {
             let mapped = evaluate(

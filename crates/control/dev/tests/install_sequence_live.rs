@@ -52,7 +52,7 @@ fn database_url(url: &str, database: &str) -> anyhow::Result<String> {
 
 fn document() -> EnvironmentDocument {
     EnvironmentDocument::from_json(
-        br#"{"org":"install-sequence","project":"fixture","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
+        br#"{"org":"install-sequence","project":"fixture","env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,"integrations":{},"applications": {}}"#,
     ).unwrap()
 }
 
@@ -201,7 +201,8 @@ fn package_fixture(work: &Path) -> anyhow::Result<PackageRoot> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../package/tests/fixtures/apply_package/base");
     let path = work.join("package");
     std::fs::create_dir_all(path.join("migrations"))?;
-    for file in ["wamn.json", "migrations/0001_initial.sql"] {
+    std::fs::create_dir_all(path.join("generated"))?;
+    for file in ["generated/wamn.json", "migrations/0001_initial.sql"] {
         std::fs::copy(source.join(file), path.join(file))?;
     }
     wamn_test_infrastructure::fixture_digest::write_build_record(&path);
@@ -225,46 +226,6 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
     })
     .await
     .context("4.13 package Job applies the package as postgres")?;
-    let mut client = connect(project_url).await?;
-    // Reuse the package fixture and the production builders used by provision/tests/cdc.rs.
-    // Derive access evidence from the installed fixture, excluding the two control maps.
-    let fields = sqlx::query(
-        "SELECT c.relname::text, array_agg(a.attname::text ORDER BY a.attnum) \
-         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
-         JOIN pg_attribute a ON a.attrelid=c.oid \
-         WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped \
-         AND c.relname NOT IN ('wamn_entities','wamn_cdc_exclusions') GROUP BY c.relname",
-    )
-    .bind(&SCHEMA)
-    .fetch_all(&mut client)
-    .await?
-    .into_iter()
-    .map(|row| {
-        wamn_compiler::DataAccessRelationFields::new(
-            SCHEMA,
-            row.get::<String, _>(0),
-            row.get::<Vec<String>, _>(1),
-        )
-    })
-    .collect::<Vec<_>>();
-    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
-        &fields,
-        &std::fs::read(package.path.join("wamn.json"))?,
-    )?;
-    let evidence = package.path.join(wamn_compiler::DATA_ACCESS_OVERLAY_PATH);
-    std::fs::create_dir_all(evidence.parent().unwrap())?;
-    std::fs::write(evidence, overlay.canonical_bytes())?;
-    wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(
-        wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: vec![package.clone()],
-            database_url: project_url.into(),
-            org: ORG.into(),
-            project: PROJECT.into(),
-            environment: ENV.into(),
-        },
-    )
-    .await
-    .context("4.13 package Job reconciles data access as postgres")?;
     Ok(())
 }
 
@@ -276,7 +237,8 @@ async fn step_4_17_env_apply_run_plane_and_package_job_maps(
     package: &PackageRoot,
     database: &str,
 ) -> anyhow::Result<()> {
-    let manifest = PackageManifest::from_slice(&std::fs::read(package.path.join("wamn.json"))?)?;
+    let manifest =
+        PackageManifest::from_slice(&std::fs::read(package.path.join("generated/wamn.json"))?)?;
     ensure_project_database(platform, &document(), &[manifest], admin, system_url)
         .await
         .context("4.17 env_apply_run_plane as the project database owner")?;

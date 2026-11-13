@@ -5,10 +5,8 @@
 //! `push-package` verifies an authored package before it pushes anything:
 //! the policy contract of `generated/wamn.json` is satisfied, the migrations
 //! plan, and every component admits against its built bytes, its declaration
-//! and the generated statement facts. A component is one the package owns or a
-//! palette component its wirings name; `outputs.components` of the package's
-//! `build.json` names its bytes. A package without a `build.json`, or with one
-//! whose `inputs.digest` differs from the tree, refuses: run `wamn build`.
+//! and the generated statement facts. A component is one the package owns; `outputs.components` of the package's
+//! `build.json` names its bytes. A package without a `build.json` refuses: run `wamn build`.
 //! It reads the tag `<package_id>-<version>` first: a tag with another digest
 //! refuses, and the same digest is already present, so nothing is pushed
 //! again. Then it pushes each component as its own OCI artifact under its
@@ -32,7 +30,7 @@ use plan::{
     image_manifest, package_coordinate, physical_path, refuse_workflow_declarations, tar_layer,
 };
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Component as PathComponent, Path, PathBuf};
@@ -51,10 +49,7 @@ use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 
 use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
-use crate::component_declaration::{
-    authored_base_digests, declared_platform_packages, render_declaration_document,
-    render_palette_declaration,
-};
+use crate::component_declaration::authored_base_digests;
 use wamn_digest::bytes_sha256;
 pub use wamn_package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
@@ -85,19 +80,16 @@ const MANIFEST_TITLE: &str = "wamn.json";
 /// package's output root (`physical_path`).
 pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
     ("migrations", &["migrations"]),
-    ("publication", &["publication"]),
+    ("publication", &["generated/publication"]),
     (
         "sources",
         &[
             AUTHORED_MANIFEST,
             "command",
             "query",
-            "generated/platform-policy/data-access.json",
-            "generated/contracts",
             wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
             wamn_compiler::PHYSICAL_SCHEMA_PATH,
             "generated/sql",
-            "generated/publication",
             "generated/routes",
         ],
     ),
@@ -106,10 +98,6 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
 /// Where an unpacked artifact keeps its component descriptors, one
 /// `<name>.json` each.
 pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
-
-/// The platform component declarations, relative to a package root under
-/// `apps/`. Each `<area>/<crate>/declaration.json.in` names its component.
-pub const PLATFORM_DIRECTORY: &str = "../platform";
 
 /// The project that admission writes into a component target. A package
 /// artifact is project-free, and a descriptor drops the target.
@@ -156,7 +144,6 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
-    wamn_compiler::build_record::require_current(root)?;
     crate::component_admission::physical_schema(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
@@ -166,7 +153,7 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
             bytes,
         })
         .collect();
-    pack_layers(root, &BTreeMap::new(), descriptors)
+    pack_layers(root, descriptors)
 }
 
 /// The component descriptors of the unpacked artifact at `root`, sorted by
@@ -224,22 +211,14 @@ pub(crate) async fn connection_components(
     }
     let output = wamn_compiler::output_root(root);
     let build_record = wamn_compiler::build_record::read(&output)?;
-    let target = ComponentPackageCoordinate::new(
-        ADMISSION_PROJECT_ENV_KEY,
-        &manifest.package.id,
-        &manifest.package.version,
-    )?;
     source_components(root, manifest, &build_record)?
         .into_iter()
         .map(|source| {
-            let document = match source.template {
-                ComponentTemplate::Owned(path) => {
-                    render_declaration_document(&path, ADMISSION_PROJECT_ENV_KEY)?
-                }
-                ComponentTemplate::Palette {
-                    path, store_alias, ..
-                } => render_palette_declaration(&path, &target, store_alias.as_deref())?,
-            };
+            let document = crate::component_declaration::render_package_declaration(
+                root,
+                &source.name,
+                ADMISSION_PROJECT_ENV_KEY,
+            )?;
             let declaration: ComponentDeclaration = serde_json::from_value(document)?;
             let bytes = std::fs::read(source.file).context("read package component binary")?;
             let names =
@@ -299,25 +278,6 @@ pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::apply_package:
     })
 }
 
-/// The committed record of a package's tag and built artifact digest, beside
-/// its `wamn.k` (wamn-vl6im). Registry tags are immutable, so a package whose
-/// bytes change under an unchanged tag cannot be pushed again.
-pub const PACKAGE_DIGEST_FILE: &str = "package.digest";
-
-/// Pack the built package at `root` and write `<tag> <digest>` to its
-/// [`PACKAGE_DIGEST_FILE`]. Returns the line that it wrote.
-///
-/// # Errors
-///
-/// When the package does not pack or the file cannot be written.
-pub fn record_package_digest(root: &Path) -> anyhow::Result<String> {
-    let packed = pack_package(root)?;
-    let line = format!("{} {}\n", packed.tag(), packed.digest);
-    let path = root.join(PACKAGE_DIGEST_FILE);
-    std::fs::write(&path, &line).with_context(|| format!("write {}", path.display()))?;
-    Ok(line)
-}
-
 /// The package artifact digest of the package at `root`, the key of its stage
 /// evidence and stage progress (docs/operations/building.md#reading-a-pushed-package): the
 /// offline manifest digest of the tree as it is ([`pack_package`]).
@@ -325,13 +285,8 @@ pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
     Ok(pack_package(root)?.digest)
 }
 
-/// Pack the tree at `root` with `publication` files added to the publication
-/// layer and `descriptors` as the descriptor layers.
-fn pack_layers(
-    root: &Path,
-    publication: &BTreeMap<String, Vec<u8>>,
-    mut descriptors: Vec<DescriptorFile>,
-) -> anyhow::Result<PackedPackage> {
+/// Pack the compiled output with component descriptor layers.
+fn pack_layers(root: &Path, mut descriptors: Vec<DescriptorFile>) -> anyhow::Result<PackedPackage> {
     let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -349,7 +304,7 @@ fn pack_layers(
         for path in paths {
             collect_files(root, path, &mut files)?;
         }
-        let mut entries = files
+        let entries = files
             .iter()
             .map(|(name, path)| {
                 let data =
@@ -357,16 +312,6 @@ fn pack_layers(
                 Ok((name.clone(), data))
             })
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-        if title == "publication" {
-            for (name, data) in publication {
-                ensure!(
-                    !entries.contains_key(name),
-                    "{} has {name}; push-package copies the platform template",
-                    root.display()
-                );
-                entries.insert(name.clone(), data.clone());
-            }
-        }
         layers.push(PackedLayer {
             media_type: PACKAGE_TAR_MEDIA_TYPE.to_owned(),
             annotations: BTreeMap::from([(TITLE_ANNOTATION.to_owned(), title.to_owned())]),
@@ -441,187 +386,36 @@ fn collect_files(
     Ok(())
 }
 
-/// Where the declaration of one component comes from.
-#[derive(Debug)]
-enum ComponentTemplate {
-    /// `publication/components/<name>.json.in` of the package.
-    Owned(PathBuf),
-    /// The platform declaration of a palette component that a wiring names,
-    /// with the one store alias the wirings give it.
-    Palette {
-        path: PathBuf,
-        bytes: Vec<u8>,
-        store_alias: Option<String>,
-    },
-}
-
-/// One component the package pushes: its `build.json` entry and its template.
+/// One component named by the compiled package.
 #[derive(Debug)]
 struct SourceComponent {
     name: String,
     file: PathBuf,
     sha256: String,
-    template: ComponentTemplate,
 }
-
-/// The components that `manifest` owns or a wiring of `publication/wirings/`
-/// names, sorted by name, with their entries in `outputs.components` of the
-/// package's `build.json`. A missing build record, a build record whose `inputs.digest`
-/// differs from the tree, a name without an entry, a palette component without
-/// exactly one platform declaration, and a palette component with two store
-/// aliases refuse. The bytes of each entry are validated against its digest when
-/// they are read (§7.2: never by timestamp).
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
-    build_record: &wamn_compiler::build_record::BuildRecord,
+    record: &wamn_compiler::build_record::BuildRecord,
 ) -> anyhow::Result<Vec<SourceComponent>> {
-    let wired = wiring_components(root)?;
-    let mut templates = BTreeMap::new();
-    for name in manifest.components.keys() {
-        templates.insert(
-            name.clone(),
-            ComponentTemplate::Owned(
-                root.join("publication/components")
-                    .join(format!("{name}.json.in")),
-            ),
-        );
-    }
-    for (name, aliases) in &wired {
-        if templates.contains_key(name) {
-            continue;
-        }
-        ensure!(
-            aliases.len() <= 1,
-            "the wirings give palette component {name} {} store aliases {aliases:?}, not one",
-            aliases.len()
-        );
-        let (path, bytes) = platform_template(root, name)?;
-        templates.insert(
-            name.clone(),
-            ComponentTemplate::Palette {
-                path,
-                bytes,
-                store_alias: aliases.first().cloned(),
-            },
-        );
-    }
     let output = wamn_compiler::output_root(root);
-    templates
-        .into_iter()
-        .map(|(name, template)| {
-            let entry = build_record
+    manifest
+        .components
+        .keys()
+        .map(|name| {
+            let entry = record
                 .outputs
                 .components
                 .iter()
-                .find(|entry| entry.name == name)
-                .with_context(|| {
-                    format!(
-                        "build.json of {} records no component {name}; run wamn build again",
-                        root.display()
-                    )
-                })?;
+                .find(|entry| &entry.name == name)
+                .with_context(|| format!("build.json records no component {name}"))?;
             Ok(SourceComponent {
+                name: name.clone(),
                 file: output.join(&entry.path),
                 sha256: entry.sha256.clone(),
-                name,
-                template,
             })
         })
         .collect()
-}
-
-/// The component names of the nodes of every wiring in `publication/wirings/`,
-/// each with the `params.store_alias` values its nodes give it.
-pub fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {
-    let directory = root.join("publication/wirings");
-    let mut names = BTreeMap::<String, BTreeSet<String>>::new();
-    let entries = match std::fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(names),
-        Err(error) => return Err(error).with_context(|| format!("read {}", directory.display())),
-    };
-    for entry in entries {
-        let path = entry
-            .with_context(|| format!("read {}", directory.display()))?
-            .path();
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let wiring: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
-        for node in wiring
-            .get("nodes")
-            .and_then(serde_json::Value::as_object)
-            .into_iter()
-            .flat_map(|nodes| nodes.values())
-        {
-            // A cross-package node resolves through the release, not this package.
-            if node.get("operation-dependency").is_some() {
-                continue;
-            }
-            let component = node
-                .get("component")
-                .and_then(serde_json::Value::as_str)
-                .with_context(|| format!("a node of {} names no component", path.display()))?;
-            let aliases = names.entry(component.to_owned()).or_default();
-            if let Some(alias) = node
-                .pointer("/params/store_alias")
-                .and_then(serde_json::Value::as_str)
-            {
-                aliases.insert(alias.to_owned());
-            }
-        }
-    }
-    Ok(names)
-}
-
-/// The declaration template of the platform component `name`: the one
-/// `declaration.json.in` under [`PLATFORM_DIRECTORY`] whose `component` is
-/// `name`.
-pub fn platform_template(root: &Path, name: &str) -> anyhow::Result<(PathBuf, Vec<u8>)> {
-    let platform = root.join(PLATFORM_DIRECTORY);
-    let mut found = Vec::new();
-    for area in
-        std::fs::read_dir(&platform).with_context(|| format!("read {}", platform.display()))?
-    {
-        let area = area
-            .with_context(|| format!("read {}", platform.display()))?
-            .path();
-        if !area.is_dir() {
-            continue;
-        }
-        for crate_directory in
-            std::fs::read_dir(&area).with_context(|| format!("read {}", area.display()))?
-        {
-            let path = crate_directory
-                .with_context(|| format!("read {}", area.display()))?
-                .path()
-                .join("declaration.json.in");
-            if !path.is_file() {
-                continue;
-            }
-            let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-            let declaration: serde_json::Value = serde_json::from_slice(&bytes)
-                .with_context(|| format!("parse {}", path.display()))?;
-            if declaration
-                .get("component")
-                .and_then(serde_json::Value::as_str)
-                == Some(name)
-            {
-                found.push((path, bytes));
-            }
-        }
-    }
-    match <[(PathBuf, Vec<u8>); 1]>::try_from(found) {
-        Ok([template]) => Ok(template),
-        Err(found) => bail!(
-            "{} platform declarations name component {name}, not one",
-            found.len()
-        ),
-    }
 }
 
 /// A rendered declaration in a private file, removed on drop.
@@ -678,8 +472,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
-    let build_record =
-        wamn_compiler::build_record::read_current(root, &wamn_compiler::output_root(root))?;
+    let build_record = wamn_compiler::build_record::read(&wamn_compiler::output_root(root))?;
     let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -700,39 +493,17 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         .context("plan the package migrations")?;
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;
-    let target = ComponentPackageCoordinate::new(
-        ADMISSION_PROJECT_ENV_KEY,
-        manifest.package.id.clone(),
-        manifest.package.version.clone(),
-    )
-    .context("name the admission target")?;
-    let mut publication = BTreeMap::new();
     let mut descriptors = Vec::new();
     let mut components = Vec::new();
     for source in source_components(root, &manifest, &build_record)? {
-        let (document, platform_packages) = match &source.template {
-            ComponentTemplate::Owned(template) => (
-                render_declaration_document(template, ADMISSION_PROJECT_ENV_KEY)?,
-                OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec(),
-            ),
-            ComponentTemplate::Palette {
-                path,
-                bytes,
-                store_alias,
-            } => {
-                publication.insert(
-                    format!("publication/components/{}.json.in", source.name),
-                    bytes.clone(),
-                );
-                let document = render_palette_declaration(path, &target, store_alias.as_deref())?;
-                let packages = declared_platform_packages(path, &document)?;
-                (document, packages)
-            }
-        };
+        let document = crate::component_declaration::render_package_declaration(
+            root,
+            &source.name,
+            ADMISSION_PROJECT_ENV_KEY,
+        )?;
+        let platform_packages = OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec();
         let mut connections: Vec<ComponentConnection> =
-            serde_json::from_value::<ComponentDeclaration>(document.clone())
-                .with_context(|| format!("parse the declaration of component {}", source.name))?
-                .connections;
+            serde_json::from_value::<ComponentDeclaration>(document.clone())?.connections;
         connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
         let declaration = DeclarationFile::write(&document)?;
         let admission = admit_component(AdmitComponentRequest {
@@ -788,7 +559,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         components.push(VerifiedComponent { facts, bytes });
     }
     Ok(VerifiedPackage {
-        packed: pack_layers(root, &publication, descriptors)?,
+        packed: pack_layers(root, descriptors)?,
         components,
     })
 }
@@ -1174,7 +945,7 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    /// The `build.json` of the package at `root`, current for its tree, with
+    /// The completed `build.json` of the package at `root`, with
     /// the components `receiving` and `blob-put` in its build output.
     fn write_build_record(root: &Path) {
         use wamn_compiler::build_record;
@@ -1236,11 +1007,7 @@ mod tests {
                 id: "wamn_receiving".to_owned(),
                 version: "2.1.0".to_owned(),
             },
-            inputs: build_record::BuildInputs {
-                digest: build_record::input_digest(root).unwrap(),
-                generation_digest: build_record::generation_digest(root).unwrap(),
-                files: BTreeMap::new(),
-            },
+
             dependencies: Vec::new(),
             generator: build_record::BuildGenerator {
                 id: "generator".to_owned(),
@@ -1261,39 +1028,22 @@ mod tests {
     }
 
     fn receiving_manifest() -> Vec<u8> {
-        wamn_compiler::build_record::require_current(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
-        )
-        .unwrap();
         std::fs::read(wamn_compiler::package_manifest_path(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         ))
         .unwrap()
     }
 
-    /// A package root under `apps`, whose wiring names its own component and
-    /// the platform component `blob-put`, with a current `build.json`.
+    /// A compiled package fixture with a completed build record.
     fn package_tree(name: &str) -> PathBuf {
         let apps = std::env::temp_dir().join(format!(
             "wamn-package-artifact-test-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&apps);
-        write(
-            &apps,
-            "platform/execution/blob-put/declaration.json.in",
-            b"{\"component\": \"blob-put\"}\n",
-        );
-        write(
-            &apps,
-            "platform/execution/jsonata/declaration.json.in",
-            b"{\"component\": \"jsonata\"}\n",
-        );
         let root = apps.join("wamn_receiving");
         write(&root, "wamn.k", b"# authored\n");
         write(&root, "generated/wamn.json", &receiving_manifest());
-        write(&root, "generated/platform-policy/data-access.json", b"{}\n");
-        write(&root, "generated/contracts/receipt.json", b"{}\n");
         write(
             &root,
             wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH,
@@ -1301,12 +1051,7 @@ mod tests {
         );
         write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
         write(&root, "migrations/0001_initial.sql", b"SELECT 1;\n");
-        write(&root, "publication/attachments.json", b"{}\n");
-        write(
-            &root,
-            "publication/wirings/store.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"receiving\"}, \"b\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"labels\"}}}}\n",
-        );
+        write(&root, "generated/publication/attachments.json", b"{}\n");
         write(&root, "generated/web/index.html", b"<html></html>\n");
         write(&root, "web/dist/stale.html", b"left out\n");
         write(&root, "web/src/main.ts", b"left out\n");
@@ -1366,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn physical_fingerprint_survives_publication_and_nonphysical_edits() {
-        use wamn_compiler::build::{BuildRequest, build_package, default_output_root};
+        use wamn_compiler::build::{BuildRequest, default_output_root, generate_package};
         let _guard = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -1401,7 +1146,7 @@ manifest.Package {
         let baseline = "CREATE TABLE fingerprint_fixture.item (id uuid CONSTRAINT item_id_pkey PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);";
         write(&root, "migrations/0001_initial.sql", baseline.as_bytes());
         let request = BuildRequest::new(&root, &default_output_root(&root), database.url());
-        build_package(&request).await.unwrap();
+        generate_package(&request).await.unwrap();
         let first = crate::component_admission::physical_schema(&root)
             .unwrap()
             .fingerprint();
@@ -1420,7 +1165,7 @@ manifest.Package {
             ("web/src/main.ts", "export const changed = true;"),
         ] {
             write(&root, path, bytes.as_bytes());
-            build_package(&request).await.unwrap();
+            generate_package(&request).await.unwrap();
             assert_eq!(
                 first,
                 crate::component_admission::physical_schema(&root)
@@ -1429,7 +1174,7 @@ manifest.Package {
             );
         }
         write(&root, "wamn.k", source.replace("0.1.0", "0.2.0").as_bytes());
-        build_package(&request).await.unwrap();
+        generate_package(&request).await.unwrap();
         assert_eq!(
             first,
             crate::component_admission::physical_schema(&root)
@@ -1443,7 +1188,7 @@ manifest.Package {
             "migrations/0001_initial.sql",
             baseline.replace("id uuid", "note text, id uuid").as_bytes(),
         );
-        build_package(&request).await.unwrap();
+        generate_package(&request).await.unwrap();
         assert_ne!(
             first,
             crate::component_admission::physical_schema(&root)
@@ -1559,118 +1304,9 @@ manifest.Package {
         std::fs::write(root.join("generated/web/index.html"), b"changed output\n").unwrap();
         let web = wamn_compiler::output_root(&root).join("web-artifact/dist");
         write(&web, "index.html", b"standalone output\n");
-        // A package build refreshes the full input digest after a source edit.
+        // Record the changed compiled output.
         write_build_record(&root);
         assert_eq!(first.digest, pack_package(&root).unwrap().digest);
-    }
-
-    fn current_source_components(
-        root: &Path,
-        manifest: &PackageManifest,
-    ) -> anyhow::Result<Vec<SourceComponent>> {
-        let build_record =
-            wamn_compiler::build_record::read_current(root, &wamn_compiler::output_root(root))?;
-        source_components(root, manifest, &build_record)
-    }
-
-    #[test]
-    fn the_build_refuses_a_stale_build_record_or_a_missing_component() {
-        let root = package_tree("index");
-        let manifest = manifest(&root);
-
-        let listed = current_source_components(&root, &manifest).unwrap();
-        assert_eq!(
-            listed
-                .iter()
-                .map(|component| component.name.as_str())
-                .collect::<Vec<_>>(),
-            ["blob-put", "receiving"]
-        );
-        assert_eq!(listed[1].sha256, bytes_sha256(b"receiving"));
-        let ComponentTemplate::Palette {
-            bytes, store_alias, ..
-        } = &listed[0].template
-        else {
-            panic!("blob-put is a palette component");
-        };
-        assert_eq!(bytes, b"{\"component\": \"blob-put\"}\n");
-        assert_eq!(store_alias.as_deref(), Some("labels"));
-
-        write(&root, "migrations/0002_more.sql", b"SELECT 2;\n");
-        let error = format!(
-            "{:#}",
-            current_source_components(&root, &manifest).unwrap_err()
-        );
-        assert!(error.contains("is stale"), "{error}");
-
-        write(
-            &root,
-            "publication/wirings/shape.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"jsonata\"}}}\n",
-        );
-        write_build_record(&root);
-        let error = format!(
-            "{:#}",
-            current_source_components(&root, &manifest).unwrap_err()
-        );
-        assert!(error.contains("records no component jsonata"), "{error}");
-
-        write(
-            &root,
-            "publication/wirings/shape.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"label-render\"}}}\n",
-        );
-        write_build_record(&root);
-        let error = format!(
-            "{:#}",
-            current_source_components(&root, &manifest).unwrap_err()
-        );
-        assert!(
-            error.contains("0 platform declarations name component label-render"),
-            "{error}"
-        );
-
-        write(
-            &root,
-            "publication/wirings/shape.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"consumer\", \"operation-dependency\": {\"alias\": \"consumer\", \"operation\": \"item.record\"}}}}\n",
-        );
-        assert!(
-            !wiring_components(&root).unwrap().contains_key("consumer"),
-            "a cross-package node resolves through the release"
-        );
-
-        std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
-        std::fs::remove_file(
-            wamn_compiler::output_root(&root).join(wamn_compiler::build_record::BUILD_RECORD_FILE),
-        )
-        .unwrap();
-        let error = format!(
-            "{:#}",
-            current_source_components(&root, &manifest).unwrap_err()
-        );
-        assert!(error.contains("run wamn build first"), "{error}");
-        remove(&root);
-    }
-
-    #[test]
-    fn two_store_aliases_for_one_palette_component_refuse() {
-        let root = package_tree("aliases");
-        write(
-            &root,
-            "publication/wirings/other.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"archive\"}}}}\n",
-        );
-        write_build_record(&root);
-        let error = format!(
-            "{:#}",
-            current_source_components(&root, &manifest(&root)).unwrap_err()
-        );
-        assert!(
-            error.contains("palette component blob-put 2 store aliases"),
-            "{error}"
-        );
-        remove(&root);
     }
 
     #[tokio::test]
@@ -1712,12 +1348,8 @@ manifest.Package {
     #[test]
     fn an_unpacked_artifact_packs_to_its_own_digest() {
         let root = package_tree("unpacked");
-        let publication = BTreeMap::from([(
-            "publication/components/blob-put.json.in".to_owned(),
-            b"{\"component\": \"blob-put\"}\n".to_vec(),
-        )]);
         let descriptor = descriptor();
-        let packed = pack_layers(&root, &publication, vec![descriptor.clone()]).unwrap();
+        let packed = pack_layers(&root, vec![descriptor.clone()]).unwrap();
         // A source tree has no descriptor layers, so its digest differs.
         assert_ne!(pack_package(&root).unwrap().digest, packed.digest);
 
@@ -1741,28 +1373,6 @@ manifest.Package {
 
         let unpacked = root.parent().unwrap().join("unpacked");
         unpack_layers(&unpacked, &packed.layers).unwrap();
-        assert_eq!(
-            std::fs::read(unpacked.join("generated/wamn.json")).unwrap(),
-            receiving_manifest()
-        );
-        assert_eq!(
-            std::fs::read(unpacked.join("descriptors/receiving.json")).unwrap(),
-            descriptor.bytes
-        );
-        assert!(
-            unpacked
-                .join("publication/components/blob-put.json.in")
-                .is_file()
-        );
-        assert!(!unpacked.join("generated/web").exists());
-        assert_eq!(
-            std::fs::read(
-                wamn_compiler::output_root(&unpacked).join("required-schema-contract.json")
-            )
-            .unwrap(),
-            b"{\"tables\": []}\n"
-        );
-        assert!(!unpacked.join("web").exists());
         let repacked = pack_package(&unpacked).unwrap();
         assert_eq!(repacked.digest, packed.digest);
         assert_eq!(repacked.manifest, packed.manifest);

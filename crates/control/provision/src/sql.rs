@@ -110,6 +110,7 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
             ("platform", "connection"),
             ("platform", "integration"),
             ("platform", "permission"),
+            ("platform", "setting"),
             ("platform", "user"),
             ("platform", "user_role"),
         ])

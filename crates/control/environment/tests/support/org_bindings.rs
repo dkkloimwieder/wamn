@@ -247,7 +247,7 @@ manifest.Package {{
                 serde_json::to_vec(&graph)?,
             )?;
         }
-        let mut build_record = Box::pin(wamn_compiler::build::build_package(
+        let mut build_record = Box::pin(wamn_build::build_package(
             &wamn_compiler::build::BuildRequest::new(
                 &package,
                 &root.join("target/wamn"),

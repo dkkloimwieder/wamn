@@ -27,6 +27,7 @@ pub fn chart_input(chart: &Path, image: &str, document: &ClusterDocument) -> any
         "name":"wamn-edge", "namespace":"hosts",
         "values":{
             "neg":document.provider == Provider::Gcp,
+            "trustedProxyHops":if document.provider == Provider::Gcp { 2 } else { 1 },
             "tlsSecret":"wamn-edge-tls", "identityCaConfigMap":"identity-ca",
             "identity":&super::identity::issuer(&document.org),
             "web":{"image":image, "bucket":if bucket.is_empty() { String::new() } else { format!("gs://{bucket}") }},

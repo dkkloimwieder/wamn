@@ -47,9 +47,7 @@ mod components;
 mod entry_publication;
 mod package_sources;
 
-use attachments::{
-    read_package_attachments, resolve_route_methods, validate_attachment_definition_hashes,
-};
+use attachments::{read_package_attachments, resolve_route_methods};
 use components::{
     project_serving_component, resolve_component_dependency_closure, resolve_route_component,
 };
@@ -584,8 +582,8 @@ pub fn assemble_local_release(
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
 ) -> anyhow::Result<AssembledLocalRelease> {
     use wamn_runtime::local_application::LocalApplicationFacts;
-    let (attachment_paths, manifest_paths) = package_files(package_roots);
-    let authored = read_package_attachments(&attachment_paths, &manifest_paths)?;
+    let (attachment_paths, _) = package_files(package_roots);
+    let authored = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(package_roots)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
@@ -704,8 +702,8 @@ async fn publish_candidate(
         .iter()
         .map(|package| package.root().to_owned())
         .collect::<Vec<_>>();
-    let (attachment_paths, manifest_paths) = package_files(&roots);
-    let authored_attachments = read_package_attachments(&attachment_paths, &manifest_paths)?;
+    let (attachment_paths, _) = package_files(&roots);
+    let authored_attachments = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(&roots)?;
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
     let packages = coordinates.into_iter().collect::<BTreeSet<_>>();
@@ -1318,41 +1316,6 @@ mod tests {
     }
 
     #[test]
-    fn release_publish_binds_each_attachment_hash_to_its_definition() {
-        let definition = serde_json::json!({
-            "id": "fixture-http",
-            "type": "http",
-            "route": {"path": "/widget/get"},
-        });
-        let definition_hash = wamn_digest::canonical_json_sha256(&definition);
-        let attachment = ServingAttachment {
-            type_: wamn_catalog::AttachmentType::Http,
-            package_id: "source_fixture".to_owned(),
-            target: wamn_catalog::AttachmentTarget::Route {
-                component: "widget".to_owned(),
-                operation: "source-fixture:widget/get@1.0.0".to_owned(),
-            },
-            definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
-                .expect("the canonicalizer emits a valid definition hash"),
-            definition,
-            auth_policy: serde_json::json!({"modes": ["pat"]}),
-            registered_operation: Some("source-fixture:widget/get@1.0.0".to_owned()),
-        };
-        let attachments = BTreeMap::from([("fixture-http".to_owned(), attachment.clone())]);
-        validate_attachment_definition_hashes(&attachments)
-            .expect("the exact canonical definition matches its authored hash");
-
-        let mut changed = attachment;
-        changed.definition["route"]["path"] = serde_json::json!("/widget/query");
-        let error = validate_attachment_definition_hashes(&BTreeMap::from([(
-            "fixture-http".to_owned(),
-            changed,
-        )]))
-        .expect_err("changed definition bytes cannot retain the old identity");
-        assert_eq!(error.error_type(), PublishManifestErrorType::Document);
-    }
-
-    #[test]
     fn release_publish_writes_no_route_host_and_refuses_an_authored_one() {
         let definition = serde_json::json!({
             "id": "fixture-http",
@@ -1837,7 +1800,7 @@ mod tests {
 
     fn dependency_manifest(digest: &str) -> wamn_compiler::manifest::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../package/tests/fixtures/component_package/wamn.json"
+            "../../package/tests/fixtures/component_package/generated/wamn.json"
         ))
         .expect("the repository package manifest parses as JSON");
         document["base_dependencies"] = serde_json::json!({
@@ -2107,6 +2070,7 @@ mod tests {
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
+                    relations: Vec::new(),
                     transactional: false,
                 },
             );

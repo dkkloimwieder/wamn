@@ -309,10 +309,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         &local_artifacts.directory,
         &local_artifacts.flow_http_component,
         &local_artifacts.materializer_component,
-    ]
-    .into_iter()
-    .chain(local_artifacts.bindings.iter())
-    {
+    ] {
         if !path.is_absolute() {
             return Err(DevConfigError::new(
                 DevConfigErrorType::InvalidValue,

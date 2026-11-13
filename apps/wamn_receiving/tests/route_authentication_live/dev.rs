@@ -45,7 +45,6 @@ impl DevJourneyInputs {
                     materializer_component: required_journey_path("WAMN_DEV_ENV_MATERIALIZER_COMPONENT")?
                         .canonicalize()
                         .context("resolve the local materializer component named by WAMN_DEV_ENV_MATERIALIZER_COMPONENT")?,
-                    bindings: None,
                 },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
                 nats: wamn_broker::nats::PlatformNats {
@@ -170,7 +169,6 @@ pub(super) fn declared_dev_data_access_grants()
 -> anyhow::Result<BTreeSet<(String, String, String, String)>> {
     let mut expected = BTreeSet::new();
     for package in JOURNEY_PACKAGES {
-        wamn_compiler::build_record::require_current(&journey_package_root(package))?;
         let path = wamn_compiler::output_root(&journey_package_root(package))
             .join("platform-policy/data-access.json");
         let policy = read_json(&path)?;

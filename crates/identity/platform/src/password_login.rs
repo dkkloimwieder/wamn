@@ -187,6 +187,7 @@ pub async fn authenticate_renewal(
     Ok(resolve_principal(tx, &login.principal)
         .await?
         .map(|principal| AuthenticatedPrincipal {
+            pat_deadline: None,
             principal,
             pat_id: None,
         }))

@@ -70,10 +70,6 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")]
     flow_http_component: PathBuf,
 
-    /// Strict local requirement-to-instance selections for components with connections.
-    #[arg(long, env = "WAMN_DEV_ENV_LOCAL_BINDINGS")]
-    local_bindings: Option<PathBuf>,
-
     /// The built `wamn-cdc-reader` the loop runs beside the host.
     #[arg(long, env = "WAMN_DEV_ENV_CDC_READER_BIN")]
     cdc_reader_binary: PathBuf,
@@ -118,7 +114,6 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         route_host: args.route_host,
         platform_domain: args.platform_domain,
         flow_http_component: args.flow_http_component,
-        local_bindings: args.local_bindings,
         host_binary: args.host_binary,
         platform_ui: args.platform_ui,
         packages: args.packages,

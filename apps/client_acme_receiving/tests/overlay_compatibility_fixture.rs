@@ -218,7 +218,6 @@ fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::
 
 /// The schema the package at `root` needs, as its build wrote it.
 fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
-    wamn_compiler::build_record::require_current(root)?;
     let relative =
         Path::new(wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH).strip_prefix("generated")?;
     let path = wamn_compiler::output_root(root).join(relative);
@@ -292,15 +291,5 @@ async fn install_fresh(
         })
         .await?;
     }
-    wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(
-        wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: roots,
-            database_url: url.clone(),
-            org: identity().org.clone(),
-            project: identity().project.clone(),
-            environment: identity().environment.clone(),
-        },
-    )
-    .await?;
     Ok((url, project))
 }

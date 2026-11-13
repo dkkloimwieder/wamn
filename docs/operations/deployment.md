@@ -211,6 +211,9 @@ Supply the existing application inputs before trusted commands:
 The canonical environment document lives in a non-secret ConfigMap in the provisioning namespace, `hosts`.
 Its name is the existing environment resource name, `e-<env-slug>-<coordinate-hash>`.
 Its `data.environment.json` holds the existing JSON document form.
+Set `revocation_seconds` for the project at the top level and for each application.
+These required nonnegative values bound credential revocation delay when an invalidation is lost.
+Zero disables auth caching. Deploy writes the settings before the host starts; restart hosts after changing a bound.
 Run `wamn env apply <environment.k> --application <application>` to create it or apply explicit configuration edits.
 Configuration edits preserve recorded application release pairs.
 Checkout files are configuration inputs or exports.
@@ -583,7 +586,7 @@ Use `wamn deploy --release` to select the published application.
 ## Web client files
 
 Use [Web upload](web-upload.md#package-clients) to copy the pinned web artifact to a bucket.
-Pass the environment document’s `client.web` digest, the org, and the registry inputs.
+Pass the environment document’s `client.web` digest and the registry inputs.
 The uploader reads the package id and client name from `web.json`.
 It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
@@ -600,7 +603,7 @@ The Rust edge reads the live release and serves its bucket files.
 For an application, it selects `clients/<package>/<web digest hex>/` from the host's pinned package and web digest.
 The digest uses `sha256:` and 64 lowercase hex digits. A missing or invalid web digest refuses.
 
-The edge adds `release` and `web` to the uploaded `config.json`, which supplies `org` and `project`.
+The Rust web front generates `config.json` with `org`, `project`, `release` and `web` from the live release.
 Both fields contain full `sha256:` digests. The edge serves this file with `no-cache`.
 A web-only apply changes the bundle and `web`, while `release` stays the same.
 
@@ -632,13 +635,15 @@ Local platform deployment installs control without a UI upload. GCP integration 
 The edge values can contain a separate `control` entry with `host` and `api`.
 The control host serves no native file routes, so its entry has no `files`.
 The edge chart forwards `/api/` to the control Service and `/password/` to identity.
-The Rust edge serves the platform UI files behind nginx.
+The Rust web front serves platform UI files and generates its org configuration.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
 
 ## Google Cloud edge
 
-On Google Cloud, a global HTTPS load balancer with Cloud CDN sends all traffic to a network endpoint group, and the group sends it to nginx.
-The load balancer presents a Google-managed certificate and re-encrypts to nginx, which keeps its own TLS as in kind.
+On Google Cloud, the HTTPS ingress sends traffic through a network endpoint group to the Rust HTTP Service on port 80.
+TLS stays at ingress. A cluster ingress uses the serving certificate that cert-manager owns.
+A non-GCP cluster must supply a default ingress controller for the chart’s TLS Ingress.
+The Rust front owns response headers and proxies password requests to identity over HTTPS.
 The CDN caches only what the origin marks as cacheable.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.
 The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) describe the external inputs. Deployment integration remains unfinished.

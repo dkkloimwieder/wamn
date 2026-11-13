@@ -30,71 +30,6 @@ fn apps() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps")
 }
 
-#[tokio::test]
-async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyhow::Result<()> {
-    use wamn_compiler::build_record;
-    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let package = scratch.path().join("apps/package");
-    let output = wamn_compiler::output_root(&package);
-    std::fs::create_dir_all(&package)?;
-    std::fs::create_dir_all(&output)?;
-    std::fs::write(package.join("wamn.k"), "# original package\n")?;
-    std::fs::write(output.join("wamn.json"), "invalid manifest")?;
-    let built = build_record::BuildRecord {
-        schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
-        package: build_record::BuildPackage {
-            id: "package".into(),
-            version: "1.0.0".into(),
-        },
-        inputs: build_record::BuildInputs {
-            digest: build_record::input_digest(&package)?,
-            generation_digest: build_record::generation_digest(&package)?,
-            files: std::collections::BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        generator: build_record::BuildGenerator {
-            id: "generator".into(),
-            toolchain: "toolchain".into(),
-            sqlx: "0.9.0".into(),
-        },
-        outputs: build_record::BuildOutputs {
-            manifest: "sha256:fixture".into(),
-            files: std::collections::BTreeMap::new(),
-            components: Vec::new(),
-        },
-    };
-    std::fs::write(
-        output.join(build_record::BUILD_RECORD_FILE),
-        built.to_bytes(),
-    )?;
-    std::fs::write(package.join("wamn.k"), "# edited package\n")?;
-    let inputs = build_record::input_digest(&package)?;
-    let error = push_package(&PushPackageRequest {
-        package: package.clone(),
-        registry: PackageRegistry {
-            artifact_base: "127.0.0.1:1/packages".into(),
-            credentials: None,
-            registry_auth_file: scratch.path().join("absent-auth.json"),
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-        },
-        component_artifact_base: "127.0.0.1:1/components".into(),
-    })
-    .await
-    .expect_err("a stale package was accepted");
-    let error = format!("{error:#}");
-    for detail in [
-        package.to_str().unwrap(),
-        &built.inputs.digest,
-        &inputs,
-        "is stale",
-        "wamn build",
-    ] {
-        assert!(error.contains(detail), "{error}");
-    }
-    Ok(())
-}
-
 /// A running registry and its inputs.
 struct Fixture {
     local: LocalRegistry,
@@ -219,7 +154,6 @@ async fn push_repeat_fetch_and_refusals() {
     assert!(!unpacked.exists(), "the unpacked package is removed");
 
     let descriptor = fixture.pulled_descriptor(&first.tag, "receiving").await;
-    wamn_compiler::build_record::require_current(&package).unwrap();
     let built = std::fs::read(apps().join("target/wamn/wamn_receiving/components/receiving.wasm"))
         .expect("read the built receiving component");
     assert_eq!(
@@ -269,11 +203,8 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
     let wms = push_package(&fixture.request(apps().join("wamn_wms")))
         .await
         .expect("push WMS");
-    let built = build_record::read_current(
-        &apps().join("wamn_receiving"),
-        &apps().join("target/wamn/wamn_receiving"),
-    )
-    .expect("read the Receiving build");
+    let built = build_record::read(&apps().join("target/wamn/wamn_receiving"))
+        .expect("read the Receiving build");
     let tag = format!("{}-{}", built.package.id, built.package.version);
     let receiving_tag = Repository::open(&fixture.registry, &tag).expect("open the tag");
     let (wms_manifest, _) = Repository::open(&fixture.registry, &wms.tag)
@@ -359,90 +290,4 @@ async fn component_tags(fixture: &Fixture) -> Vec<String> {
 /// The version of a tag `<package_id>-<version>` whose package id has no `-`.
 fn tag_version(tag: &str) -> &str {
     tag.split_once('-').expect("a tag names a version").1
-}
-
-/// A palette component that the wirings of two packages name is pushed by
-/// both and recorded in both artifacts, with no owner table (R3(2)). No
-/// database records either package.
-#[tokio::test]
-async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
-    let fixture = Fixture::start("palette").await;
-
-    // A copy of Receiving whose one wiring names jsonata, beside the platform
-    // declarations it reads.
-    let copy = fixture.directory.join("apps");
-    std::fs::create_dir(&copy).expect("create the copy");
-    std::os::unix::fs::symlink(apps().join("platform"), copy.join("platform"))
-        .expect("link the platform declarations");
-    let copied = Command::new("cp")
-        .arg("-r")
-        .arg(apps().join("wamn_receiving"))
-        .arg(&copy)
-        .status()
-        .expect("run cp");
-    assert!(copied.success(), "copy the Receiving package");
-    let receiving = copy.join("wamn_receiving");
-    std::fs::create_dir_all(receiving.join("publication/wirings")).unwrap();
-    std::fs::write(
-        receiving.join("publication/wirings/palette.json"),
-        br#"{"nodes": {"a": {"component": "jsonata"}}}"#,
-    )
-    .unwrap();
-    // The build of the copy: Receiving's, with the inputs of the copy and the
-    // jsonata component that WMS's build recorded.
-    {
-        use wamn_compiler::build_record;
-        let output = copy.join("target/wamn/wamn_receiving");
-        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-        build_record::require_current(&apps().join("wamn_receiving")).unwrap();
-        let copied = Command::new("cp")
-            .arg("-r")
-            .arg(apps().join("target/wamn/wamn_receiving"))
-            .arg(output.parent().unwrap())
-            .status()
-            .expect("run cp");
-        assert!(copied.success(), "copy the Receiving build");
-        let wms_output = apps().join("target/wamn/wamn_wms");
-        let jsonata = build_record::read_current(&apps().join("wamn_wms"), &wms_output)
-            .expect("read the WMS build")
-            .outputs
-            .components
-            .into_iter()
-            .find(|component| component.name == "jsonata")
-            .expect("the WMS build records jsonata");
-        std::fs::copy(wms_output.join(&jsonata.path), output.join(&jsonata.path))
-            .expect("copy jsonata");
-        let mut built = build_record::read(&output).expect("read the Receiving build");
-        built.inputs.digest = build_record::input_digest(&receiving).unwrap();
-        built.outputs.components.push(jsonata);
-        built
-            .outputs
-            .components
-            .sort_by(|left, right| left.name.cmp(&right.name));
-        std::fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            built.to_bytes(),
-        )
-        .unwrap();
-    }
-
-    let wms = push_package(&fixture.request(apps().join("wamn_wms")))
-        .await
-        .expect("push WMS");
-    let receiving = push_package(&fixture.request(receiving))
-        .await
-        .expect("push the Receiving copy");
-    let in_wms = fixture.pulled_descriptor(&wms.tag, "jsonata").await;
-    let in_receiving = fixture.pulled_descriptor(&receiving.tag, "jsonata").await;
-    assert_eq!(in_wms.component_digest, in_receiving.component_digest);
-    let blob_put = fixture.pulled_descriptor(&wms.tag, "blob-put").await;
-    assert_eq!(
-        blob_put
-            .connections
-            .iter()
-            .map(|connection| connection.store_alias.as_str())
-            .collect::<Vec<_>>(),
-        ["labels"],
-        "the store alias comes from the wiring"
-    );
 }

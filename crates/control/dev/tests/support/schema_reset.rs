@@ -4,7 +4,7 @@
 //! have no workflow authoring operation (wamn-alrvy.19). Event disposal and isolation
 //! remain observable through the deployed broker.
 
-use sqlx::{Connection as _, Row as _};
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::time::{Duration, Instant};

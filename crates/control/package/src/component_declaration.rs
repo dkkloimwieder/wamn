@@ -1,9 +1,7 @@
 //! Package component declarations.
 //!
-//! A package authors each base component digest once, in `wamn.json`. This
-//! module reads the authored digests, which admission tests a composed base
-//! against, and renders a `publication/components/*.json.in` template into the
-//! declaration document that admission reads.
+//! This module reads compiled base digests and component declarations. It
+//! supplies the deployment coordinate that admission reads.
 
 pub(super) mod plan;
 
@@ -119,17 +117,6 @@ pub fn authored_base_digests(
     package_root: &Path,
 ) -> Result<BTreeMap<Box<str>, Box<str>>, ComponentDeclarationError> {
     let manifest = wamn_compiler::package_manifest_path(package_root);
-    // A hand-written source manifest does not consume package build output.
-    if manifest.parent() == Some(wamn_compiler::output_root(package_root).as_path()) {
-        wamn_compiler::build_record::require_current(package_root).map_err(|source| {
-            ComponentDeclarationError {
-                type_: ComponentDeclarationErrorType::Read,
-                path: package_root.to_owned(),
-                detail: "".into(),
-                source: Some(source.into()),
-            }
-        })?;
-    }
     let bytes =
         fs::read(&manifest).map_err(|source| ComponentDeclarationError::read(&manifest, source))?;
     let document: Value = serde_json::from_slice(&bytes)
@@ -158,56 +145,39 @@ pub fn authored_base_digests(
     Ok(digests)
 }
 
-/// Renders one authored component declaration into the document admission reads.
-///
-/// One placeholder, REQUIRED: `target.project_env_key`, which the deployment fills.
-/// An unfilled or hand-written value is a refusal naming the file.
-pub fn render_declaration_document(
-    template: &Path,
+/// Read one final component declaration and supply its deployment coordinate.
+pub fn render_package_declaration(
+    package_root: &Path,
+    component: &str,
     project_env_key: &str,
 ) -> Result<Value, ComponentDeclarationError> {
-    let bytes =
-        fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
-    let mut document: Value = serde_json::from_slice(&bytes)
-        .map_err(|source| ComponentDeclarationError::parse(template, source))?;
-    let invalid = |detail: String| {
+    let invalid = |source: String| {
         ComponentDeclarationError::invalid(
-            ComponentDeclarationErrorType::TemplateInvalid,
-            template,
-            detail,
+            ComponentDeclarationErrorType::ManifestInvalid,
+            package_root,
+            source,
         )
     };
-    // The template names each operation by reference, and the version is
-    // authored once, in the wamn.json of the package that holds the template.
-    let (_, owners) = wamn_compiler::operation_reference::package_owners_of(template)
-        .map_err(|error| invalid(error.context().to_owned()))?;
-    plan::render_declaration_document(template, &mut document, project_env_key, &owners)?;
-    // An input port can name its package's generated route schema instead of
-    // copying it (wamn-4omo). The template sits at
-    // `publication/components/<component>.json.in` under its package root,
-    // and generation writes the entries of the generated operations there.
-    let package_root = template
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .unwrap_or_else(|| Path::new(""));
-    let files = wamn_compiler::route_schema::PackageFiles::open(package_root)
-        .map_err(|error| invalid(format!("cannot read its build: {error:#}")))?;
-    files
-        .publication(wamn_compiler::route_schema::GENERATED_COMPONENT_OPERATIONS)
-        .and_then(|generated| {
-            wamn_compiler::route_schema::merge_operations(&mut document, generated.as_ref())
-        })
-        .map_err(|error| invalid(format!("cannot take its generated operations: {error}")))?;
-    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
-        files.schema(reference)
-    })
-    .map_err(|error| {
-        invalid(format!(
-            "names an input port schema it cannot read: {error}"
-        ))
-    })?;
-    Ok(document)
+    let mut declarations = wamn_compiler::publication::read_components(package_root)
+        .map_err(|source| invalid(format!("read compiled component declarations: {source:#}")))?;
+    let declaration = declarations
+        .remove(component)
+        .ok_or_else(|| invalid(format!("component {component} was not compiled")))?;
+    let target = wamn_catalog::ComponentPackageCoordinate::new(
+        project_env_key,
+        declaration.target.package_id(),
+        declaration.target.package_version(),
+    )
+    .map_err(|source| invalid(source.to_string()))?;
+    let document = wamn_catalog::ComponentDeclaration {
+        target,
+        component: declaration.component,
+        interface_version: declaration.interface_version,
+        operations: declaration.operations,
+        connections: declaration.connections,
+    };
+    serde_json::to_value(document)
+        .map_err(|source| ComponentDeclarationError::parse(package_root, source))
 }
 
 /// Slot a palette declaration leaves for the store alias of its connection.

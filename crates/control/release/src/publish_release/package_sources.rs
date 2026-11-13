@@ -128,7 +128,7 @@ pub(super) fn read_package_manifests(
                 )
             })?;
         let package_id = manifest.package.id.clone();
-        contracts.insert(package_id.clone(), read_operation_contracts(root)?);
+        contracts.insert(package_id.clone(), operation_contracts(&manifest)?);
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
@@ -151,150 +151,69 @@ struct PackageContract {
     route: RouteContract,
 }
 
-/// The route facts of every generated contract `operation.json` under the package.
-///
-/// The generated contract is the only source of an operation type, of the
-/// relations a read reads, of the revision field of a `get`, and of the item
-/// field that carries an idempotency key. A package that generates no contract
-/// has no operation a route can call.
-fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, PublishManifestError> {
+/// Borrow the operation descriptions compiled into a package document.
+fn operation_contracts(
+    manifest: &wamn_compiler::manifest::PackageManifest,
+) -> Result<Vec<PackageContract>, PublishManifestError> {
     #[derive(serde::Deserialize)]
-    struct Contract {
-        operation: String,
-        #[serde(rename = "type")]
-        type_: OperationType,
-        #[serde(default)]
-        relations: Vec<Relation>,
-        #[serde(default)]
-        record: Option<Record>,
+    struct Relation<'a> {
+        schema: &'a str,
+        table: &'a str,
     }
-    #[derive(serde::Deserialize)]
-    struct Relation {
-        schema: String,
-        table: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct Record {
-        revision_field: Option<String>,
-    }
-    let unreadable = |path: &Path, error: std::io::Error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::PackageManifest,
-            format!("read generated contracts {}", path.display()),
-            error,
-        )
+    let read = || -> anyhow::Result<Vec<PackageContract>> {
+        manifest
+            .compiled_operations
+            .values()
+            .map(|description| {
+                let contract = &description.operation;
+                let reads = if contract.type_.is_read() {
+                    contract
+                        .relations
+                        .iter()
+                        .map(|relation| {
+                            let relation: Relation<'_> = serde::Deserialize::deserialize(relation)?;
+                            let table = if is_history_table_name(relation.table) {
+                                &relation.table[..relation.table.len() - HISTORY_TABLE_SUFFIX.len()]
+                            } else {
+                                relation.table
+                            };
+                            Ok(ServingRelation {
+                                schema: relation.schema.to_owned(),
+                                relation: table.to_owned(),
+                            })
+                        })
+                        .collect::<anyhow::Result<BTreeSet<_>>>()?
+                } else {
+                    BTreeSet::new()
+                };
+                let revision = contract
+                    .record
+                    .as_ref()
+                    .and_then(|record| record["revision_field"].as_str())
+                    .filter(|_| contract.type_ == OperationType::Get)
+                    .map(str::to_owned);
+                let idempotency = (!contract.type_.is_read())
+                    .then(|| wamn_compiler::client_plan::idempotency_field(&description.input))
+                    .flatten();
+                Ok(PackageContract {
+                    operation: contract.operation.clone(),
+                    route: RouteContract {
+                        type_: contract.type_,
+                        reads,
+                        revision,
+                        idempotency,
+                    },
+                })
+            })
+            .collect()
     };
-    wamn_compiler::build_record::require_current(root).map_err(|error| PublishManifestError {
-        source: Some(error.into()),
+    read().map_err(|source| PublishManifestError {
+        source: Some(source.into()),
         ..PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
-            format!("read current package build {}", root.display()),
+            format!("read compiled operations of {}", manifest.package.id),
         )
-    })?;
-    let contracts = wamn_compiler::output_root(root).join("contracts");
-    let models = match std::fs::read_dir(&contracts) {
-        Ok(models) => models,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(unreadable(&contracts, error)),
-    };
-    let mut types = Vec::new();
-    for model in models {
-        let model = model.map_err(|error| unreadable(&contracts, error))?.path();
-        if !model.is_dir() {
-            continue;
-        }
-        for contract in std::fs::read_dir(&model).map_err(|error| unreadable(&model, error))? {
-            let path = contract.map_err(|error| unreadable(&model, error))?.path();
-            if !path.to_string_lossy().ends_with(".operation.json") {
-                continue;
-            }
-            let bytes = std::fs::read(&path).map_err(|error| unreadable(&path, error))?;
-            let contract: Contract = serde_json::from_slice(&bytes).map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::PackageManifest,
-                    format!(
-                        "generated contract {} names no operation type; regenerate the package evidence",
-                        path.display()
-                    ),
-                    error,
-                )
-            })?;
-            let reads = if contract.type_.is_read() {
-                contract
-                    .relations
-                    .into_iter()
-                    .map(|relation| {
-                        // A history table changes in the same transaction as
-                        // its model relation, whose version a read keys on.
-                        let table = if is_history_table_name(&relation.table) {
-                            relation.table[..relation.table.len() - HISTORY_TABLE_SUFFIX.len()]
-                                .to_owned()
-                        } else {
-                            relation.table
-                        };
-                        ServingRelation {
-                            schema: relation.schema,
-                            relation: table,
-                        }
-                    })
-                    .collect()
-            } else {
-                BTreeSet::new()
-            };
-            let revision = contract
-                .record
-                .and_then(|record| record.revision_field)
-                .filter(|_| contract.type_ == OperationType::Get);
-            let idempotency = if contract.type_.is_read() {
-                None
-            } else {
-                read_input_identity(&path)?
-            };
-            types.push(PackageContract {
-                operation: contract.operation,
-                route: RouteContract {
-                    type_: contract.type_,
-                    reads,
-                    revision,
-                    idempotency,
-                },
-            });
-        }
-    }
-    Ok(types)
-}
-
-/// The idempotency key field of the input contract beside `operation_path`.
-///
-/// An operation with no input contract declares no key field.
-fn read_input_identity(operation_path: &Path) -> Result<Option<String>, PublishManifestError> {
-    let name = operation_path.to_string_lossy();
-    let input_path = std::path::PathBuf::from(format!(
-        "{}.input.json",
-        &name[..name.len() - ".operation.json".len()]
-    ));
-    let bytes = match std::fs::read(&input_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(PublishManifestError::with_source(
-                PublishManifestErrorType::PackageManifest,
-                format!("read generated contract {}", input_path.display()),
-                error,
-            ));
-        }
-    };
-    let contract = serde_json::from_slice(&bytes).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::PackageManifest,
-            format!(
-                "generated contract {} is not JSON; regenerate the package evidence",
-                input_path.display()
-            ),
-            error,
-        )
-    })?;
-    Ok(wamn_compiler::client_plan::idempotency_field(&contract))
+    })
 }
 
 /// The manifest route of one route attachment of the package at `root`, as
@@ -323,7 +242,23 @@ pub fn package_route(
     let root = roots
         .get(package_id)
         .ok_or_else(|| unassembled(package_id))?;
-    let contracts = read_operation_contracts(root)?;
+    let path = wamn_compiler::package_manifest_path(root);
+    let bytes = std::fs::read(&path).map_err(|source| {
+        PublishManifestError::with_source(
+            PublishManifestErrorType::PackageManifest,
+            format!("read {}", path.display()),
+            source,
+        )
+    })?;
+    let manifest =
+        wamn_compiler::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
+                format!("parse {}", path.display()),
+                source,
+            )
+        })?;
+    let contracts = operation_contracts(&manifest)?;
     plan::package_route(contracts, package_id, component, operation)
 }
 
@@ -351,13 +286,13 @@ mod tests {
             )
             .unwrap();
             let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
-                "../../../package/tests/fixtures/component_package/wamn.json"
+                "../../../package/tests/fixtures/component_package/generated/wamn.json"
             ))
             .unwrap();
             if with_migrations {
-                std::fs::create_dir(root.join("migrations")).unwrap();
+                std::fs::create_dir(output.join("migrations")).unwrap();
                 std::fs::write(
-                    root.join("migrations/0001_initial.sql"),
+                    output.join("migrations/0001_initial.sql"),
                     "CREATE TABLE inventory.item (id uuid);",
                 )
                 .unwrap();
@@ -395,11 +330,13 @@ mod tests {
 
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
         let root = scratch.path().join("package");
+        let output = root.join("generated");
+        std::fs::create_dir_all(output.join("publication")).unwrap();
+        std::fs::write(output.join("publication/attachments.json"), b"{}").unwrap();
         std::fs::create_dir_all(root.join("migrations")).unwrap();
-        std::fs::create_dir_all(root.join("generated")).unwrap();
         std::fs::write(
-            root.join("wamn.json"),
-            include_bytes!("../../../package/tests/fixtures/component_package/wamn.json"),
+            output.join("wamn.json"),
+            include_bytes!("../../../package/tests/fixtures/component_package/generated/wamn.json"),
         )
         .unwrap();
         let request = PublishReleaseRequest {
@@ -434,7 +371,7 @@ mod tests {
         }
 
         std::fs::write(migration, "CREATE TABLE inventory.item (id uuid);").unwrap();
-        let path = root.join("wamn.json");
+        let path = output.join("wamn.json");
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         manifest["models"]["item"]["owner"] = "base_fixture".into();

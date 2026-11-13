@@ -98,12 +98,10 @@ pub async fn invoke(
             None,
         )
         .await?;
-    let document = wamn_compiler::operation_reference::read_authored_document(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps/netsuite/publication/wirings/netsuite_pull.json"),
-        wamn_compiler::operation_reference::AuthoredDocument::Wiring,
-    )?;
-    let wiring: wamn_catalog::WiringDocument = serde_json::from_value(document)?;
+    let wiring: wamn_catalog::WiringDocument = serde_json::from_slice(&std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../apps/netsuite/tests/workflows/netsuite_pull.json"),
+    )?)?;
     // The NetSuite pull is an environment workflow
     // (docs/architecture/execution.md#workflows), authored, enabled and
     // admitted at one due moment. Its run executes as the `workflow` user with

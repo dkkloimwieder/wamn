@@ -1,6 +1,5 @@
 use super::{
-    ASSET_CACHE, BuildRecord, INDEX_CACHE, Path, WEB_MANIFEST_FILE, WebManifest, bail,
-    bytes_sha256, ensure, ensure_digest,
+    BuildRecord, Path, WEB_MANIFEST_FILE, WebManifest, bail, bytes_sha256, ensure, ensure_digest,
 };
 use anyhow::Context as _;
 
@@ -110,7 +109,7 @@ pub(super) fn web_dist_files(
         let name = relative
             .to_str()
             .context("web artifact paths must be UTF-8")?;
-        cache_control(name)?;
+        validate_path(name)?;
         content_type(name)?;
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
@@ -135,14 +134,12 @@ pub fn client_project(client: &str) -> anyhow::Result<&str> {
         .with_context(|| format!("the client package {client} is not @wamn/<project>-client"))
 }
 
-pub(super) fn cache_control(relative: &str) -> anyhow::Result<&'static str> {
-    if relative == "index.html" || relative == "sw.js" {
-        Ok(INDEX_CACHE)
-    } else if relative.starts_with("assets/") {
-        Ok(ASSET_CACHE)
-    } else {
-        bail!("the build wrote {relative}, which has no declared cache rule")
-    }
+pub(super) fn validate_path(relative: &str) -> anyhow::Result<()> {
+    ensure!(
+        relative == "index.html" || relative == "sw.js" || relative.starts_with("assets/"),
+        "unsupported web artifact path {relative}"
+    );
+    Ok(())
 }
 
 pub(super) fn content_type(name: &str) -> anyhow::Result<&'static str> {

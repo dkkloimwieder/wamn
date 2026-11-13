@@ -7,20 +7,19 @@ license.workspace = true
 
 [dependencies]
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+tempfile.workspace = true
 postgres-protocol = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
 wamn-schema-control.workspace = true
 anyhow.workspace = true
-base64.workspace = true
 pg_query = "=6.2.1"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
+toml.workspace = true
 # `Executor::describe` is behind `sqlx-core/offline`, which only `macros` turns on.
-syn = { workspace = true, features = ["full", "visit"] }
-tokio = { workspace = true, features = ["macros", "process", "rt"] }
+sqlx = { workspace = true, features = ["macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 url.workspace = true
 wamn-schema-introspection = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -29,16 +28,14 @@ wamn-number-pattern = { workspace = true }
 
 wit-parser = { workspace = true }
 
-[build-dependencies]
-wamn-digest.workspace = true
-
 [dev-dependencies]
 uuid.workspace = true
-wamn-component-composer = { workspace = true }
-wat = "=1.254.2"
+tokio = { workspace = true, features = ["macros", "rt"] }
+syn = { workspace = true, features = ["full"] }
+boon.workspace = true
+
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
-proptest.workspace = true
 wamn-test-postgres = { workspace = true }
 
 [lints]

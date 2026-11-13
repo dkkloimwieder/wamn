@@ -636,7 +636,7 @@ mod tests {
     fn sql_job_reads_the_canonical_configmap_without_api_credentials() -> anyhow::Result<()> {
         let document = EnvironmentDocument::from_json(&serde_json::to_vec(&serde_json::json!({
             "org":"acme", "project":"apps", "env":"dev", "target":"cloud",
-            "policy":"dev", "applications":{}
+            "policy":"dev","revocation_seconds":60, "applications":{}
         }))?)?;
         let mut job = job::manifest("initialize", "ctl", &["wamn-ctl"], &["env", "initialize"]);
         environment_input(&mut job, &document)?;

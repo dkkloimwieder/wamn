@@ -45,6 +45,9 @@ pub struct PackageManifest {
     /// The route entries generation writes for the generated operations.
     #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
     pub routes: RoutesDeclaration,
+    /// Build facts. Authored documents cannot state this member.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub compiled_operations: BTreeMap<String, crate::OperationDescription>,
 }
 
 /// An external connection required by a package, without deployment values.
@@ -632,6 +635,13 @@ impl PackageManifest {
     }
 
     fn refuse_derived_members(document: &serde_json::Value) -> Result<(), ManifestError> {
+        if document.get("compiled_operations").is_some() {
+            return Err(ManifestError::new(
+                ManifestErrorType::InvalidManifest,
+                "compiled_operations is a compiler-owned member",
+            ));
+        }
+
         if let Some(operations) = document
             .get("custom_operations")
             .and_then(serde_json::Value::as_object)
@@ -850,7 +860,7 @@ pub fn validate_operation_vocabulary(
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
                 format!(
-                    "{existing} and custom operation {operation_name} collide at generated/source-map/{artifact}.json"
+                    "{existing} and custom operation {operation_name} collide at generated/wamn/{artifact}.rs"
                 ),
             ));
         }
@@ -1963,7 +1973,6 @@ fn validate_static_sql_declarations(
     }
     let mut statement_paths = BTreeSet::new();
     let mut row_symbols = BTreeMap::new();
-    let mut fixture_symbols = BTreeMap::new();
     for (name, statement) in &operation.statements {
         validate_identifier(name, "static SQL statement")?;
         if rust_identifier(name).is_none() {
@@ -1992,20 +2001,6 @@ fn validate_static_sql_declarations(
         }
         validate_static_sql_values(operation_name, name, "parameter", &statement.parameters)?;
         validate_static_sql_values(operation_name, name, "row", &statement.row)?;
-        for parameter in &statement.parameters {
-            let fixture = format!("{name}_{}_bind_fixture", parameter.name);
-            if let Some(existing) =
-                fixture_symbols.insert(fixture.clone(), format!("{name}.{}", parameter.name))
-            {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidOperation,
-                    format!(
-                        "{operation_name} parameter pairs {existing} and {name}.{} collide at Rust fixture {fixture}",
-                        parameter.name
-                    ),
-                ));
-            }
-        }
         if statement.row.is_empty() {
             return Err(ManifestError::new(
                 ManifestErrorType::InvalidOperation,
@@ -2886,6 +2881,9 @@ pub enum CursorDirection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutesDeclaration {
+    /// Authored HTTP exposure for custom operations, keyed by local operation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operations: BTreeMap<String, HttpExposure>,
     /// The authentication modes of each route. Absent means `pat` and `session`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_modes: Option<Vec<String>>,
@@ -2895,6 +2893,14 @@ pub struct RoutesDeclaration {
     /// The start of each attachment id. Absent means none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_prefix: Option<String>,
+}
+
+/// An operation's HTTP identity. Schemas and hashes are compiled facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpExposure {
+    pub id: String,
+    pub path: String,
 }
 
 impl RoutesDeclaration {
@@ -2908,6 +2914,12 @@ impl RoutesDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
     pub connections: Vec<String>,
+    /// Private component exports outside the generated operation interfaces.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exports: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
+    /// Parameters of a generated operation, keyed by its local name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Vec<wamn_catalog::ComponentParameterDeclaration>>,
 }
 
 pub fn custom_artifact_stem(operation: &str) -> String {

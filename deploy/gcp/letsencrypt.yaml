@@ -1,6 +1,4 @@
-# nginx mounts hosts/wamn-edge-tls and terminates TLS behind the HTTPS load
-# balancer, which re-encrypts to it. cert-manager owns this certificate. The
-# load balancer presents its own Google-managed certificate.
+# Ingress uses hosts/wamn-edge-tls. cert-manager owns the certificate.
 # cert-manager answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
 # Its service account has roles/dns.admin on that zone only, through Workload
 # Identity, so the solver names the zone and never lists zones.

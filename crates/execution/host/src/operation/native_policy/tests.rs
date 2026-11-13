@@ -500,6 +500,7 @@ fn member_statement(path: &str, sql: &str) -> BTreeMap<String, ComponentSqlState
                 value_type: SqlValueType::Text,
                 nullable: false,
             }],
+            relations: Vec::new(),
             transactional: true,
         },
     )])

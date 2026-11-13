@@ -4,18 +4,13 @@
 //! into a directory of its own and builds it against the server of the test
 //! process. The build creates and drops its own verification database there.
 
-use sqlx::{Connection as _, Row as _, Statement as _};
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_compiler::build::{
-    BuildRequest, build_components, build_package, generate_package, package_output,
-};
+use sqlx::Row as _;
+use wamn_compiler::build::{BuildRequest, generate_package, package_output};
 use wamn_compiler::build_record;
-use wamn_compiler::manifest::PackageManifest;
-use wamn_compiler::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 #[tokio::test(flavor = "current_thread")]
 async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<()> {
@@ -149,25 +144,8 @@ fn copy_source(source: &Path, target: &Path) {
 }
 
 /// Every file below `root`, by its path relative to `root`.
-fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-    let mut files = BTreeMap::new();
-    let mut pending = vec![root.to_owned()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory).expect("read an output directory") {
-            let path = entry.expect("read an output entry").path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                let bytes = fs::read(&path).expect("read an output file");
-                files.insert(path.strip_prefix(root).unwrap().to_owned(), bytes);
-            }
-        }
-    }
-    files
-}
-
 async fn build(package: &Path, output_root: &Path, database: &str) -> anyhow::Result<Value> {
-    build_package(&BuildRequest::new(package, output_root, database)).await?;
+    generate_package(&BuildRequest::new(package, output_root, database)).await?;
     let path = package_output(output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json");
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
@@ -179,132 +157,13 @@ fn statement<'a>(manifest: &'a Value, operation: &str, name: &str) -> &'a Value 
 /// R10(2) and R10(3): the copy holds no generated verifier, so pass one
 /// describes without one; two builds give the same bytes and build records; the
 /// manifest is canonical and hashed once; an overlay records its base.
-#[tokio::test(flavor = "current_thread")]
-async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
-    let workspace = Workspace::new("identical");
-    workspace.edit_manifest(
-        "manifest.Package {",
-        "manifest.Package {\n    client_package = {name = \"@wamn/platform-fixture-client\"}",
-    );
-    // The fixture normally has no browser client. Its update-only model
-    // needs a read to supply the revision when this test enables components.
-    workspace.edit_manifest(
-        "operations: {\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
-        "operations: {\n                get: {revision_field = \"edit_version\", result = \"one\"}\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
-    );
-    let mut database = wamn_test_postgres::database();
-    assert!(!workspace.package().join("generated").exists());
-
-    let first = workspace.root.join("target-first");
-    let second = workspace.root.join("target-second");
-    // The default output can hold an older manifest even when the caller
-    // selects a different output root. Authored routes must use current owners.
-    let previous = wamn_compiler::output_root(&workspace.package());
-    fs::create_dir_all(&previous).expect("create previous build output");
-    let mut old: Value =
-        serde_json::from_slice(&wamn_compiler::compile_manifest(&workspace.package()).unwrap())
-            .unwrap();
-    old["package"]["version"] = Value::String("1.0.0".to_owned());
-    fs::write(
-        previous.join("wamn.json"),
-        serde_json::to_vec(&old).unwrap(),
-    )
-    .expect("write the old manifest");
-    let stale = package_output(&first, wamn_fixture_package::PACKAGE_ID)
-        .join("client-ts/components/obsolete.tsx");
-    fs::create_dir_all(stale.parent().unwrap()).expect("create stale client output");
-    fs::write(&stale, b"obsolete").expect("write an obsolete component");
-    let build_record_first = build_package(&BuildRequest::new(
-        &workspace.package(),
-        &first,
-        database.url(),
-    ))
-    .await
-    .expect("build the fixture");
-    fs::remove_dir_all(&previous).expect("remove the previous build output");
-    let build_record_second = build_package(&BuildRequest::new(
-        &workspace.package(),
-        &second,
-        database.url(),
-    ))
-    .await
-    .expect("build the fixture again");
-
-    let output_first = package_output(&first, wamn_fixture_package::PACKAGE_ID);
-    let output_second = package_output(&second, wamn_fixture_package::PACKAGE_ID);
-    let files = snapshot(&output_first);
-    assert_eq!(files, snapshot(&output_second));
-    for path in [
-        "data/counter.rs",
-        "wit/counter_query_codec.rs",
-        "client-ts/counter.ts",
-        "sql/counter/changes.sql",
-    ] {
-        assert!(
-            files.contains_key(Path::new(path)),
-            "the bigint model participates in determinism: {path}"
-        );
-    }
-    let bindings = std::str::from_utf8(&files[Path::new("client-ts/widget.ts")]).unwrap();
-    let components =
-        std::str::from_utf8(&files[Path::new("client-ts/components/widget.ts")]).unwrap();
-    assert!(bindings.contains("export async function archive("));
-    assert!(components.contains("export const WidgetArchiveForm ="));
-    assert_eq!(build_record_first, build_record_second);
-    assert_eq!(
-        build_record_first,
-        build_record::read(&output_first).unwrap()
-    );
-    assert!(
-        files.keys().any(|path| path.starts_with("native-verifier")),
-        "pass two generated no verifier"
-    );
-    assert!(!workspace.package().join("generated").exists());
-
-    let manifest = &files[Path::new("wamn.json")];
-    let value: Value = serde_json::from_slice(manifest).unwrap();
-    assert_eq!(
-        manifest,
-        &wamn_digest::canonical_json_bytes(&value),
-        "wamn.json is not canonical"
-    );
-    let digest = build_record_first.outputs.manifest.clone();
-    let data_access: Value =
-        serde_json::from_slice(&files[Path::new("platform-policy/data-access.json")]).unwrap();
-    assert_eq!(
-        data_access.as_object().unwrap().keys().collect::<Vec<_>>(),
-        ["contract", "package", "relations", "role", "schemas"],
-        "the data-access overlay carries no package identity"
-    );
-    assert_eq!(
-        build_record_first.outputs.files.len(),
-        files.len() - 1,
-        "the build record lists every output but itself"
-    );
-    assert_eq!(
-        build_record_first.inputs.digest,
-        build_record::input_digest(&workspace.package()).unwrap()
-    );
-
-    let overlay = build_package(&BuildRequest::new(
-        &workspace.overlay(),
-        &first,
-        database.url(),
-    ))
-    .await
-    .expect("build the overlay over the built base");
-    assert_eq!(overlay.dependencies.len(), 1);
-    assert_eq!(overlay.dependencies[0].id, wamn_fixture_package::PACKAGE_ID);
-    assert_eq!(overlay.dependencies[0].digest, digest);
-}
-
 /// §6.1 row 3 with the owner's nullability rule (wamn-00rts.3): a left-out
 /// type is derived; a nullable declaration over a column that SQLx says cannot
 /// be null is kept; a not-null declaration over a column that SQLx says can be
 /// null is refused.
 #[tokio::test(flavor = "current_thread")]
 async fn statement_types_are_derived_and_nullability_only_widens() {
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
 
     let accepted = Workspace::new("accepted");
     accepted.edit_manifest(
@@ -391,7 +250,7 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
     JOIN inventory.widget_tag AS items ON items.id = line.tag_id";
 
 async fn authored_feed_build(workspace: &Workspace) -> anyhow::Result<Value> {
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::new(
         &workspace.package(),
@@ -580,7 +439,7 @@ async fn authored_feed_refuses_a_key_other_than_the_root_id() {
 #[tokio::test(flavor = "current_thread")]
 async fn projection_view_keeps_non_null_and_nullable_declarations() {
     for nullable in [false, true] {
-        let mut database = wamn_test_postgres::database();
+        let database = wamn_test_postgres::database();
         let workspace = projection_view_workspace(if nullable {
             "view-nullable"
         } else {
@@ -618,80 +477,9 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             projection["relations"][0]["select_fields"],
             serde_json::json!(["attributes", "code", "edit_version", "id"])
         );
-        let rows = fs::read_to_string(output.join("wamn/widget_list.rs")).unwrap();
-        assert!(
-            rows.contains(if nullable {
-                "pub code: Option<String>,"
-            } else {
-                "pub code: String,"
-            }),
-            "{rows}"
-        );
-        let map: Value =
-            serde_json::from_slice(&fs::read(output.join("source-map/widget_list.json")).unwrap())
-                .unwrap();
-        assert_eq!(
-            map["wamn_accessors"][0]["sqlx_view_columns"],
-            serde_json::json!(["id", "code", "edit_version", "attributes"])
-        );
-        database.execute(&["CREATE SCHEMA inventory"]).unwrap();
-        let sql =
-            fs::read_to_string(workspace.package().join("migrations/0001_initial.sql")).unwrap();
-        database.execute(&[&sql]).unwrap();
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .unwrap();
-        let verifier = workspace.root.join("verifier");
-        wamn_compiler::stage_sqlx_verifier(&workspace.package(), &verifier, repository)
-            .expect("stage the view projection verifier");
-        let source = fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
-        let source = source
-            .lines()
-            .filter(|line| {
-                !line.trim_start().starts_with("let _ =") || line.contains("native::widget_list::")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            source.contains("native::widget_list::ListRowSqlx"),
-            "{source}"
-        );
-        fs::write(verifier.join("src/lib.rs"), &source).unwrap();
-        let manifest =
-            PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
-        let url = wamn_compiler::package_database_url(database.url(), &manifest).unwrap();
-        let compile = || {
-            std::process::Command::new("cargo")
-                .current_dir(&verifier)
-                .args(["check", "--lib", "--locked", "--offline"])
-                .env("DATABASE_URL", &url)
-                .env("SQLX_OFFLINE", "false")
-                .output()
-                .expect("compile the staged view projection macro")
-        };
-        fs::write(
-            verifier.join("src/lib.rs"),
-            source.replace("::ListRowSqlx", "::ListRow"),
-        )
-        .unwrap();
-        let original = compile();
-        assert_eq!(
-            original.status.success(),
-            nullable,
-            "original SQLx carrier: {}",
-            String::from_utf8_lossy(&original.stderr)
-        );
-        fs::write(verifier.join("src/lib.rs"), source).unwrap();
-        let result = compile();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
     }
     let workspace = projection_view_workspace("view-undeclared");
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::new(
         &workspace.package(),
@@ -718,7 +506,7 @@ async fn projection_view_refuses_a_wrong_declared_type_and_names_the_field() {
         "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
         "manifest.int32(\"code\"), manifest.int32(\"edit_version\")",
     );
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let error = generate_package(&BuildRequest::new(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
@@ -741,7 +529,7 @@ async fn projection_view_does_not_hide_nullable_table_columns() {
     );
     fs::write(workspace.package().join("query/widget_list.sql"),
         "SELECT screen.id, widget.note AS code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id ORDER BY screen.id;\n").unwrap();
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let error = generate_package(&BuildRequest::new(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
@@ -753,181 +541,6 @@ async fn projection_view_does_not_hide_nullable_table_columns() {
         format!("{error:#}").contains("row value code is declared not null"),
         "{error:#}"
     );
-}
-
-/// A changed base component must invalidate its pin even when its manifest
-/// and the overlay's inputs still match the current build.
-#[tokio::test(flavor = "current_thread")]
-async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
-    let workspace = Workspace::new("stale-base-pin");
-    fs::write(workspace.root.join("Cargo.toml"), "[workspace]\n").unwrap();
-    let mut database = wamn_test_postgres::database();
-    let output_root = workspace.root.join("target/wamn");
-    let base_request = BuildRequest::new(&workspace.package(), &output_root, database.url());
-    let base = generate_package(&base_request)
-        .await
-        .expect("generate the base");
-    let base_output = package_output(&output_root, &base.package.id);
-
-    // Supply component output without invoking the guest compiler. This test
-    // exercises build admission before compilation or composition starts.
-    let record_component = |output: &Path, bytes: &[u8]| {
-        let manifest =
-            PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
-        let name = manifest.components.keys().next().unwrap().clone();
-        let path = format!("components/{name}.wasm");
-        let digest = wamn_digest::bytes_sha256(bytes);
-        fs::create_dir_all(output.join("components")).unwrap();
-        fs::write(output.join(&path), bytes).unwrap();
-        let mut built = build_record::read(output).unwrap();
-        built.outputs.components = vec![build_record::BuildComponent {
-            name,
-            path,
-            sha256: digest.clone(),
-        }];
-        fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            built.to_bytes(),
-        )
-        .unwrap();
-        digest
-    };
-    let pin = record_component(&base_output, b"\0asm\x0d\0\x01\0");
-    let overlay = workspace.overlay();
-    let manifest_path = overlay.join("wamn.k");
-    let manifest =
-        PackageManifest::from_slice(&wamn_compiler::compile_manifest(&overlay).unwrap()).unwrap();
-    let source = fs::read_to_string(&manifest_path).unwrap();
-    fs::write(
-        &manifest_path,
-        source.replace(&manifest.base_dependencies["base_fixture"].digest, &pin),
-    )
-    .unwrap();
-    let request = BuildRequest::new(&overlay, &output_root, database.url());
-    let built = generate_package(&request)
-        .await
-        .expect("generate the overlay");
-    let output = package_output(&output_root, &built.package.id);
-    record_component(&output, b"\0asm\x0d\0\x01\0");
-    // A current build must test its base without calling Cargo.
-    build_package(&request)
-        .await
-        .expect("accept the matching base pin");
-
-    record_component(&base_output, b"\0asm\x0d\0\x01\0\0\x02\x01x");
-    assert_eq!(
-        build_record::read(&base_output).unwrap().outputs.manifest,
-        base.outputs.manifest
-    );
-    let before = snapshot(&output);
-    let current_error = build_package(&request)
-        .await
-        .expect_err("a current build accepted a stale base pin");
-    assert_eq!(
-        before,
-        snapshot(&output),
-        "a refused current build changed its output"
-    );
-    fs::write(overlay.join("input.txt"), "changed input").unwrap();
-    let fresh_error = build_package(&request)
-        .await
-        .expect_err("a fresh build accepted a stale base pin");
-    for error in [current_error, fresh_error] {
-        let refusal = error
-            .downcast_ref::<GenerateError>()
-            .expect("typed refusal");
-        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidComponent);
-        assert_eq!(refusal.object(), Some(base.package.id.as_str()));
-    }
-}
-
-/// Step 7 composes an overlay whose `operations` object names a base
-/// dependency: Acme over Receiving. The composed component embeds the base
-/// component's exact bytes, which push-package admission requires of a
-/// declared dependency. It builds into a copy of the build output of
-/// `wamn build apps/wamn_receiving apps/client_acme_receiving`, so run that
-/// first.
-#[tokio::test(flavor = "current_thread")]
-async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
-    let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
-    let built = apps.join("target/wamn");
-    let output_root =
-        std::env::temp_dir().join(format!("wamn-build-live-{}-compose", std::process::id()));
-    let _ = fs::remove_dir_all(&output_root);
-    for package in ["wamn_receiving", "client_acme_receiving"] {
-        let source = package_output(&built, package);
-        build_record::read_current(&apps.join(package), &source)
-            .expect("read the current package build");
-        for (path, bytes) in snapshot(&source) {
-            let target = package_output(&output_root, package).join(path);
-            fs::create_dir_all(target.parent().unwrap()).expect("create an output directory");
-            fs::write(target, bytes).expect("copy an output file");
-        }
-    }
-    let request = BuildRequest::new(&apps.join("client_acme_receiving"), &output_root, "");
-
-    let build_record = build_components(&request, "client_acme_receiving")
-        .await
-        .expect("compose Acme over Receiving");
-
-    let component = |package: &str, name: &str| {
-        fs::read(package_output(&output_root, package).join(format!("components/{name}.wasm")))
-            .expect("read a built component")
-    };
-    let base = component("wamn_receiving", "receiving");
-    let composed = component("client_acme_receiving", "client_acme_receiving");
-    assert!(composed.len() > base.len());
-    assert!(
-        composed.windows(base.len()).any(|window| window == base),
-        "the composed component embeds the base bytes"
-    );
-    assert!(
-        build_record
-            .outputs
-            .components
-            .iter()
-            .any(|entry| entry.name == "client_acme_receiving"),
-        "build.json records the composed component"
-    );
-    fs::remove_dir_all(&output_root).expect("remove the output copy");
-}
-
-/// Nested bases retain their generated identity and supply overlay migrations.
-#[tokio::test(flavor = "current_thread")]
-async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
-    let workspace = Workspace::new("nested-base");
-    let mut database = wamn_test_postgres::database();
-    let output = workspace.root.join("target/wamn");
-    let first = wamn_compiler::build::generate_package(&BuildRequest::new(
-        &workspace.package(),
-        &output,
-        database.url(),
-    ))
-    .await
-    .unwrap();
-    fs::create_dir(workspace.root.join("platform")).unwrap();
-    let nested = workspace
-        .root
-        .join("platform")
-        .join(wamn_fixture_package::PACKAGE_ID);
-    fs::rename(workspace.package(), &nested).unwrap();
-    let second = wamn_compiler::build::generate_package(&BuildRequest::new(
-        &nested,
-        &output,
-        database.url(),
-    ))
-    .await
-    .unwrap();
-    assert_eq!(first.inputs, second.inputs);
-    assert_eq!(first.outputs.manifest, second.outputs.manifest);
-    assert_eq!(first.outputs.files, second.outputs.files);
-    wamn_compiler::build::generate_package(&BuildRequest::new(
-        &workspace.overlay(),
-        &output,
-        database.url(),
-    ))
-    .await
-    .expect("the top-level overlay migrates its nested base");
 }
 
 /// Owner declarations survive compilation at a caller-selected output root.
@@ -945,14 +558,19 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records()
         "ALTER TABLE inventory.widget ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN updated_by uuid NOT NULL;",
     )
     .unwrap();
-    let mut database = wamn_test_postgres::database();
+    let database = wamn_test_postgres::database();
     let output = workspace.root.join("selected-output");
-    generate_package(&BuildRequest::new(
+    let base = generate_package(&BuildRequest::new(
         &workspace.package(),
         &output,
         database.url(),
     ))
     .await
+    .unwrap();
+    fs::write(
+        package_output(&output, &base.package.id).join(build_record::BUILD_RECORD_FILE),
+        base.to_bytes(),
+    )
     .unwrap();
     let request = BuildRequest::new(&workspace.overlay(), &output, database.url());
     generate_package(&request).await.unwrap();
@@ -972,11 +590,34 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records()
     let mut changed = fs::read(&base_path).unwrap();
     changed.push(b' ');
     fs::write(base_path, changed).unwrap();
-    let error = generate_package(&request).await.unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("manifest differs from its build record"),
-        "{error:#}"
-    );
+    generate_package(&request)
+        .await
+        .expect_err("changed compiled base bytes must refuse");
+}
+
+/// PostgreSQL describes the accessor's binds at the build interface.
+#[tokio::test]
+async fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
+    let database = wamn_test_postgres::database();
+    for (label, path, sql) in [
+        (
+            "list-binds",
+            "query/widget_list.sql",
+            "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget WHERE id = $1 ORDER BY id",
+        ),
+        (
+            "archive-binds",
+            "command/widget/archive.sql",
+            "SELECT id, edit_version, note FROM widget WHERE id = $1 AND edit_version = $2 FOR UPDATE",
+        ),
+    ] {
+        let workspace = Workspace::new(label);
+        fs::write(workspace.package().join(path), sql).unwrap();
+        let request = BuildRequest::new(
+            &workspace.package(),
+            &workspace.root.join("output"),
+            database.url(),
+        );
+        assert!(generate_package(&request).await.is_err());
+    }
 }

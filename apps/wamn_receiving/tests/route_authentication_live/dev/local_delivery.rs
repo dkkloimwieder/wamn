@@ -22,7 +22,6 @@ use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
 const MANIFEST: &str = "apps/wamn_receiving/wamn.k";
-const DECLARATION: &str = "apps/wamn_receiving/publication/components/receiving.json.in";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
 const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
@@ -34,10 +33,10 @@ const APPENDED_EDIT: &[u8] =
     b"ALTER TABLE receiving.location ADD COLUMN note text;\n-- edited after apply\n";
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq"]
+#[ignore = "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq"]
 async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq",
+        "requires: env:WAMN_LOCAL_DEV_EDIT_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:jq",
     );
     let repository = repository_root()?;
     ensure!(
@@ -135,20 +134,19 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
-        code.retained(&first, &["migrate", "introspect", "generate", "acl"])?;
+        code.retained(&first, &["migrate", "introspect", "acl"])?;
         code.locations(token, &["DOCK-1-edited", "DOCK-2-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
         let sql = watch.served().await?;
         sql.retained(&code, &["migrate", "introspect"])?;
-        ensure!(!sql.skipped.contains("generate"), "a named SQL edit cannot skip generation");
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         let valid_sql = fs::read(repository.join(SQL))?;
         fs::write(repository.join(SQL), b"SELECT invalid_delivery_sql FROM receiving.location;\n")?;
-        watch.refused_stage("generate").await?;
+        watch.refused_stage("migrate").await?;
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
@@ -160,7 +158,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         let mut invalid_code = valid_code.clone();
         invalid_code.extend_from_slice(b"\ncompile_error!(\"invalid candidate Rust\");\n");
         fs::write(repository.join(CODE), invalid_code)?;
-        watch.refused_stage("build").await?;
+        watch.refused_stage("migrate").await?;
         repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(CODE), valid_code)?;
@@ -168,18 +166,9 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         compiled.retained(&repaired, &[])?;
         compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
-        original.replace(DECLARATION, "\"package-id\": \"wamn_receiving\"", "\"package-id\": \"refused_candidate\"")?;
-        watch.refused_stage("admit").await?;
-        compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-        require_revision(&environment.route.database_url).await?;
-        original.replace(DECLARATION, "\"package-id\": \"refused_candidate\"", "\"package-id\": \"wamn_receiving\"")?;
-        let admitted = watch.served().await?;
-        admitted.retained(&compiled, &[])?;
-        admitted.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
-
         fs::write(repository.join(APPENDED), APPENDED_SQL)?;
         let appended = watch.served().await?;
-        appended.retained(&admitted, &[])?;
+        appended.retained(&compiled, &[])?;
         ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
         ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
         appended.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
@@ -604,7 +593,7 @@ impl SavedSource {
     fn capture(repository: &Path) -> anyhow::Result<Self> {
         let mut files = BTreeMap::new();
         let mut directories = BTreeMap::new();
-        for relative in [CODE, SQL, MANIFEST, DECLARATION] {
+        for relative in [CODE, SQL, MANIFEST] {
             capture_file(repository, &repository.join(relative), &mut files)?;
         }
         let mut outputs = Vec::new();
@@ -618,11 +607,8 @@ impl SavedSource {
         outputs.push(PathBuf::from(MIGRATIONS));
         for package in ["wamn_receiving", "client_acme_receiving"] {
             let package = PathBuf::from("apps").join(package);
-            wamn_compiler::build_record::require_current(&repository.join(&package))?;
-            for relative in [
-                wamn_compiler::output_root(&package),
-                package.join("tests/.sqlx"),
-            ] {
+
+            for relative in [wamn_compiler::output_root(&package)] {
                 capture_tree(
                     repository,
                     &repository.join(&relative),

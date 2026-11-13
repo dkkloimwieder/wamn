@@ -35,6 +35,8 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - serve
+            - --key-rotation-seconds
+            - {{ .Values.keyRotationSeconds | quote }}
             {{- if .Values.localMail }}
             - --local-mail
             - {{ .Values.localMail | quote }}

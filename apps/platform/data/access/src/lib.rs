@@ -8,6 +8,7 @@
 //! package's refusal.
 
 pub mod cursor;
+pub mod error;
 pub mod feed;
 pub mod page;
 pub mod scalar;

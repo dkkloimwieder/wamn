@@ -7,7 +7,6 @@
 //! crate is generated for it.
 
 use std::collections::BTreeMap;
-use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, bail};
 use sqlx::{
@@ -41,9 +40,9 @@ pub(crate) struct DescribedColumn {
 ///
 /// The keys of `corpus` are statement paths and name each statement in an
 /// error. The connection uses the database's own search path.
-pub(crate) async fn describe_statements(
+pub(crate) async fn describe_statements<'a>(
     database_url: &str,
-    corpus: &BTreeMap<String, Vec<u8>>,
+    corpus: impl IntoIterator<Item = (&'a String, &'a Vec<u8>)>,
 ) -> Result<BTreeMap<String, DescribedStatement>> {
     let mut connection = wamn_postgres::connect(database_url)
         .await
@@ -100,44 +99,39 @@ pub(crate) async fn describe_statements(
     Ok(described)
 }
 
-/// The transport type of a PostgreSQL type name that SQLx reports, if the
-/// manifest vocabulary has one.
-pub(crate) fn column_type(postgres_name: &str) -> Option<SqlValueType> {
-    match postgres_name {
-        "BOOL" => Some(SqlValueType::Boolean),
-        "INT4" => Some(SqlValueType::Int32),
-        "INT8" => Some(SqlValueType::Int64),
-        "FLOAT8" => Some(SqlValueType::Float64),
-        "TEXT" => Some(SqlValueType::Text),
-        "BYTEA" => Some(SqlValueType::Bytes),
-        "NUMERIC" => Some(SqlValueType::Numeric),
-        "TIMESTAMPTZ" => Some(SqlValueType::Timestamptz),
-        "JSON" | "JSONB" => Some(SqlValueType::Json),
-        "UUID" => Some(SqlValueType::Uuid),
-        _ => None,
-    }
-}
+pub(crate) use wamn_scalar::postgres_type as column_type;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_manifest_type_has_one_postgres_name() {
-        for (name, expected) in [
-            ("BOOL", SqlValueType::Boolean),
-            ("INT4", SqlValueType::Int32),
-            ("INT8", SqlValueType::Int64),
-            ("FLOAT8", SqlValueType::Float64),
-            ("TEXT", SqlValueType::Text),
-            ("BYTEA", SqlValueType::Bytes),
-            ("NUMERIC", SqlValueType::Numeric),
-            ("TIMESTAMPTZ", SqlValueType::Timestamptz),
-            ("JSONB", SqlValueType::Json),
-            ("UUID", SqlValueType::Uuid),
-        ] {
-            assert_eq!(column_type(name), Some(expected));
-        }
-        assert_eq!(column_type("INT2"), None);
+/// Compare the accessor's value shape with PostgreSQL's description.
+pub(crate) fn validate_contract(
+    path: &str,
+    description: &DescribedStatement,
+    binds: &[crate::generate::StatementValueContract],
+    columns: &[crate::generate::StatementValueContract],
+) -> Result<(), crate::ManifestError> {
+    let valid = description.parameters.len() == binds.len()
+        && description.columns.len() == columns.len()
+        && description
+            .parameters
+            .iter()
+            .zip(binds)
+            .all(|(name, bind)| column_type(name) == Some(bind.ty))
+        && description
+            .columns
+            .iter()
+            .zip(columns)
+            .all(|(actual, expected)| {
+                actual.name == expected.name
+                    && column_type(&actual.type_name) == Some(expected.ty)
+                    && (expected.nullable || actual.nullable != Some(true) || actual.view_column)
+            });
+    if valid {
+        return Ok(());
     }
+    Err(crate::ManifestError::for_path(
+        crate::ManifestErrorType::InvalidOperation,
+        format!(
+            "{path}: SQLx description does not fit the accessor's parameters and selected columns"
+        ),
+        path,
+    ))
 }

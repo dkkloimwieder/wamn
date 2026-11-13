@@ -32,7 +32,7 @@ pub fn repository_root() -> PathBuf {
         .expect("the fixture crate sits inside the repository")
 }
 
-/// The fixture application's directory, which `materialize_package` takes.
+/// The fixture application's directory, which the package compiler reads.
 #[must_use]
 pub fn package_root() -> PathBuf {
     repository_root().join("apps").join(PACKAGE_ID)

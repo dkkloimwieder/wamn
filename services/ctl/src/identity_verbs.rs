@@ -6,11 +6,71 @@ use std::fmt;
 
 use clap::Args;
 use serde_json::json;
+use std::path::PathBuf;
 use wamn_environment_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
 use wamn_environment_control::invite::{InviteRequest, invite as run_invite};
 use wamn_platform_identity::org::MemberGrants;
 
 use crate::provisioning_verbs::PatIssuerArgs;
+
+/// Create one API service with authored application roles and a private PAT output.
+#[derive(Args)]
+pub struct ApiServiceArgs {
+    #[arg(long)]
+    pub org: String,
+    #[arg(long)]
+    pub project: String,
+    #[arg(long)]
+    pub env: String,
+    #[arg(long)]
+    pub name: String,
+    #[arg(long)]
+    pub display_name: String,
+    #[arg(long, required = true)]
+    pub role: Vec<wamn_identity_protocol::RoleName>,
+    #[arg(long)]
+    pub lifetime_seconds: u64,
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
+    pub system_database_url: String,
+    #[arg(long, hide_env_values = true)]
+    pub application_database_url: String,
+    #[arg(long)]
+    pub emit_secret: PathBuf,
+    #[command(flatten)]
+    pub pat_issuer: PatIssuerArgs,
+}
+impl fmt::Debug for ApiServiceArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApiServiceArgs").finish_non_exhaustive()
+    }
+}
+
+pub async fn create_api_service(args: ApiServiceArgs) -> anyhow::Result<()> {
+    let changes = if std::env::var_os("WAMN_NATS_URL").is_some() {
+        wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?
+    } else {
+        wamn_broker::Publisher::default()
+    };
+    let principal = wamn_environment_control::api_service::create(
+        &wamn_environment_control::api_service::Request {
+            org: args.org,
+            project: args.project,
+            env: args.env,
+            name: args.name,
+            display_name: args.display_name,
+            roles: args.role,
+            lifetime: std::time::Duration::from_secs(args.lifetime_seconds),
+            system_database_url: args.system_database_url,
+            application_database_url: args.application_database_url,
+            identity: args.pat_issuer.into(),
+            emit_secret: args.emit_secret,
+        },
+        &changes,
+    )
+    .await?;
+    println!("created API service principal_id={principal}");
+    Ok(())
+}
 
 /// Provisioning inputs for one identity authority, not a project environment.
 #[derive(Args)]

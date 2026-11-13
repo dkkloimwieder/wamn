@@ -23,7 +23,7 @@ use wamn_engine::engine::{
     host_memory_budgets,
 };
 use wamn_engine::expected_router::expected_host_router;
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::router_delivery::RouterDelivery;
 use wamn_identity_protocol::file_keys::FileKeys;
 use wamn_identity_protocol::verifier::SessionVerifier;
@@ -133,9 +133,8 @@ impl EdgeHost {
 
 /// The memory cap of one guest memory on the box (docs/history/edge.md 4.9).
 const EDGE_MEMORY_CAP_BYTES: usize = 256 << 20;
-/// The route requests the box serves at once, over all its routes
-/// (docs/history/edge.md 4.9). It is the box's route limit and sizes the pool.
-const EDGE_REQUESTS_IN_FLIGHT: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
+/// The warm instance pool size. Overflow calls use one-shot stores.
+const EDGE_POOL_SIZE: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
 /// The compile cache directory, beside the run-state file.
 const COMPILE_CACHE_DIR: &str = "compile-cache";
 
@@ -143,7 +142,7 @@ const COMPILE_CACHE_DIR: &str = "compile-cache";
 /// host's. Each caller takes a pool slot for each core module that it
 /// starts: a route request starts the ingress and every component of the
 /// release, and the device loop starts the components. The pool holds
-/// [`EDGE_REQUESTS_IN_FLIGHT`] route requests and the device loop.
+/// [`EDGE_POOL_SIZE`] route requests and the device loop.
 fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime::engine::Engine> {
     let ingress = core_instances_of_component(release.ingress())
         .context("count the core modules of the route guest")?;
@@ -156,7 +155,7 @@ fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime:
             )
         })?;
     }
-    let requests = u32::try_from(EDGE_REQUESTS_IN_FLIGHT.get())?;
+    let requests = u32::try_from(EDGE_POOL_SIZE.get())?;
     let core_instances = requests * (ingress + application) + application;
     tracing::info!(
         ingress,
@@ -185,6 +184,7 @@ fn compile_cache_dir(db: &Path) -> anyhow::Result<PathBuf> {
 /// Load the pinned release, serve its routes, and run the device loop when
 /// the configuration names a device.
 pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
+    config.http.validate()?;
     let release = Arc::new(
         EdgeRelease::load(
             &config.release.dir,
@@ -211,14 +211,10 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .await
         .context("load the release application")?;
 
-    let routing = FlowHttpRouting::with_box_limit(
-        Some(Arc::clone(release.release())),
-        RouteInFlightLimit::new(EDGE_REQUESTS_IN_FLIGHT),
-    )
-    .with_authenticator(Arc::new(EdgeAuthenticator::new(
-        verifier,
-        Arc::clone(&release),
-    )));
+    let routing =
+        FlowHttpRouting::unlimited(Some(Arc::clone(release.release()))).with_authenticator(
+            Arc::new(EdgeAuthenticator::new(verifier, Arc::clone(&release))),
+        );
     let delivery = Arc::new(EdgeDelivery::new(
         Arc::clone(&release),
         application,

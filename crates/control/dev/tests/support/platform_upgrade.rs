@@ -1,6 +1,5 @@
 //! One deployed upgrade case. The existing journey prepares applications and owns cleanup.
 
-use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

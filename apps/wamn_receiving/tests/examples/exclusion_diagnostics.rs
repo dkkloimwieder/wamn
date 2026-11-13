@@ -52,7 +52,6 @@ fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
 }
 
 async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
-    wamn_compiler::build_record::require_current(package)?;
     let manifest_path = wamn_compiler::package_manifest_path(package);
     let manifest_bytes = std::fs::read(&manifest_path)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
@@ -74,7 +73,7 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
         &catalog,
         &manifest_bytes,
         &authored,
-        &StatementTransactionality::unclassified(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))?;
     // A generated file's logical path starts with `generated/`, and the file
     // lies at the rest of that path in the package's build output.
@@ -147,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
     // The build output lies outside Git. Copy Receiving's, which `wamn build`
     // wrote, so the scratch package has its compiled manifest.
     let receiving = root.join("apps/wamn_receiving");
-    wamn_compiler::build_record::require_current(&receiving)?;
+
     copy_tree(
         &wamn_compiler::output_root(&receiving),
         &wamn_compiler::output_root(&scratch.path().join("apps/wamn_receiving")),

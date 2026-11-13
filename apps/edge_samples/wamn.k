@@ -57,4 +57,9 @@ manifest.Package {
     }
     connections = {}
     components = {samples = {connections = ["postgres"]}}
+    routes = {
+        operations = {
+            "sample.record" = {id = "sample-record-http", path = "/sample/record"}
+        }
+    }
 }

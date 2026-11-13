@@ -4,7 +4,6 @@ use super::*;
 use base64::Engine as _;
 use http_body_util::{BodyExt as _, Full};
 use sha2::{Digest as _, Sha256};
-use sqlx::{Connection as _, Row as _};
 use wash_runtime::host::http::{
     HostHandler as _, Ingress, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
 };

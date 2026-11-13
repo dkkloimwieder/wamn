@@ -12,8 +12,6 @@ use wamn_environment_control::environment::document::EnvironmentDocument;
 fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = root.join(id);
     std::fs::create_dir_all(root.join("migrations"))?;
-    std::fs::create_dir_all(root.join("publication"))?;
-    std::fs::write(root.join("publication/attachments.json"), "{}")?;
     std::fs::write(
         root.join("wamn.k"),
         format!(
@@ -63,10 +61,10 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
     )?;
     let file = scratch.path().join("environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev",
+        "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev","revocation_seconds":60,
         "applications": {
-            "a": {"current": "none", "hostname": "a.invalid", "packages": ["appa"]},
-            "b": {"current": "none", "hostname": "b.invalid", "packages": ["appb"]}
+            "a": {"current": "none", "revocation_seconds":5,"hostname": "a.invalid", "packages": ["appa"]},
+            "b": {"current": "none", "revocation_seconds":5,"hostname": "b.invalid", "packages": ["appb"]}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
@@ -128,12 +126,12 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         b_record
     );
     // Generation succeeds, but publication refuses the absent component.
-    build_record::read_current(&a, &output)?;
+    build_record::read(&output)?;
     // Source schema apply uses the same builder before publication can fail.
     let schema_version = "3.0.0";
     package(scratch.path(), "appa", schema_version)?;
     deploy(&a, true)?;
-    let schema_build = build_record::read_current(&a, &output)?;
+    let schema_build = build_record::read(&output)?;
     assert_eq!(schema_build.package.version, schema_version);
     let last_build = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
     std::fs::write(a.join("migrations/0001_initial.sql"), "INVALID SQL")?;

@@ -15,6 +15,7 @@ const PAYLOAD_FILES: &[&str] = &[
     "platform/edge/values.yaml",
     "platform/edge/templates/configmap.yaml",
     "platform/edge/templates/deployment.yaml",
+    "platform/edge/templates/ingress.yaml",
     "platform/edge/templates/service.yaml",
     "platform/edge/templates/rbac.yaml",
     "platform/identity/Chart.yaml",
@@ -611,10 +612,10 @@ mod tests {
         let cluster = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
         let digest = format!("sha256:{}", "c".repeat(64));
         let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org":cluster.org, "project":"fixture", "env":"dev", "target":"cloud", "policy":"dev",
+            "org":cluster.org, "project":"fixture", "env":"dev", "target":"cloud", "policy":"dev","revocation_seconds":60,
             "applications":{
-                "alpha":{"packages":["platform_fixture"],"current":digest,"hostname":"alpha.example"},
-                "beta":{"packages":["platform_fixture_overlay"],"current":digest,"hostname":"beta.example"},
+                "alpha":{"packages":["platform_fixture"],"current":digest,"revocation_seconds":5,"hostname":"alpha.example"},
+                "beta":{"packages":["platform_fixture_overlay"],"current":digest,"revocation_seconds":5,"hostname":"beta.example"},
             },
         }))?)?;
         let mut manifest: wamn_catalog::ServingManifest = serde_json::from_value(json!({

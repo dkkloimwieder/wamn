@@ -121,42 +121,33 @@ pub fn role_caller(
 /// Trusted dependencies and target for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: sqlx::PgPool,
-    /// The identity statement, parsed once at construction rather than on
-    /// every request. See [`PreparedIdentityReads`].
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    org: Box<str>,
     project: Box<str>,
-    expected_subject: Box<str>,
 }
 
 impl std::fmt::Debug for RouteAuthentication {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RouteAuthentication")
-            .field("org", &self.org)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
 
 impl RouteAuthentication {
-    /// Bind the two read authorities to trusted package coordinates.
+    /// Bind the identity reader and the trusted project permission reader.
     ///
     /// Environment and project remain single-sourced from the loaded release.
     pub fn new(
         identity_reader: sqlx::PgPool,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-        org: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
-        expected_subject: impl Into<Box<str>>,
     ) -> Self {
         postgres.set_hierarchy_reader(identity_reader.clone());
         Self {
             identity_reader,
             postgres,
-            org: org.into(),
             project: project.into(),
-            expected_subject: expected_subject.into(),
         }
     }
 }
@@ -406,7 +397,18 @@ impl PlatformRouteAuthenticator {
             if !active {
                 return Err(unauthorized());
             }
-            cache.keep_session_active(ticket, token, session.claims().sub.to_string().as_str());
+            let deadline = u64::try_from(session.claims().exp)
+                .ok()
+                .and_then(|seconds| {
+                    std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds))
+                })
+                .ok_or_else(unauthorized)?;
+            cache.keep_session_active(
+                ticket,
+                token,
+                session.claims().sub.to_string().as_str(),
+                deadline,
+            );
         }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
@@ -530,9 +532,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .await
                         .map_err(|_| authentication_unavailable())?,
                     token,
-                    &authentication.org,
-                    &authentication.project,
-                    &[ADMIN_ROLE],
                 )
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
@@ -541,9 +540,10 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     authentication_unavailable()
                 })?
                 .ok_or_else(unauthorized)?;
-                cache.keep_pat(ticket, token, principal.clone());
+                cache.keep_pat(ticket, token, &principal);
                 principal
             };
+            let credential_deadline = principal.pat_deadline();
             let principal = principal.principal();
             match principal.principal_type() {
                 PrincipalType::Platform | PrincipalType::User => return Err(unauthorized()),
@@ -569,11 +569,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         return Err(unauthorized());
                     }
                 }
-                PrincipalType::Service
-                    if principal.subject() != authentication.expected_subject.as_ref() =>
-                {
-                    return Err(unauthorized());
-                }
                 PrincipalType::Service => {}
             }
             // A service receives its roles through `wamn-ctl grant-role`.
@@ -590,6 +585,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()
                 })?;
+            if credential_deadline.is_none_or(|deadline| std::time::SystemTime::now() >= deadline) {
+                return Err(unauthorized());
+            }
             let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id,

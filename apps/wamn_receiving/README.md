@@ -9,9 +9,8 @@ Receiving owns package `wamn_receiving`, its SQL, guest, generated code, and app
 Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/wamn_receiving/`, outside Git.
 [Component](component/): Application guest.
 [Publication](publication/): The attachments and the component definition.
-[Package digest](package.digest): The tag and digest that the built package packs to.
 [Web application](web/README.md): The browser page, with its route table.
-[Tests](tests/): Application assertions and SQLx metadata.
+[Tests](tests/): Application interface tests.
 [Change walkthrough](tests/field-change-walkthrough.md): A Rust-only change through the development loop and its executed test.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
 [Development loop](../../docs/operations/development-loop.md): Generation and SQLx preparation.

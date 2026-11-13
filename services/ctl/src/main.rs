@@ -52,6 +52,8 @@ enum Command {
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
     /// Provision the targeted database credential for the identity service.
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
+    /// Create an API service principal, authored grants, and its PAT.
+    CreateApiService(identity_verbs::ApiServiceArgs),
     /// Grant one user access to one project environment.
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Revoke one user's access to one project environment.
@@ -82,8 +84,6 @@ enum Command {
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Push one authored package as a registry artifact and record its digest (wamn-zua8.3)
     PushPackage(package_verbs::PushPackageArgs),
-    /// Reconcile generated package data privileges after apply-package.
-    ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Manage environment connections through control routes.
     Connection(component_verbs::ConnectionArgs),
     /// Manage project external systems through control routes.
@@ -170,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
+        Command::CreateApiService(args) => identity_verbs::create_api_service(args).await,
         Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
         Command::Invite(args) => identity_verbs::invite(args).await,
@@ -188,9 +189,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ExternalSystem(args) => component_verbs::external_system(args).await,
         Command::IntegrationType(args) => component_verbs::integration_type(args).await,
         Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
-        Command::ReconcilePackageDataAccess(args) => {
-            package_verbs::reconcile_data_access(args).await
-        }
         Command::PublishRelease(args) => release_verbs::publish(args).await,
 
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),

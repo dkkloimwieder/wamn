@@ -289,7 +289,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         Provider::Gcp => None,
     };
     let edge =
-        wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 443)
+        wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 80)
             .await?;
     let identity_tls = get(run, "identity", "secret", "identity-tls").await?;
     let operator = get(
@@ -401,28 +401,21 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .context("owner control session")?;
     let file = run.directory.join("environments/environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev",
+        "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":{
-            "alpha":{"current":"none","hostname":alpha_host,"packages":["alpha"]},
-            "beta":{"current":"none","hostname":beta_host,"packages":["beta"]}
+            "alpha":{"current":"none","revocation_seconds":5,"hostname":alpha_host,"packages":["alpha"]},
+            "beta":{"current":"none","revocation_seconds":5,"hostname":beta_host,"packages":["beta"]}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let mut client = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(30));
-    if run.document.provider == Provider::Kind {
-        let edge_tls = get(run, "hosts", "secret", "wamn-edge-tls").await?;
-        client = client.add_root_certificate(reqwest::Certificate::from_pem(&secret(
-            &edge_tls, "ca.crt",
-        )?)?);
-    }
-    let mut client = client
+        .timeout(Duration::from_secs(30))
         .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&isolated_host, ([127, 0, 0, 1], edge.port).into())
         .build()?;
-    let edge_url = format!("https://{alpha_host}:{}", edge.port);
+    let edge_url = format!("http://{alpha_host}:{}", edge.port);
     let issued: Value = identity_client.post(format!("{endpoint}/pats"))
         .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
         .send().await?.error_for_status()?.json().await?;
@@ -435,7 +428,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         isolated_host: &isolated_host,
         variables: &variables,
         token: &token,
-        client: &mut client,
+        client: &client,
         edge: &edge_url,
     };
     let control_url = match run.document.provider {
@@ -1070,23 +1063,13 @@ async fn sources(
             "version = \"2.1.1\"",
             &format!("version = \"1.0.0-test-{id}\""),
         );
-        let text = text.replace(
-            "routes = {",
-            &format!("routes = {{path_prefix = \"/{app}\", "),
-        );
+        let text = text
+            .replace(
+                "routes = {",
+                &format!("routes = {{path_prefix = \"/{app}\", "),
+            )
+            .replace("path = \"/", &format!("path = \"/{app}/"));
         std::fs::write(manifest, text)?;
-        let file = root.join("publication/attachments.json");
-        let mut attachments: BTreeMap<String, Value> =
-            serde_json::from_slice(&std::fs::read(&file)?)?;
-        for attachment in attachments.values_mut() {
-            let path = attachment["definition"]["route"]["path"]
-                .as_str()
-                .context("fixture route path")?;
-            attachment["definition"]["route"]["path"] = format!("/{app}{path}").into();
-            attachment["definition-hash"] =
-                wamn_digest::canonical_json_sha256(&attachment["definition"]).into();
-        }
-        std::fs::write(file, serde_json::to_vec_pretty(&attachments)?)?;
         let query = root.join("query/widget_list.sql");
         std::fs::write(
             &query,
