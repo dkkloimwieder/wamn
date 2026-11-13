@@ -1,7 +1,6 @@
 use serde_json::{Value, json};
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
 use wamn_compiler::manifest::validate_operation_vocabulary;
-use wamn_compiler::{DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay};
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
 use super::{artifact, fixture, parsed};
@@ -190,7 +189,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
 }
 
 #[test]
-fn claim_generation_and_canonical_authority_use_platform_declarations() {
+fn claim_generation_uses_platform_operation_declarations() {
     let manifest = super::platform_claim::manifest();
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
     let operation = artifact(
@@ -199,50 +198,6 @@ fn claim_generation_and_canonical_authority_use_platform_declarations() {
     );
     assert_eq!(operation["transaction"], "explicit_per_input");
     assert_eq!(operation["automatic_retry"], false);
-    let bytes = package.file(DATA_ACCESS_OVERLAY_PATH).unwrap().bytes();
-    DataAccessOverlay::from_slice(bytes).unwrap();
-    let mut noncanonical = bytes.to_vec();
-    noncanonical.push(b'\n');
-    assert_eq!(
-        DataAccessOverlay::from_slice(&noncanonical)
-            .unwrap_err()
-            .error_type(),
-        GenerateErrorType::InvalidManifest
-    );
-    let mut read_only = fixture::manifest();
-    read_only["models"]["widget"]["operations"] = json!({});
-    read_only["models"]["widget"]
-        .as_object_mut()
-        .unwrap()
-        .remove("delete_mode");
-    let package = fixture::generate_with(&fixture::catalog(), &read_only);
-    let overlay = artifact(&package, DATA_ACCESS_OVERLAY_PATH);
-    assert_eq!(overlay["role"], "wamn_app");
-    assert_eq!(overlay["contract"], "platform_fixture_data_access");
-    let relation = overlay["relations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|relation| relation["table"] == "widget")
-        .unwrap();
-    // `widget.list` reads every column: its attributes are the whole row.
-    assert_eq!(
-        relation["select_fields"],
-        json!([
-            "code",
-            "created_at",
-            "edit_version",
-            "id",
-            "maker_id",
-            "note"
-        ])
-    );
-    assert_eq!(relation["insert_fields"], json!([]));
-    assert_eq!(relation["update_fields"], json!([]));
-    assert_eq!(relation["lock"], true);
-    // The carrier is the first select field when a relation writes none, so
-    // it follows the union of what every operation reads.
-    assert_eq!(relation["lock_update_field"], "code");
 }
 
 #[test]

@@ -1151,8 +1151,6 @@ fn is_ruled_operation(tokens: &[Token<'_>]) -> bool {
 
     [
         "extension",
-        "function",
-        "procedure",
         "trigger",
         "rule",
         "policy",

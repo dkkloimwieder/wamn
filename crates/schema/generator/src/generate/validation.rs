@@ -46,30 +46,7 @@ pub(super) fn validate(
     validate_authored_query_filters(manifest, input.authored_sql)?;
     refuse_generator_owned_queries(input.catalog, manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
-        validate_custom_operation_sql(
-            input.catalog,
-            manifest,
-            input.authored_sql,
-            operation_name,
-            operation,
-        )?;
-        let feed_source = crate::feed::derive(
-            input.catalog,
-            manifest,
-            input.authored_sql,
-            operation_name,
-            operation,
-        )?;
-        if operation
-            .feed_source
-            .as_ref()
-            .is_some_and(|source| Some(source) != feed_source.as_ref())
-        {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!("{operation_name} feed_source differs from its statement and view catalog"),
-            ));
-        }
+        validate_custom_operation_sql(input.catalog, manifest, operation_name, operation)?;
     }
     Ok(())
 }
@@ -205,7 +182,7 @@ fn validate_model(
         // nothing outside `generated/`.
         let expression = super::min_length_check(field, *minimum);
         let guarded = table.constraints().iter().any(|constraint| {
-            matches!(constraint.constraint_type(), ConstraintType::Check { expression: found } if **found == *expression)
+            matches!(constraint.constraint_type(), ConstraintType::Check { expression: found } if super::guards_length(found, field, *minimum))
         });
         if !guarded {
             return Err(GenerateError::for_object(
@@ -764,7 +741,6 @@ fn validate_query(
 fn validate_custom_operation_sql(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    authored_sql: &[AuthoredSql<'_>],
     operation: &str,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
@@ -823,7 +799,7 @@ fn validate_custom_operation_sql(
         }
     }
     validate_constraint_error_mappings(catalog, operation, declaration)?;
-    validate_static_sql_relation_access(catalog, manifest, authored_sql, operation, declaration)
+    Ok(())
 }
 
 fn validate_static_sql_relation_fields(
@@ -895,10 +871,10 @@ fn validate_delete_target(
 }
 
 /// What one custom operation's statements do to each relation they reach,
-/// keyed by table: its schema, the access the lexer derives, and the
+/// keyed by table: its schema, the access SQL analysis derives, and the
 /// constraints the statements name as conflict targets.
 ///
-/// The lexer resolves a table by its name over the relations of the package's
+/// SQL analysis resolves a table by its name over the relations of the package's
 /// own schemas, so a table name that two of them share refuses.
 pub(super) fn derive_relation_access(
     catalog: &CatalogIr,
@@ -920,26 +896,18 @@ pub(super) fn derive_relation_access(
             .iter()
             .find(|source| source.path == statement.path)
             .expect("authored-source validation supplied every custom-operation statement");
-        let lexed = |detail| {
-            GenerateError::for_path(
-                GenerateErrorType::InvalidOperation,
-                format!("{}: {detail}", statement.path),
-                statement.path.as_str(),
-            )
-        };
-        let statement_access =
-            wamn_catalog::sql_lex::relation_access(source.bytes, relation_fields).map_err(
-                |detail| {
-                    GenerateError::for_path(
-                        GenerateErrorType::InvalidOperation,
-                        format!(
-                            "{} cannot derive exact relation access: {detail}",
-                            statement.path
-                        ),
-                        statement.path.as_str(),
-                    )
-                },
-            )?;
+        let analysis =
+            crate::sql_analysis::analyze(source.bytes, relation_fields).map_err(|detail| {
+                GenerateError::for_path(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{} cannot derive exact relation access: {detail}",
+                        statement.path
+                    ),
+                    statement.path.as_str(),
+                )
+            })?;
+        let statement_access = analysis.access;
         for (table, access) in &statement_access {
             if (!access.insert_fields.is_empty()
                 || !access.update_fields.is_empty()
@@ -960,7 +928,7 @@ pub(super) fn derive_relation_access(
                 ));
             }
         }
-        let deleted = wamn_catalog::sql_lex::delete_targets(source.bytes).map_err(lexed)?;
+        let deleted = analysis.deletes;
         for target in &deleted {
             validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
         }
@@ -970,7 +938,7 @@ pub(super) fn derive_relation_access(
                 .entry(table)
                 .or_insert_with(|| DerivedRelation {
                     schema,
-                    access: wamn_catalog::sql_lex::RelationAccess::default(),
+                    access: crate::sql_analysis::RelationAccess::default(),
                     constraints: BTreeSet::new(),
                 })
                 .access;
@@ -980,7 +948,7 @@ pub(super) fn derive_relation_access(
             aggregate.lock |= observed.lock;
             aggregate.delete |= observed.delete;
         }
-        for name in wamn_catalog::sql_lex::conflict_constraints(source.bytes).map_err(lexed)? {
+        for name in analysis.constraints {
             let relation = defining_relation(catalog, &mut derived, &name).ok_or_else(|| {
                 GenerateError::for_path(
                     GenerateErrorType::InvalidOperation,
@@ -998,7 +966,7 @@ pub(super) fn derive_relation_access(
 }
 
 /// The relations of the package's own schemas that its SQL can name: each
-/// relation's schema and columns, keyed by name, as the lexer reads them.
+/// relation's schema and columns, keyed by name, as SQL analysis reads them.
 struct PackageRelations {
     schemas: Vec<String>,
     owners: BTreeMap<String, String>,
@@ -1012,7 +980,7 @@ fn package_relations(
     manifest: &PackageManifest,
     subject: &str,
 ) -> Result<PackageRelations, GenerateError> {
-    let schemas = crate::data_access::application_schemas(manifest)?;
+    let schemas = crate::materialize::application_schemas(manifest)?;
     let mut owners = BTreeMap::<String, String>::new();
     let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
     let schema_set = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
@@ -1084,7 +1052,7 @@ fn package_relations(
 #[derive(Debug)]
 pub(super) struct DerivedRelation {
     schema: String,
-    access: wamn_catalog::sql_lex::RelationAccess,
+    access: crate::sql_analysis::RelationAccess,
     /// The constraints the operation relies on that this relation defines.
     constraints: BTreeSet<String>,
 }
@@ -1165,70 +1133,6 @@ pub(super) fn derive_relations(
             constraints: relation.constraints.into_iter().collect(),
         })
         .collect())
-}
-
-/// Refuse a stated relation that the statements do not reach exactly as stated.
-///
-/// A compiled manifest states the relations that generation derived, and a
-/// hand-written one states its own. Either way the SQL decides.
-fn validate_static_sql_relation_access(
-    catalog: &CatalogIr,
-    manifest: &PackageManifest,
-    authored_sql: &[AuthoredSql<'_>],
-    operation: &str,
-    declaration: &CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let mut actual =
-        derive_relation_access(catalog, manifest, authored_sql, operation, declaration)?
-            .into_iter()
-            .map(|(table, relation)| (table, relation.access))
-            .collect::<BTreeMap<_, _>>();
-    for relation in &declaration.relations {
-        let observed = actual.remove(&relation.table).unwrap_or_default();
-        let declared = wamn_catalog::sql_lex::RelationAccess {
-            select_fields: relation.select_fields.iter().cloned().collect(),
-            insert_fields: relation.insert_fields.iter().cloned().collect(),
-            update_fields: relation.update_fields.iter().cloned().collect(),
-            lock: relation.lock,
-            delete: relation.delete,
-        };
-        if observed != declared {
-            return Err(GenerateError::for_object(
-                GenerateErrorType::InvalidOperation,
-                format!(
-                    "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks.\n\
-                     Verified SQL: {}\n\
-                     Declared: {}\n\
-                     DELETE requires delete=true. RETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
-                    relation.schema,
-                    relation.table,
-                    serde_json::json!({
-                        "select_fields": observed.select_fields,
-                        "insert_fields": observed.insert_fields,
-                        "update_fields": observed.update_fields,
-                        "lock": observed.lock,
-                        "delete": observed.delete,
-                    }),
-                    serde_json::json!({
-                        "select_fields": declared.select_fields,
-                        "insert_fields": declared.insert_fields,
-                        "update_fields": declared.update_fields,
-                        "lock": declared.lock,
-                        "delete": declared.delete,
-                    }),
-                ),
-                format!("{}.{}", relation.schema, relation.table),
-            ));
-        }
-    }
-    if let Some(table) = actual.keys().next() {
-        return Err(GenerateError::for_object(
-            GenerateErrorType::InvalidOperation,
-            format!("{operation} SQL reaches undeclared relation {table}"),
-            table.clone(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_sort_field(
@@ -1376,7 +1280,7 @@ fn validate_authored_query_filters(
                     let parameter = u32::try_from(index + 1).expect("a query has few filters");
                     let declared = filter.match_mode;
                     let refusal =
-                        match wamn_catalog::sql_lex::filter_predicate(source.bytes, parameter) {
+                        match crate::sql_analysis::filter_predicate(source.bytes, parameter) {
                             Some((Some(found), _)) if found == declared => continue,
                             Some((Some(found), line)) => format!(
                                 "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
@@ -1416,7 +1320,7 @@ fn validate_authored_query_filters(
 /// table, no aggregate and no window. Authored SQL whose every variant reads
 /// the model's table and no other, with no `GROUP BY` and no `OVER (`, is such a query,
 /// so the author states its sort and filters and no SQL. Authored SQL stays for
-/// a query that joins, aggregates or windows. A variant the lexer cannot read
+/// a query that joins, aggregates or windows. A variant SQL analysis cannot read
 /// stays authored, because generation never rewrites SQL it did not write.
 fn refuse_generator_owned_queries(
     catalog: &CatalogIr,
@@ -1435,14 +1339,11 @@ fn refuse_generator_owned_queries(
                     .iter()
                     .find(|source| source.path == variant.path)
                     .is_some_and(|source| {
-                        !wamn_catalog::sql_lex::groups_or_windows(source.bytes)
-                            && wamn_catalog::sql_lex::relation_access(
-                                source.bytes,
-                                &relations.fields,
-                            )
-                            .is_ok_and(|access| {
-                                access.len() == 1 && access.contains_key(&model.table)
-                            })
+                        !crate::sql_analysis::groups_or_windows(source.bytes)
+                            && crate::sql_analysis::relation_access(source.bytes, &relations.fields)
+                                .is_ok_and(|access| {
+                                    access.len() == 1 && access.contains_key(&model.table)
+                                })
                     })
             });
             if generator_owned {
@@ -1532,7 +1433,6 @@ fn safe_sql_path(path: &str) -> bool {
 mod tests {
     use super::{derive_relations, validate_custom_operation_sql};
     use crate::AuthoredSql;
-    use crate::data_access::{derive_data_access_overlay, validate_data_access_contribution};
     use crate::manifest::PackageManifest;
     use serde_json::json;
     use wamn_scalar::SqlValueType;
@@ -1541,7 +1441,7 @@ mod tests {
     };
 
     #[test]
-    fn authored_view_access_grants_only_selected_view_columns() {
+    fn authored_view_access_uses_only_selected_columns() {
         let catalog = CatalogIr::new(vec![Table::new(
             "inventory",
             "private_item",
@@ -1605,24 +1505,10 @@ mod tests {
         validate_custom_operation_sql(
             &catalog,
             &manifest,
-            &sources,
             "inventory.report",
             &manifest.custom_operations["inventory.report"],
         )
         .expect("accept the derived view relation");
-        let overlay = derive_data_access_overlay(&catalog, &manifest).unwrap();
-        let bytes = serde_json::to_vec(&manifest).unwrap();
-        validate_data_access_contribution(&overlay, &bytes).unwrap();
-        let grants = serde_json::to_value(&overlay).unwrap();
-        assert_eq!(grants["relations"][0]["table"], "item_report");
-        assert_eq!(
-            grants["relations"][0]["select_fields"],
-            json!(["id", "label"])
-        );
-        assert_eq!(grants["relations"][0]["insert_fields"], json!([]));
-        assert_eq!(grants["relations"][0]["update_fields"], json!([]));
-        assert_eq!(grants["relations"][1]["table"], "private_item");
-        assert_eq!(grants["relations"][1]["select_fields"], json!([]));
         for sql in [
             "INSERT INTO item_report (id) VALUES ($1)",
             "UPDATE item_report SET label = $1",

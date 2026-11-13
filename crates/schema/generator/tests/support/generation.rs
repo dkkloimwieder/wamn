@@ -265,7 +265,7 @@ pub(super) fn run_with_bases(
         catalog,
         &bytes,
         sources,
-        &StatementTransactionality::default(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
 }
 

@@ -60,7 +60,7 @@ pub(crate) fn try_generate_with_sql(
         catalog,
         &manifest,
         &sources,
-        &StatementTransactionality::default(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
 }
 

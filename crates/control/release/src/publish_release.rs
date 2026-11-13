@@ -2118,6 +2118,7 @@ mod tests {
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
+                    relations: Vec::new(),
                     transactional: false,
                 },
             );

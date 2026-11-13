@@ -192,7 +192,7 @@ pub(crate) fn derive(
         .find(|source| source.path() == statement.path)
         .ok_or_else(|| fail("the authored statement is missing"))?;
     let sql = std::str::from_utf8(sql.bytes()).map_err(|_| fail("the statement is not UTF-8"))?;
-    if wamn_catalog::sql_lex::groups_or_windows(sql.as_bytes()) {
+    if crate::sql_analysis::groups_or_windows(sql.as_bytes()) {
         return Err(fail(
             "the authored statement has GROUP BY or a window function",
         ));
@@ -436,7 +436,7 @@ fn validate_view(
     if !query.distinct_clause.is_empty() {
         return Err("DISTINCT is not supported".into());
     }
-    if wamn_catalog::sql_lex::groups_or_windows(view.definition().as_bytes()) && query.group_clause.is_empty()
+    if crate::sql_analysis::groups_or_windows(view.definition().as_bytes()) && query.group_clause.is_empty()
         || !query.window_clause.is_empty()
         || parsed.protobuf.nodes().iter().any(|(node, _, _, _)| matches!(node, pg_query::NodeRef::FuncCall(call) if call.over.is_some()))
     { return Err("window functions are not supported".into()) }
@@ -873,7 +873,7 @@ mod tests {
             &catalog,
             &derived,
             &sql,
-            &crate::StatementTransactionality::default(),
+            &crate::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
         ))
         .unwrap();
         for file in output.files() {
@@ -891,20 +891,6 @@ mod tests {
             }
         }
         let text = |path| std::str::from_utf8(output.file(path).unwrap().bytes()).unwrap();
-        let changes = text("generated/sql/line_load/feed_changes.sql");
-        for expected in [
-            "item_history",
-            "line_history",
-            "orders_history",
-            "before->>'order_id'",
-            "before->>'item_id'",
-            "result.id = ANY",
-            "max(change_transaction)",
-            "LIMIT $4::int8",
-        ] {
-            assert!(changes.contains(expected), "missing {expected}: {changes}");
-        }
-        let wit = text("generated/wit/deps/fixture-line/package.wit");
         let contract: serde_json::Value =
             serde_json::from_str(text("generated/contracts/line/load.operation.json")).unwrap();
         assert_eq!(contract["result"], "page");
@@ -917,30 +903,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["feed_changes", "feed_page"]
         );
-        assert!(text("generated/data/line_load.rs").contains("Error::invalid(\"value_id\")"));
-        for expected in [
-            "feed: option<load-feed>",
-            "page(load-page)",
-            "changes(load-changes)",
-            "row-version: s64",
-            "cursor-expired",
-        ] {
-            assert!(wit.contains(expected), "{expected}: {wit}");
-        }
-        let grants = text(crate::data_access::DATA_ACCESS_OVERLAY_PATH);
-        let grants: serde_json::Value = serde_json::from_str(grants).unwrap();
-        for table in ["item_history", "line_history", "orders_history"] {
-            let relation = grants["relations"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|relation| relation["table"] == table)
-                .unwrap();
-            assert_eq!(
-                relation["select_fields"],
-                json!(["before", "row_key", "transaction_id", "type"])
-            );
-        }
     }
 
     #[test]

@@ -394,7 +394,7 @@ An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a
 
 ## wamn build
 
-`wamn build` builds packages in two passes.
+`wamn build` compiles each package through one SQL corpus.
 It needs a PostgreSQL server, which it does not start.
 Give a superuser URL of the server in `DATABASE_URL` or `--database-url`.
 The build creates its own verification database on that server and drops it at the end.
@@ -406,10 +406,20 @@ DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
   apps/wamn_receiving apps/client_acme_receiving
 ```
 
-Pass one compiles `wamn.k` and migrates the verification database.
+The build compiles `wamn.k` and migrates the verification database.
 The migrations of each base package run first, then the package's own migrations, then the history tables.
-The build then describes every authored statement through SQLx and writes the canonical `wamn.json`.
-Pass two generates every other output from those `wamn.json` bytes.
+SQLx describes authored statements to fill their declared value types.
+The compiler derives relations and feed sources, then generates the remaining SQL once.
+SQLx describes every generated statement, including each fixed list sort and each feed statement.
+The compiler checks each accessor's parameters and selected columns against those descriptions before it writes consumers.
+One type table in `wamn-scalar` maps PostgreSQL names for build and runtime.
+
+The build classifies writes and row locks from PostgreSQL plans.
+A call to an authored routine also counts as a write and retains the command transaction.
+It generates no application grant contribution and plans without installing derived grants.
+Deployable routine support remains incomplete.
+The build also emits history DDL at `migrations/record_history.sql` for the migration runner.
+The existing `physical-schema.json` remains until that runner replaces its readers.
 
 A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
 A stated type that differs from the type SQLx gives is refused.
@@ -517,7 +527,7 @@ A package artifact has the tag `<package_id>-<version>`. Its image manifest has 
 | 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
 | 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
 | 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `publication/`: `attachments.json`, `wirings/`, `components/<name>.json.in`, including the declaration of each palette component a wiring names |
-| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
+| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
 | 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
 
 The package artifact contains three tar layers and no browser files.

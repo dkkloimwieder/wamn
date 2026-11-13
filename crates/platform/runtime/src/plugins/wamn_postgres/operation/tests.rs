@@ -52,6 +52,7 @@ fn release() -> Arc<LoadedRelease> {
             value_type: SqlValueType::Int32,
             nullable: false,
         }],
+        relations: Vec::new(),
         transactional: true,
     };
     let mut manifest = ServingManifest::new(
@@ -65,6 +66,7 @@ BTreeSet::from([ServingComponent {
                 statements: BTreeMap::from([("read.sql".into(), ComponentSqlStatement {
                     name: "read".into(), path: "read.sql".into(),
                     sql: "SELECT value FROM widget WHERE id = 1".into(),
+                    relations: Vec::new(),
                     transactional: false, ..statement.clone()
                 })]),
             }), (OPERATION.into(), AdmittedComponentOperation { host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),

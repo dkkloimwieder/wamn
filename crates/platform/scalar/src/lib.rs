@@ -19,6 +19,15 @@ pub enum SqlValueType {
 }
 
 impl SqlValueType {
+    /// Canonical PostgreSQL cast name for this transport type.
+    pub fn postgres_name(self) -> &'static str {
+        POSTGRES_TYPES
+            .iter()
+            .find(|(_, ty)| *ty == self)
+            .expect("every transport type has a PostgreSQL name")
+            .0[0]
+    }
+
     /// Frozen wire literal.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -34,6 +43,51 @@ impl SqlValueType {
             Self::Uuid => "uuid",
         }
     }
+}
+
+// The first name is the canonical cast. The remaining names are catalog and protocol aliases.
+const POSTGRES_TYPES: &[(&[&str], SqlValueType)] = &[
+    (&["boolean", "bool"], SqlValueType::Boolean),
+    (
+        &["int4", "integer", "int2", "smallint"],
+        SqlValueType::Int32,
+    ),
+    (&["int8", "bigint"], SqlValueType::Int64),
+    (
+        &["float8", "double precision", "float4", "real"],
+        SqlValueType::Float64,
+    ),
+    (
+        &[
+            "text",
+            "varchar",
+            "character varying",
+            "bpchar",
+            "character",
+            "name",
+            "unknown",
+        ],
+        SqlValueType::Text,
+    ),
+    (&["bytea"], SqlValueType::Bytes),
+    (&["numeric"], SqlValueType::Numeric),
+    (
+        &["timestamptz", "timestamp with time zone"],
+        SqlValueType::Timestamptz,
+    ),
+    (&["jsonb", "json"], SqlValueType::Json),
+    (&["uuid"], SqlValueType::Uuid),
+];
+
+/// Map PostgreSQL catalog, protocol and SQLx names to the transport vocabulary.
+#[must_use]
+pub fn postgres_type(name: &str) -> Option<SqlValueType> {
+    POSTGRES_TYPES.iter().find_map(|(names, ty)| {
+        names
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(name))
+            .then_some(*ty)
+    })
 }
 
 /// A `timestamptz` in UTC with six fractional digits, or `None` for a value
@@ -86,7 +140,22 @@ pub fn canonical_numeric(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_numeric, canonical_timestamptz};
+    use super::{SqlValueType, canonical_numeric, canonical_timestamptz, postgres_type};
+
+    #[test]
+    fn postgres_aliases_use_the_same_transport_type() {
+        for (name, expected) in [
+            ("INT2", SqlValueType::Int32),
+            ("float4", SqlValueType::Float64),
+            ("BPCHAR", SqlValueType::Text),
+            ("varchar", SqlValueType::Text),
+            ("name", SqlValueType::Text),
+        ] {
+            assert_eq!(postgres_type(name), Some(expected));
+            assert_eq!(postgres_type(expected.postgres_name()), Some(expected));
+        }
+        assert!(postgres_type("date").is_none());
+    }
 
     #[test]
     fn a_timestamp_is_respelled_in_utc_with_six_fractional_digits() {

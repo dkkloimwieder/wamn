@@ -7,6 +7,7 @@ use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorType, read_c
 async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
+    let reader = sqlx::PgPool::connect(database.url()).await.unwrap();
     let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .unwrap();
@@ -66,7 +67,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
         .await
         .unwrap_err();
     assert_eq!(missing.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
-    let catalog = read_catalog(&client, &["file_fixture"]).await.unwrap();
+    let catalog = read_catalog(&reader, &["file_fixture"]).await.unwrap();
     assert_eq!(catalog.tables().len(), 1);
     assert_eq!(catalog.tables()[0].name(), "document");
     let schema = String::from_utf8(catalog.canonical_json_bytes()).unwrap();
@@ -81,7 +82,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
         )
         .await
         .unwrap();
-    let error = read_catalog(&client, &["file_fixture"]).await.unwrap_err();
+    let error = read_catalog(&reader, &["file_fixture"]).await.unwrap_err();
     assert_eq!(
         error.error_type(),
         PostgresIntrospectionErrorType::UnsupportedConstraint
@@ -96,7 +97,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
         )
         .await
         .unwrap();
-    let error = read_catalog(&client, &["file_fixture"]).await.unwrap_err();
+    let error = read_catalog(&reader, &["file_fixture"]).await.unwrap_err();
     assert_eq!(
         error.error_type(),
         PostgresIntrospectionErrorType::UnsupportedConstraint

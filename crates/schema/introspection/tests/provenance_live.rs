@@ -5,6 +5,7 @@ use wamn_schema_introspection::postgres::read_catalog;
 async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
+    let reader = sqlx::PgPool::connect(database.url()).await.unwrap();
     let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .unwrap();
@@ -43,8 +44,8 @@ async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() 
     assert_eq!(client.query_one("SELECT count(DISTINCT external_system_id),count(DISTINCT external_id) FROM rest_consumer_fixture.item",&[]).await.unwrap().get::<_,i64>(0),2);
     client.batch_execute("RESET ROLE").await.unwrap();
     let schemas = ["rest_consumer_fixture"];
-    read_catalog(&client, &schemas).await.unwrap();
+    read_catalog(&reader, &schemas).await.unwrap();
     client.batch_execute("CREATE TABLE platform.other(id uuid PRIMARY KEY); ALTER TABLE rest_consumer_fixture.item ADD COLUMN other uuid CONSTRAINT item_other_fkey REFERENCES platform.other(id)").await.unwrap();
-    assert!(read_catalog(&client, &schemas).await.is_err());
+    assert!(read_catalog(&reader, &schemas).await.is_err());
     driver.abort();
 }

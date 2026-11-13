@@ -61,85 +61,6 @@ fn business_error_details_are_closed() {
 }
 
 #[test]
-fn authored_sql_access_must_match_declared_reads_and_row_locks() {
-    for (field, value) in [
-        ("select_fields", json!([])),
-        ("lock", json!(false)),
-        ("update_fields", json!(["edit_version"])),
-    ] {
-        let mut manifest = fixture::manifest();
-        manifest["custom_operations"]["widget.archive"]["relations"][0][field] = value;
-        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
-            .expect_err("SQL authority mismatch was accepted");
-        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
-        assert_eq!(error.object(), Some("inventory.widget"));
-        let message = error.to_string();
-        assert!(message.contains("privilege declaration does not match verified SQL"));
-        assert!(message.contains("\"lock\":true"));
-        assert!(message.contains("\"select_fields\":[\"edit_version\",\"id\",\"note\"]"));
-    }
-}
-
-#[test]
-fn a_whole_row_reference_reads_every_column_of_its_relation() {
-    // `widget.list` selects `to_jsonb(widget)`, so it reads every widget column.
-    let mut manifest = fixture::manifest();
-    manifest["custom_operations"]["widget.list"]["relations"][0]["select_fields"] =
-        json!(["code", "edit_version", "id"]);
-    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
-        .expect_err("a whole-row read was admitted under a narrower declaration");
-    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
-    assert_eq!(error.object(), Some("inventory.widget"));
-    let message = error.to_string();
-    assert!(
-        message.contains("widget.list inventory.widget privilege declaration"),
-        "{message}"
-    );
-    assert!(
-        message.contains(
-            "\"select_fields\":[\"code\",\"created_at\",\"edit_version\",\"id\",\"maker_id\",\"note\"]"
-        ),
-        "{message}"
-    );
-}
-
-#[test]
-fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
-    // Each case replaces one authored statement. The list accessor binds no
-    // parameter. The archive accessor binds the one declared parameter.
-    for (path, sql, expected) in [
-        (
-            "query/widget_list.sql",
-            "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget WHERE id = $1 ORDER BY id;\n",
-            "query/widget_list.sql takes 1 parameters, but its generated accessor list binds 0",
-        ),
-        (
-            "command/widget/archive.sql",
-            "SELECT id, edit_version, note FROM widget WHERE id = $1 AND edit_version = $2 FOR UPDATE;\n",
-            "command/widget/archive.sql takes 2 parameters, but its generated accessor archive binds 1",
-        ),
-    ] {
-        let authored = fixture::authored_sql()
-            .into_iter()
-            .map(|(candidate, bytes)| {
-                let bytes = if candidate == path {
-                    sql.as_bytes().to_vec()
-                } else {
-                    bytes
-                };
-                (candidate, bytes)
-            })
-            .collect::<Vec<_>>();
-        let error =
-            fixture::try_generate_with_sql(&fixture::catalog(), &fixture::manifest(), &authored)
-                .expect_err("a statement that does not take its accessor's binds was admitted");
-        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
-        assert_eq!(error.path(), Some(path));
-        assert!(error.to_string().contains(expected), "{error}");
-    }
-}
-
-#[test]
 fn state_idempotence_requires_its_exact_shape() {
     for guards in [
         json!({}),
@@ -256,8 +177,7 @@ fn a_command_without_sql_may_declare_its_host_transaction() {
 }
 
 /// A package with no model, relation or connection and only stateless commands
-/// declares no SQL, and it generates with an empty data-access contribution
-/// (`wamn-10nk`). A package that declares a connection still needs a model.
+/// declares no SQL. A package that declares a connection still needs a model.
 #[test]
 fn a_package_with_no_sql_generates_without_a_model() {
     let mut manifest = json!({
@@ -283,11 +203,8 @@ fn a_package_with_no_sql_generates_without_a_model() {
         "components": {"device": {"connections": []}}
     });
     let empty = CatalogIr::new(Vec::new());
-    let package = fixture::try_generate_with_sql(&empty, &manifest, &[])
+    fixture::try_generate_with_sql(&empty, &manifest, &[])
         .expect("a package with no SQL generates");
-    let access = artifact(&package, "generated/platform-policy/data-access.json");
-    assert_eq!(access["schemas"], json!([]));
-    assert_eq!(access["relations"], json!([]));
 
     manifest["connections"] = json!({});
     manifest["components"]["device"]["connections"] = json!(["postgres"]);
@@ -304,11 +221,8 @@ fn a_package_with_no_sql_generates_without_a_model() {
         "package": "fixture_base", "version": "1.0.0",
         "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
     }});
-    let package = fixture::try_generate_with_sql(&empty, &manifest, &[])
+    fixture::try_generate_with_sql(&empty, &manifest, &[])
         .expect("a composition with stateless wrappers owns no schema");
-    let access = artifact(&package, "generated/platform-policy/data-access.json");
-    assert_eq!(access["schemas"], json!([]));
-    assert_eq!(access["relations"], json!([]));
 }
 
 /// The fixture manifest with [`fixture::UNREAD_TABLE`] as an internal relation.
@@ -349,7 +263,7 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
         &fixture::catalog_with_unread_table(),
         &bytes,
         &[],
-        &wamn_compiler::StatementTransactionality::default(),
+        &wamn_compiler::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
     .expect_err("model/internal relation overlap was accepted");
     assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);

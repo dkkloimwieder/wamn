@@ -2,9 +2,12 @@
 
 Migration SQL defines an application's schema.
 `wamn-schema-introspection` reads PostgreSQL into a normalized schema description.
+The compiler selects relations from the manifest and authored SQL before it reads their column types.
 `wamn-compiler` owns authored declarations and their checks. It combines them with the schema description and SQL bytes to produce package artifacts. Catalog holds compiled release facts and does not depend on the compiler.
 The schema description is derived output, not an editable schema language.
 The generator's core transformation performs no filesystem, database, clock, or environment access.
+The build describes its complete SQL corpus with SQLx before it emits consumers.
+`wamn-scalar` owns the PostgreSQL type names used by the compiler, introspection and runtime.
 
 ## Schema and definition ownership
 
@@ -40,7 +43,8 @@ A package schema change requires a new release and a reset of the application ta
 The [owner ruling](../audit/README.md) defines this baseline policy.
 
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
-Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.
+The catalog reader reads tables and views. It no longer scans schemas to refuse routines, triggers, rules, policies, ACLs, unused types or standalone sequences.
+Selected column types and generated properties must still fit the generated action.
 Nontransactional operations and mutations outside the selected schemas refuse.
 The platform alone installs its declared extension list, `btree_gist` and `pg_stat_statements`, before application migration SQL.
 
@@ -110,7 +114,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
 | Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
 | Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors, `idempotency_conflict` among them. |
-| `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.delete`, `.lock` | SQL authority. The SQL owns what a statement reads, writes, locks and deletes, so generation derives each relation from the statements over the tables of the package's own schemas and writes it into the compiled manifest. PostgreSQL then plans each statement under the grants it derives. Derive. |
+| `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.delete`, `.lock` | SQL authority. The SQL owns what a statement reads, writes, locks and deletes, so generation derives each relation from the statements over the tables of the package's own schemas and writes it into the compiled manifest. The compiler describes the statement with SQLx and classifies its transaction needs. Derive. |
 | `relations[].constraints` | The constraints a statement relies on: each one its SQL names in `ON CONFLICT ON CONSTRAINT`, and each one `constraint_errors` maps, on the reached relation that defines it. Derive. |
 | `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL tests types, privileges, and transaction requirements. Retain names and declared shape. |
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
@@ -251,19 +255,16 @@ No application foreign key declares `ON DELETE CASCADE`.
 
 Authored command SQL can use `DELETE FROM` only on a model that declares `delete_mode: hard`.
 The operation declares `delete: true` on that relation and names the columns that `WHERE` and `RETURNING` read in `select_fields`.
-Generation compares these declarations with the SQL.
+Generation derives these relation facts from the SQL once.
 Projections and history tables refuse delete access.
 
-Generation plans every authored and generated statement as `wamn_app` under exactly the grants that the package declaration derives.
-PostgreSQL tests column privileges at plan time, so a statement that reads a column outside those grants fails at generate time.
-If the grants do not cover every column, the test refuses a whole-row reference such as `to_jsonb(item)`, `RETURNING item`, or `(item).sku`.
-The refusal lists the path, SQLSTATE, and PostgreSQL message of each refused statement, for example `42501 permission denied for table item`.
-The test runs in one transaction that rolls back, so the generation database keeps its roles and privileges.
-The [statement admission test](../../crates/schema/generator/tests/statement_admission_live.rs) adds a whole-row cast of `widget` to a small platform package, and the test refuses it.
-
-Generation also refuses a statement that takes a different number of parameters than its generated accessor binds.
-A statement takes parameters up to the highest `$n` it references outside comments, strings, and quoted identifiers.
-The refusal names the statement path, the accessor, and both counts.
+The compiler generates SQL once, then SQLx describes every statement before consumer emission.
+This includes authored SQL, each fixed list sort, and feed statements.
+The build checks parameter counts and types, selected column names and types, and compatible nullability.
+PostgreSQL plans determine whether a statement writes or locks rows.
+A call to an authored routine counts as a write even when its plan has no write node.
+Deployment support for routines is still incomplete.
+The compiler generates no application grants and does not plan under derived grants.
 
 Generated metadata binds schema requirements, platform-policy requirements, SQL identity, and generator provenance.
 Publication and deployment record source commit attribution outside tracked generated bytes.
@@ -619,7 +620,7 @@ They are the four stamp columns, the `wamn_record_history_stamp` and `wamn_recor
 Each fixture has one definition in [`deploy/sql`](../../deploy/sql).
 The applier installs a fixture by name, and every other component recognizes it by name.
 No component models a fixture, introspects it as a declaration, or projects it into the schema description.
-No component derives grants for a fixture as it does for user fields.
+The compiler generates no grant contribution for fixture or application fields.
 Verification of an installed fixture is a string comparison against `pg_catalog`, not a typed round trip.
 
 ### Declaration
@@ -796,10 +797,10 @@ The schema state id therefore stays the same when a relation starts or stops log
 
 The generator recognizes the history table of each logged model by its name, and it adds no history table to the catalog.
 It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
-Authored SQL validation, the SQL lexer, the required schema contract, and grant derivation use that column list.
+Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
-The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no update or row lock.
-A model with a change feed ([execution](execution.md#change-feed)) also grants `wamn_app` `SELECT` on `transaction_id`, `row_key`, `type` and `before`, the columns its changes statement reads.
+The compiler emits the history DDL in `migrations/record_history.sql`.
+The existing physical schema readers still apply history until the migration runner replaces them.
 The changes statement reads entries at or after the cursor transaction.
 One snapshot supplies xmin, xmax, and the visibility test.
 It includes entries below xmin and visible entries below xmax.
@@ -1096,9 +1097,9 @@ A history read on such a relation therefore shows only the columns that it decla
 [Receiving](../../apps/wamn_receiving/query/load_purchase_order_history.sql) reads `purchase_order` this way, and its read shows no Acme column.
 An overlay history read uses the same rule with its own columns.
 
-The SQL lexer reads a relation or alias that stands alone as a function argument, such as `wamn_history.row_image(<alias>)` or `to_jsonb(<alias>)`, as a read of every column of that relation.
-The read therefore declares every column of that relation, and the generated grant covers the whole-row reference.
-The lexer reads no column from any other whole-row reference, such as a cast. The PostgreSQL statement test refuses such a reference when the grants do not cover every column.
+The compiler uses `pg_query` to read PostgreSQL syntax.
+A whole-row reference reads every column of its relation.
+Release profiles read compiled relation facts and recorded view dependencies.
 
 The [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
 `state_at` takes every row of every page and returns `Present`, `Absent`, or `Unavailable` at a per-row position.
@@ -1148,9 +1149,8 @@ Record history gives no tamper resistance against modified application code or a
 
 A very large `"P<n>D"` day count stops the retention verb at that relation, and the verb prunes no later relation of that database.
 
-The statement test of one package runs under the grants of that package alone.
-If an overlay adds a column that no installed operation reads, a whole-row read of that relation fails at run time with permission denied.
-No current statement reaches that case.
+The compiler checks statement value shapes against the migrated build database.
+Runtime privileges remain the database's responsibility.
 
 The history read has two more limits:
 

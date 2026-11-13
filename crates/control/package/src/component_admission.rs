@@ -143,6 +143,7 @@ struct GeneratedStatementContract {
     path: String,
     binds: Vec<ComponentSqlField>,
     columns: Vec<ComponentSqlField>,
+    relations: Vec<wamn_catalog::profile::RelationProfile>,
     /// PostgreSQL's own verdict from the generic plan at generation time.
     transactional: bool,
 }
@@ -477,6 +478,7 @@ fn load_operation_statements(
             sql,
             binds: statement.binds,
             columns: statement.columns,
+            relations: statement.relations,
             transactional: statement.transactional,
         };
         admitted.insert(statement.path.clone(), fact);
@@ -877,6 +879,7 @@ mod tests {
                 path: "q.sql".to_owned(),
                 binds: Vec::new(),
                 columns: Vec::new(),
+                relations: Vec::new(),
                 transactional: false,
             };
             let result = load_operation_statements(

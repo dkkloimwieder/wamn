@@ -30,7 +30,6 @@ mod client_route;
 pub mod client_ts;
 mod components;
 mod cursor;
-mod data_access;
 mod describe;
 /// Catalog facts for authored query feeds.
 pub mod feed;
@@ -47,6 +46,7 @@ mod package_catalog;
 pub mod route_schema;
 mod rustfmt;
 mod sql;
+mod sql_analysis;
 mod sqlx_metadata;
 mod tofu;
 
@@ -59,20 +59,13 @@ pub use authoring::{
 pub use cursor::{
     CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
 };
-pub use data_access::{
-    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, DataAccessRelation, DataAccessRelationFields,
-    EffectiveDataAccess, EffectiveDataAccessRelation, data_access_schemas,
-    derive_data_access_overlay_from_relation_fields, derive_effective_data_access,
-    render_effective_data_access_sql, validate_data_access_contribution,
-};
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, PHYSICAL_SCHEMA_PATH,
     REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality, derive_manifest, generate,
 };
 pub use materialize::{
-    classify_statements_with_existing_grants_in_transaction, introspect_package,
-    materialize_client_consumers, materialize_host_route_client, materialize_package,
-    materialize_package_from_catalog, materialize_package_verified,
+    introspect_package, materialize_client_consumers, materialize_host_route_client,
+    materialize_package, materialize_package_from_catalog, materialize_package_verified,
     materialize_package_verified_with_catalog,
 };
 pub use output::{host_route_client_output_root, output_root};

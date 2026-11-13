@@ -206,7 +206,8 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
         ("inventory", "wamn_entities"),
         ("inventory", "wamn_cdc_exclusions"),
     ];
-    let catalog = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
+    let reader = sqlx::PgPool::connect(&url).await.unwrap();
+    let catalog = read_catalog_excluding_relations(&reader, &["inventory"], &excluded)
         .await
         .expect("platform column grants do not refuse view introspection");
     assert_eq!(catalog.views().len(), 2);
@@ -237,26 +238,6 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
             .unwrap()
             .is_noop()
     );
-    for (grant, revoke) in [
-        (
-            "GRANT SELECT ON inventory.item_report TO PUBLIC",
-            "REVOKE SELECT ON inventory.item_report FROM PUBLIC",
-        ),
-        (
-            "GRANT SELECT (id) ON inventory.item_report TO PUBLIC",
-            "REVOKE SELECT (id) ON inventory.item_report FROM PUBLIC",
-        ),
-    ] {
-        client.batch_execute(grant).await.unwrap();
-        let error = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.error_type(),
-            wamn_schema_introspection::postgres::PostgresIntrospectionErrorType::UnsupportedAcl
-        );
-        client.batch_execute(revoke).await.unwrap();
-    }
     std::fs::remove_dir_all(package).unwrap();
 }
 

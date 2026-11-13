@@ -24,7 +24,10 @@ async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
         )
         .await
         .expect("create the logged model");
-    let catalog = wamn_schema_introspection::postgres::read_catalog(&client, &["inventory"])
+    let reader = sqlx::PgPool::connect(database.url())
+        .await
+        .expect("connect the catalog reader");
+    let catalog = wamn_schema_introspection::postgres::read_catalog(&reader, &["inventory"])
         .await
         .expect("read the model catalog");
     let manifest = serde_json::to_vec(&json!({
@@ -50,7 +53,7 @@ async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
         &catalog,
         &manifest,
         &[],
-        &StatementTransactionality::default(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
     .expect("generate the changes call");
     let changes = std::str::from_utf8(

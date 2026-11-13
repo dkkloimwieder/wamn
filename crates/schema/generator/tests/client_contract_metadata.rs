@@ -58,7 +58,7 @@ fn emit(manifest: &Value, sources: &[AuthoredSql<'_>]) -> GeneratedPackage {
         &catalog(),
         &serde_json::to_vec(manifest).unwrap(),
         sources,
-        &StatementTransactionality::default(),
+        &StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
     ))
     .expect("declared client contract fixture generates")
 }

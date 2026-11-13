@@ -9,17 +9,13 @@
 //! the bytes says which base export it calls, so the reach is the member's
 //! whole statement set: the union of that base's exports, marked imprecise.
 //!
-//! The relations come from each statement's SQL in the release, so an
-//! SQL-only change changes the profile with no component rebuild. They are the
-//! relation access that generation derives for a custom operation, plus each
-//! view's base tables, over the columns and dependencies the caller reads
-//! from PostgreSQL. The lexer admits a closed SQL subset; a statement
-//! outside it carries the lexer's refusal instead of relations.
+//! The compiler records statement relation facts. Profiling expands them with
+//! the recorded view dependencies and never reads SQL syntax.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{ComponentSqlStatement, ServingComponent};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The profile of every operation of a release's components.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -54,12 +50,10 @@ pub struct Reach {
 pub struct StatementProfile {
     pub path: String,
     pub relations: Vec<RelationProfile>,
-    /// Why the lexer derived no relations from this SQL, or `None`.
-    pub refused: Option<String>,
 }
 
 /// What one statement does to one relation, including a view's base tables.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelationProfile {
     pub table: String,
     pub reads: Vec<String>,
@@ -69,10 +63,9 @@ pub struct RelationProfile {
     pub locks: bool,
 }
 
-/// One view's columns and its base table dependencies from PostgreSQL.
+/// One view's recorded base table dependencies.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ViewRelation {
-    pub columns: BTreeSet<String>,
     /// Each base table and the columns that the view reads from it.
     /// An empty column set retains a table dependency such as `count(*)`.
     pub base_tables: BTreeMap<String, BTreeSet<String>>,
@@ -80,12 +73,9 @@ pub struct ViewRelation {
 
 /// Derive the profile of `components`, the components of one release.
 ///
-/// `relations` maps each table name to its columns, as the statements name
-/// them unqualified under the host's search path. `views` holds view columns
-/// and base table dependencies under the same names.
+/// `views` holds the recorded view dependencies under their relation names.
 pub fn release_profile<'a>(
     components: impl IntoIterator<Item = &'a ServingComponent>,
-    relations: &BTreeMap<String, BTreeSet<String>>,
     views: &BTreeMap<String, ViewRelation>,
 ) -> ReleaseProfile {
     let components = components.into_iter().collect::<Vec<_>>();
@@ -107,13 +97,13 @@ pub fn release_profile<'a>(
                 package: component.package_id.clone(),
                 operations: vec![name.clone()],
                 imprecise: false,
-                statements: statements(&operation.statements, relations, views),
+                statements: statements(&operation.statements, views),
             }];
             reaches.extend(bases.iter().map(|(base, set)| Reach {
                 package: base.package_id.clone(),
                 operations: base.descriptor.operations.keys().cloned().collect(),
                 imprecise: true,
-                statements: statements(set, relations, views),
+                statements: statements(set, views),
             }));
             operations.push(OperationProfile {
                 package: component.package_id.clone(),
@@ -128,40 +118,40 @@ pub fn release_profile<'a>(
 
 fn statements(
     statements: &BTreeMap<String, ComponentSqlStatement>,
-    relations: &BTreeMap<String, BTreeSet<String>>,
     views: &BTreeMap<String, ViewRelation>,
 ) -> Vec<StatementProfile> {
     statements
         .iter()
         .map(|(path, statement)| {
-            match crate::sql_lex::profile_relation_access(
-                statement.sql.as_bytes(),
-                relations,
-                views,
-            ) {
-                Ok(access) => StatementProfile {
-                    path: path.clone(),
-                    relations: access
-                        .into_iter()
-                        .map(|(table, access)| RelationProfile {
-                            table,
-                            reads: access.select_fields.into_iter().collect(),
-                            writes: access
-                                .insert_fields
-                                .union(&access.update_fields)
-                                .cloned()
-                                .collect(),
-                            deletes: access.delete,
-                            locks: access.lock,
-                        })
-                        .collect(),
-                    refused: None,
-                },
-                Err(detail) => StatementProfile {
-                    path: path.clone(),
-                    relations: Vec::new(),
-                    refused: Some(detail.to_owned()),
-                },
+            let mut relations = statement
+                .relations
+                .iter()
+                .map(|relation| (relation.table.clone(), relation.clone()))
+                .collect::<BTreeMap<_, _>>();
+            for view in statement
+                .relations
+                .iter()
+                .filter_map(|relation| views.get(&relation.table))
+            {
+                for (table, columns) in &view.base_tables {
+                    let relation =
+                        relations
+                            .entry(table.clone())
+                            .or_insert_with(|| RelationProfile {
+                                table: table.clone(),
+                                reads: Vec::new(),
+                                writes: Vec::new(),
+                                deletes: false,
+                                locks: false,
+                            });
+                    relation.reads.extend(columns.iter().cloned());
+                    relation.reads.sort();
+                    relation.reads.dedup();
+                }
+            }
+            StatementProfile {
+                path: path.clone(),
+                relations: relations.into_values().collect(),
             }
         })
         .collect()
@@ -172,254 +162,83 @@ mod tests {
     use super::*;
     use crate::{AdmittedComponentOperation, ComponentDescriptor};
 
-    fn statement(path: &str, sql: &str) -> (String, ComponentSqlStatement) {
-        (
-            path.to_owned(),
-            ComponentSqlStatement {
-                name: path.to_owned(),
-                path: path.to_owned(),
-                sql: sql.to_owned(),
-                binds: Vec::new(),
-                columns: Vec::new(),
-                transactional: true,
+    #[test]
+    fn profile_reads_compiled_facts_and_expands_view_dependencies() {
+        let relation = RelationProfile {
+            table: "report".into(),
+            reads: vec!["id".into()],
+            writes: Vec::new(),
+            deletes: false,
+            locks: true,
+        };
+        let statement = ComponentSqlStatement {
+            name: "read".into(),
+            path: "read.sql".into(),
+            sql: "not parsed by profiling".into(),
+            binds: Vec::new(),
+            columns: Vec::new(),
+            relations: vec![relation.clone()],
+            transactional: true,
+        };
+        let mut operation = AdmittedComponentOperation {
+            registered_operation: None,
+            committed_result_schema: None,
+            host_transaction: false,
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            statements: BTreeMap::from([("read.sql".into(), statement)]),
+        };
+        let views = BTreeMap::from([(
+            "report".into(),
+            ViewRelation {
+                base_tables: BTreeMap::from([("source".into(), BTreeSet::from(["id".into()]))]),
             },
-        )
-    }
-
-    fn component(
-        package: &str,
-        digest: &str,
-        operations: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
-    ) -> ServingComponent {
-        ServingComponent {
+        )]);
+        let component = |operation| ServingComponent {
             runtime_schema: None,
-            package_id: package.to_owned(),
-            descriptor: {
-                let mut descriptor = ComponentDescriptor {
-                    component: package.to_owned(),
-                    interface_version: "1.0.0".to_owned(),
-                    component_digest: digest.to_owned(),
-                    operations: BTreeMap::new(),
-                    imports: Vec::new(),
-                    statement_instances: BTreeMap::new(),
-                    imports_fingerprint: String::new(),
-                    effects: Vec::new(),
-                    connections: Vec::new(),
-                };
-                descriptor.operations = operations
-                    .into_iter()
-                    .map(|(name, statements)| {
-                        (
-                            name,
-                            AdmittedComponentOperation {
-                                host_transaction: false,
-                                input_ports: Vec::new(),
-                                output_ports: Vec::new(),
-                                parameters: Vec::new(),
-                                registered_operation: None,
-                                committed_result_schema: None,
-                                statements,
-                            },
-                        )
-                    })
-                    .collect();
-                descriptor
+            package_id: "fixture".into(),
+            descriptor: ComponentDescriptor {
+                component: "fixture".into(),
+                interface_version: "1.0.0".into(),
+                component_digest: "sha256:fixture".into(),
+                operations: BTreeMap::from([("read".into(), operation)]),
+                imports: Vec::new(),
+                statement_instances: BTreeMap::new(),
+                imports_fingerprint: String::new(),
+                effects: Vec::new(),
+                connections: Vec::new(),
             },
             statement_instances: BTreeMap::new(),
-        }
-    }
-
-    /// Acme's record_receipt composed over Receiving, as one release holds
-    /// them, with Receiving's lock statement written as `lock`.
-    fn release(lock: &str) -> Vec<ServingComponent> {
-        let receiving_statements = BTreeMap::from([
-            statement("record_receipt/lock_purchase_order.sql", lock),
-            statement(
-                "record_receipt/insert_receipt.sql",
-                "INSERT INTO receipt (purchase_order_id, occurred_at) VALUES ($1, $2) RETURNING id",
-            ),
-        ]);
-        let receiving = component(
-            "wamn_receiving",
-            "sha256:receiving",
-            BTreeMap::from([("record_receipt".to_owned(), receiving_statements.clone())]),
-        );
-        let acme_statements = BTreeMap::from([statement(
-            "record_receipt/record_inspection.sql",
-            "INSERT INTO quality_inspection (receipt_id, status) VALUES ($1, 'approved')",
-        )]);
-        let mut acme = component(
-            "client_acme_receiving",
-            "sha256:acme",
-            BTreeMap::from([("record_receipt".to_owned(), acme_statements.clone())]),
-        );
-        acme.descriptor.statement_instances = BTreeMap::from([
-            ("sql-0".to_owned(), "sha256:receiving".to_owned()),
-            ("sql-1".to_owned(), "sha256:acme-member".to_owned()),
-        ]);
-        acme.statement_instances = BTreeMap::from([
-            ("sql-0".to_owned(), receiving_statements),
-            ("sql-1".to_owned(), acme_statements),
-        ]);
-        vec![receiving, acme]
-    }
-
-    fn relations() -> BTreeMap<String, BTreeSet<String>> {
-        let columns = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-        BTreeMap::from([
-            (
-                "purchase_order".to_owned(),
-                columns(&["id", "status", "cost"]),
-            ),
-            (
-                "receipt".to_owned(),
-                columns(&["id", "purchase_order_id", "occurred_at"]),
-            ),
-            (
-                "quality_inspection".to_owned(),
-                columns(&["receipt_id", "status"]),
-            ),
-        ])
-    }
-
-    fn lock_statement(profile: &ReleaseProfile) -> &StatementProfile {
-        let acme = profile
-            .operations
-            .iter()
-            .find(|operation| operation.package == "client_acme_receiving")
-            .expect("the release profiles acme.record_receipt");
-        let receiving = acme
-            .reaches
-            .iter()
-            .find(|reach| reach.package == "wamn_receiving")
-            .expect("acme.record_receipt reaches Receiving");
-        assert!(receiving.imprecise, "a base member reach is its union");
-        assert_eq!(receiving.operations, ["record_receipt"]);
-        receiving
-            .statements
-            .iter()
-            .find(|statement| statement.path == "record_receipt/lock_purchase_order.sql")
-            .expect("the reach holds the lock statement")
-    }
-
-    #[test]
-    fn a_view_reports_each_of_its_three_base_tables() {
-        let columns = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-        let relations = BTreeMap::from([
-            (
-                "purchase_order".to_owned(),
-                columns(&["id", "supplier_id", "status"]),
-            ),
-            ("supplier".to_owned(), columns(&["id", "name"])),
-            (
-                "purchase_order_line".to_owned(),
-                columns(&["id", "purchase_order_id", "ordered_quantity"]),
-            ),
-        ]);
-        let views = BTreeMap::from([(
-            "purchase_order_receiving_summary".to_owned(),
-            ViewRelation {
-                columns: columns(&["purchase_order_id", "supplier_name", "line_count"]),
-                base_tables: BTreeMap::from([
-                    ("purchase_order".to_owned(), columns(&["id", "supplier_id"])),
-                    (
-                        "purchase_order_line".to_owned(),
-                        columns(&["id", "purchase_order_id", "ordered_quantity"]),
-                    ),
-                    ("supplier".to_owned(), columns(&["id", "name"])),
-                ]),
-            },
-        )]);
-        let component = component(
-            "wamn_receiving",
-            "sha256:receiving",
-            BTreeMap::from([(
-                "summary".to_owned(),
-                BTreeMap::from([statement(
-                    "summary.sql",
-                    "SELECT supplier_name FROM purchase_order_receiving_summary WHERE purchase_order_id = $1",
-                )]),
-            )]),
-        );
-        let profile = release_profile([&component], &relations, &views);
-        let statement = &profile.operations[0].reaches[0].statements[0];
-        assert_eq!(statement.refused, None);
-        assert_eq!(
-            statement.relations,
-            [
-                RelationProfile {
-                    table: "purchase_order".to_owned(),
-                    reads: vec!["id".to_owned(), "supplier_id".to_owned()],
-                    writes: Vec::new(),
-                    deletes: false,
-                    locks: false,
-                },
-                RelationProfile {
-                    table: "purchase_order_line".to_owned(),
-                    reads: vec![
-                        "id".to_owned(),
-                        "ordered_quantity".to_owned(),
-                        "purchase_order_id".to_owned()
-                    ],
-                    writes: Vec::new(),
-                    deletes: false,
-                    locks: false,
-                },
-                RelationProfile {
-                    table: "purchase_order_receiving_summary".to_owned(),
-                    reads: vec!["purchase_order_id".to_owned(), "supplier_name".to_owned()],
-                    writes: Vec::new(),
-                    deletes: false,
-                    locks: false,
-                },
-                RelationProfile {
-                    table: "supplier".to_owned(),
-                    reads: vec!["id".to_owned(), "name".to_owned()],
-                    writes: Vec::new(),
-                    deletes: false,
-                    locks: false,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn an_sql_only_change_to_one_statement_changes_the_profile_with_no_component_rebuild() {
-        let before = release("SELECT status FROM purchase_order WHERE id = $1 FOR UPDATE");
-        let after = release("SELECT status, cost FROM purchase_order WHERE id = $1");
-        let digests = |release: &[ServingComponent]| {
-            release
-                .iter()
-                .map(|component| component.descriptor.component_digest.clone())
-                .collect::<Vec<_>>()
         };
-        assert_eq!(digests(&before), digests(&after), "no component is rebuilt");
-
-        let (before, after) = (
-            release_profile(&before, &relations(), &BTreeMap::new()),
-            release_profile(&after, &relations(), &BTreeMap::new()),
-        );
+        let profile = release_profile([&component(operation.clone())], &views);
+        let facts = &profile.operations[0].reaches[0].statements[0].relations;
         assert_eq!(
-            lock_statement(&before).relations,
-            [RelationProfile {
-                table: "purchase_order".to_owned(),
-                reads: vec!["id".to_owned(), "status".to_owned()],
-                writes: Vec::new(),
-                deletes: false,
-                locks: true,
-            }]
+            facts
+                .iter()
+                .find(|fact| fact.table == relation.table)
+                .unwrap(),
+            &relation
         );
-        assert_eq!(
-            lock_statement(&after).relations,
-            [RelationProfile {
-                table: "purchase_order".to_owned(),
-                reads: vec!["cost".to_owned(), "id".to_owned(), "status".to_owned()],
-                writes: Vec::new(),
-                deletes: false,
-                locks: false,
-            }]
-        );
-        let own = &before.operations[0].reaches[0];
-        assert!(!own.imprecise, "an export's own statements are precise");
+        for (table, columns) in &views["report"].base_tables {
+            assert_eq!(
+                facts
+                    .iter()
+                    .find(|fact| &fact.table == table)
+                    .unwrap()
+                    .reads
+                    .iter()
+                    .collect::<BTreeSet<_>>(),
+                columns.iter().collect()
+            );
+        }
+        operation
+            .statements
+            .values_mut()
+            .next()
+            .unwrap()
+            .sql
+            .clear();
+        assert_eq!(release_profile([&component(operation)], &views), profile);
     }
 }
