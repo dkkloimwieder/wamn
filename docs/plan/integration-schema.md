@@ -208,38 +208,38 @@ CREATE TABLE platform.connection (
 
 -- catalog: what a component declares, materialized at package install (today catalog.connection_requirements)
 CREATE TABLE catalog.connection_requirement (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id       text NOT NULL,          -- name, interface and mode come from the package's wamn.k
     name             text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),  -- declared in wamn.k; a WIT label
     interface        text NOT NULL,          -- install checks the component imports it under the label name
     mode             text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, component_digest, package_id, name)
 );
 
 -- catalog: the version one release uses of one connection
 CREATE TABLE catalog.release_connection (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     manifest_digest  text NOT NULL,          -- the release
     connection_id    uuid NOT NULL REFERENCES platform.connection (id),
     version          integer NOT NULL,       -- from environment.k; validated at apply against the system catalog
-    PRIMARY KEY (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest)
+    PRIMARY KEY (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, manifest_digest) REFERENCES catalog.releases (project_env_key, manifest_digest)
 );
 
 -- catalog: name to connection, per release (today catalog.connection_bindings)
 CREATE TABLE catalog.connection_binding (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     manifest_digest  text NOT NULL,
     component_digest text NOT NULL,
     package_id       text NOT NULL,
     name             text NOT NULL,
     connection_id    uuid NOT NULL,
-    PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (env_key, manifest_digest, connection_id)
-        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, component_digest, package_id, name)
-        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, manifest_digest, component_digest, package_id, name),
+    FOREIGN KEY (project_env_key, manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (project_env_key, component_digest, package_id, name)
 );
 -- apply refuses a binding whose connection's version does not export the interface the requirement declares
 ```
@@ -259,7 +259,7 @@ Releases coexist during a rollout and drain per release digest; each release rea
 - A connection-only apply writes no Helm revision, so `release_connection` and `connection_binding` carry record history (stamp and log triggers).
 - The version belongs to a release's use of a connection. In steady state an env has one live release, so one version per connection; during a rollout the old release keeps its version and the new one uses its own. The host loads both builds side by side (it caches `InstancePre` per digest).
 - The live release's versions and bindings can change in place. A compatible version change updates its `release_connection.version`: live, no rollout. A breaking change ships with a new application release.
-- Runtime refresh: the host keeps connection facts in a connection memory, the local replica of the NATS KV bucket `wamn-connection` on the NATS the auth memory uses, under the auth memory's rules. A writer records the keys its commit changed and deletes them after the commit; a host that reads a fact puts it with the key's revision from before the read; a value lives at most 60 s in the bucket and in the replica; while the watch is broken the host keeps no fact and reads Postgres. Key `<env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id. Key `<env_key>.release.<manifest digest hex>` holds that release's map (component, package, name) to (connection, version). Key `<env_key>.connections` holds the env's map from integration name to connection id. Immutable rows (a generation's parameters, a version's digest and exports, a credential's secret) stay in host memory under their own ids and never enter the bucket; a secret never leaves the host. A wasm or native version's component is compiled once per digest; its instance is linked per (connection, generation, credential), so a new generation links again but never compiles again. Calls in flight finish on what they started with; the host loads a new version's artifact and builds its `InstancePre` before switching.
+- Runtime refresh: the host keeps connection facts in a connection memory, the local replica of the NATS KV bucket `wamn-connection` on the NATS the auth memory uses, under the auth memory's rules. A writer records the keys its commit changed and deletes them after the commit; a host that reads a fact puts it with the key's revision from before the read; a value lives at most 60 s in the bucket and in the replica; while the watch is broken the host keeps no fact and reads Postgres. Key `<project_env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id. Key `<project_env_key>.release.<manifest digest hex>` holds that release's map (component, package, name) to (connection, version). Key `<project_env_key>.connections` holds the env's map from integration name to connection id. Immutable rows (a generation's parameters, a version's digest and exports, a credential's secret) stay in host memory under their own ids and never enter the bucket; a secret never leaves the host. A wasm or native version's component is compiled once per digest; its instance is linked per (connection, generation, credential), so a new generation links again but never compiles again. Calls in flight finish on what they started with; the host loads a new version's artifact and builds its `InstancePre` before switching.
 - A live version change may cross a running workflow run. Integration code holds no state between calls; any token it returns (a cursor, a page token) is the external system's.
 
 | Change | Mechanism | Rollout | Application rebuilt |

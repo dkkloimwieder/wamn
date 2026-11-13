@@ -86,7 +86,7 @@ fn product_matches_its_golden_vector() {
     assert_eq!(zpl, PRODUCT);
 }
 
-/// The gate covers the whole set, so adding a template without a vector fails
+/// The condition covers the whole set, so adding a template without a vector fails
 /// here rather than shipping untested.
 #[test]
 fn every_template_id_has_a_golden_vector() {

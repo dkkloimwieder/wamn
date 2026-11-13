@@ -20,7 +20,7 @@ pub(super) fn bind_signed_file_results(
             detail,
         )
     };
-    // Re-run the same vocabulary gate for callers that construct a manifest.
+    // Re-run the same vocabulary condition for callers that construct a manifest.
     wamn_catalog::manifest::validate_operation_vocabulary(manifest)
         .map_err(|error| invalid(error.to_string()))?;
     for (export, operation) in &mut component.operations {
@@ -53,7 +53,7 @@ pub(super) fn bind_signed_file_results(
                             .fields
                             .iter()
                             .find(|field| field.path == *path)
-                            .expect("the package gate requires the signed result field")
+                            .expect("the package condition requires the signed result field")
                             .nullable,
                         read: read.clone(),
                     })
@@ -145,8 +145,8 @@ pub(super) fn host_transaction_exports<T>(
 ///
 /// ABSENT FROM THE MANIFEST DOES NOT MEAN UNEXAMINED. The palette node's
 /// identity and posture are governed on the same push: its imports pass the
-/// tenant allowlist and the capability registry's posture
-/// (`wamn_component_policy::analyze_tenant`), and its declared exports are
+/// project allowlist and the capability registry's posture
+/// (`wamn_component_policy::analyze_project`), and its declared exports are
 /// checked against the component bytes (`wamn_engine::component_admission`)
 /// before this function runs. This branch only
 /// declines to look for manifest operations that, by construction, it does

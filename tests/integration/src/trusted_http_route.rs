@@ -52,8 +52,8 @@ use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_workflow::RouterDriver;
 
-/// The one tenant every seeded row and every claim is scoped to.
-pub const ENV_KEY: &str = "tenant-a";
+/// The one project every seeded row and every claim is scoped to.
+pub const PROJECT_ENV_KEY: &str = "org-a";
 pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
 pub const PACKAGE_VERSION: &str = "1.0.0";
@@ -210,8 +210,8 @@ async fn credential_fixture(
             .await?;
     transaction
         .execute(
-            wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
-            &[&role, &ENV_KEY, &"acme", &PROJECT, &ENVIRONMENT],
+            wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql(),
+            &[&role, &PROJECT_ENV_KEY, &"acme", &PROJECT, &ENVIRONMENT],
         )
         .await?;
     transaction.commit().await?;
@@ -268,7 +268,7 @@ async fn build_with_credentials(
         LoadedRelease::load_canonical_bytes(
             &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT)
+            wamn_engine::release_manifest::ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT)
                 .with_applications(
                     [(
                         "orders".to_owned(),
@@ -317,7 +317,7 @@ async fn build_with_credentials(
         wamn_broker::Publisher::default(),
         Arc::new(credentials),
         Arc::clone(&postgres),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         PROJECT,
         ENVIRONMENT,
     ));
@@ -366,7 +366,7 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     ))
     .context("read the http-request declaration template")?;
     let rendered = template
-        .replace("__ENV_KEY__", ENV_KEY)
+        .replace("__PROJECT_ENV_KEY__", PROJECT_ENV_KEY)
         .replace("__PACKAGE_ID__", PACKAGE)
         .replace("__PACKAGE_VERSION__", PACKAGE_VERSION);
     serde_json::from_str(&rendered).context("parse the rendered http-request declaration")
@@ -563,12 +563,15 @@ async fn seed_with_client(
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let wiring_hash = document.wiring_hash().as_str().to_owned();
-    // Every catalog table FORCEs RLS on `app.env_key`, and a superuser is not
+    // Every catalog table FORCEs RLS on `app.project_env_key`, and a superuser is not
     // exempt from FORCE — the claim is what makes these writes land at all.
     client
-        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, false)",
+            &[&PROJECT_ENV_KEY],
+        )
         .await
-        .context("claim the seeding tenant")?;
+        .context("claim the seeding project")?;
 
     client.batch_execute("SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)").await?;
     let package_manifest = serde_json::json!({
@@ -583,10 +586,10 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.packages \
-                    (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+                    (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &PACKAGE,
                 &PACKAGE_VERSION,
                 &package_artifact_digest,
@@ -600,19 +603,19 @@ async fn seed_with_client(
     let manifest_digest = release.release().manifest_digest.as_str();
     client
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&ENV_KEY, &manifest_digest, &canonical_release],
+            &[&PROJECT_ENV_KEY, &manifest_digest, &canonical_release],
         )
         .await
         .context("record the release")?;
     client
         .execute(
-            "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, \
+            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
                     version, graph_json, wiring_hash, trigger, execution_type, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &ENVIRONMENT,
                 &PACKAGE,
                 &WIRING_ID,
@@ -639,9 +642,9 @@ async fn seed_with_client(
     )
     .await?;
     let connection: String=client.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name='upstream-v1'",&[]).await?.get(0);
-    client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,'write')",&[&ENV_KEY,&component.component_digest,&PACKAGE,&STORE_ALIAS,&vec![CONTRACT]]).await?;
-    client.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&ENV_KEY,&manifest_digest,&connection]).await?;
-    client.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&manifest_digest,&component.component_digest,&PACKAGE,&STORE_ALIAS,&connection]).await?;
+    client.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,'write')",&[&PROJECT_ENV_KEY,&component.component_digest,&PACKAGE,&STORE_ALIAS,&vec![CONTRACT]]).await?;
+    client.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&PROJECT_ENV_KEY,&manifest_digest,&connection]).await?;
+    client.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&PROJECT_ENV_KEY,&manifest_digest,&component.component_digest,&PACKAGE,&STORE_ALIAS,&connection]).await?;
 
     if let Some((component, documents)) = additional_wiring {
         seed_additional_wirings(client, component, documents).await?;
@@ -655,15 +658,15 @@ async fn seed_with_client(
         .get_dbname()
         .context("the disposable admin URL names no database")?;
     let scope = WorkloadRoleScope::ProjectEnvironment {
-        org: ENV_KEY,
+        org: PROJECT_ENV_KEY,
         project: PROJECT,
         environment: ENVIRONMENT,
         database,
     };
     let guest_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database,
         },
         CredentialGeneration::A,
@@ -732,9 +735,9 @@ async fn seed_additional_wirings(
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
         client.execute(
-            "INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+            "INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
-            &[&ENV_KEY, package, package_version,
+            &[&PROJECT_ENV_KEY, package, package_version,
               &wamn_digest::canonical_json_sha256(&manifest)],
         ).await?;
     }
@@ -743,10 +746,10 @@ async fn seed_additional_wirings(
         let wiring_hash = document.wiring_hash().as_str().to_owned();
         client
             .execute(
-                "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, \
+                "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
              version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
                 &[
-                    &ENV_KEY,
+                    &PROJECT_ENV_KEY,
                     &ENVIRONMENT,
                     &PACKAGE,
                     &document.wiring_id,
@@ -788,7 +791,7 @@ mod tests {
     use wamn_workflow::{RouterDelivery, RouterDriverRequest};
 
     use super::{
-        CREDENTIAL_HANDLE, ENV_KEY, ENVIRONMENT, NODE_ID, PACKAGE, PROJECT, RouteOptions,
+        CREDENTIAL_HANDLE, ENVIRONMENT, NODE_ID, PACKAGE, PROJECT, PROJECT_ENV_KEY, RouteOptions,
         WIRING_ID, WIRING_VERSION, build_with_credentials, credential_fixture, credential_secret,
     };
 
@@ -911,7 +914,7 @@ mod tests {
 
     fn request(id: u64) -> RouterDriverRequest {
         RouterDriverRequest {
-            env_key: ENV_KEY.to_owned(),
+            project_env_key: PROJECT_ENV_KEY.to_owned(),
             package_id: PACKAGE.to_owned(),
             environment: ENVIRONMENT.to_owned(),
             wiring_id: WIRING_ID.to_owned(),

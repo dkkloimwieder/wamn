@@ -13,7 +13,7 @@ resolver = "2"
 #
 # Do not fold these members back into ../../Cargo.toml. See wamn-0h0g.11.56 and
 # wamn-1yj4, which measured the alternatives: dropping `no_std` compiles but
-# adds ten wasi:cli imports that TENANT_WASI_PACKAGES denies, making both
+# adds ten wasi:cli imports that PROJECT_WASI_PACKAGES denies, making both
 # guests unpublishable, and declaring `serde_json` with default-features = false
 # does not help because the std request is not local.
 #

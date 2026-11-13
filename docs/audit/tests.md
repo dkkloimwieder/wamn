@@ -57,7 +57,7 @@ Risk: A shared helper must permit deliberate connection termination. The rollbac
 Severity: medium  
 Effort: M  
 Area: crates/control/provision/tests, crates/execution/run-state/tests  
-Evidence: `psql` or `psql_output` appears at `crates/control/provision/tests/database_owner.rs:34`, `provision.rs:89`, `cdc.rs:39`, `operation_grants.rs:21`, `identity_issuer_live.rs:26`, `session_role_reader_live.rs:26`, `system_reader_grants.rs:44`, `family_surface_grants.rs:56`, `family_denial_matrix.rs:423`, `tenant_key_live.rs:84`, `control_portable_store.rs:10`, and `deploy_sql_authority.rs:188`. Further definitions sit at `crates/execution/run-state/tests/run_state_live.rs:19` and `crates/execution/run-state/tests/admission_live.rs:15`.
+Evidence: `psql` or `psql_output` appears at `crates/control/provision/tests/database_owner.rs:34`, `provision.rs:89`, `cdc.rs:39`, `operation_grants.rs:21`, `identity_issuer_live.rs:26`, `session_role_reader_live.rs:26`, `system_reader_grants.rs:44`, `family_surface_grants.rs:56`, `family_denial_matrix.rs:423`, `project_key_live.rs:84`, `control_portable_store.rs:10`, and `deploy_sql_authority.rs:188`. Further definitions sit at `crates/execution/run-state/tests/run_state_live.rs:19` and `crates/execution/run-state/tests/admission_live.rs:15`.
 
 Problem: Three runners have identical bodies, while the wider family repeats process setup with different flags and output conversions. One version removes the password from arguments and bounds execution. Others pass the complete URL, and transaction handling also differs.
 
@@ -74,7 +74,7 @@ Effort: S
 Area: PostgreSQL test helpers  
 Evidence: `swap_db` repeats at `tests/integration/src/cdcbench.rs:151`, `services/cdc-reader/tests/event_reader_live.rs:62`, and `crates/control/provision/tests/cdc.rs:22`.
 
-Credential replacement repeats as `role_url` at `crates/control/provision/tests/system_reader_grants.rs:82`, `family_surface_grants.rs:147`, `tenant_key_live.rs:378`, `tests/integration/src/cdcbench.rs:157`, and `services/cdc-reader/tests/event_reader_live.rs:73`. Equivalent `login_url` helpers sit at `crates/control/provision/tests/identity_issuer_live.rs:74`, `session_role_reader_live.rs:109`, `family_denial_matrix.rs:509`, and `services/identity/tests/session_exchange.rs:1484`.
+Credential replacement repeats as `role_url` at `crates/control/provision/tests/system_reader_grants.rs:82`, `family_surface_grants.rs:147`, `project_key_live.rs:378`, `tests/integration/src/cdcbench.rs:157`, and `services/cdc-reader/tests/event_reader_live.rs:73`. Equivalent `login_url` helpers sit at `crates/control/provision/tests/identity_issuer_live.rs:74`, `session_role_reader_live.rs:109`, `family_denial_matrix.rs:509`, and `services/identity/tests/session_exchange.rs:1484`.
 
 The `generation_url` variants sit at `crates/control/lib/tests/package_data_access_live.rs:38`, `crates/platform/runtime/tests/executor_platform_surface_live.rs:80`, `tests/integration/src/trusted_http_route.rs:781`, and `tests/integration/src/local_application/assembly.rs:522`. An existing credential operation is available at `test-support/postgres/lib.rs:196`.
 
@@ -101,7 +101,7 @@ Proposal: Share command capture and explicit kubeconfig/context construction. Ke
 
 Deletes: Nine command-capture bodies, eight cluster command constructors, and three JSON capture wrappers.
 
-Risk: Combining these helpers can expose private stderr or lose cancellation. Retain `failed_image_build_retains_command_status_and_output_bytes` and the fake-command cases in `kubernetes_gate_runner`.
+Risk: Combining these helpers can expose private stderr or lose cancellation. Retain `failed_image_build_retains_command_status_and_output_bytes` and the fake-command cases in `kubernetes_acceptance_test_runner`.
 
 ## Finding G1-6: Private file creation repeats nine times with different overwrite rules
 
@@ -140,11 +140,11 @@ Risk: Reusing the real platform fixture wholesale can introduce unrelated models
 Severity: low  
 Effort: M  
 Area: tests/conformance, tests/system, crate test support  
-Evidence: `TestDirectory` construction, path access, and cleanup repeat at `tests/conformance/tests/cranelift_dev.rs:14`, `contract_diff.rs:66`, `repo_lint.rs:70`, `journey_image_cache.rs:44`, `kind_gate_image_remove.rs:113`, and `kubernetes_gate_runner.rs:119`. Shared directory ownership already exists at `test-support/infrastructure/scratch.rs:9`.
+Evidence: `TestDirectory` construction, path access, and cleanup repeat at `tests/conformance/tests/cranelift_dev.rs:14`, `contract_diff.rs:66`, `repo_lint.rs:70`, `journey_image_cache.rs:44`, `kind_acceptance_test_image_remove.rs:113`, and `kubernetes_acceptance_test_runner.rs:119`. Shared directory ownership already exists at `test-support/infrastructure/scratch.rs:9`.
 
-Executable writers repeat at `tests/conformance/tests/cranelift_dev.rs:47`, `wasmcloud_release_check.rs:30`, `contract_diff.rs:99`, `repo_lint.rs:101`, `journey_image_cache.rs:76`, `test_changes.rs:376`, `kind_gate_image_remove.rs:146`, and `kubernetes_gate_runner.rs:152`.
+Executable writers repeat at `tests/conformance/tests/cranelift_dev.rs:47`, `wasmcloud_release_check.rs:30`, `contract_diff.rs:99`, `repo_lint.rs:101`, `journey_image_cache.rs:76`, `test_changes.rs:376`, `kind_acceptance_test_image_remove.rs:146`, and `kubernetes_acceptance_test_runner.rs:152`.
 
-Repository-root helpers repeat at `tests/conformance/tests/registry_image_archive.rs:25`, `cranelift_dev.rs:39`, `wasmcloud_release_check.rs:11`, `capability_registry.rs:16`, `contract_diff.rs:91`, `guest_workspace_closure.rs:47`, `repo_lint.rs:93`, `otel_collector.rs:17`, `journey_image_cache.rs:68`, `test_changes.rs:368`, `kind_gate_image_remove.rs:138`, `effect_spans.rs:260`, `palette_declarations.rs:7`, `gate_jobs.rs:9`, `chart_seam_governance.rs:21`, `kubernetes_gate_runner.rs:144`, and `wasmtime_source_identity.rs:49`.
+Repository-root helpers repeat at `tests/conformance/tests/registry_image_archive.rs:25`, `cranelift_dev.rs:39`, `wasmcloud_release_check.rs:11`, `capability_registry.rs:16`, `contract_diff.rs:91`, `guest_workspace_closure.rs:47`, `repo_lint.rs:93`, `otel_collector.rs:17`, `journey_image_cache.rs:68`, `test_changes.rs:368`, `kind_acceptance_test_image_remove.rs:138`, `effect_spans.rs:260`, `palette_declarations.rs:7`, `acceptance_test_jobs.rs:9`, `chart_seam_governance.rs:21`, `kubernetes_acceptance_test_runner.rs:144`, and `wasmtime_source_identity.rs:49`.
 
 Further root helpers sit at `tests/conformance/src/manifest_dependencies.rs:269`, `ip_name_lookup.rs:40`, `runtime_policy.rs:58`, `tests/system/tests/deployment_declarations.rs:151`, `test-support/fixture-package/src/lib.rs:28`, `test-support/infrastructure/examples/host_values_files.rs:231`, `crates/control/lib/tests/release_chart_render.rs:23`, `package_digest.rs:11`, `edge_bundle.rs:11`, `release_one_digest.rs:41`, `crates/schema/generator/tests/support/client_component_check.rs:78`, `client_ts_check.rs:157`, `apps/wamn_wms/tests/environment.rs:96`, `apps/wamn_receiving/tests/route_authentication_live/environment.rs:119`, and `apps/rest_connector/tests/support.rs:14`.
 
@@ -267,7 +267,7 @@ Risk: Ready-only polling must still fail on `Pending`. Retain `callback_error_do
 
 ## Open questions for the owner
 
-1. Do external consumers require the `wamn-gate-harness` or `wamn-fixture-package` crate names? Answered 2026-10-31: no. Internal callers migrate together.
+1. Do external consumers require the `wamn-acceptance-test-harness` or `wamn-fixture-package` crate names? Answered 2026-10-31: no. Internal callers migrate together.
 
 <!-- report G2, bead wamn-lybom.2 -->
 
@@ -359,10 +359,10 @@ Owner review 2026-10-31: In passing. Delete the three count pins and `in_flight_
 
 Severity: low  
 Effort: S  
-Area: `crates/control/provision/src/tenant_key.rs`  
-Evidence: `crates/control/provision/src/tenant_key.rs:338`; `crates/control/provision/tests/tenant_key_live.rs:156`; `crates/control/provision/tests/tenant_key_live.rs:186`; `crates/control/provision/tests/tenant_key_live.rs:249`.  
+Area: `crates/control/provision/src/project_key.rs`
+Evidence: `crates/control/provision/src/project_key.rs:338`; `crates/control/provision/tests/project_key_live.rs:156`; `crates/control/provision/tests/project_key_live.rs:186`; `crates/control/provision/tests/project_key_live.rs:249`.
 Problem: `the_emitted_ddl_is_frozen` duplicates the complete generated SQL, including whitespace. Its security contract concerns derivation, ownership, privileges, and function properties. The source names no consumer that requires the entire statement text byte for byte.  
-Closed by the tenant feature removal in progress (owner review 2026-10-31). `crates/control/provision/src/tenant_key.rs`, `crates/control/provision/tests/tenant_key_live.rs` and `crates/execution/run-state/src/tenant_scope.rs` are the retired tenant feature and go whole. There is no snapshot to trim.
+Closed by the project feature removal in progress (owner review 2026-10-31). `crates/control/provision/src/project_key.rs`, `crates/control/provision/tests/project_key_live.rs` and `crates/execution/run-state/src/project_scope.rs` are the retired project feature and go whole. There is no snapshot to trim.
 
 ## Finding G2-8: Empty prerequisite reasons conceal a built-service dependency
 
@@ -370,7 +370,7 @@ Severity: low
 Effort: S  
 Area: `services/ctl/tests/pat_bootstrap_live.rs`, `tests/integration/src/route_authentication_live.rs`  
 Evidence: `services/ctl/tests/pat_bootstrap_live.rs:23`; `tests/integration/src/route_authentication_live.rs:795`; `tests/integration/src/route_authentication_live.rs:1254`; `crates/control/lib/src/dev/pat_issuer.rs:288`.  
-Problem: Three ignores say only `requires:`. Their setup requires a built `wamn-identity` executable, supplied beside the executable or through `WAMN_IDENTITY_BINARY`. These are infrastructure gates, but their reasons do not explain how to satisfy them.  
+Problem: Three ignores say only `requires:`. Their setup requires a built `wamn-identity` executable, supplied beside the executable or through `WAMN_IDENTITY_BINARY`. These are infrastructure conditions, but their reasons do not explain how to satisfy them.
 Proposal: Name the built identity service and its supported discovery paths in each reason.  
 Deletes: The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure.  
 Risk: Selection can fail before authentication coverage executes. The bootstrap and two route-authentication tests must run with the documented executable input.

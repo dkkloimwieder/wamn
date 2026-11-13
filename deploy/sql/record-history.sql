@@ -11,7 +11,7 @@
 -- actor raises SQLSTATE 55000 with the message actor-required. The function
 -- reads no users row and takes no authorization decision.
 --
--- wamn_history.create_history_table(schema, relation, tenant) is the one
+-- wamn_history.create_history_table(schema, relation, project) is the one
 -- definition of the history table shape. wamn_history.row_image(record) is the
 -- one rendering of a row image. wamn_history.log_row_change() is an AFTER
 -- INSERT OR UPDATE OR DELETE row trigger that writes one entry into the history
@@ -93,7 +93,7 @@ REVOKE ALL ON FUNCTION wamn_history.stamp_row() FROM PUBLIC;
 -- PostgreSQL truncates such a name. The longest derived name is the NOT NULL
 -- constraint of transaction_id.
 CREATE OR REPLACE FUNCTION wamn_history.create_history_table(
-    schema text, relation text, tenant boolean)
+    schema text, relation text, project boolean)
 RETURNS void
 LANGUAGE plpgsql
 SET search_path = pg_catalog
@@ -121,7 +121,7 @@ BEGIN
             (1, 'position', format('bigint GENERATED ALWAYS AS IDENTITY (SEQUENCE NAME %I.%I)',
                                    schema, history || '_position_seq')),
             (2, 'id', 'uuid DEFAULT gen_random_uuid()'),
-            (3, 'tenant_id', 'text'),
+            (3, 'project_id', 'text'),
             (4, 'row_key', 'jsonb'),
             (5, 'type', 'text'),
             (6, 'operation', 'text'),
@@ -131,7 +131,7 @@ BEGIN
             (10, 'before', 'jsonb'),
             (11, 'after', 'jsonb')
            ) AS c (ord, name, definition)
-     WHERE tenant OR c.name <> 'tenant_id';
+     WHERE project OR c.name <> 'project_id';
     derived := derived || ARRAY[history || '_pkey', history || '_type_check',
                                 history || '_operation_check', history || '_position_seq',
                                 history || '_transaction_id_idx'];
@@ -219,7 +219,7 @@ DECLARE
     new_key jsonb;
     changed_before jsonb;
     changed_after jsonb;
-    tenant boolean;
+    project boolean;
     write_entry text;
 BEGIN
     IF actor IS NULL THEN
@@ -244,18 +244,18 @@ BEGIN
 
     old_key := (SELECT jsonb_object_agg(k, old_row -> k) FROM unnest(key_columns) AS k);
     new_key := (SELECT jsonb_object_agg(k, new_row -> k) FROM unnest(key_columns) AS k);
-    -- Shared tables can retain a tenant floor. Platform administration history
-    -- has no tenant column; the same function writes its unscoped entry.
-    tenant := EXISTS (SELECT FROM pg_attribute
-                       WHERE attrelid = to_regclass(history) AND attname = 'tenant_id'
+    -- Shared tables can retain a project base grants. Platform administration history
+    -- has no project column; the same function writes its unscoped entry.
+    project := EXISTS (SELECT FROM pg_attribute
+                       WHERE attrelid = to_regclass(history) AND attname = 'project_id'
                          AND NOT attisdropped);
     write_entry := format(
         'INSERT INTO %s (%s row_key, type, operation, changed_by, changed_at, '
         'transaction_id, before, after) VALUES (%s $2, $3, $4, $5, '
         'transaction_timestamp(), pg_current_xact_id()::text::bigint, $6, $7)',
         history,
-        CASE WHEN tenant THEN 'tenant_id,' ELSE '' END,
-        CASE WHEN tenant THEN '$1,' ELSE '' END);
+        CASE WHEN project THEN 'project_id,' ELSE '' END,
+        CASE WHEN project THEN '$1,' ELSE '' END);
 
     IF TG_OP = 'UPDATE' AND old_key = new_key THEN
         -- An update records the prior and the resulting values of the changed
@@ -264,7 +264,7 @@ BEGIN
           INTO changed_before, changed_after
           FROM jsonb_each(old_row) AS o
          WHERE o.value::text IS DISTINCT FROM (new_row -> o.key)::text;
-        EXECUTE write_entry USING new_row ->> 'tenant_id', new_key, 'update'::text,
+        EXECUTE write_entry USING new_row ->> 'project_id', new_key, 'update'::text,
             operation, actor, changed_before, changed_after;
         RETURN NULL;
     END IF;
@@ -272,11 +272,11 @@ BEGIN
     -- An insert and a delete record the full row. A primary key change records
     -- a delete under the old key and an insert under the new key.
     IF TG_OP <> 'INSERT' THEN
-        EXECUTE write_entry USING old_row ->> 'tenant_id', old_key, 'delete'::text,
+        EXECUTE write_entry USING old_row ->> 'project_id', old_key, 'delete'::text,
             operation, actor, old_row, '{}'::jsonb;
     END IF;
     IF TG_OP <> 'DELETE' THEN
-        EXECUTE write_entry USING new_row ->> 'tenant_id', new_key, 'insert'::text,
+        EXECUTE write_entry USING new_row ->> 'project_id', new_key, 'insert'::text,
             operation, actor, '{}'::jsonb, new_row;
     END IF;
     RETURN NULL;

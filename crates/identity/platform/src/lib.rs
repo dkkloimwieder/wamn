@@ -137,9 +137,9 @@ pub fn operator_subject(
     canonical_subject(&format!("wamn-operator-{org}--{project}--{environment}"))
 }
 
-/// The service subject of one scheduled application in one environment tenant.
-pub fn application_subject(env_key: &str, package: &str) -> Result<String, IdentityError> {
-    canonical_subject(&format!("wamn-app-{env_key}--{package}"))
+/// The service subject of one scheduled application in one environment project.
+pub fn application_subject(project_env_key: &str, package: &str) -> Result<String, IdentityError> {
+    canonical_subject(&format!("wamn-app-{project_env_key}--{package}"))
 }
 
 /// The type of first-party platform principal.
@@ -499,7 +499,7 @@ impl From<wamn_identity_protocol::SessionError> for IdentityError {
 /// `email` is the user's deliverable address. It is separate from `subject`,
 /// which authenticates and carries no promise of delivery.
 /// `reconcile-run-plane` copies the email into the `platform."user"` user
-/// row of every tenant this user can write in (`wamn-0h0g.9.18`), so a user
+/// row of every project this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
 pub async fn create_user(
     client: &(impl GenericClient + Sync),
@@ -838,7 +838,7 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> 
 /// Grant a user principal membership in one registered project-environment.
 ///
 /// Repeated grants are harmless. The database rejects service principals and
-/// missing environments. Membership does not create tenant users or assign roles.
+/// missing environments. Membership does not create project users or assign roles.
 pub async fn grant_project_env_membership(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -1154,7 +1154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_subject_is_scoped_to_env_key_and_package() {
+    fn application_subject_is_scoped_to_project_env_key_and_package() {
         assert_eq!(
             application_subject("acme--erp--prod", "integration").unwrap(),
             "wamn-app-acme--erp--prod--integration"
@@ -1167,7 +1167,7 @@ mod tests {
             application_subject("acme--erp--prod", "integration").unwrap(),
             application_subject("acme--erp--prod", "consumer").unwrap()
         );
-        assert!(application_subject("bad tenant", "integration").is_err());
+        assert!(application_subject("bad project", "integration").is_err());
     }
 
     #[test]

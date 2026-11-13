@@ -767,8 +767,8 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let env_key = project_env_key(self.org, project, env);
-            match write_status(&url, &env_key, attachment, caller, status).await {
+            let project_env_key = project_env_key(self.org, project, env);
+            match write_status(&url, &project_env_key, attachment, caller, status).await {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -838,12 +838,12 @@ impl ControlRoutes<'_> {
         }
         let mut completed = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let env_key = project_env_key(self.org, project, env);
+            let project_env_key = project_env_key(self.org, project, env);
             let scope = ApplicationScope {
                 org: self.org,
                 project,
                 env,
-                env_key: &env_key,
+                project_env_key: &project_env_key,
             };
             match write_application(&system, &url, scope, attachment, caller, principal).await {
                 Ok(drops) => self.changes.publish(drops).await,
@@ -1129,7 +1129,7 @@ async fn release_profile(
 /// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
-    env_key: &str,
+    project_env_key: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
@@ -1149,7 +1149,7 @@ async fn write_status(
             .await?;
         require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
-        write_environment_status(&transaction, env_key, status, &mut drops).await?;
+        write_environment_status(&transaction, project_env_key, status, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }

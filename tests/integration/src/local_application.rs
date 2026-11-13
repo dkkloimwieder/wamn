@@ -70,7 +70,7 @@ pub struct LocalApplicationConfig<'a> {
     pub scratch: &'a std::path::Path,
     pub component_directory: &'a std::path::Path,
     pub flow_http_wasm: &'a std::path::Path,
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
     pub org: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
@@ -85,7 +85,7 @@ impl std::fmt::Debug for LocalApplicationConfig<'_> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("LocalApplicationConfig")
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .field("org", &self.org)
             .field("project", &self.project)
             .field("environment", &self.environment)
@@ -103,7 +103,7 @@ pub(crate) struct PreparedLocalApplication {
     pub route_host: String,
     pub bearer: String,
     pub caller_secret_path: PathBuf,
-    pub env_key: String,
+    pub project_env_key: String,
     pub caller_role: String,
     pub component_digests: HashMap<String, String>,
 }
@@ -116,7 +116,7 @@ pub struct LocalApplication {
     pub route_host: String,
     pub bearer: String,
     pub caller_secret_path: PathBuf,
-    pub env_key: String,
+    pub project_env_key: String,
     pub caller_role: String,
     pub component_digests: HashMap<String, String>,
     pub queue: LocalQueue,
@@ -129,7 +129,7 @@ impl std::fmt::Debug for LocalApplication {
             .debug_struct("LocalApplication")
             .field("endpoint", &self.endpoint)
             .field("route_host", &self.route_host)
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .field("caller_role", &self.caller_role)
             .field("component_digests", &self.component_digests)
             .finish_non_exhaustive()
@@ -144,7 +144,7 @@ impl LocalApplication {
             route_host,
             bearer,
             caller_secret_path,
-            env_key,
+            project_env_key,
             caller_role,
             component_digests,
         } = assembly::assemble(config).await?;
@@ -163,7 +163,7 @@ impl LocalApplication {
             route_host,
             bearer,
             caller_secret_path,
-            env_key,
+            project_env_key,
             caller_role,
             component_digests,
             queue,

@@ -386,10 +386,9 @@ pub fn reader_deployment(
     use serde_json::json;
     use wamn_control_provision::WorkloadRoleFamily;
     let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    let labels =
-        json!({"app.kubernetes.io/name":"wamn-cdc-reader", "app.kubernetes.io/instance":env_key});
+    let labels = json!({"app.kubernetes.io/name":"wamn-cdc-reader", "app.kubernetes.io/instance":project_env_key});
     json!({
         "apiVersion":"apps/v1", "kind":"Deployment",
         "metadata":{"name":name,"namespace":namespace,"annotations":{"wamn.environment":triple.to_string()}},
@@ -447,10 +446,11 @@ pub(crate) async fn wait_reader_stopped(
     triple: &Triple,
 ) -> anyhow::Result<()> {
     use crate::environment::ensure::kubectl;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    let selector =
-        format!("app.kubernetes.io/name=wamn-cdc-reader,app.kubernetes.io/instance={env_key}");
+    let selector = format!(
+        "app.kubernetes.io/name=wamn-cdc-reader,app.kubernetes.io/instance={project_env_key}"
+    );
     tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             let pods: serde_json::Value = serde_json::from_str(

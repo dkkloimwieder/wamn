@@ -5,19 +5,19 @@ pub use crate::migrations::{MigrationResolution, Resolution, resolution_package}
 
 pub(super) async fn begin<'a>(
     client: &'a mut Client,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<Transaction<'a>> {
     let tx = client.transaction().await.context("begin package SQL")?;
-    tx.query_one(super::CLAIM_ENV_KEY_SQL, &[&env_key])
+    tx.query_one(super::CLAIM_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .context("claim package tenant")?;
+        .context("claim package project")?;
     super::bind_apply_package_principal(&tx).await?;
     Ok(tx)
 }
 
 /// Package authority stays outside the shared migration rules.
 pub(super) struct PackageMigrationHooks<'a> {
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
     pub package: &'a super::PreparedPackage,
     pub plan: &'a wamn_schema_control::PackageMigrationPlan,
     pub coordinate: &'a str,
@@ -30,14 +30,14 @@ pub(super) struct PackageMigrationHooks<'a> {
 
 impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
     async fn begin<'a>(&mut self, client: &'a mut Client) -> anyhow::Result<Transaction<'a>> {
-        begin(client, self.env_key).await
+        begin(client, self.project_env_key).await
     }
 
     async fn initialize(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
         if self.initial {
             self.changed |= crate::connection_requirement::install(
                 tx,
-                self.env_key,
+                self.project_env_key,
                 &self.package.root,
                 &self.package.manifest,
                 self.package.component_source.as_ref(),
@@ -66,7 +66,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
             .collect::<Vec<_>>();
         super::definition_ownership::validate_definition_ownership_before_apply(
             tx,
-            self.env_key,
+            self.project_env_key,
             self.coordinate,
             self.plan.coordinate.package_id(),
             &self.package.manifest,
@@ -107,7 +107,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
             .collect::<Vec<_>>();
         self.changed |= super::definition_ownership::reconcile_definition_ownership(
             tx,
-            self.env_key,
+            self.project_env_key,
             self.coordinate,
             self.plan.coordinate.package_id(),
             &self.package.manifest,
@@ -128,7 +128,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
         let fingerprint = super::installed_physical_fingerprint(tx, directory, manifest).await?;
         self.changed |= super::package_version::record_package_schema(
             tx,
-            self.env_key,
+            self.project_env_key,
             &self.plan.coordinate,
             self.artifact_digest,
             &fingerprint,
@@ -136,9 +136,12 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
         .await
         .context("record the completed package schema")?;
         if self.initial {
-            self.changed |=
-                super::operation_grants::ensure_admin_role(tx, self.env_key, &mut self.drops)
-                    .await?;
+            self.changed |= super::operation_grants::ensure_admin_role(
+                tx,
+                self.project_env_key,
+                &mut self.drops,
+            )
+            .await?;
         }
         if let Some(comment) = self.local_comment.as_mut() {
             self.changed |= super::local_target::record_manifest(

@@ -42,7 +42,7 @@ mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
 
 const PROJECT: &str = "test";
-const ENV_KEY: &str = "tenant-a";
+const PROJECT_ENV_KEY: &str = "org-a";
 const ENVIRONMENT: &str = "test";
 const AUDIENCE: &str = "urn:wamn:project-env:org-a:test:test:native-b";
 const ATTACHMENT: &str = "native-test-http";
@@ -60,7 +60,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let admin = connect(admin_url).await?;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
@@ -197,7 +197,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
 }
 
 pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
-    env_key_postgres(admin_url).await?;
+    project_env_key_postgres(admin_url).await?;
     let admin = connect(admin_url).await?;
     let principals = wamn_control_provision::platform_principals_sql("platform.example.invalid")?;
     admin
@@ -208,7 +208,7 @@ pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<Wam
 }
 
 async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, FlowHttpRouting)> {
-    let postgres = env_key_postgres(admin_url).await?;
+    let postgres = project_env_key_postgres(admin_url).await?;
     let server = Server::start().await;
     let (keys, _) = server.cache();
     let verifier = SessionVerifier::new(keys, ORG, AUDIENCE)?;
@@ -268,9 +268,10 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "native session route test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
-        ),
+        wamn_engine::release_manifest::ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(serde_json::from_value(
+                json!({"receiving": {"packages": ["root", "child"]}}),
+            )?),
     )?);
     let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -384,7 +385,7 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
         }
         assert!(!event.native_identity && !native_ids.contains(&event.scope));
         let claims = event.claims.expect("host claims");
-        assert_eq!(claims.env_key, ENV_KEY);
+        assert_eq!(claims.project_env_key, PROJECT_ENV_KEY);
         assert_eq!(
             claims.user_id.as_deref(),
             Some(caller.principal_id()),
@@ -525,7 +526,7 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
     ComponentAdmissionRequest {
         declaration: ComponentDeclaration {
             scope: ComponentPackageScope {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 package_id: "root".into(),
                 package_version: "1.0.0".into(),
             },
@@ -1069,12 +1070,12 @@ impl wamn_runtime::plugins::wamn_postgres::CredentialProvider for WarmCredential
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<wamn_runtime::plugins::wamn_postgres::ResolvedCredential>> {
         if !self.enabled.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(None);
         }
-        self.provider.resolve(project, class, env_key)
+        self.provider.resolve(project, class, project_env_key)
     }
 }
 
@@ -1097,8 +1098,8 @@ async fn warm_postgres_with_pool(
         .get(0);
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
@@ -1199,14 +1200,14 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             let caller = authenticated(&route, true).await;
             let (postgres, _) = warm_postgres(database.url(), &[])
                 .await
-                .expect("tenant guest generation");
+                .expect("project guest generation");
             let admin = connect(database.url()).await.expect("admin");
             admin.batch_execute("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").await.expect("owned rollback marker");
             postgres
                 .bind_session_claims(
                     "retained-transaction",
                     &SessionClaims {
-                        env_key: ENV_KEY.into(),
+                        project_env_key: PROJECT_ENV_KEY.into(),
                         project: Some(PROJECT.into()),
                         user_id: Some(caller.principal_id().into()),
                         operation: Some(ROOT.into()),
@@ -1365,9 +1366,10 @@ async fn pat_caller(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "warm PAT test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
-        ),
+        wamn_engine::release_manifest::ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(serde_json::from_value(
+                json!({"receiving": {"packages": ["root", "child"]}}),
+            )?),
     )?);
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

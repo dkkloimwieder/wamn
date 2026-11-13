@@ -366,7 +366,7 @@ async fn reconcile_target_identity_guard_live() {
             &format!(
                 "SELECT expected_environment, \
                         source_policy_org,source_policy_hash \
-                   FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
+                   FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--billing--dev'"
             ),
             &[],
         )
@@ -416,7 +416,7 @@ async fn reconcile_target_identity_guard_live() {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.environment_policies \
-                    SET source_policy_hash=$1 WHERE env_key='acme--billing--dev'"
+                    SET source_policy_hash=$1 WHERE project_env_key='acme--billing--dev'"
             ),
             &[&format!("sha256:{}", "0".repeat(64))],
         )

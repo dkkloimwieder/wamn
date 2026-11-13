@@ -15,7 +15,7 @@
 // which the repair cannot revoke — so it would encode a state the grant can
 // never satisfy, drift would stay true forever, and the reconciler would plan
 // the repair on every pass without converging. That is wamn-0h0g.12.40
-// exactly, and it was only ever caught by a live gate.
+// exactly, and it was only ever caught by a live acceptance test.
 
 /// Direct grants on the managed authoring/release boundary. `$1` is the project
 /// run-plane schema; PUBLIC is included so stale ambient writes are visible.
@@ -225,7 +225,7 @@ pub fn select_environment_policy_row_security_sql() -> &'static str {
 }
 
 /// Every policy on the projected environment-policy relation, including the
-/// fields whose widening can change the visible tenant set.
+/// fields whose widening can change the visible project set.
 pub fn select_environment_policy_policies_sql() -> &'static str {
     "SELECT policy.polname, \
             CASE policy.polcmd WHEN 'r' THEN 'select' WHEN 'a' THEN 'insert' \

@@ -21,10 +21,10 @@ use wamn_schema_generator::{
 };
 use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const CLAIM_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, artifact_digest FROM catalog.packages \
- WHERE env_key = $1 ORDER BY package_id COLLATE \"C\"";
+ WHERE project_env_key = $1 ORDER BY package_id COLLATE \"C\"";
 // apply-package owns these OID histories beside application tables. No package
 // declaration consumes them, so the declared relation list leaves them out.
 // The sweep below still reads them, because every relation in a package-owned
@@ -88,7 +88,7 @@ pub struct ReconcilePackageDataAccessRequest {
 
 impl ReconcilePackageDataAccessRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -233,7 +233,7 @@ pub async fn reconcile_package_data_access(
     let packages = read_presented_packages(&request.packages)?;
     execute_prepared(
         &request.database_url,
-        &request.env_key(),
+        &request.project_env_key(),
         &packages,
         ReconcileMode::Production,
         true,
@@ -257,15 +257,19 @@ pub fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAc
 pub async fn reconcile_local(
     prepared: &PreparedLocalDataAccess,
     database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    wamn_runtime::local_application::require_local_target(database_url, env_key, environment)
-        .await?;
+    wamn_runtime::local_application::require_local_target(
+        database_url,
+        project_env_key,
+        environment,
+    )
+    .await?;
     execute_prepared(
         database_url,
-        env_key,
+        project_env_key,
         &prepared.0,
         ReconcileMode::Local(environment),
         apply,
@@ -327,20 +331,20 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
 
 async fn execute_prepared(
     database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(
-        !env_key.is_empty(),
+        !project_env_key.is_empty(),
         "org, project and environment must not be empty"
     );
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile_mode(&mut client, env_key, packages, mode, apply).await;
+    let result = reconcile_mode(&mut client, project_env_key, packages, mode, apply).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -355,7 +359,7 @@ async fn execute_prepared(
 
 async fn reconcile_mode(
     client: &mut Client,
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
@@ -364,7 +368,7 @@ async fn reconcile_mode(
         .transaction()
         .await
         .context("begin package data-access reconciliation")?;
-    let result = reconcile_in_transaction(&tx, env_key, packages, mode, apply).await?;
+    let result = reconcile_in_transaction(&tx, project_env_key, packages, mode, apply).await?;
     if apply {
         tx.commit()
             .await
@@ -380,7 +384,7 @@ async fn reconcile_mode(
 /// Reconcile through the existing owner without committing the caller's transaction.
 async fn reconcile_in_transaction(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
@@ -389,13 +393,13 @@ async fn reconcile_in_transaction(
         ReconcileMode::Local(environment) => Some(environment),
         ReconcileMode::Production => None,
     };
-    tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+    tx.query_one(CLAIM_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .context("claim package tenant")?;
+        .context("claim package project")?;
     tx.query_one(LOCK_SQL, &[])
         .await
         .context("lock project data-access carrier")?;
-    validate_installed_set(tx, env_key, packages, local.is_some()).await?;
+    validate_installed_set(tx, project_env_key, packages, local.is_some()).await?;
     let schemas = packages
         .iter()
         .flat_map(|package| package.schemas.iter().cloned())
@@ -418,7 +422,7 @@ async fn reconcile_in_transaction(
         .context("read stable App ACL role")?;
     let Some(role) = role else {
         anyhow::bail!(
-            "package-data-access-role-missing: role={DATA_ACCESS_ROLE}; remedy=prepare the project App role floor"
+            "package-data-access-role-missing: role={DATA_ACCESS_ROLE}; remedy=prepare the project App role minimum"
         );
     };
     ensure!(
@@ -465,7 +469,7 @@ async fn reconcile_in_transaction(
         residue_targets(&after_residue)
     );
     if apply && let Some(environment) = local {
-        record_local_manifests(tx, env_key, environment, packages).await?;
+        record_local_manifests(tx, project_env_key, environment, packages).await?;
     }
     Ok(DataAccessReconcileResult {
         coordinates: packages
@@ -483,13 +487,16 @@ async fn reconcile_in_transaction(
 /// grants move together or not at all.
 async fn record_local_manifests(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
     packages: &[PresentedPackage],
 ) -> anyhow::Result<()> {
-    let mut comment =
-        wamn_runtime::local_application::read_local_target_comment(tx, env_key, environment)
-            .await?;
+    let mut comment = wamn_runtime::local_application::read_local_target_comment(
+        tx,
+        project_env_key,
+        environment,
+    )
+    .await?;
     for package in packages {
         wamn_package_control::apply_package::record_manifest(
             tx,
@@ -710,12 +717,12 @@ async fn undeclared_residue(
 
 async fn validate_installed_set(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PresentedPackage],
     local: bool,
 ) -> anyhow::Result<()> {
     let installed = tx
-        .query(SELECT_INSTALLED_SQL, &[&env_key])
+        .query(SELECT_INSTALLED_SQL, &[&project_env_key])
         .await
         .context("read complete installed package set")?
         .into_iter()

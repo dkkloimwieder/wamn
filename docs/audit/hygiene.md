@@ -68,9 +68,9 @@ Owner review 2026-10-31: Group 4 Do, small. Delete the diagnostic and keep its t
 
 Severity: medium  
 Effort: S  
-Area: `tools/kubernetes-gate-run`
+Area: `tools/kubernetes-acceptance-test-run`
 
-Evidence: `tools/kubernetes-gate-run:11`, `tools/kubernetes-gate-run:32`, `tools/kubernetes-gate-run:34`.
+Evidence: `tools/kubernetes-acceptance-test-run:11`, `tools/kubernetes-acceptance-test-run:32`, `tools/kubernetes-acceptance-test-run:34`.
 
 Problem: Value-taking arguments call `shift 2` without first requiring a second argument. The script disables automatic exit on command failure, so an incomplete argument such as `--manifest` leaves the loop on the same argument indefinitely.
 
@@ -78,7 +78,7 @@ Proposal: Require each argument value before advancing the parser. During the id
 
 Deletes: The unchecked argument branches, followed by the shell parser when its owner moves.
 
-Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_gate_runner.rs` with bounded missing-value cases for every value-taking flag.
+Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_acceptance_test_runner.rs` with bounded missing-value cases for every value-taking flag.
 
 Owner review 2026-10-31: In passing with H1-5. The parser goes when the shell runner goes.
 
@@ -86,7 +86,7 @@ Owner review 2026-10-31: In passing with H1-5. The parser goes when the shell ru
 
 Severity: medium  
 Effort: M  
-Area: `tools/identity-jwks-journey-run`, `tools/kubernetes-gate-run`
+Area: `tools/identity-jwks-journey-run`, `tools/kubernetes-acceptance-test-run`
 
 Evidence: `tools/identity-jwks-journey-run:58`, `tools/identity-jwks-journey-run:183`, `tools/identity-jwks-journey-run:303`, `tools/identity-jwks-journey-run:424`, `tests/orchestrator/src/main.rs:40`.
 
@@ -96,17 +96,17 @@ Proposal: Merge the journey into the existing identity test owner and shared tes
 
 Deletes: Both shell runners after their callers move, plus the test that extracts the identity cleanup function with `sed`.
 
-Risk: Consolidation can lose negative authentication cases or expose fixture secrets. Preserve the verdict cases in `kubernetes_gate_runner.rs` and run the complete disposable identity journey at its required acceptance boundary.
+Risk: Consolidation can lose negative authentication cases or expose fixture secrets. Preserve the verdict cases in `kubernetes_acceptance_test_runner.rs` and run the complete disposable identity journey at its required acceptance boundary.
 
-Owner review 2026-10-31: Group 1 In passing with deployment D3-6. `identity-jwks-journey-run` and `kubernetes-gate-run` merge into the Rust identity tests and the one fixture. Question 3 is answered: yes, the repository `evidence/` requirement goes.
+Owner review 2026-10-31: Group 1 In passing with deployment D3-6. `identity-jwks-journey-run` and `kubernetes-acceptance-test-run` merge into the Rust identity tests and the one fixture. Question 3 is answered: yes, the repository `evidence/` requirement goes.
 
 ## Finding H1-6: Application lifecycle adapters duplicate resource management
 
 Severity: medium  
 Effort: M  
-Area: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-gate-run`
+Area: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-acceptance-test-run`
 
-Evidence: `tools/receiving-cluster-journey-run:14`, `tools/wms-cluster-journey-run:14`, `tools/rc-gate-run:19`, `tools/delivery-owned:85`. `measurements.md section 7` records 78 duplicated lines between the Receiving and WMS scripts.
+Evidence: `tools/receiving-cluster-journey-run:14`, `tools/wms-cluster-journey-run:14`, `tools/rc-acceptance-test-run:19`, `tools/delivery-owned:85`. `measurements.md section 7` records 78 duplicated lines between the Receiving and WMS scripts.
 
 Problem: These adapters repeat cluster creation, image import, operator installation, inspection, and cleanup. Their Rust callers already own the test lifecycle, but delegate shared infrastructure behavior to separate shell interfaces.
 
@@ -130,25 +130,25 @@ Risk: Existing baseline readers depend on the current format. Use saved results 
 
 Owner review 2026-10-31: In passing. One result writer keeps identity, workload, conflicts and errors, and summaries derive from it. Question 2 is answered: no, raw results are retained beside the summary.
 
-## Finding H1-8: The cloud floor runner leaves work active after failure
+## Finding H1-8: The cloud minimum runner leaves work active after failure
 
 Severity: medium  
 Effort: M  
-Area: `tools/bench/pg-floor/gcp.sh`
+Area: `tools/bench/pg-minimum/gcp.sh`
 
-Evidence: `tools/bench/pg-floor/gcp.sh:59`, `tools/bench/pg-floor/gcp.sh:116`, `tools/bench/pg-floor/gcp.sh:149`, `tools/bench/pg-floor/gcp.sh:155`, `tools/bench/db-profile.sh:7`.
+Evidence: `tools/bench/pg-minimum/gcp.sh:59`, `tools/bench/pg-minimum/gcp.sh:116`, `tools/bench/pg-minimum/gcp.sh:149`, `tools/bench/pg-minimum/gcp.sh:155`, `tools/bench/db-profile.sh:7`.
 
-Problem: The exit handler deletes only the client Job, although the runner starts a background PostgreSQL sampler. A failure during the replay can also bypass trigger restoration in `wamn_pg_floor`. The initial Pod-discovery loop has no deadline.
+Problem: The exit handler deletes only the client Job, although the runner starts a background PostgreSQL sampler. A failure during the replay can also bypass trigger restoration in `wamn_pg_minimum`. The initial Pod-discovery loop has no deadline.
 
-Proposal: Give the floor run one cleanup owner that stops sampling, restores altered triggers, and removes its client. Bound Pod discovery and use a distinct run identity for the disposable resources.
+Proposal: Give the minimum run one cleanup owner that stops sampling, restores altered triggers, and removes its client. Bound Pod discovery and use a distinct run identity for the disposable resources.
 
 Deletes: The Job-only cleanup handler and unbounded discovery loop.
 
-Risk: Failed runs can leave a sampler active or alter the next experiment’s conditions. Inject a replay failure against a disposable floor database and prove cleanup and trigger restoration.
+Risk: Failed runs can leave a sampler active or alter the next experiment’s conditions. Inject a replay failure against a disposable minimum database and prove cleanup and trigger restoration.
 
 Owner review 2026-10-31: In passing, when `gcp.sh` is next touched. The `COMMIT_DELAY` switch there stays by ruling.
 
-## Finding H1-9: The train runner omits its documented submodule gate
+## Finding H1-9: The train runner omits its documented submodule condition
 
 Severity: medium  
 Effort: S  
@@ -194,13 +194,13 @@ Merged into code-quality A2-14 (owner review 2026-10-31). In passing, one source
 
 Severity: low  
 Effort: S  
-Area: `tools/rename-app-system-to-platform`, `tools/kind-gate-build`, `tools/kind-gate-image-remove`
+Area: `tools/rename-app-system-to-platform`, `tools/kind-acceptance-test-build`, `tools/kind-acceptance-test-image-remove`
 
-Evidence: `tools/rename-app-system-to-platform:4`, `tools/rename-app-system-to-platform:70`, `tools/kind-gate-build:93`, `tools/kind-gate-build:109`, `tools/kind-gate-image-remove:8`.
+Evidence: `tools/rename-app-system-to-platform:4`, `tools/rename-app-system-to-platform:70`, `tools/kind-acceptance-test-build:93`, `tools/kind-acceptance-test-build:109`, `tools/kind-acceptance-test-image-remove:8`.
 
-Problem: The rename tool preserves an applied one-time transformation and defaults to rewriting the checkout. The gate builder has no tracked caller, while the image remover’s tracked operational reference comes from that builder. Together these scripts retain 653 lines outside the documented delivery path.
+Problem: The rename tool preserves an applied one-time transformation and defaults to rewriting the checkout. The condition builder has no tracked caller, while the image remover’s tracked operational reference comes from that builder. Together these scripts retain 653 lines outside the documented delivery path.
 
-Proposal: Delete the rename tool and the manual gate build/removal pair. Use the existing platform build and owned disposable cluster lifecycle.
+Proposal: Delete the rename tool and the manual condition build/removal pair. Use the existing platform build and owned disposable cluster lifecycle.
 
 Deletes: All three scripts and tests whose sole subject is the removed command surface.
 
@@ -226,14 +226,14 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `journey-image-cache` | 222 | Cache, relabel, lease, and retain images. Upgrade operation and registry tests. | Merge production behavior into `wamn-control`. |
 | `kind-cluster-delete` | 33 | Bounded deletion and leftover inspection. Lifecycle adapters and Rust tests. | Keep one implementation until shared Rust infrastructure replaces it. |
 | `kind-cluster-delete-test` | 153 | Fake-command teardown tests. No tracked caller. | Merge into discoverable conformance tests. |
-| `kind-gate-build` | 114 | Build and load a gates image. No caller. | Delete. |
-| `kind-gate-image-remove` | 434 | Plan and remove retired node images. Gate builder and conformance tests. | Delete with the retired builder. |
+| `kind-acceptance-test-build` | 114 | Build and load a acceptance test image. No caller. | Delete. |
+| `kind-acceptance-test-image-remove` | 434 | Plan and remove retired node images. Condition builder and conformance tests. | Delete with the retired builder. |
 | `kind-kept-delete` | 25 | Remove resources named by `kept.json`. Environment tests and test instructions. | Merge into shared test infrastructure. |
-| `kubernetes-gate-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
+| `kubernetes-acceptance-test-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
 | `lane-start` | 90 | Prepare checkout, binaries, dependencies, and packages. Build and test instructions. | Cut down and renamed under F2-7 (banned word). |
 | `local-registry` | 41 | Start or reuse a labeled host registry. Build instructions. | Merge into control-side local platform preparation. |
 | `native-descriptor-limit-check` | 178 | Exercise descriptor limits in host processes. No caller. | Merge into host tests. |
-| `rc-gate-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
+| `rc-acceptance-test-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
 | `receiving-cluster-journey-run` | 133 | Receiving lifecycle adapter. Receiving cluster fixtures. | Merge into shared test infrastructure. |
 | `rename-app-system-to-platform` | 105 | Apply a one-time schema spelling change. No caller. | Delete. |
 | `repo-lint` | 326 | Run formatting, Clippy, and repository rules. Change runner and test instructions. | Keep, share shell helpers. |
@@ -250,20 +250,20 @@ Paths below are relative to `tools/bench/`.
 
 | Script or Rust source | Lines | Purpose and referrers | Decision |
 | --- | ---: | --- | --- |
-| `local.sh` | 541 | Run local application, floor, and profile experiments. Benchmark instructions. | Keep benchmark ownership, reuse development lifecycle. |
+| `local.sh` | 541 | Run local application, minimum, and profile experiments. Benchmark instructions. | Keep benchmark ownership, reuse development lifecycle. |
 | `tier.sh` | 37 | Run deployed get/update measurements. GCP runbook and benchmark instructions. | Keep, retain full results. |
-| `pg-floor/gcp.sh` | 190 | Run floor experiments on GCP. Benchmark instructions and deployment comments. | Keep with owned cleanup and bounded waits. |
-| `pg-floor/run.sh` | 41 | Run the local floor experiment. Sourced by `local.sh`. | Keep beside benchmark runner. |
-| `db-profile.sh` | 35 | Sample database counters and seed Receiving. Local and GCP floor runners. | Keep one helper with an explicit cleanup contract. |
+| `pg-minimum/gcp.sh` | 190 | Run minimum experiments on GCP. Benchmark instructions and deployment comments. | Keep with owned cleanup and bounded waits. |
+| `pg-minimum/run.sh` | 41 | Run the local minimum experiment. Sourced by `local.sh`. | Keep beside benchmark runner. |
+| `db-profile.sh` | 35 | Sample database counters and seed Receiving. Local and GCP minimum runners. | Keep one helper with an explicit cleanup contract. |
 | `database-delta.py` | 28 | Subtract database counters. Profile helper and GCP runner. | Keep. |
-| `result.py` | 49 | Write common compact results. Local, tier, and floor result readers. | Keep one result writer, preserve identity and failure detail. |
-| `pg-floor/result.py` | 68 | Interpret pgbench results and reconcile changed rows. Both floor runners. | Keep. |
+| `result.py` | 49 | Write common compact results. Local, tier, and minimum result readers. | Keep one result writer, preserve identity and failure detail. |
+| `pg-minimum/result.py` | 68 | Interpret pgbench results and reconcile changed rows. Both minimum runners. | Keep. |
 | `app-result.py` | 71 | Attribute sampled application span times. `local.sh`. | Keep as benchmark analysis. |
 | `name-guests.py` | 45 | Restore guest symbol names from matching artifacts. `local.sh`. | Keep as benchmark analysis. |
 | `profile-summary.py` | 90 | Summarize CPU samples. `local.sh`. | Keep as benchmark analysis. |
 | `src/main.rs` | 1,109 | Generate timed Receiving traffic and collect results. Local and tier runners. | Keep as a separate benchmark binary. |
 
-The support files also have live owners. `test-changes-suites.json` (8 lines) is replaced by `tests/selection.toml` under G3-2. Keep `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep floor SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud floor runner.
+The support files also have live owners. `test-changes-suites.json` (8 lines) is replaced by `tests/selection.toml` under G3-2. Keep `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep minimum SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud minimum runner.
 
 Production image preparation, collector rendering, and local registry preparation belong behind `wamn-ctl`, with implementation in `wamn-control`. Repository bootstrap, lint, revision testing, benchmark analysis, and test fixtures retain their existing types of owners. This follows `docs/architecture/overview.md:46` and `docs/architecture/overview.md:53`.
 

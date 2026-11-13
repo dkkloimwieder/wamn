@@ -4,27 +4,27 @@ SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true),
 INSERT INTO platform."user" (id, type, email, display_name) VALUES
     ('00000000-0000-4000-8000-0000000000f1', 'user', 'creator@example.invalid', 'creator'),
     ('00000000-0000-4000-8000-0000000000f2', 'user', 'editor@example.invalid', 'editor');
-INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version)
+INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version)
 VALUES ('sha256:' || repeat('c', 64), 'history', 'fixture', '1');
 INSERT INTO catalog.package_migrations
-    (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at)
+    (project_env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at)
 VALUES ('history', 'fixture', '1', 1, 'migrations/0001_initial.sql', 'sha256:' || repeat('a', 64), 'applied', now());
 INSERT INTO catalog.package_definition_owners
-    (env_key, schema_name, relation_name, definition_type, definition_name, owner_package_id)
+    (project_env_key, schema_name, relation_name, definition_type, definition_name, owner_package_id)
 VALUES ('history', 'fixture', 'item', 'relation', 'item', 'fixture');
-INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes)
+INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes)
 VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);
 INSERT INTO platform.integration (id,integration_type,name,status)
 VALUES ('10000000-0000-4000-8000-000000000001','http','history-http','active');
 INSERT INTO platform.connection (id,integration_id,integration_type,status)
 VALUES ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','http','active');
-INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode)
+INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode)
 VALUES ('history','sha256:' || repeat('a',64),'fixture','store','wamn:connection/http@0.1.0','write');
-INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version)
+INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version)
 VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002',1);
-INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id)
+INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id)
 VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002');
-INSERT INTO catalog.wiring_tombstones (env_key, package_id, environment, wiring_id, reason)
+INSERT INTO catalog.wiring_tombstones (project_env_key, package_id, environment, wiring_id, reason)
 VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
 DO $assert_inserts$
 DECLARE

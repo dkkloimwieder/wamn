@@ -65,7 +65,7 @@ impl RouterDeliveryBridge {
         let release = Arc::clone(&operations.release);
         jetstream.bind_derived_scope(
             ROUTER_DELIVERY_ID,
-            &release.scope().env_key,
+            &release.scope().project_env_key,
             project,
             &release.scope().environment,
         )?;

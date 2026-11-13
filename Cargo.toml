@@ -26,7 +26,7 @@ license = "Apache-2.0"
 # in ONE place per M-CARGO-WORKSPACE. Members inherit with `[lints] workspace = true`.
 #
 # Levels are deliberate, not aspirational: everything here is `warn` because
-# `tools/repo-lint` already runs clippy with `-D warnings`, so that gate is what
+# `tools/repo-lint` already runs clippy with `-D warnings`, so that condition is what
 # promotes these to errors. Setting `deny` here as well would only duplicate it
 # and break plain `cargo build` for a developer mid-edit.
 #
@@ -155,7 +155,7 @@ url = "2"
 # The two spellings the Rust client emitter reaches for that nothing in this
 # workspace declared directly: `numeric` is `rust_decimal::Decimal` and `uuid`
 # is `uuid::Uuid`. A crate that compiles emitted bindings needs both, which is
-# why the emitter's own compile gate declares them too (wamn-10yt.45).
+# why the emitter's own compilation test declares them too (wamn-10yt.45).
 rust_decimal = { version = "1", default-features = false }
 uuid = "1"
 libc = "0.2"

@@ -40,7 +40,9 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectWiring, JETSTREAM_DURATION_MS, effect_span,
     record_effect_ms, record_wiring,
 };
-use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, ENV_KEY_CONFIG_KEY, PROJECT_CONFIG_KEY};
+use crate::plugins::wamn_postgres::{
+    DEFAULT_PROJECT, PROJECT_CONFIG_KEY, PROJECT_ENV_KEY_CONFIG_KEY,
+};
 mod admission;
 
 mod bindings {
@@ -70,7 +72,7 @@ pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 
 /// The host-owned inputs needed to publish one admitted Emit terminal.
 ///
-/// Tenant, project, and environment are intentionally absent:
+/// Project, project, and environment are intentionally absent:
 /// [`WamnJetstream::publish_derived`] resolves them from the claim bound to
 /// `component_id`. `package_id` is supplied only by the native host caller from
 /// its loaded release/run/wiring identity; it is not a guest WIT operand.
@@ -161,7 +163,7 @@ pub struct WamnJetstreamConfig {
     /// (docs/plan/alignment.md R5). `None` ⇒ the plugin registers but every
     /// call returns `connection-unavailable`.
     pub nats: Option<async_nats::Client>,
-    /// Trusted event coordinates, separate from tenant and database authority.
+    /// Trusted event coordinates, separate from project and database authority.
     pub event_scope: Option<Triple>,
     /// Declared NATS stream copies, separate from workload instances.
     pub stream_replicas: Option<usize>,
@@ -217,19 +219,19 @@ pub struct WamnJetstream {
     /// `OnceCell`) so a transient connect failure is retried on the next call
     /// instead of memoized forever; only a successful connect is stored.
     ctx: Mutex<Option<Context>>,
-    /// Per-component tenant/project/environment claim, registered at workload
+    /// Per-component project/project/environment claim, registered at workload
     /// bind from the same trusted `wamn.*` config the `wamn:postgres`
     /// claims read. It exists only to enrich this plugin's effect spans: before
-    /// `wamn-0h0g.24.3` the bind read the tenant, derived the execution target
+    /// `wamn-0h0g.24.3` the bind read the project, derived the execution target
     /// from it and discarded it, so nothing here could say whose event plane a
     /// publish or an ack belonged to.
     claims: std::sync::RwLock<HashMap<String, JetstreamClaim>>,
 }
 
-/// One component's bind-time tenant/project claim.
+/// One component's bind-time project/project claim.
 #[derive(Clone, Debug)]
 struct JetstreamClaim {
-    env_key: Box<str>,
+    project_env_key: Box<str>,
     project: Box<str>,
     environment: Box<str>,
 }
@@ -320,7 +322,7 @@ fn prepare_derived_publication(
     }
 
     let event = DerivedEvent::new(
-        claim.env_key.to_string(),
+        claim.project_env_key.to_string(),
         coordinates.project.to_string(),
         coordinates.environment.to_string(),
         request.package_id,
@@ -338,7 +340,7 @@ fn prepare_derived_publication(
         event.op,
     );
     let message_id = derived_msg_id(
-        &claim.env_key,
+        &claim.project_env_key,
         &coordinates.project,
         &coordinates.environment,
         &event.package_id,
@@ -401,7 +403,7 @@ fn js_span(
     let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
-            env_key: &claim.env_key,
+            project_env_key: &claim.project_env_key,
             project: &claim.project,
             component: component_id,
         },
@@ -488,7 +490,7 @@ impl WamnJetstream {
         ])
     }
 
-    fn materializer_env_key(&self) -> Result<String, JsError> {
+    fn materializer_project_env_key(&self) -> Result<String, JsError> {
         require_event_coordinates(&self.event_coordinates)
             .map_err(|error| JsError::Other(error.to_string()))?;
         Ok(wamn_control_registry::project_env_key(
@@ -505,7 +507,7 @@ impl WamnJetstream {
     fn set_claim(
         &self,
         component_id: &str,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
         project: Option<&str>,
         environment: Option<&str>,
     ) {
@@ -515,7 +517,7 @@ impl WamnJetstream {
             .insert(
                 component_id.to_string(),
                 JetstreamClaim {
-                    env_key: env_key.unwrap_or_default().into(),
+                    project_env_key: project_env_key.unwrap_or_default().into(),
                     project: project.unwrap_or(DEFAULT_PROJECT).into(),
                     environment: environment.unwrap_or_default().into(),
                 },
@@ -530,12 +532,12 @@ impl WamnJetstream {
     pub fn bind_derived_scope(
         &self,
         component_id: &str,
-        env_key: &str,
+        project_env_key: &str,
         project: &str,
         environment: &str,
     ) -> Result<(), DerivedPublishError> {
         for (field, value) in [
-            ("env_key", env_key),
+            ("project_env_key", project_env_key),
             ("project", project),
             ("environment", environment),
         ] {
@@ -548,7 +550,7 @@ impl WamnJetstream {
         }
         self.set_claim(
             component_id,
-            Some(env_key),
+            Some(project_env_key),
             Some(project),
             Some(environment),
         );
@@ -573,7 +575,7 @@ impl WamnJetstream {
             .get(component_id)
             .cloned()
             .unwrap_or_else(|| JetstreamClaim {
-                env_key: Box::default(),
+                project_env_key: Box::default(),
                 project: DEFAULT_PROJECT.into(),
                 environment: Box::default(),
             })
@@ -596,7 +598,7 @@ impl WamnJetstream {
                 )
             })?;
         for value in [
-            claim.env_key.as_ref(),
+            claim.project_env_key.as_ref(),
             claim.project.as_ref(),
             claim.environment.as_ref(),
         ] {
@@ -731,17 +733,17 @@ impl HostPlugin for WamnJetstream {
         if !interfaces.contains("wamn", "jetstream", &["registration"]) {
             return Ok(());
         }
-        let (env_key, project, environment) = {
+        let (project_env_key, project, environment) = {
             let config = &item.local_resources().config;
             (
-                config.get(ENV_KEY_CONFIG_KEY).cloned(),
+                config.get(PROJECT_ENV_KEY_CONFIG_KEY).cloned(),
                 config.get(PROJECT_CONFIG_KEY).cloned(),
                 config.get(ENVIRONMENT_CONFIG_KEY).cloned(),
             )
         };
         self.set_claim(
             item.id(),
-            env_key.as_deref(),
+            project_env_key.as_deref(),
             project.as_deref(),
             environment.as_deref(),
         );
@@ -871,11 +873,11 @@ async fn prepare_consumer(
     package_id: &str,
     registration_id: &str,
 ) -> Result<(), JsError> {
-    let env_key = plugin.materializer_env_key()?;
+    let project_env_key = plugin.materializer_project_env_key()?;
     let triggers = postgres
         .event_triggers(
             &plugin.event_coordinates.project,
-            &env_key,
+            &project_env_key,
             &plugin.event_coordinates.environment,
         )
         .await
@@ -957,11 +959,11 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<String, JsError>> {
         let (plugin, postgres, component) = event_plugins(accessor)?;
-        let env_key = match plugin.materializer_env_key() {
-            Ok(env_key) => env_key,
+        let project_env_key = match plugin.materializer_project_env_key() {
+            Ok(project_env_key) => project_env_key,
             Err(error) => return Ok(Err(error)),
         };
-        if let Err(error) = postgres.require_event_materializer(&component, &env_key) {
+        if let Err(error) = postgres.require_event_materializer(&component, &project_env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
         let claim = plugin.claim_for(&component);
@@ -970,7 +972,7 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
             match postgres
                 .event_triggers(
                     &plugin.event_coordinates.project,
-                    &env_key,
+                    &project_env_key,
                     &plugin.event_coordinates.environment,
                 )
                 .instrument(span)
@@ -992,11 +994,11 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         source_event_id: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
         let (plugin, postgres, component) = event_plugins(accessor)?;
-        let env_key = match plugin.materializer_env_key() {
-            Ok(env_key) => env_key,
+        let project_env_key = match plugin.materializer_project_env_key() {
+            Ok(project_env_key) => project_env_key,
             Err(error) => return Ok(Err(error)),
         };
-        if let Err(error) = postgres.require_event_materializer(&component, &env_key) {
+        if let Err(error) = postgres.require_event_materializer(&component, &project_env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
         let claim = plugin.claim_for(&component);
@@ -1032,11 +1034,11 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
                 ctx.component_id.to_string(),
             ))
         })?;
-        let env_key = match plugin.materializer_env_key() {
-            Ok(env_key) => env_key,
+        let project_env_key = match plugin.materializer_project_env_key() {
+            Ok(project_env_key) => project_env_key,
             Err(error) => return Ok(Err(error)),
         };
-        if let Err(error) = postgres.require_event_materializer(&component_id, &env_key) {
+        if let Err(error) = postgres.require_event_materializer(&component_id, &project_env_key) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
         let claim = plugin.claim_for(&component_id);
@@ -1200,7 +1202,7 @@ mod tests {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
         let publication = prepare_derived_publication(
             JetstreamClaim {
-                env_key: "fixture-route-auth".into(),
+                project_env_key: "fixture-route-auth".into(),
                 project: "database-project".into(),
                 environment: "dev".into(),
             },
@@ -1231,7 +1233,7 @@ mod tests {
         assert!(!publication.message_id.contains("\r\n"));
 
         let event = DerivedEvent::from_slice(&publication.body).expect("derived wire decodes");
-        assert_eq!(event.env_key, "fixture-route-auth");
+        assert_eq!(event.project_env_key, "fixture-route-auth");
         assert_eq!(event.project, "widgets");
         assert_eq!(event.environment, "dev");
         assert_eq!(event.package_id, "platform_fixture");
@@ -1247,7 +1249,7 @@ mod tests {
     #[test]
     fn derived_publication_refuses_a_noncanonical_package_identity() {
         let claim = JetstreamClaim {
-            env_key: "fixture".into(),
+            project_env_key: "fixture".into(),
             project: "app".into(),
             environment: "dev".into(),
         };
@@ -1283,7 +1285,7 @@ mod tests {
         );
         plugin.set_claim(
             "component-1",
-            Some("other.tenant"),
+            Some("other.project"),
             Some("app"),
             Some("dev"),
         );
@@ -1296,7 +1298,7 @@ mod tests {
         );
         assert!(
             plugin
-                .bind_derived_scope("component-1", "other.tenant", "app", "dev")
+                .bind_derived_scope("component-1", "other.project", "app", "dev")
                 .is_err(),
             "a claim that can escape one subject token is refused"
         );
@@ -1521,7 +1523,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Live round-trip against a real data-plane NATS. Ignored by default and
-    // gated on WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate: it exercises the exact async-nats call
+    // conditioned on WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate: it exercises the exact async-nats call
     // sequence the plugin relies on (dedupe on publish, durable pull consumer,
     // fetch/metadata/headers/ack) through the plugin's own mapping helpers, so
     // a broken API assumption fails here rather than only in-cluster. The full

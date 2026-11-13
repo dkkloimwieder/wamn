@@ -16,7 +16,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const ENV_KEY: &str = "package-data-access-live--fixture--dev";
+const PROJECT_ENV_KEY: &str = "package-data-access-live--fixture--dev";
 const PASSWORD: &str = "package-data-access-live-password";
 /// The relation maps apply-package writes beside the application tables.
 const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
@@ -163,13 +163,13 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App generation accepts tenant scope");
+    .expect("App generation accepts project scope");
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
@@ -211,7 +211,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     admin
         .batch_execute(APP_SCHEMA)
         .await
-        .expect("install application authorization floor");
+        .expect("install application authorization base grants");
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
@@ -515,7 +515,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
     admin
         .batch_execute(APP_SCHEMA)
         .await
-        .expect("install application authorization floor");
+        .expect("install application authorization base grants");
     admin
 }
 
@@ -587,11 +587,11 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     apply(&url, fixture_package_root()).await;
     apply(&url, overlay_package_root()).await;
     // platform and catalog are platform schemas. No package manifest names
-    // them, so the reconciler never reads a relation there. The floor grants the
+    // them, so the reconciler never reads a relation there. The minimum grants the
     // two schema files install stand outside every package declaration, and so
     // does this seeded grant.
     admin
-        .batch_execute("GRANT UPDATE (env_key) ON TABLE catalog.packages TO wamn_app;")
+        .batch_execute("GRANT UPDATE (project_env_key) ON TABLE catalog.packages TO wamn_app;")
         .await
         .expect("seed App authority inside the platform schemas");
     reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
@@ -622,7 +622,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
         admin
             .query_one(
                 "SELECT pg_catalog.has_column_privilege( \
-                   'wamn_app', 'catalog.packages', 'env_key', 'UPDATE')",
+                   'wamn_app', 'catalog.packages', 'project_env_key', 'UPDATE')",
                 &[],
             )
             .await
@@ -662,13 +662,13 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     apply(&url, package.clone()).await;
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("App generation accepts tenant scope");
+    .expect("App generation accepts project scope");
     admin
         .batch_execute(&sql::prepare_workload_generation_sql(
             WorkloadRoleFamily::App,
@@ -884,8 +884,11 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         .await
         .expect("read the database instance")
         .get(0);
-    let marker =
-        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, instance);
+    let marker = wamn_runtime::local_application::local_target_marker(
+        PROJECT_ENV_KEY,
+        ENVIRONMENT,
+        instance,
+    );
     admin
         .batch_execute(&format!(
             "DO $comment$ BEGIN \
@@ -905,7 +908,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             reconcile_package_data_access::reconcile_local(
                 &prepared,
                 &url,
-                ENV_KEY,
+                PROJECT_ENV_KEY,
                 ENVIRONMENT,
                 apply,
             )
@@ -949,9 +952,9 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         admin
             .query_one(
                 "SELECT artifact_digest FROM catalog.packages \
-                  WHERE env_key = $1 AND package_id = 'platform_fixture' \
+                  WHERE project_env_key = $1 AND package_id = 'platform_fixture' \
                     AND package_version = '2.1.1'",
-                &[&ENV_KEY],
+                &[&PROJECT_ENV_KEY],
             )
             .await
             .expect("read the immutable package row")

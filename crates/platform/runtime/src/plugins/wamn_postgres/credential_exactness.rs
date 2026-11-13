@@ -43,7 +43,7 @@ pub enum CredentialProbePredicate {
     SessionUser,
     CurrentUser,
     Database,
-    TenantBinding,
+    ProjectBinding,
     Membership,
     Acl,
 }
@@ -106,19 +106,19 @@ impl Display for CredentialProbeError {
 
 impl std::error::Error for CredentialProbeError {}
 
-/// One explicit parsed database credential plus its trusted tenant binding.
+/// One explicit parsed database credential plus its trusted project binding.
 ///
 /// The binding is lifecycle metadata minted beside the credential, never a
 /// guest echo or a caller-settable session GUC. Its provenance belongs to
 /// `wamn-0h0g.13.59`; this seam only prevents a selector from pairing that
-/// credential with a different expected tenant.
+/// credential with a different expected project.
 ///
 /// Debug output is deliberately opaque because `tokio_postgres::Config`
 /// contains userinfo and password material.
 #[derive(Clone)]
 pub struct ExplicitCredentialSource {
     config: Config,
-    env_key_binding: Box<str>,
+    project_env_key_binding: Box<str>,
 }
 
 impl Debug for ExplicitCredentialSource {
@@ -126,7 +126,7 @@ impl Debug for ExplicitCredentialSource {
         formatter
             .debug_struct("ExplicitCredentialSource")
             .field("credential", &"[REDACTED]")
-            .field("env_key_binding", &"[REDACTED]")
+            .field("project_env_key_binding", &"[REDACTED]")
             .finish()
     }
 }
@@ -138,7 +138,7 @@ impl Debug for ExplicitCredentialSource {
 /// always refuses, including when it happens to name the same database.
 pub fn explicit_credential_source(
     database_url: &str,
-    env_key_binding: impl Into<Box<str>>,
+    project_env_key_binding: impl Into<Box<str>>,
     ambient: AmbientCredentialState,
 ) -> Result<ExplicitCredentialSource, CredentialProbeError> {
     if ambient == AmbientCredentialState::Present {
@@ -147,11 +147,11 @@ pub fn explicit_credential_source(
             CredentialProbePredicate::CredentialSource,
         ));
     }
-    let env_key_binding = env_key_binding.into();
-    if env_key_binding.is_empty() {
+    let project_env_key_binding = project_env_key_binding.into();
+    if project_env_key_binding.is_empty() {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::InvalidSource,
-            CredentialProbePredicate::TenantBinding,
+            CredentialProbePredicate::ProjectBinding,
         ));
     }
     let config = database_url.parse::<Config>().map_err(|_| {
@@ -168,7 +168,7 @@ pub fn explicit_credential_source(
     }
     Ok(ExplicitCredentialSource {
         config,
-        env_key_binding,
+        project_env_key_binding,
     })
 }
 
@@ -248,7 +248,7 @@ pub struct ExpectedCredentialIdentity {
     session_user: Box<str>,
     current_user: Box<str>,
     database: Box<str>,
-    env_key_binding: Box<str>,
+    project_env_key_binding: Box<str>,
     memberships: Vec<MembershipExpectation>,
     acl: Vec<AclExpectation>,
 }
@@ -258,7 +258,7 @@ impl ExpectedCredentialIdentity {
         session_user: impl Into<Box<str>>,
         current_user: impl Into<Box<str>>,
         database: impl Into<Box<str>>,
-        env_key_binding: impl Into<Box<str>>,
+        project_env_key_binding: impl Into<Box<str>>,
         memberships: Vec<MembershipExpectation>,
         acl: Vec<AclExpectation>,
     ) -> Self {
@@ -266,7 +266,7 @@ impl ExpectedCredentialIdentity {
             session_user: session_user.into(),
             current_user: current_user.into(),
             database: database.into(),
-            env_key_binding: env_key_binding.into(),
+            project_env_key_binding: project_env_key_binding.into(),
             memberships,
             acl,
         }
@@ -281,7 +281,7 @@ impl ExpectedCredentialIdentity {
 /// before use; enforcing that construction sequence belongs to the trusted
 /// selector in `wamn-0h0g.22.8`.
 ///
-/// Exactness is source user/database/tenant metadata -> expected identity ->
+/// Exactness is source user/database/project metadata -> expected identity ->
 /// observed session/current user, database, memberships, and ACL. Host/port may
 /// legitimately name a proxy or replica, and PostgreSQL cannot report which
 /// password authenticated a session, so endpoint and password bytes are
@@ -302,7 +302,7 @@ impl Debug for CredentialExactnessProbe {
 }
 
 /// Bind one explicit source to the exact identity expected by its trusted
-/// selector. User, database, and tenant swaps refuse before a socket is used.
+/// selector. User, database, and project swaps refuse before a socket is used.
 pub fn credential_exactness_probe(
     source: ExplicitCredentialSource,
     expected: ExpectedCredentialIdentity,
@@ -319,10 +319,10 @@ pub fn credential_exactness_probe(
             CredentialProbePredicate::Database,
         ));
     }
-    if source.env_key_binding != expected.env_key_binding {
+    if source.project_env_key_binding != expected.project_env_key_binding {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::PredicateMismatch,
-            CredentialProbePredicate::TenantBinding,
+            CredentialProbePredicate::ProjectBinding,
         ));
     }
     Ok(CredentialExactnessProbe { source, expected })
@@ -581,16 +581,16 @@ mod tests {
 
     const URL: &str = "postgresql://exact-user:do-not-print@localhost/exact_db";
 
-    fn source(env_key: &str) -> ExplicitCredentialSource {
-        explicit_credential_source(URL, env_key, AmbientCredentialState::Absent).unwrap()
+    fn source(project_env_key: &str) -> ExplicitCredentialSource {
+        explicit_credential_source(URL, project_env_key, AmbientCredentialState::Absent).unwrap()
     }
 
-    fn expected(env_key: &str) -> ExpectedCredentialIdentity {
+    fn expected(project_env_key: &str) -> ExpectedCredentialIdentity {
         ExpectedCredentialIdentity::new(
             "exact-user",
             "exact-user",
             "exact_db",
-            env_key,
+            project_env_key,
             vec![MembershipExpectation::new(
                 "wamn_app",
                 MembershipMode::Member,
@@ -678,8 +678,8 @@ mod tests {
 
     #[test]
     fn exact_source_rejects_an_ambient_conflict_without_disclosure() {
-        let error = explicit_credential_source(URL, "tenant-a", AmbientCredentialState::Present)
-            .unwrap_err();
+        let error =
+            explicit_credential_source(URL, "org-a", AmbientCredentialState::Present).unwrap_err();
         assert_eq!(error.error_type(), CredentialProbeErrorType::SourceConflict);
         assert_eq!(
             error.predicate(),
@@ -693,30 +693,30 @@ mod tests {
 
     #[test]
     fn source_and_probe_debug_are_redacted() {
-        let source = source("tenant-a");
+        let source = source("org-a");
         assert_eq!(
             format!("{source:?}"),
-            "ExplicitCredentialSource { credential: \"[REDACTED]\", env_key_binding: \"[REDACTED]\" }"
+            "ExplicitCredentialSource { credential: \"[REDACTED]\", project_env_key_binding: \"[REDACTED]\" }"
         );
-        let probe = credential_exactness_probe(source, expected("tenant-a")).unwrap();
+        let probe = credential_exactness_probe(source, expected("org-a")).unwrap();
         let rendered = format!("{probe:?}");
-        for secret in ["exact-user", "do-not-print", "tenant-a", "exact_db"] {
+        for secret in ["exact-user", "do-not-print", "org-a", "exact_db"] {
             assert!(!rendered.contains(secret), "leaked {secret:?}: {rendered}");
         }
     }
 
     #[test]
-    fn source_user_database_and_env_key_swaps_refuse() {
+    fn source_user_database_and_project_env_key_swaps_refuse() {
         let wrong_user = ExpectedCredentialIdentity::new(
             "other-user",
             "other-user",
             "exact_db",
-            "tenant-a",
+            "org-a",
             vec![],
             vec![],
         );
         assert_mismatch(
-            credential_exactness_probe(source("tenant-a"), wrong_user).unwrap_err(),
+            credential_exactness_probe(source("org-a"), wrong_user).unwrap_err(),
             CredentialProbePredicate::SessionUser,
             None,
         );
@@ -725,19 +725,19 @@ mod tests {
             "exact-user",
             "exact-user",
             "other_db",
-            "tenant-a",
+            "org-a",
             vec![],
             vec![],
         );
         assert_mismatch(
-            credential_exactness_probe(source("tenant-a"), wrong_database).unwrap_err(),
+            credential_exactness_probe(source("org-a"), wrong_database).unwrap_err(),
             CredentialProbePredicate::Database,
             None,
         );
 
         assert_mismatch(
-            credential_exactness_probe(source("tenant-a"), expected("tenant-b")).unwrap_err(),
-            CredentialProbePredicate::TenantBinding,
+            credential_exactness_probe(source("org-a"), expected("org-b")).unwrap_err(),
+            CredentialProbePredicate::ProjectBinding,
             None,
         );
     }
@@ -759,8 +759,7 @@ mod tests {
                 |actual: &mut ObservedIdentity| actual.database = "other_db".to_owned(),
             ),
         ] {
-            let probe =
-                credential_exactness_probe(source("tenant-a"), expected("tenant-a")).unwrap();
+            let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
             let mut actual = observation();
             mutate(&mut actual);
             let queries = FakeQueries::new(actual, true, true);
@@ -777,7 +776,7 @@ mod tests {
 
     #[tokio::test]
     async fn membership_and_acl_mismatches_are_distinct_predicates() {
-        let probe = credential_exactness_probe(source("tenant-a"), expected("tenant-a")).unwrap();
+        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
         assert_mismatch(
             probe
                 .probe_queries(
@@ -804,7 +803,7 @@ mod tests {
 
     #[tokio::test]
     async fn listener_uses_the_same_expected_identity_contract() {
-        let probe = credential_exactness_probe(source("tenant-a"), expected("tenant-a")).unwrap();
+        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
         let mut actual = observation();
         actual.session_user = "pooled-user".to_owned();
         assert_mismatch(
@@ -822,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn pooled_and_listener_paths_run_the_same_complete_query_contract() {
-        let probe = credential_exactness_probe(source("tenant-a"), expected("tenant-a")).unwrap();
+        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
         for connection_type in [
             CredentialConnectionType::Pooled,
             CredentialConnectionType::Listener,

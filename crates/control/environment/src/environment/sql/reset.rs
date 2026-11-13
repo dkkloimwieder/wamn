@@ -414,13 +414,13 @@ pub async fn initialize_with_migrations(
         )?);
     }
     stage::create_number_sequences(&project_url, &defaults).await?;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     for (application, digest, manifest, code_packages) in releases {
         stage::materialize_application_principals(
             &platform.system_database_url,
             &project_url,
-            &env_key,
+            &project_env_key,
             &manifest,
             &code_packages,
             &changes,

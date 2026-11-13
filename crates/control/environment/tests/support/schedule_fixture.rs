@@ -42,7 +42,7 @@ pub use wamn_runtime::plugins::wamn_postgres::{
 pub use wamn_schema_control::BareSchemaName;
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
-pub const ENV_KEY: &str = "schedule-live--default--dev";
+pub const PROJECT_ENV_KEY: &str = "schedule-live--default--dev";
 pub const PROJECT: &str = "default";
 pub const ENVIRONMENT: &str = "dev";
 pub const APPLICATION: &str = "orders";
@@ -127,7 +127,7 @@ pub fn read_component() -> Vec<u8> {
 
 pub fn read_declaration() -> Value {
     json!({
-        "scope": {"env_key": ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
+        "scope": {"project_env_key": PROJECT_ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
         "component": "orders_data", "interface-version": "0.1.0",
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
@@ -222,10 +222,10 @@ pub async fn fixture() -> Fixture {
              INSERT INTO platform.permission (role_name, permission) VALUES \
                ('reader', '{READ_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
-             INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
-               VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
+             INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) \
+               VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
+             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
+               VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))
         .await
         .expect("seed the users, roles, permissions and the environment");
@@ -265,16 +265,16 @@ pub async fn fixture() -> Fixture {
         LoadedRelease::load_canonical_bytes(
             &served.canonical_bytes(),
             "schedule-live",
-            ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(declared()),
+            ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     );
     let digest = release.release().manifest_digest.as_str().to_owned();
     admin
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&ENV_KEY, &digest, &served.canonical_bytes()],
+            &[&PROJECT_ENV_KEY, &digest, &served.canonical_bytes()],
         )
         .await
         .expect("install the serving release");
@@ -319,13 +319,13 @@ pub async fn scoped_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>, S
         ),
     ] {
         let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
-                env_key: ENV_KEY,
+            WorkloadRoleScope::ProjectEnvKey {
+                project_env_key: PROJECT_ENV_KEY,
                 database: &database,
             }
         } else {
             WorkloadRoleScope::ProjectEnvironment {
-                org: ENV_KEY,
+                org: PROJECT_ENV_KEY,
                 project: PROJECT,
                 environment: ENVIRONMENT,
                 database: &database,
@@ -385,7 +385,7 @@ pub fn declared() -> wamn_catalog::EnvironmentApplications {
 
 impl Fixture {
     /// Author version 1 of `id` as `wamn-ctl workflow author` does, with a
-    /// green gate report under its hash.
+    /// green condition report under its hash.
     pub async fn author(
         &self,
         id: &str,
@@ -492,7 +492,7 @@ impl Fixture {
         self.postgres
             .admit_schedule_run(
                 PROJECT,
-                ENV_KEY,
+                PROJECT_ENV_KEY,
                 &ScheduleRunAdmission {
                     environment: ENVIRONMENT,
                     application: APP,
@@ -533,7 +533,7 @@ impl Fixture {
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     Arc::clone(&self.postgres),
-                    self.release.scope().env_key.as_str(),
+                    self.release.scope().project_env_key.as_str(),
                     PROJECT,
                     self.release.scope().environment.as_str(),
                 )),
@@ -599,8 +599,8 @@ pub async fn event(fixture: &Fixture, id: &str, sequence: i64, role: Option<&str
     let graph = workflow(id);
     let execution = if role.is_some() { "role" } else { "invoker" };
     fixture.admin.execute(
-        "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)",
-        &[&ENV_KEY, &ENVIRONMENT, &APP, &id, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str(), &APPLICATION, &sequence, &execution, &role, &ADMIN],
+        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)",
+        &[&PROJECT_ENV_KEY, &ENVIRONMENT, &APP, &id, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str(), &APPLICATION, &sequence, &execution, &role, &ADMIN],
     ).await.unwrap();
 }
 
@@ -713,13 +713,13 @@ pub async fn release_variant(
     let release = LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "event-live",
-        ReleaseScope::new(ENV_KEY, ENVIRONMENT)
+        ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT)
             .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
     )
     .unwrap();
     fixture.admin.execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&ENV_KEY, &release.release().manifest_digest.as_str(), &manifest.canonical_bytes()],
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&PROJECT_ENV_KEY, &release.release().manifest_digest.as_str(), &manifest.canonical_bytes()],
         ).await.unwrap();
     release
 }

@@ -11,7 +11,7 @@ use tokio::process::Command;
 use wamn_control_provision::{PlatformComponent, WorkloadRoleFamily};
 use wamn_dev_control::dev::environment::{
     DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, generation_args,
-    install_journey_platform_floor, reconcile_journey_run_plane,
+    install_journey_platform_base_grants, reconcile_journey_run_plane,
 };
 use wamn_environment_control::provision_project_env::{
     ProvisionProjectEnvRequest, provision_project_env, run_workload_action,
@@ -82,7 +82,7 @@ async fn provision_browser_environment(
         project: BROWSER_PROJECT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
     };
-    install_journey_platform_floor(&target, "example.invalid").await?;
+    install_journey_platform_base_grants(&target, "example.invalid").await?;
     reconcile_journey_run_plane(&scope, system_url, target_url.as_str()).await?;
     let secret = output.join("administration.json");
     run_workload_action(&generation_args(

@@ -1,4 +1,4 @@
-# The pgbench client of the GCP Postgres floor (wamn-c8a5v.1). gcp.sh copies
+# The pgbench client of the GCP Postgres minimum (wamn-c8a5v.1). gcp.sh copies
 # the replay scripts in and runs pgbench through kubectl exec. It runs on pool
 # bench beside the idle Receiving host, never on pool pg: a client on the
 # Postgres node slows every statement (wamn-48d4d). The CPU request fits
@@ -8,7 +8,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pg-floor-client
+  name: pg-minimum-client
   namespace: platform
   labels:
     app.kubernetes.io/managed-by: wamn

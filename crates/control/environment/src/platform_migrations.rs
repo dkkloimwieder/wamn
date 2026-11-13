@@ -38,7 +38,7 @@ fn report(
     )
 }
 
-/// Describe known SQL consumers without imposing a compatibility gate.
+/// Describe known SQL consumers without imposing a compatibility condition.
 async fn warnings(
     client: &impl GenericClient,
     planned: &PlatformMigrationPlan,

@@ -50,7 +50,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
     }
     let published = publish_release_with_package_manifests(
         &PublishReleaseManifest {
-            org: "tenant-a",
+            org: "org-a",
             project: "fixture",
             environment: "dev",
             packages: &packages,

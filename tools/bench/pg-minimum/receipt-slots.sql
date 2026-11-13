@@ -1,5 +1,5 @@
 -- Reserve the receipts of the record_receipt replay (receipt.sql) on the
--- 1000-order floor seed. psql sets :clients and :lines.
+-- 1000-order minimum seed. psql sets :clients and :lines.
 -- Client c owns the open orders n with (n - 1) % clients = c, as update.sql
 -- reserves its rows. Window w of order n holds lines w * lines + 1 to
 -- (w + 1) * lines. Each pass visits every window once, so 4 passes put at

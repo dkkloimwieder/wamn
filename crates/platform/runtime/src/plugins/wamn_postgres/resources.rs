@@ -374,10 +374,10 @@ pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<A
 ///
 /// PUBLISHED, AND FROZEN. `tests/integration/src/metricbench.rs` polls
 /// `wamn_postgres_query_duration_ms_count` against the running collector and
-/// blocks the in-cluster gate on it, and asserts it again over pinned fixture
+/// blocks the in-cluster acceptance test on it, and asserts it again over pinned fixture
 /// text; `docs/archive/observability/dashboards.md` slices a deployed Grafana
 /// panel by `db_operation`. Renaming either the instrument or the label breaks
-/// the gate loudly and the dashboards silently.
+/// the condition loudly and the dashboards silently.
 static QUERY_DURATION_MS: std::sync::LazyLock<opentelemetry::metrics::Histogram<f64>> =
     std::sync::LazyLock::new(|| {
         opentelemetry::global::meter("wamn-postgres")
@@ -396,8 +396,8 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 }
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
-/// the executing component's tenant/project (the same claim maps that inject
-/// `app.env_key`; the guest cannot spoof them). The name and the `db.*` fields are
+/// the executing component's project/project (the same claim maps that inject
+/// `app.project_env_key`; the guest cannot spoof them). The name and the `db.*` fields are
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
@@ -423,12 +423,12 @@ pub(super) fn db_span_for_project(
     project: &str,
     op: &'static str,
 ) -> tracing::Span {
-    let env_key = plugin.env_key_for(component_id).unwrap_or_default();
+    let project_env_key = plugin.project_env_key_for(component_id).unwrap_or_default();
     let run = plugin.current_run_for(component_id);
     let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
-            env_key: &env_key,
+            project_env_key: &project_env_key,
             project,
             component: component_id,
         },
@@ -454,7 +454,7 @@ async fn begin_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
-    let env_key = plugin.require_env_key(component_id)?;
+    let project_env_key = plugin.require_project_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -463,7 +463,7 @@ async fn begin_transaction(
     let application = plugin.application_for(component_id);
     let run = plugin.current_run_for(component_id);
     let (connection, pp, authority) = plugin
-        .checkout_workload(component_id, project, &env_key)
+        .checkout_workload(component_id, project, &project_env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     plugin
@@ -471,7 +471,7 @@ async fn begin_transaction(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &env_key,
+            &project_env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -522,7 +522,7 @@ pub(super) async fn prepare_statement_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<(PgTransaction, super::claims::transactions::BoundClaims), PgError> {
-    let env_key = plugin.require_env_key(component_id)?;
+    let project_env_key = plugin.require_project_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -531,7 +531,7 @@ pub(super) async fn prepare_statement_transaction(
     let application = plugin.application_for(component_id);
 
     let (connection, policy, authority) = plugin
-        .checkout_workload(component_id, project, &env_key)
+        .checkout_workload(component_id, project, &project_env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     let claims = plugin
@@ -539,7 +539,7 @@ pub(super) async fn prepare_statement_transaction(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &env_key,
+            &project_env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -884,7 +884,7 @@ async fn txn_open_cursor<T: 'static>(
     })?;
     trace
         .run(async move {
-            // A cursor over `SELECT set_config('app.env_key', …)` would execute the
+            // A cursor over `SELECT set_config('app.project_env_key', …)` would execute the
             // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
             if let Err(e) = reject_claim_mutation(&sql) {
                 return Ok(Err(e));
@@ -1849,8 +1849,8 @@ mod tests {
         })
         .expect("an offline postgres plugin opens no connection");
         plugin
-            .set_env_key(COMPONENT_ID, "tenant-a")
-            .expect("the tenant claim is valid");
+            .set_project_env_key(COMPONENT_ID, "org-a")
+            .expect("the project claim is valid");
         plugin
     }
 
@@ -1993,7 +1993,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["tenant-a", "project-a", COMPONENT_ID],
+                ["org-a", "project-a", COMPONENT_ID],
                 [
                     "package_a",
                     "orders",
@@ -2033,7 +2033,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["tenant-a", "project-a", COMPONENT_ID],
+                ["org-a", "project-a", COMPONENT_ID],
                 ["", "", "0", "", "0", "", "", ""],
                 &[("db.system", "postgresql"), ("db.operation", "query")],
             ),

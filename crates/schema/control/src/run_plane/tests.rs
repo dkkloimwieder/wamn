@@ -329,7 +329,7 @@ fn unforced_environment_policy_rls_mutant_plans_repair() {
 }
 
 #[test]
-fn missing_environment_policy_env_key_policy_mutant_plans_repair() {
+fn missing_environment_policy_project_env_key_policy_mutant_plans_repair() {
     let mut obs = observation_at_record();
     obs.environment_policy_row_security
         .as_mut()
@@ -341,12 +341,12 @@ fn missing_environment_policy_env_key_policy_mutant_plans_repair() {
     assert!(
         repair
             .sql
-            .contains("CREATE POLICY environment_policies_env_key")
+            .contains("CREATE POLICY environment_policies_project_env_key")
     );
 }
 
 #[test]
-fn widened_environment_policy_env_key_policy_mutant_plans_exact_replacement() {
+fn widened_environment_policy_project_env_key_policy_mutant_plans_exact_replacement() {
     let mut obs = observation_at_record();
     let row_security = obs
         .environment_policy_row_security
@@ -354,7 +354,7 @@ fn widened_environment_policy_env_key_policy_mutant_plans_exact_replacement() {
         .expect("record relation");
     let policy = row_security
         .policies
-        .get_mut("environment_policies_env_key")
+        .get_mut("environment_policies_project_env_key")
         .expect("record policy");
     policy.command = "all".to_string();
     policy.roles.insert("PUBLIC".to_string());
@@ -376,7 +376,7 @@ fn widened_environment_policy_env_key_policy_mutant_plans_exact_replacement() {
     assert!(repair.sql.contains("DROP POLICY %I"));
     assert!(repair.sql.contains("FOR SELECT TO wamn_app USING"));
     // wamn-0h0g.22.17: the repair drops EVERY policy on the relation, so it
-    // must recreate BOTH arms. Recreating only the floor would silently
+    // must recreate BOTH arms. Recreating only the minimum would silently
     // revert the platform admission on every reconcile-run-plane.
     assert!(
         repair
@@ -521,7 +521,7 @@ fn broad_app_run_grants_are_removed_without_regranting_writes() {
             .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs")
     );
     assert!(repair.sql.contains("REVOKE SELECT ("));
-    assert!(repair.sql.contains("env_key"));
+    assert!(repair.sql.contains("project_env_key"));
     assert!(repair.sql.contains("capture_mode"));
     assert!(!repair.sql.contains("GRANT INSERT"));
     assert!(!repair.sql.contains("GRANT UPDATE"));
@@ -568,7 +568,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 // drop-then-add repair test on live record checks.
 
 #[test]
-fn extra_record_check_is_removed_but_floor_check_is_untouched() {
+fn extra_record_check_is_removed_but_base_grants_check_is_untouched() {
     let mut obs = observation_at_record();
     obs.checks.insert(
         ("runs".to_string(), "legacy_runs_check".to_string()),
@@ -655,7 +655,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
 }
 
 #[test]
-fn extra_record_trigger_is_removed_but_floor_trigger_is_untouched() {
+fn extra_record_trigger_is_removed_but_base_grants_trigger_is_untouched() {
     let mut obs = observation_at_record();
     obs.triggers.insert(
         ("runs".to_string(), "legacy_runs_trigger".to_string()),

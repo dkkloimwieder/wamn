@@ -14,7 +14,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
     event(&fixture, "a-role", 10, Some("reader")).await;
     event(&fixture, "b-invoker", 10, None).await;
     event(&fixture, "z-invalid", 10, Some("reader")).await;
-    // The last graph fails its release gate after the earlier inserts. No
+    // The last graph fails its release condition after the earlier inserts. No
     // partial fan-out may survive the transaction.
     admin
         .batch_execute("ALTER TABLE catalog.workflows DISABLE TRIGGER workflows_controlled_update")

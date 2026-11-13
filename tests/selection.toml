@@ -100,7 +100,7 @@ targets = [
   { workspace="root", package="wamn-control-provision", target="test:session_role_reader_live", tier="live-postgres" },
   { workspace="root", package="wamn-control-provision", target="test:session_target", tier="contract" },
   { workspace="root", package="wamn-control-provision", target="test:system_reader_grants", tier="live-postgres" },
-  { workspace="root", package="wamn-control-provision", target="test:tenant_key_live", tier="live-postgres" },
+  { workspace="root", package="wamn-control-provision", target="test:project_key_live", tier="live-postgres" },
   { workspace="root", package="wamn-control-registry", target="lib:wamn_control_registry", tier="contract" },
   { workspace="root", package="wamn-control-registry", target="test:registry", tier="contract" },
   { workspace="root", package="wamn-broker", target="lib:wamn_broker", tier="live-nats" },

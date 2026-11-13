@@ -246,16 +246,16 @@ pub trait CredentialProvider: Send + Sync {
     /// (`wamn-0h0g.22.16`): a project names one login per class, and a class it
     /// does not name resolves to an error rather than to another class's login.
     ///
-    /// `env_key` is `Some` for guest-SQL and `None` for host-owned platform
-    /// work. After `wamn-0h0g.22.6` the guest's tenant comes from
-    /// `current_user`, so for that class THE CREDENTIAL IS THE TENANT
+    /// `project_env_key` is `Some` for guest-SQL and `None` for host-owned platform
+    /// work. After `wamn-0h0g.22.6` the guest's project comes from
+    /// `current_user`, so for that class THE CREDENTIAL IS THE PROJECT
     /// AUTHORITY: resolution must refuse rather than hand back a credential
     /// minted for someone else.
     fn resolve(
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
@@ -402,11 +402,11 @@ impl CredentialProvider for StaticCredentialProvider {
     /// was. The class remains part of the POOL KEY as well: two authorities must
     /// never share a pooled session even when they resolve to the same URL.
     ///
-    /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
-    /// credential's login role carries the tenant key as its scope digest, and
+    /// FOR GUEST SQL THE PROJECT BINDING IS VERIFIED, NOT CONFIGURED. The
+    /// credential's login role carries the project key as its scope digest, and
     /// the same key is what every governed predicate computes — so the binding
     /// is checked from the credential itself rather than declared beside it,
-    /// and a credential minted for another tenant is REFUSED instead of
+    /// and a credential minted for another project is REFUSED instead of
     /// silently borrowed. Selection happens FIRST and the check runs on the
     /// selected credential, so it fires on exactly the credential that would be
     /// handed back — never on a different class's login.
@@ -414,7 +414,7 @@ impl CredentialProvider for StaticCredentialProvider {
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         let Some(cfg) = self.projects.get(project) else {
             return Ok(None);
@@ -426,18 +426,18 @@ impl CredentialProvider for StaticCredentialProvider {
             )
         })?;
         if class == AuthorityClass::GuestSql {
-            let env_key = env_key.context(
-                "guest-SQL resolution requires the tenant: after wamn-0h0g.22.6 the \
-                 credential IS the tenant authority",
+            let project_env_key = project_env_key.context(
+                "guest-SQL resolution requires the project: after wamn-0h0g.22.6 the \
+                 credential IS the project authority",
             )?;
             let database = credential_database(&resolved.database_url)?;
             let role = credential_generation_role(&resolved.database_url)?;
-            let key = app_scope_hash(env_key, &database);
+            let key = app_scope_hash(project_env_key, &database);
             anyhow::ensure!(
                 role.contains(&key),
                 "the credential for project {project:?} authenticates as {role:?}, which \
-                 does not carry the tenant key for the requested tenant; refusing rather \
-                 than reading another tenant's rows"
+                 does not carry the project key for the requested project; refusing rather \
+                 than reading another project's rows"
             );
         }
         Ok(Some(resolved))
@@ -508,7 +508,7 @@ pub(super) fn credential_generation_role(database_url: &str) -> anyhow::Result<S
 ///
 /// Read from the URL rather than configured beside it for the same reason the
 /// generation role is: a declared database could disagree with the one that
-/// actually connects, and the tenant key is computed over BOTH the tenant and
+/// actually connects, and the project key is computed over BOTH the project and
 /// the database — so a disagreement would compute a key for a database the
 /// session is not in.
 pub(super) fn credential_database(database_url: &str) -> anyhow::Result<String> {
@@ -577,13 +577,13 @@ impl PoolLifecycle {
     }
 }
 
-/// Raw checkout state, observed before any claim injection. Gate probes use
+/// Raw checkout state, observed before any claim injection. Condition probes use
 /// this to assert a fresh checkout is transaction-free and claim-free.
 #[derive(Debug)]
 pub struct CheckoutProbe {
     pub backend_pid: i32,
-    /// `current_setting('app.env_key', true)` — must be NULL on a clean conn.
-    pub env_key_claim: Option<String>,
+    /// `current_setting('app.project_env_key', true)` — must be NULL on a clean conn.
+    pub project_env_key_claim: Option<String>,
     /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
     /// transaction that performed writes.
     pub xact_id: Option<String>,
@@ -691,7 +691,7 @@ pub(super) fn credential_exactness_hook(
 /// Apply the project's `statement_timeout` once, when the connection is created.
 ///
 /// The value comes from [`ResolvedCredential`], which is resolved per
-/// (project, class, tenant) -- exactly the pool key -- so every borrower of a
+/// (project, class, project) -- exactly the pool key -- so every borrower of a
 /// given connection wants the same number. Paying a `SET` round trip for it on
 /// every request is waste: measured at 0.293 ms of each authenticated request
 /// (measurement record in commit `b40a1714b8a0`).
@@ -906,11 +906,11 @@ mod tests {
     ///
     /// The check must read the credential the GUEST would actually connect with,
     /// not whatever url the project happens to carry for some other authority.
-    /// This project's platform login carries `acme`'s tenant key and its
+    /// This project's platform login carries `acme`'s project key and its
     /// guest login carries `evil`'s, so a check that read the wrong credential
-    /// would ADMIT a cross-tenant guest read. Both directions are asserted.
+    /// would ADMIT a cross-project guest read. Both directions are asserted.
     #[test]
-    fn the_guest_env_key_check_reads_the_credential_the_guest_would_connect_with() {
+    fn the_guest_project_env_key_check_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a:pw@db/billing",
             app_scope_hash("acme", "billing")
@@ -930,27 +930,27 @@ mod tests {
             provider
                 .resolve("billing", AuthorityClass::GuestSql, Some("acme"))
                 .is_err(),
-            "the guest credential is minted for another tenant and must be REFUSED, \
+            "the guest credential is minted for another project and must be REFUSED, \
              not borrowed — reading the platform credential here would admit a \
-             cross-tenant read"
+             cross-project read"
         );
         assert!(
             provider
                 .resolve("billing", AuthorityClass::GuestSql, Some("evil"))
-                .expect("the guest credential's own tenant resolves")
+                .expect("the guest credential's own project resolves")
                 .is_some()
         );
         assert!(
             provider
                 .resolve("billing", AuthorityClass::GuestSql, None)
                 .is_err(),
-            "guest resolution without a tenant has no authority to check"
+            "guest resolution without a project has no authority to check"
         );
-        // The platform class is project-environment scoped: no tenant binding.
+        // The platform class is project-environment scoped: no project binding.
         assert!(
             provider
                 .resolve("billing", AuthorityClass::ExecutorPlatform, None)
-                .expect("platform resolution needs no tenant")
+                .expect("platform resolution needs no project")
                 .is_some()
         );
     }
@@ -961,8 +961,8 @@ mod tests {
     ///
     /// Resolved as a PLATFORM class deliberately: the subject here is the
     /// project MAP, and guest resolution additionally verifies the credential's
-    /// tenant binding (`wamn-0h0g.22.6.7`), which has its own test. Mixing the
-    /// two would make a project-selection failure and a tenant-binding failure
+    /// project binding (`wamn-0h0g.22.6.7`), which has its own test. Mixing the
+    /// two would make a project-selection failure and a project-binding failure
     /// indistinguishable.
     #[test]
     fn an_unlisted_project_does_not_borrow_another_projects_credential() {
@@ -1100,7 +1100,7 @@ mod tests {
                 "",
             )
             .is_err(),
-            "an empty tenant binding must refuse"
+            "an empty project binding must refuse"
         );
     }
 

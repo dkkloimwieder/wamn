@@ -7,8 +7,8 @@ use wamn_router::{
     DEDUP_ID_FIELD, Delivery, NodeCall, NodeOutcome, Step, Terminal, Verdict, WalkStatus, Wiring,
 };
 use wamn_workflow::{
-    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorType, WiringOperationFact,
-    WiringParameterFact, WiringScope, lower_active_wiring,
+    ConditionedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorType,
+    WiringOperationFact, WiringParameterFact, WiringScope, lower_active_wiring,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -16,7 +16,7 @@ const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 fn scope(environment: &'static str) -> WiringScope<'static> {
     WiringScope {
-        env_key: "tenant-a",
+        project_env_key: "org-a",
         package_id: "package_a",
         environment,
     }
@@ -138,7 +138,7 @@ fn lower<'a>(
     operations: &'a [WiringOperationFact],
 ) -> Result<Wiring, wamn_workflow::WiringLoweringError> {
     lower_active_wiring(
-        GatedActiveWiring {
+        ConditionedActiveWiring {
             scope: scope("prod"),
             package_version: "1.0.0",
             document,
@@ -403,7 +403,7 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
 
     let operations = operations();
     let environment_drift = lower_active_wiring(
-        GatedActiveWiring {
+        ConditionedActiveWiring {
             scope: scope("prod"),
             package_version: "1.0.0",
             document: &document,
@@ -421,7 +421,7 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     );
 
     let version_drift = lower_active_wiring(
-        GatedActiveWiring {
+        ConditionedActiveWiring {
             scope: scope("prod"),
             package_version: "1.0.0",
             document: &document,

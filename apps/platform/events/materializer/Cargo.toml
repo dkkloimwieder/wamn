@@ -1,6 +1,6 @@
 [package]
 name = "wamn-materializer"
-description = "wamn CDC materializer decisions: pure registration matching, tenant guards, causation bounds, condition evaluation, and event-input projection."
+description = "wamn CDC materializer decisions: pure registration matching, project guards, causation bounds, condition evaluation, and event-input projection."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,7 +23,7 @@ chrono = { workspace = true, features = ["std"] }
 
 # No DB / wasm / clock dependency: every decision is a pure function of the
 # delivered event + the declarations. The guest (apps/platform/execution/materializer) owns
-# every effect; the matbench gate drives the same decisions live.
+# every effect; the matbench condition drives the same decisions live.
 
 [lints]
 workspace = true

@@ -55,13 +55,13 @@ const API_VERSION: &str = "postgresql.cnpg.io/v1";
 /// naming it is applied.**
 ///
 /// Catalog-publish does the schema DDL as superuser and applies the per-table
-/// `FORCE ROW LEVEL SECURITY` floor there (2.4/2.5) — wamn-q3n.7 establishes
+/// `FORCE ROW LEVEL SECURITY` minimum there (2.4/2.5) — wamn-q3n.7 establishes
 /// only the RLS-**enforceable** substrate (a `NOBYPASSRLS`, non-guest-reachable
 /// owner + per-DB `CONNECT` confinement); there are no tables to protect at
 /// provision time.
 ///
 /// `spec.ensure: present` (additive). `databaseReclaimPolicy: retain` so deleting
-/// the CR never drops the underlying tenant database (the shared-cluster
+/// the CR never drops the underlying project database (the shared-cluster
 /// guardrail — teardown drops explicitly, never as a side effect of CR deletion).
 pub fn render_project_env_database(
     triple: &Triple,
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn reclaim_policy_retains_the_database_on_cr_deletion() {
-        // Deleting the CR must NOT drop the tenant database (shared-cluster
+        // Deleting the CR must NOT drop the project database (shared-cluster
         // guardrail): the reclaim policy is `retain`, never `delete`.
         let t = Triple::new("acme", "billing", "prod");
         let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", "wamn-system", None);

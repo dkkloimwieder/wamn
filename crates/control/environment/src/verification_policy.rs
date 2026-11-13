@@ -44,7 +44,7 @@ pub async fn project_environment_policy(
     verification_database_url: &str,
     run_schema: &BareSchemaName,
     source_policy_org: &str,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<EnvironmentPolicyProjection> {
     let source =
@@ -57,7 +57,7 @@ pub async fn project_environment_policy(
     let changed = crate::reconcile_run_plane::converge_environment_policy(
         &mut target,
         run_schema,
-        env_key,
+        project_env_key,
         environment,
         &source,
         true,

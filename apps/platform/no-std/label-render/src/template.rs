@@ -2,7 +2,7 @@
 //!
 //! `{ template_id, fields } -> zpl`, with no effects and no ambient authority.
 //! The template set is **closed**: three templates, no authoring machinery.
-//! Template authoring is demand-gated — an application that needs a fourth
+//! Template authoring is enabled on demand — an application that needs a fourth
 //! brings it.
 
 extern crate alloc;

@@ -459,7 +459,7 @@ impl FileRoutes {
         self.postgres
             .administration_transaction(
                 &self.project,
-                &self.release.scope().env_key,
+                &self.release.scope().project_env_key,
                 principal,
                 &format!(
                     "wamn-control:file/{action}@{}",
@@ -495,7 +495,7 @@ impl FileRoutes {
         let id = Uuid::new_v4();
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
-        self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        self.postgres.administration_transaction(&self.project, &self.release.scope().project_env_key, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
                 client.execute("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
                     &[&id.to_string(), &application, &connection.id, &name, &media_type, &size, &staged.sha256, &staged.blob_key]).await?;
@@ -561,7 +561,7 @@ impl FileRoutes {
                 true,
             )
             .await?;
-        self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        self.postgres.administration_transaction(&self.project, &self.release.scope().project_env_key, &principal,
             &format!("wamn-control:file/delete@{}", wamn_catalog::host_route_version()), async |client| {
                 let deleted = client.execute("DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2", &[&request.file_id.to_string(), &request.application]).await?;
                 if deleted != 1 { return Err(refused(FileRefusal::NotFound, "file_id")); }
@@ -615,7 +615,7 @@ impl FileRoutes {
             request.exposure,
         )
         .await?;
-        let written = self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
+        let written = self.postgres.administration_transaction(&self.project, &self.release.scope().project_env_key, &principal,
             &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()), async |client| {
                 let updated = client.execute("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)",
                     &[&request.file_id.to_string(), &request.application, &request.exposure.literal(), &url]).await?;

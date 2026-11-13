@@ -120,7 +120,7 @@ pub struct EdgeConfig {
     pub forward: Option<ForwardConfig>,
 }
 
-/// The environment coordinate of the box. The release names no env_key or
+/// The environment coordinate of the box. The release names no project_env_key or
 /// environment (R1), so the edge takes both from here, as the cloud host does.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,7 +131,7 @@ pub struct ScopeConfig {
 }
 
 impl ScopeConfig {
-    /// The env_key and environment of the release, with env_key derived
+    /// The project_env_key and environment of the release, with project_env_key derived
     /// from the coordinate.
     pub fn release_scope(&self) -> ReleaseScope {
         ReleaseScope::new(
@@ -159,8 +159,7 @@ pub struct SessionConfig {
     pub keys: PathBuf,
     /// The session issuer that signs the keys.
     pub issuer: String,
-    /// The organization a session must name. It is also the tenant of every
-    /// intent.
+    /// The organization a session must name. It also partitions every intent.
     pub org: String,
     /// The project-environment identity a session must name.
     pub audience: String,
@@ -330,7 +329,7 @@ mod tests {
                 ("WAMN_EDGE_SESSION_KEYS", "/keys.json"),
                 ("WAMN_EDGE_SESSION_ISSUER", "https://issuer"),
                 ("WAMN_EDGE_SESSION_ORG", "org-a"),
-                ("WAMN_EDGE_SESSION_AUDIENCE", "tenant-a/edge"),
+                ("WAMN_EDGE_SESSION_AUDIENCE", "org-a/edge"),
                 ("WAMN_EDGE_DB", "/edge.db"),
                 ("WAMN_EDGE_ROUTE_HOST", "edge.localhost"),
                 ("WAMN_EDGE_LISTEN", "127.0.0.1:0"),

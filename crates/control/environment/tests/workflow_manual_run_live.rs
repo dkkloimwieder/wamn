@@ -58,7 +58,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
-const ENV_KEY: &str = "manual-live--default--dev";
+const PROJECT_ENV_KEY: &str = "manual-live--default--dev";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
@@ -153,7 +153,7 @@ fn read_component() -> Vec<u8> {
 
 fn read_declaration() -> Value {
     json!({
-        "scope": {"env_key": ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
+        "scope": {"project_env_key": PROJECT_ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
         "component": "orders_data", "interface-version": "0.1.0",
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
@@ -166,7 +166,7 @@ fn read_declaration() -> Value {
 fn jsonata_declaration() -> Value {
     serde_json::from_str(
         &JSONATA_DECLARATION
-            .replace("__ENV_KEY__", ENV_KEY)
+            .replace("__PROJECT_ENV_KEY__", PROJECT_ENV_KEY)
             .replace("__PACKAGE_ID__", APPLICATION)
             .replace("__PACKAGE_VERSION__", "1.0.0"),
     )
@@ -248,7 +248,7 @@ fn load(manifest: &ServingManifest) -> Arc<LoadedRelease> {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "manual-live",
-            ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(declared()),
+            ReleaseScope::new(PROJECT_ENV_KEY, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     )
@@ -329,10 +329,10 @@ async fn fixture() -> Fixture {
                ('reader', '{START_REFERENCE}'), \
                ('clerk', '{START_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
-             INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
-               VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
+             INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) \
+               VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
+             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
+               VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
              CREATE TABLE application_data.orders (id text PRIMARY KEY, total int NOT NULL, status text NOT NULL);
              INSERT INTO application_data.orders VALUES ('o-1', 1250, 'open'), ('o-2', 300, 'closed');"
         ))
@@ -372,9 +372,9 @@ async fn fixture() -> Fixture {
     let digest = release.release().manifest_digest.as_str().to_owned();
     admin
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&ENV_KEY, &digest, &served.canonical_bytes()],
+            &[&PROJECT_ENV_KEY, &digest, &served.canonical_bytes()],
         )
         .await
         .expect("install the serving release");
@@ -421,13 +421,13 @@ async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
         ),
     ] {
         let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
-                env_key: ENV_KEY,
+            WorkloadRoleScope::ProjectEnvKey {
+                project_env_key: PROJECT_ENV_KEY,
                 database: &database,
             }
         } else {
             WorkloadRoleScope::ProjectEnvironment {
-                org: ENV_KEY,
+                org: PROJECT_ENV_KEY,
                 project: PROJECT,
                 environment: ENVIRONMENT,
                 database: &database,
@@ -494,7 +494,7 @@ impl Fixture {
                     wamn_broker::Publisher::default(),
                     Arc::new(ConnectionCredentials::empty()),
                     Arc::clone(&self.postgres),
-                    release.scope().env_key.as_str(),
+                    release.scope().project_env_key.as_str(),
                     PROJECT,
                     release.scope().environment.as_str(),
                 )),
@@ -594,7 +594,7 @@ impl Fixture {
         let principal: PrincipalId = user.parse().unwrap();
         let held = self
             .postgres
-            .session_operation_permissions(PROJECT, ENV_KEY, &signed, &principal)
+            .session_operation_permissions(PROJECT, PROJECT_ENV_KEY, &signed, &principal)
             .await
             .expect("read the session grants");
         AuthenticatedCaller::new(
@@ -709,13 +709,13 @@ impl Fixture {
         self.admin
             .query(
                 "SELECT format('release %s %s', manifest_digest, md5(canonical_bytes)) \
-                   FROM catalog.releases WHERE env_key = $1 \
+                   FROM catalog.releases WHERE project_env_key = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
                    FROM platform.environment \
                  UNION ALL SELECT format('policy %s', expected_environment) \
-                   FROM wamn_run.environment_policies WHERE env_key = $1 \
+                   FROM wamn_run.environment_policies WHERE project_env_key = $1 \
                  ORDER BY 1",
-                &[&ENV_KEY],
+                &[&PROJECT_ENV_KEY],
             )
             .await
             .unwrap()
@@ -854,12 +854,12 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
     fixture
         .admin
         .execute(
-            "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, \
+            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
                 version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) \
              VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', true, \
                 $7::text::uuid)",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &ENVIRONMENT,
                 &APP,
                 &WORKFLOW,
@@ -892,7 +892,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
         .postgres
         .admit_manual_run(
             PROJECT,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &ManualRunAdmission {
                 package_id: APP,
                 manifest_digest: &fixture.digest,
@@ -943,7 +943,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
     let refusal = refusal
         .downcast_ref::<wamn_environment_control::author_workflow::AuthorWorkflowError>()
         .expect("an authorship refusal");
-    assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Gate);
+    assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 
     fixture.enabled().await;
     let without = load(&manifest(None, &fixture.jsonata));
@@ -1046,7 +1046,7 @@ async fn a_host_of_another_release_cannot_claim_the_run() {
         .admin
         .query_one(
             "SELECT r.status, q.attempts, q.lease_expires_at IS NULL \
-               FROM wamn_run.runs AS r JOIN wamn_run.run_queue AS q USING (env_key, run_id) \
+               FROM wamn_run.runs AS r JOIN wamn_run.run_queue AS q USING (project_env_key, run_id) \
               WHERE r.run_id = $1",
             &[&run],
         )

@@ -23,7 +23,7 @@
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
 //! real prepared-statement path (SR12b).
 
 /// The closed authority a trusted caller selects its credential under.
@@ -40,6 +40,9 @@ pub mod intent_store;
 pub mod invariants;
 /// Evidence basis for operator resolution of intents.
 pub mod operator_action;
+/// The framed scope digest and the guest-SQL project key.
+#[cfg(feature = "project-key")]
+pub mod project_scope;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
 /// The JSON payload redaction policy extracted from node I/O capture.
@@ -49,16 +52,13 @@ pub mod run_store;
 /// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;
-/// The framed scope digest and the guest-SQL tenant key.
-#[cfg(feature = "tenant-key")]
-pub mod tenant_scope;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
 pub use authority_class::AuthorityClass;
 pub use credential_generation::CredentialGeneration;
 pub use intent_store::IntentStore;
+#[cfg(feature = "project-key")]
+pub use project_scope::app_scope_hash;
 pub use run_store::RunStore;
 pub use status::{FailType, NodeErrorType, NodeRunStatus, RunStatus};
-#[cfg(feature = "tenant-key")]
-pub use tenant_scope::app_scope_hash;

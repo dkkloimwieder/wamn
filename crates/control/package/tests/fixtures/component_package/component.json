@@ -1,6 +1,6 @@
 {
   "scope": {
-    "env_key": "tenant-a",
+    "project_env_key": "org-a",
     "package-id": "source_fixture",
     "package-version": "1.0.0"
   },

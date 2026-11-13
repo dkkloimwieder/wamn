@@ -45,7 +45,7 @@ pub const ENTRY_ID_COLUMN: &str = "id";
 
 /// The history table columns in creation order, each with its schema column type.
 ///
-/// The history table of a package relation has no `tenant_id` column. Every
+/// The history table of a package relation has no `project_id` column. Every
 /// column is `NOT NULL`. The log trigger writes every column except
 /// [`POSITION_COLUMN`] and [`ENTRY_ID_COLUMN`], which PostgreSQL generates.
 pub const HISTORY_COLUMNS: [(&str, &str); 10] = [

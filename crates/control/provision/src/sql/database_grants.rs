@@ -3,8 +3,8 @@
 /// List connectable databases that grant `CONNECT` to PUBLIC.
 ///
 /// The filter is `datallowconn`, not `NOT datistemplate`, and must stay so:
-/// `template1` is a template AND connectable, so a template filter reported a
-/// clean floor while `template1` still carried PostgreSQL's default PUBLIC
+/// `template1` is a template AND connectable, so a template filter reported
+/// clean base grants while `template1` still carried PostgreSQL's default PUBLIC
 /// `CONNECT`. `template0` (`datallowconn = false`) is correctly out of scope —
 /// it keeps its PUBLIC `CONNECT` aclitem, which no session can use.
 pub fn public_connect_databases_sql() -> &'static str {
@@ -19,7 +19,7 @@ pub fn public_connect_databases_sql() -> &'static str {
 ///
 /// Database privileges are cluster catalog entries, so the DO block may target
 /// each database while connected to the exact project database. This gives ctl
-/// ownership of converging the ratified cluster-wide floor during initial
+/// ownership of converging the ratified cluster-wide base grants during initial
 /// generation preparation.
 ///
 /// The loop selects on `datallowconn`, **not** `NOT datistemplate`. `template1`
@@ -33,12 +33,12 @@ pub fn public_connect_databases_sql() -> &'static str {
 ///
 /// The loop revokes only where `pg_database.datacl` still grants PUBLIC
 /// `CONNECT`, so the provisioner, which is not a superuser, skips a database
-/// that it cannot alter and that already has the floor. A role that is not
+/// that it cannot alter and that already has the base grants. A role that is not
 /// the owner only gets a warning from `REVOKE`, so a database that still
 /// grants PUBLIC `CONNECT` stays in [`public_connect_databases_sql`], and the
 /// check that follows the revoke fails with its name (owner ruling of
 /// 2026-10-03 on `wamn-zua8.3`).
-pub fn revoke_public_connect_floor_sql() -> &'static str {
+pub fn revoke_public_connect_base_grants_sql() -> &'static str {
     "DO $$ DECLARE database_name text; BEGIN \
        FOR database_name IN SELECT d.datname FROM pg_database d \
           WHERE d.datallowconn AND EXISTS ( \
@@ -52,7 +52,7 @@ pub fn revoke_public_connect_floor_sql() -> &'static str {
 /// Check PUBLIC's effective `TEMPORARY` privilege on the target.
 ///
 /// The caller connects to the already-validated exact project database. Unlike
-/// the cluster-wide `CONNECT` floor, `TEMPORARY` is deliberately confined only
+/// the cluster-wide `CONNECT` base grants, `TEMPORARY` is deliberately confined only
 /// on that database so unrelated databases retain their own policy.
 pub fn public_temporary_on_current_database_sql() -> &'static str {
     "SELECT EXISTS (SELECT FROM pg_database d CROSS JOIN LATERAL \
@@ -64,10 +64,10 @@ pub fn public_temporary_on_current_database_sql() -> &'static str {
 /// All non-template databases available for exact cross-database ACL checks.
 ///
 /// This one keeps the `NOT datistemplate` filter on purpose, unlike
-/// [`public_connect_databases_sql`] / [`revoke_public_connect_floor_sql`]: the
+/// [`public_connect_databases_sql`] / [`revoke_public_connect_base_grants_sql`]: the
 /// caller OPENS a session against each name it returns, and an open session on
 /// `template1` makes concurrent `CREATE DATABASE … TEMPLATE template1` fail.
-/// The floor builders only read and revoke catalog ACLs, so they can and must
+/// The base grant builders only read and revoke catalog ACLs, so they can and must
 /// cover `template1`; this one cannot.
 ///
 /// The second column says whether the current login can connect. The

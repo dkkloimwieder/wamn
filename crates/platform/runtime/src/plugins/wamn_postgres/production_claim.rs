@@ -30,7 +30,7 @@ use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 /// Result of one host-only production queue turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductionClaimResult {
-    /// No eligible row was visible to this tenant.
+    /// No eligible row was visible to this project.
     Empty,
     /// A fresh lease committed for router execution.
     Ready {
@@ -80,7 +80,7 @@ enum ClaimTurn {
     /// commit so the crash-evidence attempt advance taken before the savepoint
     /// survives — a refusal that rolls its own attempt counter back can never
     /// reach `max_attempts`, so the janitor can never reap the run and it stays
-    /// the tenant's FIFO head forever (wamn-0h0g.15.69). The claim itself still
+    /// the project's FIFO head forever (wamn-0h0g.15.69). The claim itself still
     /// fails with this error.
     GrantRefused(ProductionClaimError),
 }
@@ -120,7 +120,7 @@ impl RunStore for WamnPostgres {
 
     /// Lock, classify, and lease at most one production run.
     ///
-    /// Tenant, project, schema, lease owner, and the carried release identity
+    /// Project, project, schema, lease owner, and the carried release identity
     /// come only from host-injected component identity. A `Ready` result is
     /// returned only after COMMIT, so router execution never starts under an
     /// uncommitted lease.
@@ -143,11 +143,11 @@ impl RunStore for WamnPostgres {
                 "a nonempty canonical package set, environment, and positive lease TTL are required",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve tenant",
-                "component has no host-injected tenant",
+                "resolve project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -178,7 +178,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -193,7 +193,7 @@ impl RunStore for WamnPostgres {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorType::Storage,
-                "begin tenant transaction",
+                "begin project transaction",
                 format!("{error:?}"),
             ));
         }
@@ -256,11 +256,11 @@ impl RunStore for WamnPostgres {
                 "a nonempty canonical package set, environment, and non-negative janitor grace are required",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve janitor tenant",
-                "component has no host-injected tenant",
+                "resolve janitor project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -290,7 +290,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -352,11 +352,11 @@ impl RunStore for WamnPostgres {
                 "lease generation and TTL must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve renewal tenant",
-                "component has no host-injected tenant",
+                "resolve renewal project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -387,7 +387,7 @@ impl RunStore for WamnPostgres {
                 connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -435,11 +435,11 @@ impl RunStore for WamnPostgres {
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve completion tenant",
-                "component has no host-injected tenant",
+                "resolve completion project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -469,7 +469,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -510,11 +510,11 @@ impl RunStore for WamnPostgres {
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve deadline report tenant",
-                "component has no host-injected tenant",
+                "resolve deadline report project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -544,7 +544,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -634,8 +634,8 @@ async fn finish_guarded_queue_transaction<T>(
 /// replica counts: if that replica dies, this host reclaims it.
 const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
      SELECT 1 FROM run_queue AS q \
-       JOIN runs AS r ON r.env_key = q.env_key AND r.run_id = q.run_id \
-      WHERE q.env_key = current_setting('app.env_key', true) \
+       JOIN runs AS r ON r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
+      WHERE q.project_env_key = current_setting('app.project_env_key', true) \
         AND r.package_id = ANY($1::text[]) \
         AND r.environment = $2 \
         AND r.manifest_digest = $3 \
@@ -657,11 +657,11 @@ impl WamnPostgres {
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve release tenant",
-                "component has no host-injected tenant",
+                "resolve release project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -692,7 +692,7 @@ impl WamnPostgres {
                 connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -735,11 +735,11 @@ impl WamnPostgres {
         let Some(release) = self.release_identity_for(component_id) else {
             return Ok(false);
         };
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
-                "resolve backlog tenant",
-                "component has no host-injected tenant",
+                "resolve backlog project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
@@ -769,7 +769,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,

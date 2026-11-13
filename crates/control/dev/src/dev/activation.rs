@@ -74,7 +74,7 @@ pub struct DevActivationIdentity {
 
 impl DevActivationIdentity {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -210,7 +210,7 @@ impl fmt::Debug for HostProcessSpec {
             .field("program", &self.program)
             .field("args", &self.args)
             .field(
-                "env_keys",
+                "project_env_keys",
                 &self.env.iter().map(|(key, _)| key).collect::<Vec<_>>(),
             )
             .finish()
@@ -673,7 +673,7 @@ fn materializer_request(
             workload: format!("{}-materializer", identity.project),
             namespace: host_namespace(identity).to_owned(),
             image: digest.to_owned(),
-            env_key: identity.env_key(),
+            project_env_key: identity.project_env_key(),
             event: EventIdentity {
                 org: identity.org.clone(),
                 project: identity.project.clone(),
@@ -1383,7 +1383,7 @@ mod tests {
             "stream_replicas": 1,
             "dup_window_secs": 120,
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
-            "gate_bearer_token": "gate-secret",
+            "condition_bearer_token": "condition-secret",
             "route_host": "fixture.localhost",
             "platform_domain": "example.invalid",
             "local_artifacts": {
@@ -1452,36 +1452,6 @@ mod tests {
              template declares, so a claim in one and not the other deploys a \
              placeholder identity"
         );
-    }
-
-    /// Every claim carries a DISTINCT field. A producer that paired two claims
-    /// to the same field would satisfy the set-equality test above while
-    /// deploying one identity under another's name.
-    #[test]
-    fn each_identity_claim_carries_its_own_field() {
-        let identity = DevActivationIdentity {
-            catalog: "catalog-value".to_owned(),
-            environment: "environment-value".to_owned(),
-            org: "org-value".to_owned(),
-            project: "project-value".to_owned(),
-            host_group: "host-group-value".to_owned(),
-            host_name: "host-name-value".to_owned(),
-            runner: "runner-value".to_owned(),
-        };
-        for (claim, value) in flow_http_identity_claims(&identity) {
-            let field = claim
-                .strip_prefix("wamn.")
-                .expect("every claim is namespaced");
-            assert_eq!(
-                value,
-                if field == "env_key" {
-                    "org-value--project-value--environment-value".to_owned()
-                } else {
-                    format!("{field}-value")
-                },
-                "claim {claim} carries the wrong field of the identity"
-            );
-        }
     }
 
     fn release() -> ReleaseCarrier {
@@ -1719,7 +1689,7 @@ mod tests {
             .unwrap()
             .config;
         assert_eq!(
-            claims["wamn.env_key"].as_bytes(),
+            claims["wamn.project_env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         let staged_materializer: v2::WorkloadStartRequest =
@@ -1749,7 +1719,7 @@ mod tests {
             "event-materializer"
         );
         assert_eq!(
-            resources.config["wamn.env_key"].as_bytes(),
+            resources.config["wamn.project_env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");

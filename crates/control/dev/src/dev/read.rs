@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscriber_observes_typed_stage_and_gate_changes() {
+    async fn subscriber_observes_typed_stage_and_condition_changes() {
         let (publisher, handle) = dev_read_channel();
         publisher.stage_completed(DevStage::Migrate);
         let mut subscriber = handle.subscribe();
@@ -246,28 +246,28 @@ mod tests {
                 .has_changed()
                 .expect("publisher is live")
         );
-        publisher.stage_started(DevStage::Gate);
+        publisher.stage_started(DevStage::Condition);
 
         let running = subscriber.next().await.expect("publisher remains live");
         assert_eq!(
-            running.stages()[DevStage::Gate.position()].state(),
+            running.stages()[DevStage::Condition.position()].state(),
             &DevStageState::Running
         );
 
         publisher.stage_failed(
-            DevStage::Gate,
+            DevStage::Condition,
             DevStageFailure::new(
                 "dev-stage-owner-failed",
-                "Gate endpoint is unavailable",
-                Some("check the Gate endpoint"),
+                "Condition endpoint is unavailable",
+                Some("check the Condition endpoint"),
             ),
         );
         let failed = subscriber.next().await.expect("publisher remains live");
         assert!(matches!(
-            failed.stages()[DevStage::Gate.position()].state(),
+            failed.stages()[DevStage::Condition.position()].state(),
             DevStageState::Failed(failure)
                 if failure.code() == "dev-stage-owner-failed"
-                    && failure.remedy() == Some("check the Gate endpoint")
+                    && failure.remedy() == Some("check the Condition endpoint")
         ));
     }
 

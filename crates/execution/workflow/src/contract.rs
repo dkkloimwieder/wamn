@@ -2,7 +2,7 @@
 //!
 //! [`Workflows`] is the one interface a client uses, for example
 //! `wamn-ctl` or a test. [`PostgresWorkflows`]
-//! implements it over the run plane of one tenant and environment.
+//! implements it over the run plane of one project and environment.
 //!
 //! Manual starts use the host route. A park holds a queued run that no replica holds, and a
 //! release returns it to the queue. Park acts on the queue row only, so a

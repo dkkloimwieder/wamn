@@ -4,7 +4,7 @@
 //! in, one ZPL label out. It imports only
 //! `wamn:node`, so it holds no authority that leaves the host and its effect
 //! projection is empty — which is what makes a wiring carrying it eligible for
-//! the gate's effect-free-case path. Nothing here declares that; it follows
+//! the condition's effect-free-case path. Nothing here declares that; it follows
 //! from the imports.
 //!
 //! The private template module renders ZPL. Its golden vectors test the ZPL
@@ -23,7 +23,7 @@
 //! the entry operation emits and what the route answers with. The platform carries one
 //! value of one schema per edge and has no fan-out, so a palette node applies itself to
 //! EACH ITEM'S VALUE and passes error request elements through untouched; its ports
-//! declare `{"type": "array"}`, byte-identical to the entry's, which is what the gate's
+//! declare `{"type": "array"}`, byte-identical to the entry's, which is what the condition's
 //! digest rule compares. `docs/architecture/execution.md#results-and-effects` records
 //! the current limit. Earlier alternatives were router fan-out per request element and
 //! per request element outcome reporting for nodes whose work can fail per request
@@ -31,13 +31,13 @@
 //!
 //! `template_id` is a **wiring parameter**, not an input field. Template choice
 //! is authoring intent: a wirer picks "packaging label" once and the wiring then
-//! declares honestly what it renders, so gate cases can pin golden output per
+//! declares honestly what it renders, so acceptance test cases can pin golden output per
 //! wiring. Taking it from the input would make every caller a template chooser
 //! and the wiring's behaviour caller-dependent. It also puts the closed set in
 //! the declaration's parameter schema as a typed `enum`, so an unknown
-//! template refuses at gate/config-validation time rather than at first
+//! template refuses at condition/config-validation time rather than at first
 //! invocation. The check below is defence in depth behind that, not the
-//! primary gate.
+//! primary condition.
 
 #![no_std]
 #![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]

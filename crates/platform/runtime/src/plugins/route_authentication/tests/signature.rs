@@ -23,7 +23,7 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let credentials = crate::connection_credentials::test_util::Fixture::new().await;
-        let database = wamn_platform_identity::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::project_platform();
         database
             .execute(
                 &[&wamn_control_provision::sql::ensure_workload_acl_role_sql(
@@ -340,14 +340,14 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     use wamn_broker::connection_changes::ConnectionDrops;
     use wamn_platform_identity::connections::administration;
 
-    const ENV_KEY: &str = "acme--host-project--dev";
+    const PROJECT_ENV_KEY: &str = "acme--host-project--dev";
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let _lock = wamn_test_postgres::lock();
     let (_server, client) = nats().await;
     let mut fixture = Fixture::new().await;
-    fixture.changes = replicate(&client, Some(ENV_KEY), Arc::clone(&fixture.memory));
+    fixture.changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&fixture.memory));
     until("the connection watch runs", || fixture.memory.watched()).await;
     let routing = fixture.valid_plugin().await;
     let signature = signed(BODY);
@@ -367,7 +367,10 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .await
         .unwrap()
         .get(0);
-    let old = fixture.memory.connection(ENV_KEY, &connection).unwrap();
+    let old = fixture
+        .memory
+        .connection(PROJECT_ENV_KEY, &connection)
+        .unwrap();
     assert_eq!(old.service_principal_id.to_string(), caller.principal_id());
 
     // A repeated request needs neither Postgres connection reads nor the store.
@@ -413,7 +416,10 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     assert!(!drops.is_empty());
     fixture.changes.publish(drops).await;
     until("the host sees the committed delete", || {
-        fixture.memory.connection(ENV_KEY, &connection).is_err()
+        fixture
+            .memory
+            .connection(PROJECT_ENV_KEY, &connection)
+            .is_err()
     })
     .await;
     assert_eq!(
@@ -423,7 +429,10 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
             .unwrap_err(),
         (401, String::new())
     );
-    let new = fixture.memory.connection(ENV_KEY, &connection).unwrap();
+    let new = fixture
+        .memory
+        .connection(PROJECT_ENV_KEY, &connection)
+        .unwrap();
     assert_eq!(new.active_generation, old.active_generation + 1);
     assert_ne!(new.credential_id, old.credential_id);
     assert_eq!(new.service_principal_id, old.service_principal_id);

@@ -4,9 +4,9 @@
 //! start it: every value the strict configuration needs was minted inside the
 //! test and thrown away with it, so the loop was testable and not startable
 //! (wamn-10yt.10.30). This subcommand runs the same standup module the live
-//! gates run, writes the strict `dev.json`, and exits.
+//! conditions run, writes the strict `dev.json`, and exits.
 //!
-//! It is not a gate: it emits no test result. Its evidence is that `wamn dev`
+//! It is not a condition: it emits no test result. Its evidence is that `wamn dev`
 //! starts against what it leaves behind.
 //!
 //! Point it only at disposable PostgreSQL 18 services. Standup resets the
@@ -140,7 +140,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     }
     println!("  config: {}", config.display());
     // The operator token is also in dev.json for generated client launch.
-    // The local Gate uses its separate management-author token.
+    // The local Condition uses its separate management-author token.
     println!(
         "  pat:    {} (operator PAT, at .stringData.token)",
         root.join(OPERATOR_PAT_FILE).display()

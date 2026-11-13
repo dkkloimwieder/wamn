@@ -60,10 +60,10 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, false)";
+const CLAIM_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, false)";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
- WHERE env_key = $1 AND manifest_digest = $2";
+ WHERE project_env_key = $1 AND manifest_digest = $2";
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
@@ -80,7 +80,7 @@ pub struct PublishReleaseManifest<'a> {
 
 impl PublishReleaseManifest<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
@@ -269,7 +269,7 @@ pub struct PublishReleaseRequest {
 
 impl PublishReleaseRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -315,18 +315,19 @@ pub async fn publish_local(
 )> {
     wamn_runtime::local_application::require_local_target(
         target.database_url,
-        &args.env_key(),
+        &args.project_env_key(),
         &args.environment,
     )
     .await?;
     ensure!(
-        read_projected_environment_disposable(target.control_database_url, &args.env_key()).await?,
+        read_projected_environment_disposable(target.control_database_url, &args.project_env_key())
+            .await?,
         "local candidates require a provisioned disposable environment"
     );
     let (client, connection) = tokio_postgres::connect(target.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
     client
-        .query_one(CLAIM_ENV_KEY_SQL, &[&args.env_key()])
+        .query_one(CLAIM_PROJECT_ENV_KEY_SQL, &[&args.project_env_key()])
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
@@ -337,11 +338,11 @@ pub async fn publish_local(
     )
     .await?;
     let projected =
-        read_projected_environment_policy(&client, &run_schema, &args.env_key()).await?;
+        read_projected_environment_policy(&client, &run_schema, &args.project_env_key()).await?;
     verify_projected_environment_policy(
         projected.as_ref(),
         &policy,
-        &ReleaseScope::new(args.env_key(), &args.environment),
+        &ReleaseScope::new(args.project_env_key(), &args.environment),
         &run_schema,
     )?;
     drop(client);
@@ -606,7 +607,7 @@ pub fn assemble_local_release(
     for admission in admissions {
         let fact = admission.facts();
         ensure!(
-            fact.scope.env_key == args.env_key()
+            fact.scope.project_env_key == args.project_env_key()
                 && packages
                     .iter()
                     .any(|package| package.package_id() == fact.scope.package_id
@@ -692,7 +693,7 @@ async fn publish_candidate(
     let (_, application) = select_application(&args.applications, args.application.as_deref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
-    let release_components = descriptor_components(&args.env_key(), &coordinates, &opened)?;
+    let release_components = descriptor_components(&args.project_env_key(), &coordinates, &opened)?;
     let roots = opened
         .iter()
         .map(|package| package.root().to_owned())
@@ -746,10 +747,13 @@ pub(crate) struct ProjectedEnvironmentPolicy {
 pub(crate) async fn read_projected_environment_policy(
     client: &Client,
     run_schema: &BareSchemaName,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
     client
-        .query_opt(&projected_environment_policy_sql(run_schema), &[&env_key])
+        .query_opt(
+            &projected_environment_policy_sql(run_schema),
+            &[&project_env_key],
+        )
         .await
         .map(|row| {
             row.map(|row| ProjectedEnvironmentPolicy {
@@ -761,24 +765,24 @@ pub(crate) async fn read_projected_environment_policy(
         .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
-/// Whether provisioning marked this tenant's environment disposable.
+/// Whether provisioning marked this project's environment disposable.
 ///
 /// The same projection the admit path reads (wamn-10yt.38), from the same
 /// control store, read ONCE per release publish rather than once per fact. An
 /// absent relation is a stale store and says so rather than defaulting
-/// quietly. A tenant with no projected row
+/// quietly. A project with no projected row
 /// is DURABLE, which is what keeps the change additive.
 const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
-         SELECT disposable FROM catalog.tenant_environments WHERE env_key = $1\
+         SELECT disposable FROM catalog.project_environments WHERE project_env_key = $1\
      ), false)";
 
 async fn read_projected_environment_disposable(
     control_database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<bool> {
     on_control_plane(control_database_url, async |control| {
         let row = control
-            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&env_key])
+            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&project_env_key])
             .await
             .context("read the projected environment's disposable marker")?;
         Ok(row.get(0))
@@ -979,15 +983,15 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// Read the canonical bytes of an installed release.
 pub async fn read_release(
     transaction: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     manifest_digest: &str,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+        .query_one(CLAIM_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .map_err(|error| storage("claim the release tenant", error))?;
+        .map_err(|error| storage("claim the release project", error))?;
     transaction
-        .query_opt(READ_RELEASE_SQL, &[&env_key, &manifest_digest])
+        .query_opt(READ_RELEASE_SQL, &[&project_env_key, &manifest_digest])
         .await
         .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| storage("read the release", error))
@@ -998,15 +1002,18 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManife
 }
 
 fn descriptor_components(
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PackageCoordinate],
     opened: &[OpenedPackage],
 ) -> anyhow::Result<ReleaseComponents> {
     let mut components = ReleaseComponents::default();
     for (package, opened) in packages.iter().zip(opened) {
-        let scope =
-            ComponentPackageScope::new(env_key, package.package_id(), package.package_version())
-                .context("name the release component scope")?;
+        let scope = ComponentPackageScope::new(
+            project_env_key,
+            package.package_id(),
+            package.package_version(),
+        )
+        .context("name the release component scope")?;
         for descriptor in wamn_package_control::package_artifact::read_descriptors(opened.root())? {
             let facts = descriptor.into_admitted(scope.clone());
             wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
@@ -1111,7 +1118,7 @@ mod tests {
             };
             let mut component = closure_component("source_fixture", None);
             component.scope.package_id = "source_fixture".to_owned();
-            component.scope.env_key = request.env_key();
+            component.scope.project_env_key = request.project_env_key();
             let mut components = ReleaseComponents::default();
             components
                 .insert(component, Vec::new(), BTreeMap::new())
@@ -1784,9 +1791,9 @@ mod tests {
     }
 
     /// The release component carries the descriptor layer byte for byte, and
-    /// two tenants read one component from one artifact.
+    /// two projects read one component from one artifact.
     #[tokio::test]
-    async fn a_release_component_carries_its_descriptor_layer_in_every_env_key() {
+    async fn a_release_component_carries_its_descriptor_layer_in_every_project_env_key() {
         let fact = closure_component("registered-component", Some("base:widget/get@1.0.0"));
         let (root, layer) = unpacked_descriptor("layer", &fact);
         let opened = wamn_package_control::package_artifact::open_package_source(
@@ -1795,11 +1802,12 @@ mod tests {
         .await
         .unwrap();
         let packages = [PackageCoordinate::new("base", "1.0.0").unwrap()];
-        let project = |env_key: &str| {
+        let project = |project_env_key: &str| {
             let components =
-                descriptor_components(env_key, &packages, std::slice::from_ref(&opened)).unwrap();
+                descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
+                    .unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
-            assert_eq!(fact.scope.env_key, env_key);
+            assert_eq!(fact.scope.project_env_key, project_env_key);
             project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
         };
         let first = project("acme--plant--dev");
@@ -2127,7 +2135,7 @@ mod tests {
             policy: wamn_control_registry::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
-        let release = ReleaseScope::new("tenant-a", "prod");
+        let release = ReleaseScope::new("org-a", "prod");
         let schema = BareSchemaName::new("wamn_run").unwrap();
         assert_eq!(
             verify_projected_environment_policy(None, &source_policy, &release, &schema)

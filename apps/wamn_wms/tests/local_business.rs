@@ -47,7 +47,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: crate::environment::identity().env_key().as_str(),
+        project_env_key: crate::environment::identity().project_env_key().as_str(),
         org: crate::environment::identity().org.as_str(),
         project: crate::environment::identity().project.as_str(),
         environment: crate::environment::identity().environment.as_str(),

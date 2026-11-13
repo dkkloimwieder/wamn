@@ -59,7 +59,7 @@ interface types {
     /// one's key.
     wiring-id: string,
     /// The active wiring version the router resolved for this delivery. Wirings
-    /// are versioned, gated data hot-activated by pointer flip; a delivery runs
+    /// are versioned, conditioned data hot-activated by pointer flip; a delivery runs
     /// against exactly one version, resolved once at its start.
     wiring-version: u32,
     /// This node's instance id within the wiring graph. Two instances of the
@@ -126,7 +126,7 @@ interface types {
     /// wiring's error edge.
     terminal(error-detail),
     /// The input violated this node's declared contract. Never retried and never
-    /// merely error-edged: shape safety is the gate's jurisdiction, so reaching
+    /// merely error-edged: shape safety is the condition's jurisdiction, so reaching
     /// this at runtime means the payload is poison — it dead-letters (stream
     /// path) rather than being redelivered forever against the same bad input.
     invalid-input(error-detail),

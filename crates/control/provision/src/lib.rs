@@ -1,6 +1,6 @@
 //! wamn project provisioning (2.3) — the **pure** core.
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! Standing up a project environment turns the SQL-emitting E3 crates into a
 //! live system: provision a per-project-env Postgres **database** (D6:
@@ -20,7 +20,7 @@
 //! # Isolation model
 //!
 //! Postgres roles are **cluster-global**, so one shared cluster has one shared
-//! `wamn_app` role (the grantee every generated floor and hand-written schema
+//! `wamn_app` role (the grantee every generated minimum and hand-written schema
 //! already targets). Cross-project isolation is therefore **not** at the role
 //! level — it is:
 //!
@@ -30,7 +30,7 @@
 //! 2. **per-generation CONNECT** — `PUBLIC` and the stable `wamn_app` role hold
 //!    no `CONNECT`; each generation login is granted `CONNECT` on its own
 //!    database only, so a generation cannot open a session on another database;
-//! 3. **RLS within** — the 3.2 tenant floor confines rows by `app.env_key`.
+//! 3. **RLS within** — the 3.2 project base grants confines rows by `app.project_env_key`.
 //!
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
 //! a hardening follow-up (8.2), not this MVP.
@@ -45,7 +45,7 @@
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
 //! real prepared-statement path (SR12b).
 
 pub mod apply;
@@ -62,6 +62,8 @@ mod name;
 pub mod operation_grants;
 pub mod org;
 pub mod platform_principals;
+/// The pure derivation guest RLS uses to reach a project from `current_user`.
+pub mod project_key;
 pub mod provisioner;
 #[cfg(feature = "ops")]
 pub mod recovery;
@@ -73,9 +75,7 @@ pub mod session_target;
 pub mod sql;
 /// The two T1 control-database read consumers' scoped credential contract.
 pub mod system_reader;
-/// The pure derivation guest RLS uses to reach a tenant from `current_user`.
-pub mod tenant_key;
-/// Test databases with the system control store floor.
+/// Test databases with the system control store minimum.
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_database;
 pub mod workload_role;
@@ -86,7 +86,7 @@ pub use backup::{
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
 pub use database::render_project_env_database;
-pub use error::{ProvisionError, check_env_key_environment_identity};
+pub use error::{ProvisionError, check_project_env_key_environment_identity};
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
@@ -145,7 +145,7 @@ pub const CONTROL_PORTABLE_STORE_SQL: &str =
 /// The declarations applied to a fresh control database, in order.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
 
-/// The per-tenant authorization and configuration schema, applied to a project
+/// The per-project authorization and configuration schema, applied to a project
 /// database after its catalog schema.
 ///
 /// Every relation it creates carries a stamp trigger that calls

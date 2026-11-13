@@ -51,7 +51,7 @@ struct Config {
     org: String,
     project: String,
     env: String,
-    env_key: String,
+    project_env_key: String,
     batch: u32,
     fetch_ms: u32,
     sweep_ms: u64,
@@ -98,7 +98,7 @@ impl Config {
             org: required("WAMN_MAT_ORG")?,
             project: required("WAMN_MAT_PROJECT")?,
             env: required("WAMN_MAT_ENV")?,
-            env_key: required("WAMN_MAT_ENV_KEY")?,
+            project_env_key: required("WAMN_MAT_PROJECT_ENV_KEY")?,
             batch: batch(&env_or("WAMN_MAT_BATCH", "64"))?,
             fetch_ms: env_or("WAMN_MAT_FETCH_MS", "5000")
                 .parse()
@@ -234,7 +234,7 @@ fn prepare_message(config: &Config, message: &Message, counters: &mut Counters) 
             verified_source_event_id(&config.project, &config.env, envelope, &message_ids)
         }
         SourceEvent::Derived(event) => verified_derived_source_event_id(
-            &config.env_key,
+            &config.project_env_key,
             &config.project,
             &config.env,
             event,
@@ -394,12 +394,12 @@ async fn run_service() {
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* env_key={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
+        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* project_env_key={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
         config.stream,
         config.org,
         config.project,
         config.env,
-        config.env_key,
+        config.project_env_key,
         config.batch,
         config.fetch_ms,
         config.max_deliver,
@@ -579,7 +579,7 @@ mod tests {
             org: "org".into(),
             project: "app".into(),
             env: "dev".into(),
-            env_key: "tenant".into(),
+            project_env_key: "project".into(),
             batch: 1,
             fetch_ms: 1,
             sweep_ms: 1,
@@ -687,7 +687,7 @@ mod tests {
     fn envelope() -> Envelope {
         serde_json::from_value(serde_json::json!({
             "op": "insert",
-            "new": {"tenant_id": "tenant"},
+            "new": {"project_id": "project"},
             "package_id": "receiving",
             "entity": "receipts",
             "table": "receipts",
@@ -721,7 +721,7 @@ mod tests {
     fn cdc_decode_refuses_either_half_of_package_entity_identity() {
         let complete = serde_json::json!({
             "op": "insert",
-            "new": {"tenant_id": "tenant"},
+            "new": {"project_id": "project"},
             "package_id": "receiving",
             "entity": "receipts",
             "table": "receipts",
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn derived_origin_decodes_separately_from_the_cdc_envelope() {
         let event = DerivedEvent::new(
-            "tenant",
+            "project",
             "app",
             "dev",
             "receiving",

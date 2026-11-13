@@ -2,7 +2,7 @@
 //! database.
 //!
 //! The verb opens no database connection. An operator or a test tool pipes its
-//! output into `psql` against the tenant database, after `app-schema.sql`.
+//! output into `psql` against the project database, after `app-schema.sql`.
 //! `wamn-0h0g.9` owns the production caller that applies it.
 
 use anyhow::Context as _;

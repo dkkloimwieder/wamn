@@ -118,7 +118,7 @@ pub async fn initialize(
             database.path().trim_start_matches('/'),
         ))
         .await
-        .context("set the database privilege floor after CNPG")?;
+        .context("set the database base privileges after CNPG")?;
     ensure::ensure_project_database(platform, &document, &packages, &admin, admin_url).await?;
     let drops =
         super::bindings::project_authority(&platform.system_database_url, &project_url, &document)

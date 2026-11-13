@@ -1,6 +1,6 @@
 //! Reserved application principals and the built-in role.
 
-/// The fixed WAMN namespace for platform principal ids. Every tenant and every
+/// The fixed WAMN namespace for platform principal ids. Every project and every
 /// deployment derives the same id from the same name, so no configuration
 /// carries the id. The value is frozen: a change changes every platform row id.
 /// Anyone can recompute it from the domain.
@@ -11,7 +11,7 @@ pub const WAMN_NAMESPACE: uuid::Uuid =
 
 /// The reserved principal namespace. A platform principal name is
 /// `wamn:<component>`, where the component is kebab-case and carries no action
-/// and no version. A tenant or application cannot create a name with this prefix.
+/// and no version. A project or application cannot create a name with this prefix.
 pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
 
 /// A platform component that writes under its own `platform."user"` row.
@@ -19,7 +19,7 @@ pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
 /// The row names the component, never the invocation. The list is closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformComponent {
-    /// Tenant provisioning. Its row is the first row in a tenant database.
+    /// Project provisioning. Its row is the first row in a project database.
     Provisioning,
     /// Package application, including operation grants.
     ApplyPackage,

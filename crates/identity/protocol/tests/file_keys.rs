@@ -19,7 +19,7 @@ use wamn_identity_protocol::verifier::SessionVerifier;
 
 const ISSUER: &str = "https://identity.example.test";
 const ORG: &str = "org-a";
-const AUDIENCE: &str = "tenant-a/dev";
+const AUDIENCE: &str = "org-a/dev";
 const PRINCIPAL: &str = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b";
 
 /// A key pair from a fixed seed, and its public JWK under `kid`.

@@ -216,7 +216,7 @@ impl HostRouteDelivery {
                 let held = postgres
                     .held_operation_grants(
                         project,
-                        &self.release.scope().env_key,
+                        &self.release.scope().project_env_key,
                         &principal,
                         &attachment.operation,
                     )

@@ -12,7 +12,7 @@ use super::{
     read_package_attachments, read_package_manifests, resolve_route_methods,
 };
 
-const ENV_KEY: &str = "effective-release-poc--fixture--dev";
+const PROJECT_ENV_KEY: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
@@ -95,7 +95,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                 });
         let declaration = wamn_package_control::component_declaration::render_declaration_document(
             &input.component_declaration,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
         )
         .unwrap_or_else(|error| {
             panic!("render {}: {error}", input.component_declaration.display())

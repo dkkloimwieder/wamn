@@ -1349,7 +1349,7 @@ mod tests {
                  SET transaction_timeout = '30s'",
             )
             .await
-            .context("bound Receiving gate timeouts")?;
+            .context("bound Receiving condition timeouts")?;
         bind_actor(&client, FIXTURE_PRINCIPAL).await?;
         Ok(client)
     }
@@ -2150,7 +2150,7 @@ mod tests {
             .context("server_version_num is not numeric")?;
         ensure!(
             (180_000..190_000).contains(&version),
-            "Receiving live gate requires PostgreSQL 18, found {version}"
+            "Receiving live acceptance test requires PostgreSQL 18, found {version}"
         );
         Ok(())
     }

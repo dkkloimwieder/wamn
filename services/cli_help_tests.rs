@@ -24,7 +24,7 @@ fn is_secret_environment(name: &std::ffi::OsStr) -> bool {
         || name.ends_with("_PATHS")
         || matches!(
             name.as_ref(),
-            "WAMN_NATS_TLS_KEY" | "WAMN_DEV_ENV_NATS_TLS_KEY" | "WAMN_MANAGEMENT_ENV_KEY"
+            "WAMN_NATS_TLS_KEY" | "WAMN_DEV_ENV_NATS_TLS_KEY" | "WAMN_MANAGEMENT_PROJECT_ENV_KEY"
         )
     {
         return false;

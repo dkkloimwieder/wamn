@@ -22,14 +22,14 @@ use super::error::{
 const SELECT_DEFINITION_OWNER_SQL: &str = "\
 SELECT owner_package_id, client_field_extensible \
   FROM catalog.package_definition_owners \
- WHERE env_key = $1 AND schema_name = $2 AND relation_name = $3 \
+ WHERE project_env_key = $1 AND schema_name = $2 AND relation_name = $3 \
    AND definition_type = $4 AND definition_name = $5";
 const INSERT_DEFINITION_OWNER_SQL: &str = "\
 INSERT INTO catalog.package_definition_owners \
-    (env_key, schema_name, relation_name, definition_type, definition_name, \
+    (project_env_key, schema_name, relation_name, definition_type, definition_name, \
      owner_package_id, client_field_extensible) \
 VALUES ($1, $2, $3, $4, $5, $6, $7) \
-ON CONFLICT (env_key, schema_name, relation_name, definition_type, definition_name) \
+ON CONFLICT (project_env_key, schema_name, relation_name, definition_type, definition_name) \
 DO NOTHING";
 pub(super) const SELECT_RELATION_PRESENT_SQL: &str = "\
 SELECT EXISTS (\
@@ -87,7 +87,7 @@ pub(super) struct StoredDefinitionOwner {
 
 pub(super) async fn reconcile_definition_ownership(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -105,7 +105,7 @@ pub(super) async fn reconcile_definition_ownership(
                         .is_some_and(|model| model.client_field_extensible);
                 changed |= insert_definition_owner(
                     tx,
-                    env_key,
+                    project_env_key,
                     coordinate,
                     planned,
                     DefinitionType::Relation,
@@ -130,7 +130,7 @@ pub(super) async fn reconcile_definition_ownership(
                     let definition = row.get::<_, String>(1);
                     changed |= insert_definition_owner(
                         tx,
-                        env_key,
+                        project_env_key,
                         coordinate,
                         planned,
                         type_,
@@ -145,7 +145,7 @@ pub(super) async fn reconcile_definition_ownership(
                 ensure_definition_present(tx, coordinate, planned).await?;
                 changed |= insert_definition_owner(
                     tx,
-                    env_key,
+                    project_env_key,
                     coordinate,
                     planned,
                     mutation.definition_type(),
@@ -197,7 +197,7 @@ async fn ensure_definition_present(
 )]
 async fn insert_definition_owner(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
     type_: DefinitionType,
@@ -210,7 +210,7 @@ async fn insert_definition_owner(
         .execute(
             INSERT_DEFINITION_OWNER_SQL,
             &[
-                &env_key,
+                &project_env_key,
                 &mutation.schema(),
                 &mutation.relation(),
                 &type_.as_str(),
@@ -226,7 +226,7 @@ async fn insert_definition_owner(
     }
     let existing = load_definition_owner(
         tx,
-        env_key,
+        project_env_key,
         mutation.schema(),
         mutation.relation(),
         type_,
@@ -254,7 +254,7 @@ async fn insert_definition_owner(
 
 pub(super) async fn load_definition_owner(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     schema: &str,
     relation: &str,
     type_: DefinitionType,
@@ -262,7 +262,13 @@ pub(super) async fn load_definition_owner(
 ) -> anyhow::Result<Option<StoredDefinitionOwner>> {
     tx.query_opt(
         SELECT_DEFINITION_OWNER_SQL,
-        &[&env_key, &schema, &relation, &type_.as_str(), &definition],
+        &[
+            &project_env_key,
+            &schema,
+            &relation,
+            &type_.as_str(),
+            &definition,
+        ],
     )
     .await
     .context("read durable definition owner")
@@ -306,7 +312,7 @@ pub(super) use plan::MigrationPolicyPlan;
 
 pub(super) async fn validate_definition_ownership_before_apply(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -319,13 +325,14 @@ pub(super) async fn validate_definition_ownership_before_apply(
         let mutation = &planned.mutation;
         match mutation.action() {
             DefinitionAction::Create => {
-                preflight_create_relation(tx, env_key, coordinate, package_id, planned).await?;
+                preflight_create_relation(tx, project_env_key, coordinate, package_id, planned)
+                    .await?;
                 created.push((mutation.schema(), mutation.relation()));
             }
             DefinitionAction::Add => {
                 preflight_add_definition(
                     tx,
-                    env_key,
+                    project_env_key,
                     coordinate,
                     package_id,
                     manifest,
@@ -336,7 +343,11 @@ pub(super) async fn validate_definition_ownership_before_apply(
             }
             DefinitionAction::Alter | DefinitionAction::Drop => {
                 preflight_existing_definition_mutation(
-                    tx, env_key, coordinate, package_id, planned,
+                    tx,
+                    project_env_key,
+                    coordinate,
+                    package_id,
+                    planned,
                 )
                 .await?;
             }
@@ -347,7 +358,7 @@ pub(super) async fn validate_definition_ownership_before_apply(
 
 async fn preflight_create_relation(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     package_id: &str,
     planned: &PlannedDefinitionMutation,
@@ -355,7 +366,7 @@ async fn preflight_create_relation(
     let mutation = &planned.mutation;
     if let Some(owner) = load_definition_owner(
         tx,
-        env_key,
+        project_env_key,
         mutation.schema(),
         mutation.relation(),
         DefinitionType::Relation,
@@ -400,7 +411,7 @@ async fn preflight_create_relation(
 
 async fn preflight_add_definition(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -410,7 +421,7 @@ async fn preflight_add_definition(
     let mutation = &planned.mutation;
     let stored = load_definition_owner(
         tx,
-        env_key,
+        project_env_key,
         mutation.schema(),
         mutation.relation(),
         DefinitionType::Relation,
@@ -482,7 +493,7 @@ async fn preflight_add_definition(
 
     if let Some(owner) = load_definition_owner(
         tx,
-        env_key,
+        project_env_key,
         mutation.schema(),
         mutation.relation(),
         mutation.definition_type(),
@@ -527,7 +538,7 @@ async fn preflight_add_definition(
 
 async fn preflight_existing_definition_mutation(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &str,
     package_id: &str,
     planned: &PlannedDefinitionMutation,
@@ -535,7 +546,7 @@ async fn preflight_existing_definition_mutation(
     let mutation = &planned.mutation;
     if let Some(owner) = load_definition_owner(
         tx,
-        env_key,
+        project_env_key,
         mutation.schema(),
         mutation.relation(),
         mutation.definition_type(),

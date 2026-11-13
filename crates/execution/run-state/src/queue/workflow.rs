@@ -4,7 +4,7 @@
 //! `available_at <= now()` never takes it. The run keeps its status
 //! `dispatched`: the run-level `parked` status stays retired. Table names stay
 //! unqualified, so the caller's transaction `search_path` selects the run plane,
-//! and every statement reads its tenant from the `app.env_key` claim.
+//! and every statement reads its project from the `app.project_env_key` claim.
 //!
 //! Live workflow tests exercise these statements over a disposable database.
 
@@ -14,27 +14,27 @@ use crate::RunStatus;
 const PARKED_AT: &str = "'infinity'::timestamptz";
 
 /// Admit one event workflow with its executor, actor, frozen nodes and delivery id.
-/// Binds: `env_key`, application, release, environment, workflow, version, hash,
+/// Binds: `project_env_key`, application, release, environment, workflow, version, hash,
 /// principal, role, delivery, actor, node digests, key, input,
 /// source run, root run, depth.
 pub fn insert_event_run_sql() -> String {
     format!(
-        "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
+        "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
              node_digests_json, idempotency_key, input_json, status, \
              event_source_run_id, event_root_run_id, event_depth) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8::text::uuid, $9, $10, \
                  $11::text::uuid, $12::text::jsonb, $13, $14::text::jsonb, '{dispatched}', $15, $16, $17) \
-         ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
 }
 
-/// Read the original event run by tenant, idempotency key and input.
+/// Read the original event run by project, idempotency key and input.
 pub fn select_event_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE env_key = $1 AND idempotency_key = $2 \
+    "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
         AND trigger_source = 'event' AND input_json = $3::text::jsonb"
 }
 
@@ -45,20 +45,20 @@ pub fn select_event_run_sql() -> &'static str {
 /// CONFLICT DO NOTHING` on the idempotency key returns no row for a repeated
 /// key, and the caller then reads the first run with [`select_manual_run_sql`].
 ///
-/// Binds: `$1` `env_key`, `$2` application package, `$3` release manifest
+/// Binds: `$1` `project_env_key`, `$2` application package, `$3` release manifest
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
 /// wiring hash, `$8` executing principal, `$9` execution role, `$10` the
 /// invoking user, `$11` node digests JSON text, `$12` idempotency key, `$13`
 /// input JSON text.
 pub fn insert_manual_run_sql() -> String {
     format!(
-        "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
+        "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
              node_digests_json, idempotency_key, input_json, status) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8::text::uuid, $9, 'manual', \
                  $10::text::uuid, $11::text::jsonb, $12, $13::text::jsonb, '{dispatched}') \
-         ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
@@ -68,9 +68,9 @@ pub fn insert_manual_run_sql() -> String {
 /// same input. It returns no row when the key belongs to another input or
 /// another grain.
 ///
-/// Binds: `$1` `env_key`, `$2` idempotency key, `$3` input JSON text.
+/// Binds: `$1` `project_env_key`, `$2` idempotency key, `$3` input JSON text.
 pub fn select_manual_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE env_key = $1 AND idempotency_key = $2 \
+    "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
         AND trigger_source = 'manual' AND input_json = $3::text::jsonb"
 }
 
@@ -82,19 +82,19 @@ pub fn select_manual_run_sql() -> &'static str {
 /// key returns no row for a repeated due moment, and the caller then reads the
 /// first run with [`select_workflow_schedule_run_sql`].
 ///
-/// Binds: `$1` `env_key`, `$2` application package, `$3` release manifest
+/// Binds: `$1` `project_env_key`, `$2` application package, `$3` release manifest
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
 /// wiring hash, `$8` executing principal, `$9` execution role, `$10` node
 /// digests JSON text, `$11` idempotency key, `$12` input JSON text.
 pub fn insert_workflow_schedule_run_sql() -> String {
     format!(
-        "INSERT INTO runs (env_key, package_id, manifest_digest, environment, \
+        "INSERT INTO runs (project_env_key, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, \
              execution_principal_id, execution_role, invoked_by, \
              node_digests_json, idempotency_key, input_json, status) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8::text::uuid, $9, 'schedule', \
                  $10::text::jsonb, $11, $12::text::jsonb, '{dispatched}') \
-         ON CONFLICT (env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         ON CONFLICT (project_env_key, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
@@ -104,15 +104,15 @@ pub fn insert_workflow_schedule_run_sql() -> String {
 /// and the same input. It returns no row when the key belongs to another
 /// input or another grain.
 ///
-/// Binds: `$1` `env_key`, `$2` idempotency key, `$3` input JSON text.
+/// Binds: `$1` `project_env_key`, `$2` idempotency key, `$3` input JSON text.
 pub fn select_workflow_schedule_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE env_key = $1 AND idempotency_key = $2 \
+    "SELECT run_id FROM runs WHERE project_env_key = $1 AND idempotency_key = $2 \
         AND trigger_source = 'schedule' AND input_json = $3::text::jsonb"
 }
 
-/// Queue one admitted run. Binds: `$1` `env_key`, `$2` run id.
+/// Queue one admitted run. Binds: `$1` `project_env_key`, `$2` run id.
 pub fn insert_run_queue_sql() -> &'static str {
-    "INSERT INTO run_queue (env_key, run_id) VALUES ($1, $2)"
+    "INSERT INTO run_queue (project_env_key, run_id) VALUES ($1, $2)"
 }
 
 /// Park a queued run that no replica holds. It returns the run id, or no row
@@ -123,9 +123,9 @@ pub fn park_queued_run_sql() -> String {
     format!(
         "UPDATE run_queue AS q SET available_at = {PARKED_AT} \
            FROM runs AS r \
-          WHERE q.env_key = current_setting('app.env_key', true) \
+          WHERE q.project_env_key = current_setting('app.project_env_key', true) \
             AND q.run_id = $1 \
-            AND r.env_key = q.env_key AND r.run_id = q.run_id \
+            AND r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
             AND r.environment = $2 \
             AND r.status = '{dispatched}' \
             AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
@@ -143,9 +143,9 @@ pub fn release_parked_run_sql() -> String {
     format!(
         "UPDATE run_queue AS q SET available_at = now() \
            FROM runs AS r \
-          WHERE q.env_key = current_setting('app.env_key', true) \
+          WHERE q.project_env_key = current_setting('app.project_env_key', true) \
             AND q.run_id = $1 \
-            AND r.env_key = q.env_key AND r.run_id = q.run_id \
+            AND r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
             AND r.environment = $2 \
             AND q.available_at = {PARKED_AT} \
           RETURNING q.run_id"
@@ -165,8 +165,8 @@ pub fn list_workflow_runs_sql() -> String {
                 COALESCE(q.available_at = {PARKED_AT}, false) AS parked, \
                 to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
            FROM runs AS r \
-           LEFT JOIN run_queue AS q ON q.env_key = r.env_key AND q.run_id = r.run_id \
-          WHERE r.env_key = current_setting('app.env_key', true) \
+           LEFT JOIN run_queue AS q ON q.project_env_key = r.project_env_key AND q.run_id = r.run_id \
+          WHERE r.project_env_key = current_setting('app.project_env_key', true) \
             AND r.environment = $1 \
             AND r.wiring_id IS NOT NULL \
           ORDER BY r.created_at DESC, r.run_id DESC \
@@ -185,8 +185,8 @@ pub fn select_run_queue_state_sql() -> String {
                 COALESCE(q.available_at = {PARKED_AT}, false) AS parked, \
                 COALESCE(q.lease_expires_at > now(), false) AS leased \
            FROM runs AS r \
-           LEFT JOIN run_queue AS q ON q.env_key = r.env_key AND q.run_id = r.run_id \
-          WHERE r.env_key = current_setting('app.env_key', true) \
+           LEFT JOIN run_queue AS q ON q.project_env_key = r.project_env_key AND q.run_id = r.run_id \
+          WHERE r.project_env_key = current_setting('app.project_env_key', true) \
             AND r.run_id = $1 AND r.environment = $2"
     )
 }

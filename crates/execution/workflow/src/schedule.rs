@@ -38,10 +38,10 @@ pub trait ScheduleRows: Send + Sync {
 }
 
 /// The enabled schedule workflows of the declared applications. Binds: `$1`
-/// tenant, `$2` environment, `$3` the application name.
+/// project, `$2` environment, `$3` the application name.
 const ENABLED_SCHEDULES_SQL: &str = "\
 SELECT application, workflow_id, schedule FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND enabled AND trigger = 'schedule'";
 
 /// The schedule rows of the application that the host serves. It
@@ -64,7 +64,7 @@ impl std::fmt::Debug for PostgresSchedules {
 }
 
 impl PostgresSchedules {
-    /// Serve the schedules of `applications` in `env_key` and `environment`,
+    /// Serve the schedules of `applications` in `project_env_key` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
         client: tokio_postgres::Client,
@@ -93,7 +93,7 @@ impl ScheduleRows for PostgresSchedules {
             .client
             .query(
                 ENABLED_SCHEDULES_SQL,
-                &[&scope.env_key, &scope.environment, application],
+                &[&scope.project_env_key, &scope.environment, application],
             )
             .await
             .context("read the enabled workflow schedules")?;
@@ -122,7 +122,7 @@ impl ScheduleRows for PostgresSchedules {
         self.postgres
             .admit_schedule_run(
                 &self.project,
-                &scope.env_key,
+                &scope.project_env_key,
                 &ScheduleRunAdmission {
                     environment: &scope.environment,
                     application: &schedule.application,

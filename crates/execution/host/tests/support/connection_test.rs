@@ -376,8 +376,8 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     let canonical = b"{}".as_slice();
-    let digest: String = billing.query_one("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&canonical]).await?.get(0);
-    billing.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&connection["id"].as_str().unwrap()]).await?;
+    let digest: String = billing.query_one("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&canonical]).await?.get(0);
+    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&connection["id"].as_str().unwrap()]).await?;
     *live.0.lock().await = Some(digest);
     let before = counts(&admin).await?;
     assert_eq!(

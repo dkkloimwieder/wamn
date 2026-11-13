@@ -1,7 +1,7 @@
 //! Execute the identity issuer grants on a disposable PostgreSQL 18 database.
 //!
 //! The test starts its own PostgreSQL server with a wamn_system database. It
-//! resets its system schemas and closes the server PUBLIC CONNECT floor.
+//! resets its system schemas and closes the server PUBLIC CONNECT base grants.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -12,8 +12,9 @@ use wamn_control_provision::identity_issuer::{
     prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
 };
 use wamn_control_provision::sql::{
-    ensure_db_owner_role_sql, prepare_workload_generation_sql, revoke_public_connect_floor_sql,
-    role_database_grants_sql, terminate_workload_generation_sessions_sql,
+    ensure_db_owner_role_sql, prepare_workload_generation_sql,
+    revoke_public_connect_base_grants_sql, role_database_grants_sql,
+    terminate_workload_generation_sessions_sql,
 };
 use wamn_control_provision::{
     CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily,
@@ -142,7 +143,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             &admin,
             &format!("SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"),
         );
-        run(&admin, revoke_public_connect_floor_sql());
+        run(&admin, revoke_public_connect_base_grants_sql());
         run(
             &admin,
             "REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC;",

@@ -3,10 +3,10 @@
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
-const ENV_KEY: &str = "publish-release-live";
+const PROJECT_ENV_KEY: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
-       env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at\
+       project_env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at\
      ) VALUES ($1, $2, $3, $4, $5, $6, 'applied', now())";
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -24,18 +24,21 @@ async fn connect(url: &str) -> Client {
 
 async fn seed_package(client: &Client) {
     client
-        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, false)",
+            &[&PROJECT_ENV_KEY],
+        )
         .await
-        .expect("claim the test tenant");
+        .expect("claim the test project");
     client.execute(
-        "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ($1, 'inventory', '1.0.0', $2, $3)",
-        &[&ENV_KEY, &format!("sha256:{}", "a".repeat(64)), &format!("sha256:{}", "c".repeat(64))]
+        "INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ($1, 'inventory', '1.0.0', $2, $3)",
+        &[&PROJECT_ENV_KEY, &format!("sha256:{}", "a".repeat(64)), &format!("sha256:{}", "c".repeat(64))]
     ).await.expect("record the installed baseline");
     client
         .execute(
             INSERT_MIGRATION_SQL,
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &"inventory",
                 &"1.0.0",
                 &1_i32,
@@ -82,7 +85,7 @@ async fn assert_immutable_rows(client: &Client) {
 
 #[tokio::test]
 async fn migration_records_remain_immutable() {
-    let project = locked_database::database(wamn_catalog::test_database::tenant);
+    let project = locked_database::database(wamn_catalog::test_database::project);
     let client = connect(&project).await;
     seed_package(&client).await;
     assert_immutable_rows(&client).await;

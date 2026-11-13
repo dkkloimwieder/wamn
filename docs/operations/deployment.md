@@ -573,7 +573,7 @@ The credential of `--registry-auth-file` must pull the packages and push to the 
 Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
 The manifest names no environment key and no environment, so one release has one digest in every environment.
-The composed `env_key` is `<org>--<project>--<environment>`.
+The composed `project_env_key` is `<org>--<project>--<environment>`.
 The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
@@ -694,9 +694,9 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 
 ## User roles
 
-`apply-package` writes the built-in role `admin` in each tenant.
+`apply-package` writes the built-in role `admin` in each project.
 `admin` has no permission rows and holds every operation that the serving release serves.
-Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
+Every other role is authored in the project, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.

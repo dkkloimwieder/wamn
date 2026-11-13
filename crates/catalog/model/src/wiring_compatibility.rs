@@ -1,4 +1,4 @@
-//! Pure semantic gate for a wiring against admitted component facts.
+//! Pure semantic condition for a wiring against admitted component facts.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -12,7 +12,7 @@ use crate::{
 
 const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
 
-/// Stable classification for a refused wiring/component compatibility gate.
+/// Stable classification for a refused wiring/component compatibility condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringCompatibilityErrorType {
     FactScopeMismatch,
@@ -30,7 +30,7 @@ pub enum WiringCompatibilityErrorType {
     SchemaMismatch,
 }
 
-/// Contextual refusal from the gate-time wiring compatibility boundary.
+/// Contextual refusal from the condition-time wiring compatibility boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringCompatibilityError {
     type_: WiringCompatibilityErrorType,
@@ -61,7 +61,7 @@ impl std::error::Error for WiringCompatibilityError {}
 
 /// Validate one wiring exclusively against facts from its exact package scope.
 ///
-/// This is a publish/gate function, not a delivery-time fallback. Every normal
+/// This is a publish/condition function, not a delivery-time fallback. Every normal
 /// edge resolves the exact authored source and target ports and requires equal
 /// JSON Schemas. Parameters are both declared and validated
 /// against their admitted schemas. No structural subtyping, coercion, default,
@@ -78,12 +78,12 @@ pub fn validate_wiring_compatibility(
         return Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorType::FactScopeMismatch,
             format!(
-                "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring gate scope ({:?}, {:?}, {:?})",
+                "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring condition scope ({:?}, {:?}, {:?})",
                 component.component,
-                component.scope.env_key,
+                component.scope.project_env_key,
                 component.scope.package_id,
                 component.scope.package_version,
-                scope.env_key,
+                scope.project_env_key,
                 scope.package_id,
                 scope.package_version,
             ),
@@ -106,7 +106,7 @@ pub fn validate_wiring_compatibility(
 /// different exact package scopes. The release publisher owns resolving each
 /// authored dependency alias before calling it; this function verifies that
 /// the supplied target still matches the node tuple and then applies the same
-/// parameter, port, and schema rules as the package-local gate.
+/// parameter, port, and schema rules as the package-local condition.
 pub fn validate_resolved_wiring_compatibility(
     wiring: &WiringDocument,
     components: &BTreeMap<String, AdmittedComponent>,
@@ -462,7 +462,7 @@ mod tests {
 
     fn scope() -> ComponentPackageScope {
         ComponentPackageScope {
-            env_key: "t1".to_string(),
+            project_env_key: "t1".to_string(),
             package_id: "app".to_string(),
             package_version: "1.0.0".to_string(),
         }

@@ -1,5 +1,5 @@
 //! Database install order on one fresh PostgreSQL 18 server, with each Job's roles.
-//! The local-floor case uses an independent server because owner memberships are cluster-wide.
+//! The local-minimum case uses an independent server because owner memberships are cluster-wide.
 //! No cluster, package registry, or NATS server is required.
 //! Job error output (wamn-gts3b) stays covered in platform/invite.rs by
 //! a_passing_invite_logs_only_its_result and a_failed_invite_logs_the_verb_error.
@@ -194,7 +194,7 @@ async fn step_4_11_env_apply_reads_schema_baseline(
     ensure_project_database(platform, &document(), &[], admin, system_url)
         .await
         .context(
-            "4.11 env_apply_reads_schema_baseline as wamn_apply, then installs the project floor",
+            "4.11 env_apply_reads_schema_baseline as wamn_apply, then installs the project base grants",
         )?;
     Ok(())
 }
@@ -352,11 +352,11 @@ async fn release_cache(
     project_url: &str,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
-    let env_key = wamn_control_provision::project_env_key(ORG, PROJECT, ENV);
+    let project_env_key = wamn_control_provision::project_env_key(ORG, PROJECT, ENV);
     let digest = manifest.digest();
     wamn_environment_control::environment::stage::write_release(
         project_url,
-        &env_key,
+        &project_env_key,
         digest.as_str(),
         manifest,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -368,8 +368,8 @@ async fn release_cache(
     client.batch_execute("SET ROLE wamn_db_owner").await?;
     let bytes: Vec<u8> = client
         .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&env_key, &digest.as_str()],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
+            &[&project_env_key, &digest.as_str()],
         )
         .await?
         .get(0);
@@ -423,20 +423,20 @@ async fn install_sequence_4_7_through_4_19_1_with_job_roles() -> anyhow::Result<
 }
 
 #[tokio::test]
-async fn local_floor_run_plane_and_release_cache_as_database_owner() -> anyhow::Result<()> {
-    // The separate server keeps env apply's cluster-wide grant from hiding a local-floor defect.
+async fn local_base_grants_run_plane_and_release_cache_as_database_owner() -> anyhow::Result<()> {
+    // The separate server keeps env apply's cluster-wide grant from hiding a local-minimum defect.
     let mut server = wamn_test_postgres::start(&[])?;
-    let database = server.create_database("local_floor")?;
+    let database = server.create_database("local_base_grants")?;
     let client = connect(database.url()).await?;
     client
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await?;
     client
-        .batch_execute(&sql::set_database_owner_sql("local_floor"))
+        .batch_execute(&sql::set_database_owner_sql("local_base_grants"))
         .await?;
-    wamn_dev_control::dev::environment::install_journey_platform_floor(&client, DOMAIN)
+    wamn_dev_control::dev::environment::install_journey_platform_base_grants(&client, DOMAIN)
         .await
-        .context("local_floor installs the platform schema as the database owner")?;
+        .context("local_base_grants installs the platform schema as the database owner")?;
     reconcile_run_plane::reconcile(
         &client,
         &wamn_schema_control::BareSchemaName::new("wamn_run")?,
@@ -444,10 +444,10 @@ async fn local_floor_run_plane_and_release_cache_as_database_owner() -> anyhow::
     )
     .await
     .context(
-        "4.17 local_floor_run_plane_as_database_owner without wamn_authority permission denial",
+        "4.17 local_base_grants_run_plane_as_database_owner without wamn_authority permission denial",
     )?;
     release_cache(database.url(), &release(BTreeSet::new()))
         .await
-        .context("4.17 local_floor_release_cache_passes_owner_row_security")?;
+        .context("4.17 local_base_grants_release_cache_passes_owner_row_security")?;
     Ok(())
 }

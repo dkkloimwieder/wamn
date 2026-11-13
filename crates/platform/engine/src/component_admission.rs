@@ -1,4 +1,4 @@
-//! Pure byte admission for tenant component-library entries.
+//! Pure byte admission for project component-library entries.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -369,7 +369,7 @@ pub fn validate_component_admission(
         ));
     }
     let policy_imports = wamn_component_policy::ComponentImports::new(imports.iter().cloned());
-    wamn_component_policy::analyze_tenant(
+    wamn_component_policy::analyze_project(
         &policy_imports,
         &request.admitted_platform_packages,
         &component_name,
@@ -743,7 +743,7 @@ mod tests {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_string(),
+                    project_env_key: "org-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },

@@ -363,11 +363,11 @@ pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
     format!("{org}--{project}--{env}")
 }
 
-/// The NATS user of the environment `env_key`. Its client certificate
+/// The NATS user of the environment `project_env_key`. Its client certificate
 /// carries this DNS name, and its replies use the inbox `_INBOX_<user>`
 /// (docs/plan/alignment.md R5).
-pub fn environment_nats_user(env_key: &str) -> String {
-    format!("wamn-env-{env_key}")
+pub fn environment_nats_user(project_env_key: &str) -> String {
+    format!("wamn-env-{project_env_key}")
 }
 
 /// The NATS user of the control host of `org`, which covers every

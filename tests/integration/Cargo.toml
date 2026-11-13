@@ -65,7 +65,7 @@ wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 wamn-identity-protocol = { workspace = true, features = ["test-util"] }
-# `wamn_catalog::fixture_graph` is gated behind `test-util`.
+# `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The session fixture of the runtime tests, which control_client_live includes.
 tokio-rustls = { workspace = true }

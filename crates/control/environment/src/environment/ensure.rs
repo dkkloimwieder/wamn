@@ -57,7 +57,7 @@ pub async fn provision_resources(
     let private = PrivateDirectory::create()?;
     let namespace = platform.target.namespace.as_str();
 
-    // The row, the role posture, the Database CR, the privilege floor, the
+    // The row, the role posture, the Database CR, the base privileges, the
     // database Secret, and the management-author PAT when absent.
     let pat_name = management_author_pat_name(&triple);
     let issue_pat = platform.pat_issuer.endpoint.is_some()
@@ -87,7 +87,7 @@ pub async fn provision_resources(
     admin
         .batch_execute(&outcome.privilege_sql)
         .await
-        .context("ensure the database privilege floor")?;
+        .context("ensure the database base privileges")?;
     private.apply_and_shred(platform, &database_secret).await?;
     if issue_pat {
         private.apply_and_shred(platform, &pat_secret).await?;
@@ -329,7 +329,7 @@ pub fn materializer_host_values(
     if let Some(image) = super::runtime::host_image(installed, group["name"].as_str().unwrap()) {
         group["image"] = image.clone();
     }
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     Ok(json!({
         "roles": [],
@@ -339,7 +339,7 @@ pub fn materializer_host_values(
             "automountServiceAccountToken": true,
             "hostGroups": [group]
         }},
-        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{env_key}")}}
+        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{project_env_key}")}}
     }))
 }
 
@@ -358,7 +358,7 @@ pub fn materializer_workload(
             workload: format!("{name}-materializer"),
             namespace: namespace.to_owned(),
             image: super::runtime::pod_artifact_base(insecure_registry, image)?.into_owned(),
-            env_key: wamn_control_provision::project_env_key(
+            project_env_key: wamn_control_provision::project_env_key(
                 &document.org,
                 &document.project,
                 &document.env,

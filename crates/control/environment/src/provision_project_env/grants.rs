@@ -14,14 +14,14 @@ use super::{
     sql,
 };
 
-pub(super) async fn verify_public_access_floor(
+pub(super) async fn verify_public_base_grants(
     client: &(impl GenericClient + Sync),
     label: &str,
 ) -> anyhow::Result<()> {
     let databases: Vec<String> = client
         .query(sql::public_connect_databases_sql(), &[])
         .await
-        .context("verify cluster PUBLIC CONNECT floor")?
+        .context("verify cluster PUBLIC CONNECT base grants")?
         .into_iter()
         .map(|row| row.get(0))
         .collect();
@@ -32,7 +32,7 @@ pub(super) async fn verify_public_access_floor(
     let public_temporary: bool = client
         .query_one(sql::public_temporary_on_current_database_sql(), &[])
         .await
-        .context("verify target database PUBLIC TEMPORARY floor")?
+        .context("verify target database PUBLIC TEMPORARY base grants")?
         .get(0);
     anyhow::ensure!(
         !public_temporary,

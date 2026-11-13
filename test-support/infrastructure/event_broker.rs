@@ -65,12 +65,20 @@ struct Subjects {
 pub fn prepare(
     work: &Path,
     scope: &Triple,
-    env_key: &str,
+    project_env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
 ) -> anyhow::Result<EventBroker> {
-    prepare_with(None, work, scope, env_key, source, advisory, consumers)
+    prepare_with(
+        None,
+        work,
+        scope,
+        project_env_key,
+        source,
+        advisory,
+        consumers,
+    )
 }
 
 /// [`prepare`] with the CA of `authority`, for brokers of several
@@ -79,7 +87,7 @@ pub fn prepare_in(
     authority: &Authority,
     work: &Path,
     scope: &Triple,
-    env_key: &str,
+    project_env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -88,7 +96,7 @@ pub fn prepare_in(
         Some(authority),
         work,
         scope,
-        env_key,
+        project_env_key,
         source,
         advisory,
         consumers,
@@ -99,7 +107,7 @@ fn prepare_with(
     authority: Option<&Authority>,
     work: &Path,
     scope: &Triple,
-    env_key: &str,
+    project_env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -108,7 +116,7 @@ fn prepare_with(
         scope.org.as_str(),
         scope.project.as_str(),
         scope.env.as_str(),
-        env_key,
+        project_env_key,
         source.name.as_str(),
         advisory.name.as_str(),
     ] {

@@ -154,7 +154,7 @@ pub async fn publish_declarations(
         std::fs::write(
             declarations.join("fixture.json.in"),
             serde_json::to_vec(&json!({
-                "scope":{"env_key":"__ENV_KEY__","package-id":name},
+                "scope":{"project_env_key":"__PROJECT_ENV_KEY__","package-id":name},
                 "component":"fixture","interface-version":"0.1.0",
                 "operations":{&operation:{"registered-operation":operation,
                     "input-ports":[],"output-ports":[],"parameters":[]}},

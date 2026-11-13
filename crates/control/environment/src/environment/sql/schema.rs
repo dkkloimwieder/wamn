@@ -137,9 +137,9 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
         database_instance: Some(instance),
         ..State::default()
     };
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-    let read = database_state(&url, &env_key).await;
+    let read = database_state(&url, &project_env_key).await;
     match read {
         Ok(records) => {
             state.project_baseline = records.project_baseline;
@@ -157,7 +157,7 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
 }
 
 /// Read the same installed SQL records through a local or deployed connection.
-pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result<State> {
+pub async fn database_state(database_url: &str, project_env_key: &str) -> anyhow::Result<State> {
     let mut client = analyse::connect_project(database_url).await?;
     let tx = client
         .build_transaction()
@@ -165,8 +165,11 @@ pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result
         .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
         .start()
         .await?;
-    tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-        .await?;
+    tx.query_one(
+        "SELECT set_config('app.project_env_key', $1, true)",
+        &[&project_env_key],
+    )
+    .await?;
     let baseline = tx
         .query_one(
             "SELECT sha256, installed_at::text, (SELECT oid::text FROM pg_catalog.pg_database WHERE datname=current_database()) FROM platform.schema_baseline WHERE singleton",
@@ -180,20 +183,21 @@ pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result
     let mut incomplete = BTreeMap::new();
     for row in tx
         .query(
-            "SELECT package_id FROM catalog.packages WHERE env_key=$1 UNION SELECT package_id FROM catalog.package_migrations WHERE env_key=$1",
-            &[&env_key],
+            "SELECT package_id FROM catalog.packages WHERE project_env_key=$1 UNION SELECT package_id FROM catalog.package_migrations WHERE project_env_key=$1",
+            &[&project_env_key],
         )
         .await?
     {
         let id: String = row.get(0);
-        if let Some(applied) = apply_package::read_applied_package(&tx, env_key, &id).await? {
+        if let Some(applied) = apply_package::read_applied_package(&tx, project_env_key, &id).await? {
             packages.insert(id, applied);
         } else {
-            let records = apply_package::read_package_migrations(&tx, env_key, &id).await?;
+            let records = apply_package::read_package_migrations(&tx, project_env_key, &id).await?;
             incomplete.insert(id, records);
         }
     }
-    let fingerprint = apply_package::installed_environment_fingerprint(&tx, env_key).await?;
+    let fingerprint =
+        apply_package::installed_environment_fingerprint(&tx, project_env_key).await?;
     tx.commit().await?;
     let mut unknowns = Vec::new();
     for (id, files) in packages
@@ -771,7 +775,7 @@ pub async fn apply(
             diff.release.as_deref().expect("selected schema release"),
         )
         .await?;
-        let env_key = wamn_control_provision::project_env_key(
+        let project_env_key = wamn_control_provision::project_env_key(
             &document.org,
             &document.project,
             &document.env,
@@ -779,7 +783,7 @@ pub async fn apply(
         stage::materialize_application_principals(
             &platform.system_database_url,
             &url,
-            &env_key,
+            &project_env_key,
             &release,
             &manifests,
             &platform.auth_changes().await?,

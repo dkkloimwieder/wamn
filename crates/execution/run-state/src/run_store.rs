@@ -285,7 +285,7 @@ pub enum ProductionLeaseRenewal {
 /// Result of one host-owned crash-budget janitor turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductionReapResult {
-    /// No exhausted row was visible to this tenant.
+    /// No exhausted row was visible to this project.
     Empty,
     /// The selected row was marked infrastructure-failure and
     /// dequeued with exact caller compare-and-set semantics.

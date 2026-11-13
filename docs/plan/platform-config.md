@@ -349,8 +349,8 @@ The test budget, the stops and the closeout are the same as for C2.
 
 Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text below where they differ:
 
-1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `env_key`, including its wire fields. The separate `environment` field keeps the short name.
-2. The event field is `env_key`, and credential hashes frame `"env_key"`. No format number changes.
+1. C3.1 removes `project_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `project_env_key`, including its wire fields. The separate `environment` field keeps the short name.
+2. The event field is `project_env_key`, and credential hashes frame `"project_env_key"`. No format number changes.
 3. See [integration and connection schema](integration-schema.md).
 4. See [integration and connection schema](integration-schema.md).
 5. See [integration and connection schema](integration-schema.md).
@@ -397,7 +397,7 @@ The proposal has no owning bead in the retired plan.
 
 `provision-project-env` stays outside `env apply` (R21).
 The session-target Secret goes to the identity namespace, which no `env apply` input names.
-The gates use local port-forward files for login.
+The conditions use local port-forward files for login.
 The mint-pat Job, the Rust identity journey, and three live tests call `provision-project-env`.
 The work stays open and unscheduled (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
 

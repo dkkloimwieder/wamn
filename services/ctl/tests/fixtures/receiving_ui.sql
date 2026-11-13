@@ -1,4 +1,4 @@
--- Business rows only. The Rust fixture binds the actor and tenant.
+-- Business rows only. The Rust fixture binds the actor and project.
 INSERT INTO receiving.item (id, item_number)
 VALUES ('00000000-0000-0000-0000-000000000101', 'ITEM-BROWSER');
 INSERT INTO receiving.location (id, location_code)

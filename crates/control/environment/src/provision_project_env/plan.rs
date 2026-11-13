@@ -24,7 +24,7 @@ pub fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
 /// Rust callers needing the same ordering apply [`role_posture_sql`], await its
 /// commit, then apply [`sql::drain_app_role_sessions_sql`].
 ///
-/// `pub` so the live gate applies the SAME fragments production uses instead of
+/// `pub` so the live acceptance test applies the SAME fragments production uses instead of
 /// hand-transcribed copies — the `reconcile_run_plane::reconcile` precedent.
 pub fn role_sql() -> String {
     format!(
@@ -52,7 +52,7 @@ pub fn role_posture_sql() -> String {
 ///
 /// **`wamn_app` is REVOKED, not granted (`wamn-0h0g.12.179`).** Until the
 /// `wamn-0h0g.22.6` cutover `wamn_app` was the guest LOGIN role and this batch
-/// granted it `CONNECT`. Guest SQL now authenticates as a per-tenant generation
+/// granted it `CONNECT`. Guest SQL now authenticates as a per-project generation
 /// login that `prepare_workload_generation_sql` grants `CONNECT` directly, and
 /// `wamn_app` became the stable NOLOGIN ACL role those generations INHERIT. A
 /// `CONNECT` left on it is therefore not a leftover that merely offends a

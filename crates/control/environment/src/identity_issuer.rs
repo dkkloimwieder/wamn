@@ -424,13 +424,13 @@ async fn stable(client: &(impl GenericClient + Sync), before_prepare: bool) -> a
     Ok(())
 }
 
-async fn public_floor(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
+async fn public_base_grants(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
     anyhow::ensure!(
         client
             .query(sql::public_connect_databases_sql(), &[])
             .await?
             .is_empty(),
-        "prepare the cluster PUBLIC CONNECT floor before provisioning identity credentials"
+        "prepare the cluster PUBLIC CONNECT base grants before provisioning identity credentials"
     );
     anyhow::ensure!(
         !client
@@ -451,7 +451,7 @@ async fn prepare(
     let role = identity_issuer_generation_role(&args.issuer, generation)?;
     let other_role = identity_issuer_generation_role(&args.issuer, generation.other())?;
     let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_floor(&transaction).await?;
+    public_base_grants(&transaction).await?;
     stable(&transaction, true).await?;
     let target = state(&transaction, &role).await?;
     let other = state(&transaction, &other_role).await?;
@@ -573,7 +573,7 @@ async fn retire(
     let role = identity_issuer_generation_role(issuer, generation)?;
     let replacement_role = identity_issuer_generation_role(issuer, generation.other())?;
     let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_floor(&transaction).await?;
+    public_base_grants(&transaction).await?;
     stable(&transaction, false).await?;
     let old = state(&transaction, &role)
         .await?

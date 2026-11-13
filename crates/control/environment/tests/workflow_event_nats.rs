@@ -20,8 +20,8 @@ mod event_batch {
         let txid = changed_order(&fixture).await;
         event(&fixture, "first", 0, Some("reader")).await;
         fixture.admin.execute(
-            "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
-             SELECT env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
+            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
+             SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
             &[&APP],
         ).await.unwrap();
         let upgraded = release_variant(&fixture, APP, b"1251").await;

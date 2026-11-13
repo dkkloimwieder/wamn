@@ -7,7 +7,7 @@
 //! the application rows of [`crate::application`]: with the environment's
 //! `wamn_administration` login, in one transaction on the project database
 //! that binds the caller and the route's sealed operation id. The database is
-//! the org boundary, so these tables have no tenant column and no row
+//! the org boundary, so these tables have no project column and no row
 //! security. The application reads these rows and writes none of them.
 //!
 //! A write keeps a row whose values are already the given ones, so writing

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
-use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
+use wamn_control_provision::project_key::{authority_derivations_bootstrap_sql, project_key};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
     WorkloadRoleScopeType, project_env_database_name, project_env_guest_secret_name, sql,
@@ -21,7 +21,7 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const ENV_KEY: &str = "pg18order--inventory--dev";
+const PROJECT_ENV_KEY: &str = "pg18order--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 struct Fixture {
@@ -57,8 +57,8 @@ fn generation_role(
     generation: CredentialGeneration,
 ) -> String {
     let scope = if family == WorkloadRoleFamily::App {
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database,
         }
     } else {
@@ -143,7 +143,7 @@ async fn fixture() -> Fixture {
         .await
         .expect("install stored project-env instance");
     catalog
-        .batch_execute(sql::revoke_public_connect_floor_sql())
+        .batch_execute(sql::revoke_public_connect_base_grants_sql())
         .await
         .unwrap();
     apply_documented_order(&catalog, &database).await;
@@ -438,7 +438,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
         let acl = APP_ROLE;
         let parents: &[&str] = &[];
         assert_ne!(role_a, role_b);
-        assert!(!role_a.contains(ENV_KEY));
+        assert!(!role_a.contains(PROJECT_ENV_KEY));
         provision_project_env::run_workload_action(&request(
             &fixture,
             family,
@@ -472,7 +472,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 &actor,
             )
             .await;
-            let key = tenant_key(ENV_KEY, &fixture.database);
+            let key = project_key(PROJECT_ENV_KEY, &fixture.database);
             assert!(role_a.contains(&key) && role_b.contains(&key));
             assert!(role_a.len() <= 63 && role_b.len() <= 63);
             let secret = secret_json(&secret_path(&fixture, family, CredentialGeneration::A));
@@ -480,10 +480,10 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 secret["metadata"]["name"],
                 project_env_guest_secret_name(ORG, PROJECT, ENVIRONMENT)
             );
-            assert_eq!(secret["metadata"]["labels"]["wamn.tenant-key"], key);
+            assert_eq!(secret["metadata"]["labels"]["wamn.project-key"], key);
             assert_eq!(
-                secret["metadata"]["annotations"]["wamn.io/env_key"],
-                ENV_KEY
+                secret["metadata"]["annotations"]["wamn.io/project_env_key"],
+                PROJECT_ENV_KEY
             );
             target
                 .batch_execute(&authority_derivations_bootstrap_sql())
@@ -491,13 +491,13 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 .unwrap();
             let guest = login(&url_a, &role_a).await;
             let derived: Option<String> = guest
-                .query_one("SELECT wamn_authority.current_tenant_key()", &[])
+                .query_one("SELECT wamn_authority.current_project_key()", &[])
                 .await
                 .unwrap()
                 .get(0);
             assert_eq!(derived.as_deref(), Some(key.as_str()));
             let matches_row: bool = guest.query_one(
-                "SELECT wamn_authority.tenant_key($1::text) = wamn_authority.current_tenant_key()", &[&ENV_KEY],
+                "SELECT wamn_authority.project_key($1::text) = wamn_authority.current_project_key()", &[&PROJECT_ENV_KEY],
             ).await.unwrap().get(0);
             assert!(matches_row);
         }

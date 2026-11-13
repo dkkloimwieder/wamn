@@ -203,8 +203,8 @@ pub fn object_store_overlay(overlay: &str, secret_name: &str) -> anyhow::Result<
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpClaims {
-    #[serde(rename = "wamn.env_key")]
-    pub env_key: String,
+    #[serde(rename = "wamn.project_env_key")]
+    pub project_env_key: String,
     #[serde(rename = "wamn.catalog")]
     pub catalog: String,
     #[serde(rename = "wamn.environment")]
@@ -239,7 +239,7 @@ pub fn render_host_values(
         .clone_from(&input.host_tag);
     // The host's data connection is the environment's NATS user
     // (docs/plan/alignment.md R5).
-    let env_key = wamn_control_registry::project_env_key(
+    let project_env_key = wamn_control_registry::project_env_key(
         &input.event.org,
         &input.event.project,
         &input.event.environment,
@@ -251,7 +251,7 @@ pub fn render_host_values(
         .context("host base global.certificates is missing")?
         .insert(
             "dataCertSecretName".into(),
-            format!("wamn-nats-{env_key}").into(),
+            format!("wamn-nats-{project_env_key}").into(),
         );
     let group = one_mut(&mut overlay.runtime.host_groups, "host overlay hostGroups")?;
     group.namespace.clone_from(&input.namespace);
@@ -275,7 +275,7 @@ pub fn render_host_values(
          inbox-prefix: \"_INBOX_{}\", stream-allow: \"{}\", subject-allow: \"{}\", \
          subscription-capacity-bytes: \"4194304\", subscription-capacity: \"64\", \
          max-in-flight: \"64\"}}}}}}}}]",
-        wamn_control_registry::environment_nats_user(&env_key),
+        wamn_control_registry::environment_nats_user(&project_env_key),
         source.name,
         source.subjects.join(","),
     ))

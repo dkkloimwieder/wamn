@@ -1,4 +1,4 @@
-//! Walk conformance — the frontier-ordering / port-routing / error-edge floor,
+//! Walk conformance — the frontier-ordering / port-routing / error-edge minimum,
 //! exercised with NO cluster, NO DB, NO wasm: build a `Wiring`, drive it with a
 //! programmable node invoker, and assert purely from returned `Step`s and the
 //! final `Walk`.

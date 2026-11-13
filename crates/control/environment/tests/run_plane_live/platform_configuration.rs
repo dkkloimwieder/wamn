@@ -1,13 +1,13 @@
 //! The platform configuration rows on the admin-hierarchy path
 //! (docs/architecture/data-access.md#actors, wamn-aqd0m.3).
 //!
-//! `reconcile-run-plane` writes the identity rows of the tenant first, as env
+//! `reconcile-run-plane` writes the identity rows of the project first, as env
 //! apply does. Then an administration generation login, minted by the
 //! production builder, writes one row of each of the five tables in one
 //! transaction that binds a caller and an operation, as the control host
 //! writes the application rows of an environment. The login reaches neither
 //! a superuser nor `BYPASSRLS`, so the row security of each table applies.
-//! Each write appends its history entry, a guest generation of the tenant
+//! Each write appends its history entry, a guest generation of the project
 //! reads each row back through `wamn_app`'s `SELECT`, the same rows again
 //! write none, a changed setting writes one row, and no rows remove none.
 
@@ -25,7 +25,7 @@ use wamn_platform_identity::configuration::PlatformConfiguration;
 #[path = "../support/platform_configuration.rs"]
 mod rows;
 
-const ENV_KEY: &str = "acme--billing--dev";
+const PROJECT_ENV_KEY: &str = "acme--billing--dev";
 const ADMINISTRATION_PASSWORD: &str = "administration-generation-configuration-probe";
 
 /// Mint generation a of the environment's administration login through the
@@ -97,7 +97,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         dry_run: false,
     })
     .await
-    .expect("reconcile-run-plane writes the tenant identity rows");
+    .expect("reconcile-run-plane writes the project identity rows");
     let (administration_role, mut administration) =
         mint_administration_generation(&target, &target_url, &database).await;
     let configuration = rows::configuration(CLI_PROJECT);
@@ -109,7 +109,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         5,
         "the first write writes one row of each table"
     );
-    let (generation, guest) = mint_guest_generation(&target, &target_url, ENV_KEY).await;
+    let (generation, guest) = mint_guest_generation(&target, &target_url, PROJECT_ENV_KEY).await;
     assert_eq!(
         rows::read_back(&guest)
             .await
@@ -235,7 +235,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         dry_run: false,
     })
     .await
-    .expect("reconcile-run-plane writes the tenant identity rows");
+    .expect("reconcile-run-plane writes the project identity rows");
     // The stable administration role and its surface, as env apply prepares
     // them for the control host.
     let (administration_role, administration) =

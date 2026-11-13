@@ -48,7 +48,7 @@ pub(crate) async fn invoke_route(
     let release = host.release.scope();
     let span = invocation_span(
         &InvocationSite {
-            env_key: &release.env_key,
+            project_env_key: &release.project_env_key,
             project: &host.project,
             environment: &release.environment,
             wiring_id: "",
@@ -79,7 +79,7 @@ pub(crate) async fn invoke_route(
             config: "null".to_owned(),
         };
         let acquisition = NodeAcquisition {
-            claims: host.claims(&release.env_key, Some(host.release_identity())),
+            claims: host.claims(&release.project_env_key, Some(host.release_identity())),
             invocation: component_invocation(
                 component,
                 route.operation,
@@ -153,7 +153,7 @@ mod tests {
     fn component() -> AdmittedComponent {
         AdmittedComponent {
             scope: ComponentPackageScope {
-                env_key: "tenant-a".into(),
+                project_env_key: "org-a".into(),
                 package_id: "fixture".into(),
                 package_version: "1.0.0".into(),
             },

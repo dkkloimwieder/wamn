@@ -2,7 +2,7 @@
 
 #[test]
 fn catalog_stamps_require_an_actor_and_preserve_creation() {
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let principals = format!(
         "BEGIN; {} COMMIT;",
         wamn_control_provision::platform_principals_sql("example.invalid").unwrap()

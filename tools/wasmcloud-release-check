@@ -127,7 +127,7 @@ wamn_assert_identity() {
     wamn_fail 65 "checkout HEAD $head_revision is not $WAMN_EXPECTED_TAG at $WAMN_EXPECTED_REVISION"
   }
   [[ -z "$(wamn_git status --porcelain --untracked-files=all)" ]] || {
-    wamn_fail 65 'upstream checkout is dirty; the gate requires the exact released source'
+    wamn_fail 65 'upstream checkout is dirty; the acceptance test requires the exact released source'
   }
 }
 
@@ -157,17 +157,17 @@ case "$WAMN_COMMAND" in
     export GIT_CONFIG_NOSYSTEM=1
     wamn_assert_identity
     wamn_dry_run
-    WAMN_GATE_STATUS=0
-    wamn_run format "${WAMN_FORMAT[@]}" || WAMN_GATE_STATUS=$?
+    WAMN_ACCEPTANCE_TEST_STATUS=0
+    wamn_run format "${WAMN_FORMAT[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
     wamn_assert_identity
-    wamn_run wash-runtime-fixtures "${WAMN_BUILD_FIXTURES[@]}" || WAMN_GATE_STATUS=$?
+    wamn_run wash-runtime-fixtures "${WAMN_BUILD_FIXTURES[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
     wamn_assert_identity
-    wamn_run wash-runtime-features "${WAMN_RUNTIME_FEATURES[@]}" || WAMN_GATE_STATUS=$?
-    wamn_run wash-runtime "${WAMN_RUNTIME_TEST[@]}" || WAMN_GATE_STATUS=$?
+    wamn_run wash-runtime-features "${WAMN_RUNTIME_FEATURES[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
+    wamn_run wash-runtime "${WAMN_RUNTIME_TEST[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
     wamn_assert_identity
-    wamn_run git-template-features "${WAMN_GIT_FIXTURE_FEATURES[@]}" || WAMN_GATE_STATUS=$?
-    wamn_run git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}" || WAMN_GATE_STATUS=$?
+    wamn_run git-template-features "${WAMN_GIT_FIXTURE_FEATURES[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
+    wamn_run git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}" || WAMN_ACCEPTANCE_TEST_STATUS=$?
     wamn_assert_identity
-    exit "$WAMN_GATE_STATUS"
+    exit "$WAMN_ACCEPTANCE_TEST_STATUS"
     ;;
 esac

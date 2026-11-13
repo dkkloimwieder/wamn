@@ -54,7 +54,7 @@ fn ensure_admin_statements_access_system_tables_only_through_grants() {
         sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::AuditRetention,
         ),
-        sql::revoke_public_connect_floor_sql().into(),
+        sql::revoke_public_connect_base_grants_sql().into(),
         sql::workload_generation_state_sql().into(),
         sql::role_database_grants_sql().into(),
         sql::public_connect_databases_sql().into(),

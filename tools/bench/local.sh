@@ -7,7 +7,7 @@ duration=60
 concurrency=16
 profile=false
 edge=true
-pg_floor=false
+pg_minimum=false
 app_path=false
 mix=false
 contention=false
@@ -22,7 +22,7 @@ while (($#)); do
       esac
       shift 2 ;;
     --app-path) app_path=true; shift ;;
-    --pg-floor) pg_floor=true; shift ;;
+    --pg-minimum) pg_minimum=true; shift ;;
     --profile) profile=true; shift ;;
     --no-edge) edge=false; shift ;;
     --duration-secs|--concurrency)
@@ -34,14 +34,14 @@ while (($#)); do
   esac
 done
 if $app_path; then
-  if $pg_floor; then
-    echo "--app-path cannot use --pg-floor" >&2
+  if $pg_minimum; then
+    echo "--app-path cannot use --pg-minimum" >&2
     exit 2
   fi
   edge=false
 fi
-if $pg_floor && $profile; then
-  echo "--pg-floor cannot use --profile" >&2
+if $pg_minimum && $profile; then
+  echo "--pg-minimum cannot use --profile" >&2
   exit 2
 fi
 if $profile; then
@@ -59,7 +59,7 @@ fi
 version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 test -n "$version"
 result_name="local-$version.json"
-if $pg_floor; then result_name="local-pg-$version.json"; fi
+if $pg_minimum; then result_name="local-pg-$version.json"; fi
 if $app_path; then result_name="local-app-$version.json"; fi
 export CARGO_TARGET_DIR="$repository/target"
 export TMPDIR=${TMPDIR:-/var/tmp}
@@ -182,8 +182,8 @@ if ! $ready; then
   docker logs "$prefix-postgres" >&2
   exit 1
 fi
-if $pg_floor; then
-  source tools/bench/pg-floor/run.sh
+if $pg_minimum; then
+  source tools/bench/pg-minimum/run.sh
   exit
 fi
 
@@ -237,13 +237,13 @@ echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
 
 # Use the deployed permission generator with the development identity's owner.
-read -r org project environment env_key < <(python3 - <<'IDENTITY'
+read -r org project environment project_env_key < <(python3 - <<'IDENTITY'
 import pathlib
 import re
 
 source = pathlib.Path("crates/control/dev/src/dev/environment.rs").read_text()
 values = []
-for name in ("ORG", "PROJECT", "ENVIRONMENT", "ENV_KEY"):
+for name in ("ORG", "PROJECT", "ENVIRONMENT", "PROJECT_ENV_KEY"):
     value, = re.findall(r'^pub const ' + name + r': &str = "([^"]+)";$', source, re.M)
     values.append(value)
 print(*values)
@@ -255,7 +255,7 @@ DATABASE_URL="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
     exit 1
   }
 "$bin/examples/event_broker_files" "$work" \
-  "$org" "$project" "$environment" "$env_key" 1 \
+  "$org" "$project" "$environment" "$project_env_key" 1 \
   "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
 event_memory=$(python3 - "$work" "$prefix-events" <<'CONFIGURATION'
 import pathlib

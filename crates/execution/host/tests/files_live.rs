@@ -49,7 +49,7 @@ mod files;
 mod session_fixture;
 #[path = "../../../control/environment/tests/support/file_package/signed_read.rs"]
 mod signed_read;
-use application_fixture::{ApplicationHost, ENV_KEY, MEMBER, PROJECT, READ};
+use application_fixture::{ApplicationHost, MEMBER, PROJECT, PROJECT_ENV_KEY, READ};
 use session_fixture::{ORG, claims, header, signed};
 
 fn attachment(action: &str) -> String {
@@ -73,9 +73,11 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&serde_json::to_value(manifest)?),
         "native files fixture",
-        ReleaseScope::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
-            "files":{"packages":["session_test"],"connections":{}}
-        }))?),
+        ReleaseScope::new(PROJECT_ENV_KEY, "dev").with_applications(serde_json::from_value(
+            json!({
+                "files":{"packages":["session_test"],"connections":{}}
+            }),
+        )?),
     )?))
 }
 
@@ -131,7 +133,7 @@ impl FileHost {
             writer.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)",
                 &[&row.get::<_,String>(0),&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(5)]).await?;
         }
-        host.admin.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&release.manifest().canonical_bytes()]).await?;
+        host.admin.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&release.manifest().canonical_bytes()]).await?;
         let component = release
             .manifest()
             .components
@@ -143,9 +145,9 @@ impl FileHost {
             ("files-no-cdn", "files-no-cdn", "write"),
         ] {
             let id: String=host.admin.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1",&[&name]).await?.get(0);
-            host.admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)",&[&ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
-            host.admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&id]).await?;
-            host.admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
+            host.admin.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)",&[&PROJECT_ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
+            host.admin.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&id]).await?;
+            host.admin.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
         }
         let credentials = Arc::new(
             ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG).with_store(
@@ -159,14 +161,14 @@ impl FileHost {
             Publisher::default(),
             credentials,
             Arc::clone(&postgres),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             PROJECT,
             "dev",
         ));
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
             Arc::clone(&facts),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             PROJECT,
             Some(Arc::clone(&release)),
         ));
@@ -596,7 +598,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     // A second host must skip a pass while the first host holds the lease.
     let lease = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Some(lease) = fixture.postgres.file_collection(PROJECT, ENV_KEY).await? {
+            if let Some(lease) = fixture
+                .postgres
+                .file_collection(PROJECT, PROJECT_ENV_KEY)
+                .await?
+            {
                 return anyhow::Ok(lease);
             }
             tokio::task::yield_now().await;
@@ -1189,8 +1195,8 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     fixture.host.admin.batch_execute("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: "file_referenced_delete",
         },
         CredentialGeneration::A,
@@ -1242,7 +1248,7 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
 #[test]
 fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -> anyhow::Result<()>
 {
-    let package = signed_read::signed_read_fixture(ENV_KEY)?;
+    let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
     let serving = package
         .release
         .manifest()
@@ -1281,7 +1287,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 
-    let package = signed_read::signed_read_fixture(ENV_KEY)?;
+    let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
     let fixture =
         FileHost::start_with_release("package_signed_file", Arc::clone(&package.release)).await?;
     let bytes = b"private bytes returned by the package's signed read";
@@ -1330,7 +1336,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
                 ORG,
             )),
             Arc::clone(&fixture.postgres),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             PROJECT,
             "dev",
         )),

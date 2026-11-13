@@ -277,7 +277,7 @@ mod tests {
         normalize_component_fact(
             ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_owned(),
+                    project_env_key: "org-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),
                 },

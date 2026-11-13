@@ -1,6 +1,6 @@
 //! The command line for the one-shot control-plane verbs.
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! The four control crates own the control operations. This crate holds the clap argument
 //! definitions, the printed output, and the exit codes. Each verb parses its
