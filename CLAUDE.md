@@ -120,7 +120,7 @@ Use [running tests](docs/operations/running-tests.md) for test commands, require
 Read [building](docs/operations/building.md) for artifact commands and [deployment](docs/operations/deployment.md) for deployed environments.
 Build debug artifacts by default with `cargo build` or `cargo test`.
 Use `--release` only when the selected test needs release artifacts.
-The deployed tests use the Docker image targets `--target host` and `--target gates`.
+The deployed host uses the Docker image target `--target host`.
 A journey test drives the product's own deploy path, which is the `wamn` commands and control routes that clients use, and it asserts the end state (owner ruling 2026-11-04).
 Test code that does again what the product does is deleted, not fixed or hardened.
 If the product cannot drive a step that a journey needs, that is a product gap: file it as a bead against the deploy routes (Track 2), and do not compensate in test code.

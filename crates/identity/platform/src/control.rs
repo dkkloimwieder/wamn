@@ -261,9 +261,7 @@ pub async fn control_session_is_active(
     client: &(impl GenericClient + Sync),
     claims: &SessionClaims,
 ) -> Result<bool, IdentityError> {
-    let SessionAuthority::Login(login) = &claims.authority else {
-        return Ok(false);
-    };
+    let SessionAuthority::Login(login) = &claims.authority;
     if control_audience_org(&claims.aud) != Some(claims.org.as_str()) {
         return Ok(false);
     }

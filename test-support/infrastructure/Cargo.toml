@@ -31,7 +31,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 wamn-control-provision = { workspace = true }
-wamn-authoring-model = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-control = { workspace = true }
@@ -39,10 +38,6 @@ tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "ti
 url = { workspace = true }
 tokio-postgres = { workspace = true }
 wamn-test-postgres = { workspace = true }
-
-[dev-dependencies]
-wamn-environment-control = { workspace = true }
-wamn-dev-control = { workspace = true }
 
 [lints]
 workspace = true

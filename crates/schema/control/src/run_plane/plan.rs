@@ -14,8 +14,7 @@ use super::schema::{
 
 use super::{
     BareSchemaName, RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, SCENARIO_AUTHOR_ROLE,
-    ensure_scenario_author_role_sql, rewrite_schema,
+    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, rewrite_schema,
 };
 
 use super::declarations::{
@@ -83,9 +82,9 @@ fn repair_run_capture_privilege_sql(
         "LOCK TABLE {qualified} IN ACCESS EXCLUSIVE MODE; \
          REVOKE SELECT ({all_columns}), INSERT ({all_columns}), \
                 UPDATE ({all_columns}), REFERENCES ({all_columns}) \
-           ON TABLE {qualified} FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
+           ON TABLE {qualified} FROM PUBLIC, wamn_app; \
          REVOKE ALL PRIVILEGES ON TABLE {qualified} \
-           FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
+           FROM PUBLIC, wamn_app; \
          GRANT SELECT, DELETE ON TABLE {qualified} TO wamn_app; \
          DO $run_retention_acl$ BEGIN \
            IF EXISTS (SELECT FROM pg_catalog.pg_roles \
@@ -100,7 +99,7 @@ fn repair_run_capture_privilege_sql(
          DO $run_capture_acl$ BEGIN \
            IF EXISTS ( \
                 SELECT 1 \
-                  FROM unnest(ARRAY['wamn_app','{SCENARIO_AUTHOR_ROLE}']) actor, \
+                  FROM unnest(ARRAY['wamn_app']) actor, \
                        unnest(ARRAY['INSERT','UPDATE']) privilege \
                  WHERE pg_catalog.has_any_column_privilege( \
                    actor, '{qualified}', privilege)) \
@@ -129,15 +128,6 @@ fn repair_run_capture_privilege_sql(
                       'wamn_app', '{qualified}', privilege)) \
               OR EXISTS ( \
                    SELECT 1 \
-                     FROM unnest(ARRAY[ \
-                       'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                    WHERE pg_catalog.has_table_privilege( \
-                      '{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
-              OR pg_catalog.has_any_column_privilege( \
-                   '{SCENARIO_AUTHOR_ROLE}', '{qualified}', \
-                   'SELECT,INSERT,UPDATE,REFERENCES') \
-              OR EXISTS ( \
-                   SELECT 1 \
                      FROM pg_catalog.pg_class relation \
                      CROSS JOIN LATERAL pg_catalog.aclexplode( \
                        COALESCE(relation.relacl, \
@@ -148,7 +138,7 @@ fn repair_run_capture_privilege_sql(
                     FROM pg_catalog.pg_class relation \
                     JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
                    WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
-                   IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}') \
+                   IN ('wamn_app') \
            THEN RAISE EXCEPTION USING ERRCODE = '42501', \
                 MESSAGE = 'run-capture-author-sql-write-authority'; \
            END IF; \
@@ -179,22 +169,13 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 
     observed(&obs.authoring_table_privileges, "PUBLIC") != BTreeSet::new()
         || observed(&obs.authoring_table_privileges, "wamn_app") != expected(&["SELECT", "DELETE"])
-        || observed(&obs.authoring_table_privileges, SCENARIO_AUTHOR_ROLE) != BTreeSet::new()
         || observed(&obs.authoring_effective_table_privileges, "wamn_app")
             != expected(&["SELECT", "DELETE"])
-        || observed(
-            &obs.authoring_effective_table_privileges,
-            SCENARIO_AUTHOR_ROLE,
-        ) != BTreeSet::new()
         || observed(&obs.authoring_effective_column_privileges, "wamn_app") != expected(&["SELECT"])
-        || observed(
-            &obs.authoring_effective_column_privileges,
-            SCENARIO_AUTHOR_ROLE,
-        ) != BTreeSet::new()
         || obs
             .authoring_table_owners
             .get(&(schema.as_str().to_string(), "runs".to_string()))
-            .is_some_and(|owner| owner == "wamn_app" || owner == SCENARIO_AUTHOR_ROLE)
+            .is_some_and(|owner| owner == "wamn_app")
         || obs.app_run_capture_privileges.0
         || obs.app_run_capture_privileges.1
         || !obs.app_run_capture_privileges.2
@@ -224,26 +205,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         .is_some_and(|columns| columns.contains("capture_mode"));
     let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
 
-    // The standalone record files grant schema visibility to this reserved
-    // role, so it must exist (and remain non-login/non-bypass) before a missing
-    // schema header executes. It intentionally owns no project-plane table read.
-    if obs
-        .scenario_author_role
-        .is_none_or(|role| !role.is_host_only())
-    {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureScenarioAuthorRole,
-            target: SCENARIO_AUTHOR_ROLE.to_string(),
-            sql: ensure_scenario_author_role_sql().to_string(),
-        });
-    }
-    if obs.app_is_scenario_author_member {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
-            target: "wamn_app-membership".to_string(),
-            sql: format!("REVOKE {SCENARIO_AUTHOR_ROLE} FROM wamn_app"),
-        });
-    }
     if capture_mode_present && run_capture_privileges_drifted {
         let available_columns = obs
             .tables
@@ -353,28 +314,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
-    // The host-only role needs schema visibility even when an existing schema
-    // receives only a newly missing table section (record table sections do
-    // not replay file headers). Catalog from-zero carries its header grant;
-    // an existing catalog is repaired explicitly.
-    if !obs.scenario_author_schema_usage.contains(schema.as_str()) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
-            target: format!("{}.usage", schema.as_str()),
-            sql: format!(
-                "GRANT USAGE ON SCHEMA {} TO {SCENARIO_AUTHOR_ROLE}",
-                schema.quoted()
-            ),
-        });
-    }
-    if obs.catalog_schema_present && !obs.scenario_author_schema_usage.contains("catalog") {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairAuthoringPrivilege,
-            target: "catalog.usage".to_string(),
-            sql: format!("GRANT USAGE ON SCHEMA catalog TO {SCENARIO_AUTHOR_ROLE}"),
-        });
-    }
-
     // Converge direct grants exactly on the narrow authoring surface. PUBLIC
     // and the guest-visible role are part of the expected map so a stale grant
     // cannot survive an otherwise current schema.
@@ -391,12 +330,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if !present {
             continue;
         }
-        let direct_grantees: &[&str] = &["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE];
-        let effective_grantees: &[&str] = &["wamn_app", SCENARIO_AUTHOR_ROLE];
+        let direct_grantees: &[&str] = &["PUBLIC", "wamn_app"];
+        let effective_grantees: &[&str] = &["wamn_app"];
         let expected_for = |grantee: &str| -> BTreeSet<String> {
             let privileges = match grantee {
                 "wamn_app" => spec.app,
-                SCENARIO_AUTHOR_ROLE => spec.author,
                 "PUBLIC" => &[],
                 _ => unreachable!("closed authoring grantee set"),
             };
@@ -460,13 +398,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 .map(|grantee| format!("REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM {grantee}"))
                 .collect::<Vec<_>>()
                 .join("; ");
-            for (grantee, privileges) in
-                [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)]
             {
+                let privileges = spec.app;
                 if !privileges.is_empty() {
                     write!(
                         sql,
-                        "; GRANT {} ON TABLE {qualified} TO {grantee}",
+                        "; GRANT {} ON TABLE {qualified} TO wamn_app",
                         privileges.join(", ")
                     )
                     .expect("writing to a String cannot fail");
@@ -481,7 +418,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         for grantee in effective_grantees.iter().copied() {
             let expected = match grantee {
                 "wamn_app" => spec.app,
-                SCENARIO_AUTHOR_ROLE => spec.author,
                 _ => unreachable!("closed effective grantee set"),
             };
             for privilege in TABLE_PRIVILEGE_TYPES {

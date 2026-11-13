@@ -512,16 +512,6 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
             .expect_redacted("control authority")
     );
 
-    let pat = issue_pat(
-        &fixture.system.client,
-        user.id(),
-        "control test",
-        Duration::from_secs(3600),
-    )
-    .await
-    .expect_redacted("user PAT");
-    super::refuse(&https, pat.token(), CONTROL).await;
-
     let renewed = body(
         post(
             &https,

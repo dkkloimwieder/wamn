@@ -1,13 +1,11 @@
 # Cluster tests
 
 Use the [platform deployment test](running-tests.md#platform-and-environment-apply-on-kind) for the product platform command.
-The [registry image archive test](running-tests.md#registry-image-archive-in-kind) retains its own cluster.
 Choose an [output directory](running-tests.md#capture-a-run) and follow the [cleanup](running-tests.md#cleanup) procedure.
 
 DEP2-02 removes the Receiving, WMS, RC, and combined identity/session cluster runners.
 [Removed coverage](running-tests.md#removed-application-cluster-coverage) records the historical combinations without replacements.
 [Native application tests](running-tests.md#local-application-business-tests) retain the business fixtures.
-Native identity, session, socket, and trace tests also remain.
 
 ### Deployed queue recovery on wamn-dev
 

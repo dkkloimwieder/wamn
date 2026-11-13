@@ -226,7 +226,10 @@ fn base_and_overlay_project_admitted_routes() {
         assert!(first.manifest.components.iter().any(|component| {
             component.package_id == route.package_id
                 && component.descriptor.component == route.component
-                && component.operations.contains_key(&route.operation)
+                && component
+                    .descriptor
+                    .operations
+                    .contains_key(&route.operation)
         }));
         let contract = &kinds[&(route.package_id.clone(), route.operation.clone())];
         assert_ne!(contract.kind, OperationType::EventHandler);

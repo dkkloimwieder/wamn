@@ -1,5 +1,8 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
+#[path = "../../../../../services/ctl/src/route_request.rs"]
+mod route_request;
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -145,7 +148,7 @@ impl Journey<'_> {
             self.client.post(endpoint).json(body)
         } else {
             let query =
-                wamn_client::encode_read_query(body[0].as_object().context("read request")?);
+                route_request::encode_read_query(body[0].as_object().context("read request")?);
             self.client.get(format!("{endpoint}?{query}"))
         };
         let response = request.bearer_auth(self.token).send().await?;

@@ -332,11 +332,20 @@ async fn operator_pat_issuance_over_https() {
         "refused callers cannot change any system row"
     );
 
-    let user_pat = success(
+    assert_failure(
+        request(&authorized, &process.endpoint, user.id(), "user", 3600)
+            .send()
+            .await
+            .expect_redacted("user PAT refusal"),
+        400,
+        INVALID,
+    )
+    .await;
+    let service_pat = success(
         &authorized,
         &process.endpoint,
-        user.id(),
-        "  operator user  ",
+        machine.id(),
+        "  operator service  ",
         &system,
     )
     .await;
@@ -357,7 +366,7 @@ async fn operator_pat_issuance_over_https() {
             "PAT refusal",
             3600,
         )
-        .bearer_auth(user_pat["token"].as_str().expect("PAT string"))
+        .bearer_auth(service_pat["token"].as_str().expect("PAT string"))
         .send()
         .await
         .expect_redacted("PAT cannot authenticate an operator"),
@@ -376,7 +385,7 @@ async fn operator_pat_issuance_over_https() {
         "PAT issuance cannot create principals, roles, or membership grants"
     );
 
-    let token = user_pat["token"].as_str().expect("PAT string");
+    let token = service_pat["token"].as_str().expect("PAT string");
     let mut forged = token.to_owned();
     let end = forged.pop().expect("token secret");
     forged.push(if end == 'a' { 'b' } else { 'a' });
@@ -387,7 +396,7 @@ async fn operator_pat_issuance_over_https() {
             .is_none(),
         "known prefix alone is insufficient"
     );
-    let prefix = user_pat["token_prefix"].as_str().expect("PAT prefix");
+    let prefix = service_pat["token_prefix"].as_str().expect("PAT prefix");
     revoke_pat(&system, prefix, &mut AuthDrops::default())
         .await
         .expect_redacted("revoke service-issued PAT");
@@ -724,16 +733,6 @@ async fn public_routes(endpoint: &str, client: &reqwest::Client) {
     let value: Value = serde_json::from_slice(&response.bytes().await.expect_redacted("JWKS body"))
         .expect_redacted("public JWKS JSON");
     assert_eq!(value["keys"].as_array().expect("public keys").len(), 1);
-    assert_failure(
-        client
-            .post(format!("{endpoint}/session"))
-            .send()
-            .await
-            .expect_redacted("anonymous exchange reaches bearer authentication"),
-        401,
-        "{\"error\":\"unauthorized\"}",
-    )
-    .await;
 }
 
 async fn snapshots(system: &Client, exclude_pats: bool) -> Vec<Vec<String>> {

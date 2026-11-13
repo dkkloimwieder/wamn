@@ -518,16 +518,17 @@ pub fn validate_local_facts(
             .context("local component is outside the manifest")?;
         anyhow::ensure!(
             projected.descriptor.component_digest.as_str() == fact.component_digest
-                && projected.operations.len() == fact.operations.len(),
+                && projected.descriptor.operations.len() == fact.operations.len(),
             "local component differs from its manifest projection"
         );
         for (name, operation) in &fact.operations {
             let selected = projected
+                .descriptor
                 .operations
                 .get(name)
                 .context("local operation is outside the manifest")?;
             anyhow::ensure!(
-                selected.carries(operation),
+                selected == operation,
                 "local operation differs from its manifest projection"
             );
         }
@@ -723,10 +724,7 @@ mod tests {
 
     fn fixture() -> (super::LocalApplicationFacts, wamn_catalog::ServingManifest) {
         use std::collections::{BTreeMap, BTreeSet};
-        use wamn_catalog::{
-            PackageCoordinate, ServingComponent, ServingComponentOperation, ServingManifest,
-            ServingRelease,
-        };
+        use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
             "scope": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
         })).unwrap(), format!("sha256:{}", "7".repeat(64)), Vec::new(), Vec::new()).unwrap().component;
@@ -734,25 +732,7 @@ mod tests {
             ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
             },
-            BTreeSet::from([ServingComponent {
-                runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
-                package_id: "orders".to_owned(),
-                operations: BTreeMap::from([(
-                    "run".to_owned(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: wamn_catalog::ComponentDescriptor::named(
-                    "transform",
-                    "0.1.0",
-                    component.component_digest.clone(),
-                ),
-            }]),
+            BTreeSet::from([ServingComponent::project(&component, Vec::new()).unwrap()]),
             BTreeSet::new(),
             BTreeMap::new(),
         )

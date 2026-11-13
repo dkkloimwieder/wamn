@@ -131,7 +131,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
             "expected_row_version":1, "change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}
         }])).await?;
         ensure!(updated[0]["value"]["row_version"] == 2, "the authenticated command did not commit its revision");
-        require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
+        require_local_facts(root, &environment.route.database_url).await?;
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
@@ -196,7 +196,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "an edited applied migration must create a new target instance: instance {} after {}, skipped {:?}", reset.instance, first.instance, reset.skipped);
         reset.locations(token, &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
-        require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
+        require_local_facts(root, &environment.route.database_url).await?;
         ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");
         Ok::<_, anyhow::Error>(())
     }.await;
@@ -246,11 +246,7 @@ async fn location_note(url: &str) -> anyhow::Result<bool> {
     Ok(present)
 }
 
-async fn require_local_facts(
-    root: &Path,
-    control: &tokio_postgres::Client,
-    target_url: &str,
-) -> anyhow::Result<()> {
+async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()> {
     let bytes = fs::read(
         root.join("local-artifacts")
             .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
@@ -265,7 +261,6 @@ async fn require_local_facts(
         !facts.applications.is_empty(),
         "dev host declares no local application"
     );
-    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE env_key=$1 AND command_type='publish'", &[&identity().env_key().as_str()]).await?.get(0);
     let (target, task) = connect(target_url).await?;
     let wirings: i64 = target
         .query_one(
@@ -287,7 +282,7 @@ async fn require_local_facts(
         .collect::<Vec<_>>();
     task.abort();
     ensure!(
-        published == 0 && wirings == 0,
+        wirings == 0,
         "local execution wrote permanent publication facts"
     );
     ensure!(

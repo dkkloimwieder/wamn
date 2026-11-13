@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::{AdmittedComponent, ServingComponent, ServingComponentOperation};
+use wamn_catalog::{AdmittedComponent, ServingComponent};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -65,7 +65,6 @@ impl std::fmt::Debug for NativePolicyResources {
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
-    operations: BTreeMap<String, ServingComponentOperation>,
     statements: BTreeMap<String, PreparedStatementSet>,
     /// Signing authority comes only from the release-pinned descriptor.
     signed_results: BTreeMap<String, wamn_catalog::SignedFileReads>,
@@ -148,6 +147,7 @@ pub(super) fn new_native_policy(
                 served.package_id == fact.scope.package_id
                     && served.descriptor.component == fact.component
                     && served.descriptor.component_digest.as_str() == fact.component_digest
+                    && served.descriptor.operations == fact.operations
             })
             .context("component-not-in-carried-release")
     };
@@ -162,7 +162,6 @@ pub(super) fn new_native_policy(
             Ok::<_, anyhow::Error>(Arc::new(ComponentPolicy {
                 signed_results,
                 fact: fact.clone(),
-                operations: served.operations.clone(),
                 statements: prepare_statement_sets(served, &manifest.routes),
                 members,
                 runtime_schema: served.runtime_schema.clone(),
@@ -243,14 +242,10 @@ impl NativePolicy {
                 && acquisition.claims.project.as_deref() == Some(self.resources.project.as_str()),
             "native-invocation-component-identity-mismatch"
         );
-        anyhow::ensure!(
-            fact.operation(operation).is_some(),
-            "native invocation operation is not admitted"
-        );
-        let released = component
+        let released = fact
             .operations
             .get(operation)
-            .context("native invocation operation is not released")?;
+            .context("native invocation operation is not admitted")?;
         authorize_released_operation(facts.caller.as_ref(), released)?;
         Ok(Arc::clone(component))
     }

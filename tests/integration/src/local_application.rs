@@ -42,8 +42,6 @@ pub struct LocalApplicationRuntime {
     pub queue: LocalQueue,
 }
 
-/// What a queue service of the local release binds: its router, its
-/// PostgreSQL adapter and the release itself.
 #[derive(Clone)]
 pub struct LocalQueue {
     pub driver: Arc<wamn_workflow::RouterDriver>,
@@ -150,7 +148,7 @@ impl LocalApplication {
             caller_role,
             component_digests,
         } = assembly::assemble(config).await?;
-        let queue = runtime.queue.clone();
+        let queue = runtime.queue;
         let (endpoint, task) = serve_with_plugins(
             Arc::clone(&runtime.engine),
             runtime.flow_http.clone(),
@@ -171,33 +169,6 @@ impl LocalApplication {
             queue,
             task,
         })
-    }
-
-    /// Start through the authenticated host route served by this fixture.
-    pub async fn start_workflow(
-        &self,
-        application: &str,
-        workflow: &str,
-        input: &serde_json::Value,
-        key: &str,
-    ) -> anyhow::Result<String> {
-        let response = reqwest::Client::new()
-            .post(format!("{}/wamn_control/workflow/start", self.endpoint))
-            .header("Host", &self.route_host)
-            .bearer_auth(&self.bearer)
-            .json(&serde_json::json!([{"request_id": key, "value": {
-                "application": application, "workflow_id": workflow,
-                "input_json": input, "idempotency_key": key,
-            }}]))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<serde_json::Value>()
-            .await?;
-        response[0]["value"]["run_id"]
-            .as_str()
-            .map(str::to_owned)
-            .with_context(|| format!("workflow.start refused: {response}"))
     }
 
     pub async fn shutdown(mut self) -> anyhow::Result<()> {

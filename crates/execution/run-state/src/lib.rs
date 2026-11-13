@@ -30,8 +30,6 @@
 pub mod authority_class;
 /// The two reusable credential-generation slots.
 mod credential_generation;
-/// The durability class a run was admitted under.
-pub mod durability;
 /// The intent store case set that every store runs.
 #[cfg(feature = "test-util")]
 pub mod intent_cases;
@@ -40,8 +38,6 @@ pub mod intent_store;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
 /// call after every step.
 pub mod invariants;
-/// Versioned identity shared by persisted admission and trusted effect calls.
-pub mod invocation_context;
 /// Evidence basis for operator resolution of intents.
 pub mod operator_action;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
@@ -50,9 +46,6 @@ pub mod queue;
 pub mod redaction;
 /// The queued-run lifecycle as a storage trait.
 pub mod run_store;
-/// Contract-owned helpers for checking repository stand-in schemas.
-#[cfg(feature = "test-util")]
-pub mod schema_drift;
 /// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;
@@ -64,7 +57,6 @@ pub mod transitions;
 
 pub use authority_class::AuthorityClass;
 pub use credential_generation::CredentialGeneration;
-pub use durability::DurabilityClass;
 pub use intent_store::IntentStore;
 pub use run_store::RunStore;
 pub use status::{FailType, NodeErrorType, NodeRunStatus, RunStatus};

@@ -4,7 +4,7 @@ use super::{DB_OWNER_ROLE, quote_ident};
 
 /// Idempotently create or harden the database-owner role [`DB_OWNER_ROLE`] as
 /// NOLOGIN, under the shared `wamn_role_bootstrap` advisory lock — the
-/// [`super::ensure_control_author_acl_role_sql`] shape, so a replay that finds a
+/// shared role bootstrap shape, so a replay that finds a
 /// drifted attribute re-`ALTER`s it instead of reporting success.
 ///
 /// **Zero grants, zero memberships, no generation pair.** The role exists only

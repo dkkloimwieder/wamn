@@ -3,7 +3,7 @@
 //! It uses a superuser connection to a database on the PostgreSQL server of its
 //! test process.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use tokio_postgres::{Client, NoTls};
 
@@ -21,7 +21,7 @@ const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABL
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
-const AUTHOR_SQL_ROLES: [&str; 2] = ["wamn_app", "wamn_control_author"];
+const AUTHOR_SQL_ROLES: [&str; 1] = ["wamn_app"];
 
 #[derive(Debug, PartialEq, Eq)]
 struct PortableFingerprint {
@@ -61,23 +61,14 @@ async fn prepare_scratch_database(client: &Client) {
                    INHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    INHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               ELSE ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
+                \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_run_projection_writer') THEN \
                  CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_control_author') THEN \
-                 CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               ELSE ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
+                \
              END $$; \
-             REVOKE wamn_scenario_author FROM wamn_app; \
              DO $$ BEGIN \
                EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database()); \
@@ -202,13 +193,6 @@ async fn install_project_database(client: &Client, url: &str) {
     })
     .await
     .expect("apply the package-owned fixture migration stream");
-
-    // The management surface revokes and regrants across `catalog` as well as
-    // the run schema, so it must follow the catalog install, not precede it.
-    client
-        .batch_execute(&sql::grant_management_admitter_surface_sql("wamn_run"))
-        .await
-        .expect("install canonical management-admission authority");
 }
 
 /// Portable relations that live only in the control plane.
@@ -216,13 +200,11 @@ async fn install_project_database(client: &Client, url: &str) {
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 4] = [
-    "catalog.authoring_command_audit",
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] = [
     // The projected environment identity is a CONTROL fact: the project plane
     // has no `registry.project_envs` to project from, and its own catalog is
     // recreated per run (wamn-10yt.38).
     "catalog.tenant_environments",
-    "wamn_run.gate_reports",
     "wamn_authority.author_login_tenants",
 ];
 
@@ -298,7 +280,7 @@ async fn portable_fingerprints(
 /// The one author-writable relation outside row security.
 const WRITE_LOG: &str = "platform.write_log";
 
-async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
+async fn assert_author_sql_boundaries(client: &Client) {
     client
         .batch_execute("BEGIN READ ONLY")
         .await
@@ -343,10 +325,8 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
         )
         .await
         .expect("read author SQL mutation privileges");
-    let mut control_author_relations = BTreeSet::new();
     for row in rows {
         let relation: String = row.get(0);
-        let role: String = row.get(1);
         let forced_row_security: bool = row.get(2);
         // The write log has no tenant column and no row policy: the database is
         // the tenant (docs/architecture/data-access.md#the-write-log). Its
@@ -355,19 +335,7 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
             forced_row_security || relation == WRITE_LOG,
             "{relation} grants author SQL mutation without forced row security"
         );
-        if role == "wamn_control_author" {
-            control_author_relations.insert(relation);
-        }
     }
-    let expected = if control_database {
-        BTreeSet::from([
-            "catalog.authoring_command_audit".to_string(),
-            "wamn_run.gate_reports".to_string(),
-        ])
-    } else {
-        BTreeSet::new()
-    };
-    assert_eq!(control_author_relations, expected);
     client
         .batch_execute("ROLLBACK")
         .await
@@ -398,7 +366,7 @@ async fn protected_relations_match_reconciled_postgres() {
             .all(|fingerprint| !fingerprint.columns.is_empty()),
         "control-only portable relations must exist in the control plane: {control_only_fingerprints:?}"
     );
-    assert_author_sql_boundaries(&client, true).await;
+    assert_author_sql_boundaries(&client).await;
     install_project_database(&client, &url).await;
     let project_side_control_only =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
@@ -409,5 +377,5 @@ async fn protected_relations_match_reconciled_postgres() {
         "control-only portable relations must not be installed project-side: \
          {project_side_control_only:?}"
     );
-    assert_author_sql_boundaries(&client, false).await;
+    assert_author_sql_boundaries(&client).await;
 }

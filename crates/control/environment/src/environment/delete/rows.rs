@@ -3,8 +3,6 @@
 use anyhow::Context as _;
 use wamn_control_registry::Triple;
 
-use super::{CONTROL_TABLES, delete_control_rows_sql};
-
 /// Destroy credential files and remove the environment's registry rows last.
 /// The caller holds the lifecycle lock and removes external resources first.
 /// SQL changes roll back if file cleanup fails or this operation is cancelled.
@@ -33,14 +31,6 @@ pub async fn delete_registry_rows(
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
-    for (table, trigger) in CONTROL_TABLES {
-        for statement in delete_control_rows_sql(table, trigger, &env_key) {
-            transaction
-                .execute(statement.as_str(), &[])
-                .await
-                .with_context(|| format!("delete the control rows of {table}"))?;
-        }
-    }
     let credentials = transaction
         .query(
             wamn_control_registry::sql::delete_environment_connections_sql(),

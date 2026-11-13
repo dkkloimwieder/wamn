@@ -365,21 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn a_retired_workflow_http_attachment_does_not_render_the_http_role() {
-        let value = serde_json::json!({
-            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},
-            "components":[],"routes":[],"attachments":{},
-            "workflow":{"attachments":{"orders-http":{"type":"http","wiring-id":"orders"}}}
-        });
-        let (manifest, _) =
-            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&value))
-                .unwrap();
-        let roles = roles(&manifest, "acme", "orders", "dev");
-        assert!(roles.is_empty());
-    }
-
-    #[test]
     fn the_named_application_supplies_the_http_statement_instances() {
         let mut manifest: ServingManifest = serde_json::from_value(serde_json::json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -404,7 +389,6 @@ mod tests {
             manifest.components.insert(wamn_catalog::ServingComponent {
                 package_id: "wamn_wms".into(),
                 descriptor: wamn_catalog::ComponentDescriptor::named(name, "0.1", DIGEST),
-                operations: BTreeMap::new(),
                 runtime_schema: None,
                 statement_instances: imports
                     .into_iter()

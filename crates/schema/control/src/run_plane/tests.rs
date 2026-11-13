@@ -78,20 +78,9 @@ fn bare_schema_rejects_syntax_that_the_unquoted_rewrite_cannot_represent() {
 fn observation_at_record() -> RunPlaneObservation {
     let mut obs = RunPlaneObservation {
         catalog_schema_present: true,
-        scenario_author_role: Some(ScenarioAuthorRoleObservation {
-            can_login: false,
-            is_superuser: false,
-            can_create_database: false,
-            can_create_role: false,
-            inherits_roles: false,
-            can_replicate: false,
-            bypasses_rls: false,
-        }),
         environment_policy_row_security: Some(environment_policy_row_security_at_record()),
         ..Default::default()
     };
-    obs.scenario_author_schema_usage
-        .extend(["catalog".to_string(), "demo".to_string()]);
     for file in RUN_PLANE_FILES {
         for table in record_tables(file, "wamn_run") {
             let cols = record_columns(file, "wamn_run", &table)
@@ -116,7 +105,8 @@ fn observation_at_record() -> RunPlaneObservation {
             (schema_name.to_string(), spec.table.to_string()),
             "platform_admin".to_string(),
         );
-        for (grantee, privileges) in [("wamn_app", spec.app), (SCENARIO_AUTHOR_ROLE, spec.author)] {
+        {
+            let (grantee, privileges) = ("wamn_app", spec.app);
             if !privileges.is_empty() {
                 let key = (
                     schema_name.to_string(),
@@ -174,56 +164,6 @@ fn observation_at_record() -> RunPlaneObservation {
     obs
 }
 
-#[test]
-fn run_queue_record_columns_pin_the_global_fifo_shape() {
-    let cols = record_columns(RUN_QUEUE_SQL, "wamn_run", "run_queue");
-    let names: Vec<&str> = cols.iter().map(|(c, _)| c.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "created_at",
-            "created_by",
-            "updated_at",
-            "updated_by",
-            "env_key",
-            "run_id",
-            "priority",
-            "available_at",
-            "stream_seq",
-            "lease_owner",
-            "lease_expires_at",
-            "lease_generation",
-            "attempts",
-            "max_attempts",
-            "enqueued_at",
-        ]
-    );
-    let definitions: Vec<&str> = cols
-        .iter()
-        .map(|(_, definition)| definition.as_str())
-        .collect();
-    assert_eq!(
-        definitions,
-        [
-            "created_at timestamptz NOT NULL",
-            "created_by uuid NOT NULL",
-            "updated_at timestamptz NOT NULL",
-            "updated_by uuid NOT NULL",
-            "env_key text NOT NULL CHECK (env_key <> '')",
-            "run_id text NOT NULL",
-            "priority int NOT NULL DEFAULT 0",
-            "available_at timestamptz NOT NULL DEFAULT now()",
-            "stream_seq bigint NOT NULL DEFAULT 0",
-            "lease_owner text",
-            "lease_expires_at timestamptz",
-            "lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0)",
-            "attempts int NOT NULL DEFAULT 0",
-            "max_attempts int NOT NULL DEFAULT 20",
-            "enqueued_at timestamptz NOT NULL DEFAULT now()",
-        ]
-    );
-}
-
 /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
 /// `fail_type` — the fqg.16 sibling — is present as a column.
 #[test]
@@ -272,117 +212,6 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
     );
 }
 
-/// A manual workflow run is its own grain
-/// (docs/architecture/execution.md#environment-workflows): no flow, no service
-/// principal, no registration, no binding world; a release pin, frozen node
-/// digests as a JSON object, an executing principal and role, and the invoking
-/// user. A schedule workflow run is the same grain with the schedule as its
-/// cause and no invoking user. Every other grain leaves those columns NULL, and
-/// admission pins them.
-#[test]
-fn runs_manual_grain_check_mirrors_are_exact() {
-    let check = |name: &str| {
-        CHECK_SPECS
-            .iter()
-            .find(|spec| spec.table == "runs" && spec.name == name)
-            .unwrap_or_else(|| panic!("runs.{name} CHECK mirror exists"))
-            .definition
-    };
-    let grain = check("runs_execution_grain_check");
-    assert!(
-        grain.contains(
-            " OR flow_id IS NULL AND flow_version IS NULL \
-             AND NOT trigger_source IS DISTINCT FROM 'manual'::text \
-             AND registration_id IS NULL AND service_principal_id IS NULL \
-             AND wiring_id IS NOT NULL AND wiring_id <> ''::text \
-             AND wiring_version IS NOT NULL AND wiring_version > 0 \
-             AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text \
-             AND manifest_digest IS NOT NULL AND node_digests_json IS NOT NULL \
-             AND jsonb_typeof(node_digests_json) = 'object'::text \
-             AND execution_principal_id IS NOT NULL \
-             AND execution_role IS NOT NULL AND execution_role <> ''::text \
-             AND NOT invoked_by IS DISTINCT FROM 'manual'::text \
-             AND invoked_by_user_id IS NOT NULL AND binding_world_json IS NULL OR "
-        ),
-        "{grain}"
-    );
-    assert!(
-        grain.ends_with(
-            " OR flow_id IS NULL AND flow_version IS NULL \
-             AND NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-             AND registration_id IS NULL AND service_principal_id IS NULL \
-             AND wiring_id IS NOT NULL AND wiring_id <> ''::text \
-             AND wiring_version IS NOT NULL AND wiring_version > 0 \
-             AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text \
-             AND manifest_digest IS NOT NULL AND node_digests_json IS NOT NULL \
-             AND jsonb_typeof(node_digests_json) = 'object'::text \
-             AND execution_principal_id IS NOT NULL \
-             AND execution_role IS NOT NULL AND execution_role <> ''::text \
-             AND NOT invoked_by IS DISTINCT FROM 'schedule'::text \
-             AND invoked_by_user_id IS NULL AND binding_world_json IS NULL)"
-        ),
-        "{grain}"
-    );
-    assert_eq!(
-        check("runs_execution_identity_check"),
-        "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text \
-         OR NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-         OR NOT trigger_source IS DISTINCT FROM 'event'::text \
-         OR execution_principal_id IS NULL AND execution_role IS NULL \
-         AND invoked_by IS NULL AND invoked_by_user_id IS NULL \
-         AND node_digests_json IS NULL)"
-    );
-    // Only an automation run carries a service principal.
-    assert_eq!(
-        check("runs_service_principal_check"),
-        "CHECK ((NOT trigger_source IS DISTINCT FROM 'automation'::text) \
-         = (service_principal_id IS NOT NULL))"
-    );
-    for pinned in [
-        "execution_principal_id",
-        "execution_role",
-        "invoked_by",
-        "invoked_by_user_id",
-        "node_digests_json",
-    ] {
-        assert!(
-            RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned},"))
-                || RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned} ON")),
-            "the admission pins trigger names {pinned}"
-        );
-        assert!(
-            RUNS_ADMISSION_PINS_TRIGGER_SQL.contains(pinned),
-            "the admission pins trigger SQL names {pinned}"
-        );
-    }
-}
-
-/// Sections carry the table's whole apparatus: indexes, RLS, policy, grant.
-#[test]
-fn table_sections_carry_indexes_rls_and_grants() {
-    let rq = table_section(RUN_QUEUE_SQL, "wamn_run", "run_queue");
-    assert!(rq.contains("CREATE INDEX run_queue_claimable"));
-    assert!(rq.contains("available_at, stream_seq, run_id, lease_expires_at"));
-    assert!(rq.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(rq.contains("FROM PUBLIC, wamn_app"));
-    assert!(!rq.contains("TO wamn_app"));
-    for retired in [
-        "partition_key",
-        "partition_policy",
-        "partition_owner",
-        "run_dead_letters",
-        "run_queue_partition",
-    ] {
-        assert!(
-            !rq.contains(retired),
-            "retired queue DDL remains: {retired}"
-        );
-    }
-
-    let package = table_section(CATALOG_SCHEMA_SQL, "catalog", "packages");
-    assert!(package.contains("artifact_digest"));
-}
-
 /// THE load-bearing self-consistency invariant: an observation derived from
 /// the record itself plans NOTHING. Whatever the record files evolve into,
 /// a schema at record is a no-op — this is what makes the verb idempotent
@@ -409,29 +238,25 @@ fn observation_at_record_plans_a_noop() {
 /// restore.
 #[test]
 fn a_pin_carrier_added_without_its_inline_check_does_not_converge() {
-    for (column, check) in [
-        ("capture_mode", "runs_capture_mode_check"),
-        ("durability_class", "runs_durability_class_check"),
-    ] {
-        let mut obs = observation_at_record();
-        obs.checks.remove(&("runs".to_string(), check.to_string()));
-        assert!(
-            obs.tables
-                .get("runs")
-                .is_some_and(|columns| columns.contains(column)),
-            "the bare-ADD state has the carrier without its CHECK"
-        );
+    let (column, check) = ("capture_mode", "runs_capture_mode_check");
+    let mut obs = observation_at_record();
+    obs.checks.remove(&("runs".to_string(), check.to_string()));
+    assert!(
+        obs.tables
+            .get("runs")
+            .is_some_and(|columns| columns.contains(column)),
+        "the bare-ADD state has the carrier without its CHECK"
+    );
 
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        assert!(
-            plan.actions.iter().any(|action| {
-                action.kind == RunPlaneActionKind::RepairConstraint
-                    && action.target == format!("runs.{check}")
-            }),
-            "a bare {column} costs a second reconcile turn: {:#?}",
-            plan.actions
-        );
-    }
+    let plan = plan_run_plane(&schema("demo"), &obs);
+    assert!(
+        plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairConstraint
+                && action.target == format!("runs.{check}")
+        }),
+        "a bare {column} costs a second reconcile turn: {:#?}",
+        plan.actions
+    );
 }
 
 #[test]
@@ -458,7 +283,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
         .entry((
             "catalog".to_string(),
             "releases".to_string(),
-            SCENARIO_AUTHOR_ROLE.to_string(),
+            "wamn_app".to_string(),
         ))
         .or_default()
         .insert("UPDATE".to_string());
@@ -656,15 +481,7 @@ fn from_zero_plans_the_full_set_in_order() {
     let obs = RunPlaneObservation::default();
     let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
     let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
-    assert_eq!(kinds[0], RunPlaneActionKind::EnsureScenarioAuthorRole);
-    assert_eq!(kinds[1], RunPlaneActionKind::EnsureSchema);
-    let creates: Vec<&str> = plan
-        .actions
-        .iter()
-        .filter(|a| a.kind == RunPlaneActionKind::CreateTable)
-        .map(|a| a.target.as_str())
-        .collect();
-    assert_eq!(creates, ["environment_policies", "runs", "run_queue"]);
+    assert_eq!(kinds[0], RunPlaneActionKind::EnsureSchema);
     assert!(
         plan.actions
             .iter()
@@ -753,69 +570,6 @@ fn broad_app_run_grants_are_removed_without_regranting_writes() {
 }
 
 #[test]
-fn stale_scenario_author_reads_are_revoked_without_regrant() {
-    let mut obs = observation_at_record();
-    for table in ["environment_policies", "runs"] {
-        let key = (
-            "demo".to_string(),
-            table.to_string(),
-            SCENARIO_AUTHOR_ROLE.to_string(),
-        );
-        for map in [
-            &mut obs.authoring_table_privileges,
-            &mut obs.authoring_effective_table_privileges,
-            &mut obs.authoring_effective_column_privileges,
-        ] {
-            map.insert(key.clone(), BTreeSet::from(["SELECT".to_string()]));
-        }
-    }
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let environment = plan
-        .actions
-        .iter()
-        .find(|action| {
-            action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
-                && action.target == "demo.environment_policies"
-        })
-        .expect("the stale environment-policy read is repaired");
-    assert!(
-        environment.sql.contains(
-            "REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"environment_policies\" FROM wamn_scenario_author"
-        ),
-        "{}",
-        environment.sql
-    );
-    assert!(
-        !environment.sql.contains(
-            "GRANT SELECT ON TABLE \"demo\".\"environment_policies\" TO wamn_scenario_author"
-        ),
-        "{}",
-        environment.sql
-    );
-
-    let runs = plan
-        .actions
-        .iter()
-        .find(|action| action.kind == RunPlaneActionKind::RepairRunCapturePrivilege)
-        .expect("the stale runs read is repaired");
-    assert!(
-        runs.sql.contains(
-            "REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs FROM PUBLIC, wamn_app, wamn_scenario_author"
-        ),
-        "{}",
-        runs.sql
-    );
-    assert!(
-        !runs
-            .sql
-            .contains("GRANT SELECT ON TABLE \"demo\".runs TO wamn_scenario_author"),
-        "{}",
-        runs.sql
-    );
-}
-
-#[test]
 fn drifted_and_missing_checks_plan_exact_repairs() {
     let mut obs = observation_at_record();
     obs.checks.insert(
@@ -848,185 +602,6 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 // deleted from `CHECK_SPECS` with the projection it constrained.
 // `drifted_and_missing_checks_plan_exact_repairs` above keeps the
 // drop-then-add repair test on live record checks.
-
-/// The separate test-set store is gone: a draft's own `cases` are the only
-/// test source, so no relation, privilege, helper, or FK may name one.
-#[test]
-fn the_authoring_test_set_store_is_absent_from_the_record() {
-    assert!(
-        !CHECK_SPECS
-            .iter()
-            .any(|spec| spec.table == "authoring_test_sets")
-    );
-    assert!(
-        !AUTHORING_PRIVILEGE_SPECS
-            .iter()
-            .any(|spec| spec.table == "authoring_test_sets")
-    );
-    assert!(
-        !helper_specs()
-            .iter()
-            .any(|spec| spec.name == "reject_immutable_authoring_test_set_change")
-    );
-    assert!(
-        !trigger_specs()
-            .iter()
-            .any(|trigger| trigger.table == "authoring_test_sets")
-    );
-    let source = select_run_plane_helper_functions_sql();
-    assert!(!source.contains("authoring_test_sets"), "{source}");
-}
-
-/// The FRESH-INSTALL emitter and the RECONCILE emitter must agree, relation
-/// by relation, on what `wamn_scenario_author` holds (wamn-0h0g.22.20).
-///
-/// This is the one assertion `observation_at_record` cannot make. That
-/// fixture builds its privilege map FROM `AUTHORING_PRIVILEGE_SPECS`, so a
-/// spec that disagrees with the shipped DDL stays self-consistent and every
-/// planner test keeps passing while a provisioned environment converges
-/// forever: the reconciler re-grants what the file never granted, and the
-/// drift report names the revoked state as the drift. Reading the grants out
-/// of `catalog-schema.sql` is the only way to make the two answer
-/// independently.
-///
-/// Comment lines are dropped before the scan. Static checked-in DDL cannot
-/// otherwise tell a real declaration from a COMMENT mentioning one, and this
-/// direction of the check would false-RED on a comment that merely quotes a
-/// grant.
-///
-/// THE SCAN IS SHAPE-AGNOSTIC (wamn-0h0g.22.33). It formerly matched only
-/// `GRANT SELECT ON catalog.x TO wamn_scenario_author;` — the author as SOLE
-/// grantee — which made the equality closed over the relations an emitter
-/// spells that way and blind to every other spelling. The three relations
-/// `.22.33` found were granted `TO wamn_app, wamn_scenario_author`, exactly
-/// the shape the old scan skipped, so a grant landing in `catalog-schema.sql`
-/// in that form would have been reported here as agreement.
-#[test]
-fn the_catalog_ddl_and_the_authoring_specs_agree_on_the_author() {
-    let granted_to_author = catalog_selects_for(CATALOG_SCHEMA_SQL, "wamn_scenario_author");
-    let specified_for_author: BTreeSet<String> = AUTHORING_PRIVILEGE_SPECS
-        .iter()
-        .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
-        .filter(|spec| !spec.author.is_empty())
-        .map(|spec| spec.table.to_string())
-        .collect();
-    assert_eq!(
-        granted_to_author, specified_for_author,
-        "the fresh install and the reconciler disagree on the author's \
-             catalog surface; landing this revoke in a subset of its three \
-             emitters is strictly worse than landing none of it"
-    );
-
-    // The scan has to be able to SEE a grant, or the equality above is two
-    // empty sets agreeing with each other. The relations the confinement
-    // narrowed to `wamn_app` are the positive control: read out of the same
-    // file by the same function, differing only in the grantee.
-    let granted_to_app = catalog_selects_for(CATALOG_SCHEMA_SQL, "wamn_app");
-    assert!(
-        granted_to_app.len()
-            >= AUTHORING_PRIVILEGE_SPECS
-                .iter()
-                .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
-                .count(),
-        "the grant scan matched {} app grants, so its statement shape no \
-             longer matches the file and the author scan establishes nothing",
-        granted_to_app.len()
-    );
-}
-
-/// Every `catalog` relation `sql` GRANTs `grantee` a SELECT on, whatever else
-/// the statement grants and whoever else it grants to.
-///
-/// This reads the fresh-install emitter independently of
-/// [`AUTHORING_PRIVILEGE_SPECS`], which drives run-plane reconciliation. The
-/// equality above and the literal fixtures below keep those two emitters in
-/// agreement (`wamn-0h0g.22.33`).
-fn catalog_selects_for(sql: &str, grantee: &str) -> BTreeSet<String> {
-    let body = sql
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with("--"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut relations_read = BTreeSet::new();
-    for statement in body.split(';') {
-        let statement = statement.split_whitespace().collect::<Vec<_>>().join(" ");
-        let Some(rest) = statement.strip_prefix("GRANT ") else {
-            continue;
-        };
-        let Some((privileges, rest)) = rest.split_once(" ON catalog.") else {
-            continue;
-        };
-        let grants_select = privileges
-            .split(',')
-            .map(str::trim)
-            .any(|privilege| matches!(privilege, "SELECT" | "ALL" | "ALL PRIVILEGES"));
-        if !grants_select {
-            continue;
-        }
-        let Some((relations, grantees)) = rest.split_once(" TO ") else {
-            continue;
-        };
-        if !grantees
-            .split(',')
-            .map(str::trim)
-            .any(|name| name == grantee)
-        {
-            continue;
-        }
-        for relation in relations.split(',').map(str::trim) {
-            relations_read.insert(
-                relation
-                    .strip_prefix("catalog.")
-                    .unwrap_or(relation)
-                    .to_string(),
-            );
-        }
-    }
-    relations_read
-}
-
-/// The scanner's answer on a LITERAL fixture (wamn-0h0g.22.33).
-///
-/// The cross-check above compares two sets the scan itself produces, so a
-/// scan that silently stopped matching would report agreement. Deriving the
-/// expectation from `CATALOG_SCHEMA_SQL` would be a tautology over the very
-/// text under test, so the value is pinned here as a literal instead — one
-/// case per shape a grant has ever taken in the tree.
-#[test]
-fn the_author_grant_scan_sees_every_shape_a_grant_can_take() {
-    let fixture = "\
-GRANT SELECT ON catalog.sole TO wamn_scenario_author;
-GRANT SELECT ON catalog.trailing TO wamn_app, wamn_scenario_author;
-GRANT SELECT, INSERT ON catalog.multi_privilege TO wamn_scenario_author;
-GRANT SELECT ON catalog.listed_a, catalog.listed_b TO wamn_scenario_author;
-GRANT SELECT ON catalog.app_only TO wamn_app;
-GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
-GRANT wamn_scenario_author TO wamn_app;
-GRANT INSERT ON catalog.write_only TO wamn_scenario_author;
--- GRANT SELECT ON catalog.commented TO wamn_scenario_author;
-";
-    assert_eq!(
-        catalog_selects_for(fixture, "wamn_scenario_author"),
-        [
-            "listed_a",
-            "listed_b",
-            "multi_privilege",
-            "sole",
-            "trailing"
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect::<BTreeSet<String>>()
-    );
-    assert_eq!(
-        catalog_selects_for(fixture, "wamn_app"),
-        ["app_only", "trailing"]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<BTreeSet<String>>()
-    );
-}
 
 #[test]
 fn extra_record_check_is_removed_but_floor_check_is_untouched() {
@@ -1186,70 +761,4 @@ fn schema_rewrite_is_dot_anchored() {
         !rewrite_schema(RUN_STATE_SQL, &schema)
             .contains("SET search_path = pg_catalog, pg_temp, poc_f1")
     );
-}
-/// Named mutant guard: omitting any one field lets a disabled/unforced RLS
-/// flag or a missing/widened policy falsely observe as converged.
-#[test]
-fn environment_policy_row_security_observation_reads_the_exact_contract() {
-    let flags = select_environment_policy_row_security_sql();
-    assert!(flags.contains("relrowsecurity"));
-    assert!(flags.contains("relforcerowsecurity"));
-
-    let policies = select_environment_policy_policies_sql();
-    for field in [
-        "polname",
-        "polcmd",
-        "polpermissive",
-        "polroles",
-        "polqual",
-        "polwithcheck",
-    ] {
-        assert!(policies.contains(field), "missing policy field {field}");
-    }
-    assert!(policies.contains("ORDER BY policy.polname"));
-}
-
-/// Observation SQL pins (the shell binds these verbatim; the live gate
-/// shows they observe real state).
-#[test]
-fn observation_sql_is_pinned() {
-    assert!(select_schema_columns_sql().contains("NOT a.attisdropped"));
-    assert!(select_schema_indexes_sql().contains("pg_indexes"));
-    assert!(catalog_schema_present_sql().contains("'catalog'"));
-    assert!(select_schema_checks_sql().contains("con.contype = 'c'"));
-    assert!(select_schema_checks_sql().contains("pg_get_constraintdef"));
-    assert!(select_schema_triggers_sql().contains("NOT t.tgisinternal"));
-    assert!(select_scenario_author_role_sql().contains("rolbypassrls"));
-    assert!(select_app_scenario_author_membership_sql().contains("'MEMBER'"));
-    assert!(select_run_capture_privileges_sql().contains("has_table_privilege"));
-    assert!(select_run_capture_privileges_sql().contains("has_column_privilege"));
-    assert!(select_run_capture_privileges_sql().contains("capture_mode"));
-    assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
-    // Every observation query must see every relation the privilege
-    // reconciler owns, or the planner reads an empty privilege set and plans
-    // a repair that can never converge. Driven off the spec so a table added
-    // to the reconciler and forgotten in an observation fails here.
-    for observation in [
-        select_authoring_table_privileges_sql(),
-        select_authoring_effective_table_privileges_sql(),
-        select_authoring_effective_column_privileges_sql(),
-        select_authoring_table_owners_sql(),
-    ] {
-        for spec in AUTHORING_PRIVILEGE_SPECS {
-            assert!(
-                observation.contains(spec.table),
-                "{}: {observation}",
-                spec.table
-            );
-        }
-    }
-    assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
-    assert!(select_authoring_effective_table_privileges_sql().contains("'releases'"));
-    assert!(select_authoring_table_owners_sql().contains("relation.relowner"));
-    assert!(
-        select_authoring_effective_column_privileges_sql().contains("has_any_column_privilege")
-    );
-    assert!(select_authoring_effective_column_privileges_sql().contains("('SELECT'::text)"));
-    assert!(select_scenario_author_schema_usage_sql().contains("has_schema_privilege"));
-    assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
 }

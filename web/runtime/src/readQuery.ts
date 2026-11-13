@@ -7,7 +7,7 @@
  * keys stand in byte order of their UTF-8 names, and every byte outside the
  * RFC 3986 unreserved set is escaped as `%XX` with uppercase hex. The server
  * accepts other valid spellings and parameter orders. The Rust encoder in
- * `crates/client/core/src/read_query.rs` writes the same form.
+ * `services/ctl/src/read_query.rs` writes the same form.
  */
 
 import type { JsonValue } from "./wire.js";

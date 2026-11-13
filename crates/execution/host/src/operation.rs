@@ -691,6 +691,7 @@ fn prepare_statement_sets(
     routes: &BTreeSet<ServingRoute>,
 ) -> BTreeMap<String, PreparedStatementSet> {
     served
+        .descriptor
         .operations
         .iter()
         .map(|(operation, fact)| {
@@ -768,6 +769,7 @@ fn prepare_entry_members(
         instances.keys().collect::<Vec<_>>()
     );
     let statements = composing
+        .descriptor
         .operations
         .values()
         .flat_map(|fact| fact.statements.clone())

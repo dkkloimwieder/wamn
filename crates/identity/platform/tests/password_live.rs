@@ -9,8 +9,7 @@ use wamn_platform_identity::password::{
     issue_invitation, password_work,
 };
 use wamn_platform_identity::{
-    Principal, PrincipalId, authenticate_pat, create_service, create_user, disable_principal,
-    issue_pat,
+    Principal, PrincipalId, create_service, create_user, disable_principal,
 };
 
 const PASSWORD: &str = "my uncommon warehouse passphrase";
@@ -60,14 +59,6 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let user = new_user(&client, "alice").await;
     let other = new_user(&client, "bob").await;
     let work = password_work();
-    let pat = issue_pat(
-        &client,
-        user.id(),
-        "existing",
-        std::time::Duration::from_secs(3600),
-    )
-    .await
-    .unwrap();
     client.batch_execute("INSERT INTO registry.orgs (id, placement_type) VALUES ('password-test', 'dedicated');
         INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
         INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
@@ -155,15 +146,6 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         .unwrap()
         .unwrap();
     assert_eq!(authenticated.principal().id(), user.id());
-    assert_eq!(
-        authenticate_pat(&client, pat.token())
-            .await
-            .unwrap()
-            .unwrap()
-            .principal()
-            .id(),
-        user.id()
-    );
     assert!(
         authenticate_password(
             &client,
@@ -387,14 +369,6 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     )
     .await
     .unwrap();
-    let pat = issue_pat(
-        &client,
-        user.id(),
-        "preserved",
-        std::time::Duration::from_secs(3600),
-    )
-    .await
-    .unwrap();
     let tx = client.transaction().await.unwrap();
     let renewal = password_login::create_login(&tx, user.id(), "https://reset.invalid", "widgets")
         .await
@@ -495,12 +469,6 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         .is_none()
     );
     tx.commit().await.unwrap();
-    assert!(
-        authenticate_pat(&client, pat.token())
-            .await
-            .unwrap()
-            .is_some()
-    );
     client.execute("UPDATE identity.principals SET email='replacement@example.invalid' WHERE id=$1::text::uuid", &[&user.id().as_str()]).await.unwrap();
     assert!(
         issue_reset(

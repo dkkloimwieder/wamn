@@ -55,9 +55,8 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         "release": {"packages": [{"package-id": "status_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "status_test",
             "descriptor": {"component": "purchase", "interface-version": "0.1.0",
-                "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {},
-                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
-            "operations": {READ: {"registered-operation": READ, "permissions": [READ]}}}],
+                "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []}},
+                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
         "routes": [{"package-id": "status_test", "component": "purchase", "operation": READ,
             "type": "get"}],
         "attachments": {ROUTE: attachment, "purchase-http": {"type":"http","package-id":"status_test",
@@ -112,8 +111,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOBYPASSRLS; \
+             \
              CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

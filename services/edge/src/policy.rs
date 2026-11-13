@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::{AdmittedComponent, ServingComponentOperation};
+use wamn_catalog::AdmittedComponent;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope, NoTransaction};
 use wamn_engine::operation::native_call::{NativeCallFailure, NativeInvocation};
@@ -30,7 +30,6 @@ const NODE_TYPES: &str = "wamn:node/types@0.1.0";
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
-    operations: BTreeMap<String, ServingComponentOperation>,
 }
 
 /// The facts of one edge call that only the policy reads.
@@ -67,7 +66,7 @@ impl EdgePolicy {
     pub fn new(components: &[AdmittedComponent], release: &LoadedRelease) -> anyhow::Result<Self> {
         let mut policies = BTreeMap::new();
         for fact in components {
-            let served = release
+            release
                 .manifest()
                 .components
                 .iter()
@@ -75,14 +74,12 @@ impl EdgePolicy {
                     served.package_id == fact.scope.package_id
                         && served.descriptor.component == fact.component
                         && served.descriptor.component_digest.as_str() == fact.component_digest
+                        && served.descriptor.operations == fact.operations
                 })
                 .context("component-not-in-carried-release")?;
             policies.insert(
                 native_component_name(fact)?,
-                Arc::new(ComponentPolicy {
-                    fact: fact.clone(),
-                    operations: served.operations.clone(),
-                }),
+                Arc::new(ComponentPolicy { fact: fact.clone() }),
             );
         }
         Ok(Self {
@@ -110,14 +107,11 @@ impl EdgePolicy {
             .get(component_id)
             .context("native invocation component is not admitted")?;
         let operation = request.operation.as_str();
-        anyhow::ensure!(
-            component.fact.operation(operation).is_some(),
-            "native invocation operation is not admitted"
-        );
         let released = component
+            .fact
             .operations
             .get(operation)
-            .context("native invocation operation is not released")?;
+            .context("native invocation operation is not admitted")?;
         authorize_released_operation(request.facts.caller.as_ref(), released)?;
         Ok(())
     }
@@ -293,29 +287,6 @@ mod tests {
         assert_eq!(
             policy.authorize("bound", &request).unwrap_err().to_string(),
             "native-node-deadline-exceeded"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_operation_not_released_refuses() {
-        let request = request().await;
-        let policy = &request.application.policy;
-        policy.authorize("bound", &request).unwrap();
-        {
-            let mut bindings = policy.bindings.write().unwrap();
-            let component = bindings.get("bound").unwrap();
-            let fact = component.fact.clone();
-            bindings.insert(
-                "bound".into(),
-                Arc::new(ComponentPolicy {
-                    fact,
-                    operations: BTreeMap::new(),
-                }),
-            );
-        }
-        assert_eq!(
-            policy.authorize("bound", &request).unwrap_err().to_string(),
-            "native invocation operation is not released"
         );
     }
 

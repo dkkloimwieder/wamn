@@ -2,37 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Security attributes observed for the host-only scenario author role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "the seven fields mirror the seven `pg_roles` attribute columns one for one \
-              (rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolreplication, \
-              rolbypassrls); PostgreSQL reports them as booleans and a faithful copy of what the \
-              server says is worth more here than a state machine"
-)]
-pub struct ScenarioAuthorRoleObservation {
-    pub can_login: bool,
-    pub is_superuser: bool,
-    pub can_create_database: bool,
-    pub can_create_role: bool,
-    pub inherits_roles: bool,
-    pub can_replicate: bool,
-    pub bypasses_rls: bool,
-}
-
-impl ScenarioAuthorRoleObservation {
-    pub(super) fn is_host_only(self) -> bool {
-        !self.can_login
-            && !self.is_superuser
-            && !self.can_create_database
-            && !self.can_create_role
-            && !self.inherits_roles
-            && !self.can_replicate
-            && !self.bypasses_rls
-    }
-}
-
 /// One live PostgreSQL row-security policy, normalized from `pg_policy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowPolicyObservation {
@@ -57,11 +26,6 @@ pub struct RowSecurityObservation {
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlaneObservation {
-    /// Host-only scenario-author role attributes, or absent when the cluster
-    /// has not yet provisioned the role.
-    pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
-    /// Whether guest-visible `wamn_app` inherits the host-only author role.
-    pub app_is_scenario_author_member: bool,
     /// Revocable table or column authority on `run_queue` held directly by
     /// `wamn_app` or inherited from `PUBLIC`.
     pub app_run_queue_authority: bool,
@@ -84,8 +48,6 @@ pub struct RunPlaneObservation {
     /// Ownership is authority to restore revoked ACLs and therefore must stay
     /// outside both the guest-visible and host-only author roles.
     pub authoring_table_owners: BTreeMap<(String, String), String>,
-    /// Schemas on which the host-only author role effectively has USAGE.
-    pub scenario_author_schema_usage: BTreeSet<String>,
     /// EVERY ordinary table in the target schema → its live column names.
     /// Includes entity/floor tables, which the planner ignores.
     pub tables: BTreeMap<String, BTreeSet<String>>,

@@ -12,7 +12,6 @@ use super::{
 /// edit anywhere, and acquires an entry HERE only when it acquires authority.
 pub(in super::super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
     match family {
-        WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
         WorkloadRoleFamily::ConnectionReader => Some(StableGrantSet::ConnectionReader),
@@ -202,60 +201,6 @@ pub(in super::super) fn verify_audit_retention_grants(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact audit-retention grant set"
-    );
-    Ok(())
-}
-
-pub(in super::super) fn verify_management_admitter_grants(
-    role: &str,
-    database: &str,
-    required_database: &str,
-    grants: &[RoleAcl],
-) -> anyhow::Result<()> {
-    if grants.is_empty() {
-        anyhow::ensure!(
-            database != required_database,
-            "stable role {role:?} has no management-admission ACL in required database {database:?}"
-        );
-        return Ok(());
-    }
-
-    let actual = grants
-        .iter()
-        .map(|acl| {
-            (
-                acl.object_type.clone(),
-                acl.schema_name.clone(),
-                acl.object_name.clone(),
-                acl.privilege.clone(),
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    let mut expected = BTreeSet::from([
-        (
-            "schema".to_string(),
-            "catalog".to_string(),
-            "catalog".to_string(),
-            "USAGE".to_string(),
-        ),
-        (
-            "routine".to_string(),
-            "wamn_authority".to_string(),
-            "tenant_key".to_string(),
-            "EXECUTE".to_string(),
-        ),
-    ]);
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        expected.insert((
-            "relation".to_string(),
-            "catalog".to_string(),
-            relation.to_string(),
-            "SELECT".to_string(),
-        ));
-    }
-    anyhow::ensure!(
-        actual == expected,
-        "stable role {role:?} ACLs in database {database:?} are not the exact management-admission grant set"
     );
     Ok(())
 }
@@ -885,7 +830,6 @@ pub(in super::super) fn verify_control_grants(
 /// The per-family denial matrices a stable ACL role is measured against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in super::super) enum StableGrantSet {
-    ManagementAdmitter,
     RegistryReader,
     IdentityReader,
     ConnectionReader,
@@ -935,9 +879,6 @@ impl StableGrantSet {
         dynamic_targets: &[(String, String)],
     ) -> anyhow::Result<()> {
         match self {
-            Self::ManagementAdmitter => {
-                verify_management_admitter_grants(role, database, required_database, grants)
-            }
             Self::RegistryReader => verify_system_reader_grants(
                 SystemReader::Registry,
                 "registry",

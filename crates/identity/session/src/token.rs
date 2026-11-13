@@ -28,8 +28,6 @@ pub const MAX_ROLE_LEN: usize = 64;
 pub enum SessionAuthority {
     /// An existing password login and its renewal family.
     Login(String),
-    /// The source credential of an optional PAT exchange.
-    Pat(String),
 }
 
 /// Required wire claims; deserialization alone does not authenticate them.
@@ -148,9 +146,7 @@ pub fn verify_session_token(
 /// Refuse claims whose principal, authority, roles, or CSRF digest are not
 /// canonical. The signer checks the same shape before it signs.
 pub fn validate_claim_shape(claims: &SessionClaims) -> Result<(), SessionError> {
-    let authority = match &claims.authority {
-        SessionAuthority::Login(id) | SessionAuthority::Pat(id) => id,
-    };
+    let SessionAuthority::Login(authority) = &claims.authority;
     if !is_principal_id(authority)
         || !is_principal_id(&claims.sub)
         || claims.iss.trim().is_empty()

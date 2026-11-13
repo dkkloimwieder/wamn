@@ -47,13 +47,9 @@ pub async fn project_environment_policy(
     env_key: &str,
     environment: &str,
 ) -> anyhow::Result<EnvironmentPolicyProjection> {
-    let source = read_authoritative_environment_policy(
-        system_database_url,
-        source_policy_org,
-        environment,
-        false,
-    )
-    .await?;
+    let source =
+        read_authoritative_environment_policy(system_database_url, source_policy_org, environment)
+            .await?;
     let (mut target, connection) = tokio_postgres::connect(verification_database_url, NoTls)
         .await
         .context("connect to the verification policy target")?;

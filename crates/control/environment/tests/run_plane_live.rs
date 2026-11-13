@@ -14,7 +14,7 @@ mod target_identity;
 
 use wamn_platform_identity::auth_changes::AuthChanges;
 
-use catalog::{capture_mode_security_leg, two_plane_residency_leg};
+use catalog::capture_mode_security_leg;
 use run_history::persisted_literal_leg;
 
 use tokio_postgres::{Client, NoTls};
@@ -36,7 +36,6 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql")
 const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// The CONTROL plane's canonical record. Read here only to lift the co-resident
 /// relation's declaration text, never installed as a whole.
-const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
@@ -49,7 +48,7 @@ const CLI_PROJECT: &str = "billing";
 const CLI_ENV: &str = "dev";
 const CLI_INSTANCE: &str = "k3m9x2p7";
 
-async fn seed_system_env_policy(su: &Client, durability_class: &str) {
+async fn seed_system_env_policy(su: &Client) {
     su.batch_execute(
         "DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
@@ -61,7 +60,7 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
            promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
            cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
-           hibernation text NOT NULL, durability_class text NOT NULL, \
+           hibernation text NOT NULL, \
            PRIMARY KEY (org, name)); \
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
@@ -75,9 +74,9 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     su.execute(
         "INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
-            backup_cadence,wal_retention,hibernation,durability_class) \
-         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off',$1)",
-        &[&durability_class],
+            backup_cadence,wal_retention,hibernation) \
+         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off')",
+        &[],
     )
     .await
     .expect("seed system env policy");
@@ -424,20 +423,14 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     client
 }
 
-async fn seed_run_admission_facts(
-    su: &Client,
-    env_key: &str,
-    package_id: &str,
-    environment: &str,
-    durability_class: &str,
-) {
+async fn seed_run_admission_facts(su: &Client, env_key: &str, package_id: &str, environment: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.environment_policies \
-               (env_key,expected_environment,durability_class) \
-             VALUES ($1,$2,$3)"
+               (env_key,expected_environment) \
+             VALUES ($1,$2)"
         ),
-        &[&env_key, &environment, &durability_class],
+        &[&env_key, &environment],
     )
     .await
     .expect("seed the project-local environment policy");
@@ -464,15 +457,8 @@ async fn reset(su: &Client) {
          DROP SCHEMA IF EXISTS catalog CASCADE; \
          DROP SCHEMA IF EXISTS platform CASCADE; \
          DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSE \
-             ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
+            \
          END $$; \
-         REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
            EXECUTE format( \
              'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
@@ -541,7 +527,6 @@ async fn run_plane_reconcile_live() {
     let su = connect(&url).await;
     from_zero_leg(&su, &url).await;
     current_noop_leg(&su).await;
-    two_plane_residency_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     partition::global_fifo_queue_leg(&su).await;
     capture_mode_security_leg(&su, &url).await;
@@ -563,7 +548,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
     install_current_run_plane(su).await;
-    seed_run_admission_facts(su, "hidden", "owner", "dev", "standard").await;
+    seed_run_admission_facts(su, "hidden", "owner", "dev").await;
     su.batch_execute(&format!(
         "DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rp_owner_no_bypass') THEN \
@@ -575,8 +560,8 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
            'GRANT TEMPORARY ON DATABASE %I TO rp_owner_no_bypass', current_database()); \
          END $temporary$; \
          INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id,environment,status) VALUES \
-           ('hidden','owner','f',1,'owner','dev','running'); \
+           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment,status) VALUES \
+           ('hidden','owner','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'owner','dev','running'); \
          ALTER TABLE {SCHEMA}.runs OWNER TO rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
          CREATE TEMP TABLE pg_roles \
@@ -706,7 +691,7 @@ async fn environment_identity_leg(
     target_url: &str,
 ) {
     reset(su).await;
-    seed_system_env_policy(system_su, "standard").await;
+    seed_system_env_policy(system_su).await;
     let schema = schema();
 
     su.batch_execute("SET ROLE wamn_db_owner").await.unwrap();
@@ -728,27 +713,6 @@ async fn environment_identity_leg(
     .expect("reconcile-run-plane applies");
 
     env_key_identity_leg(su).await;
-
-    let projected: String = su
-        .query_one(
-            &format!(
-                "SELECT durability_class FROM {SCHEMA}.environment_policies \
-                 WHERE env_key='acme--billing--dev'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read projected standard policy")
-        .get(0);
-    assert_eq!(projected, "standard");
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id, \
-            environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-before','f',1,'cat','dev','standard')"
-    ))
-    .await
-    .expect("seed a run before reconciliation");
 
     su.batch_execute(&format!(
         "DELETE FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
@@ -797,36 +761,6 @@ async fn environment_identity_leg(
     // A second apply writes no second copy of any identity row.
     env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,package_id, \
-            environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-after','f',1,'cat','dev','standard')"
-    ))
-    .await
-    .expect("seed a run after reconciliation");
-    let classes: Vec<(String, String)> = su
-        .query(
-            &format!(
-                "SELECT run_id,durability_class FROM {SCHEMA}.runs \
-                 WHERE run_id IN ('r-policy-before','r-policy-after') ORDER BY run_id DESC"
-            ),
-            &[],
-        )
-        .await
-        .expect("read frozen run classes")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect();
-    assert_eq!(
-        classes,
-        [
-            ("r-policy-before".to_string(), "standard".to_string()),
-            ("r-policy-after".to_string(), "standard".to_string()),
-        ],
-        "policy reconciliation must not rewrite stored run classes"
-    );
-
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -851,10 +785,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .batch_execute(
             "CREATE TABLE public.wamn_app_role_sentinel (id int PRIMARY KEY); \
              ALTER TABLE public.wamn_app_role_sentinel OWNER TO wamn_app; \
-             CREATE TABLE public.wamn_scenario_author_role_sentinel \
-               (id int PRIMARY KEY); \
-             ALTER TABLE public.wamn_scenario_author_role_sentinel \
-               OWNER TO wamn_scenario_author;",
+",
         )
         .await
         .expect("create cross-database runtime-role ownership sentinel");
@@ -862,17 +793,12 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
 
     let role_oids_before = su
         .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
-                    (SELECT oid::bigint FROM pg_roles \
-                      WHERE rolname = 'wamn_scenario_author')",
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
             &[],
         )
         .await
         .expect("snapshot shared runtime roles");
-    let role_oids_before = (
-        role_oids_before.get::<_, i64>(0),
-        role_oids_before.get::<_, i64>(1),
-    );
+    let role_oids_before = (role_oids_before.get::<_, i64>(0),);
 
     // --dry-run is STRICTLY read-only: it changes neither shared roles nor tables.
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
@@ -881,18 +807,13 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     assert!(!dry.is_noop());
     let role_oids_after = su
         .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
-                    (SELECT oid::bigint FROM pg_roles \
-                      WHERE rolname = 'wamn_scenario_author')",
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
             &[],
         )
         .await
         .expect("re-read shared runtime roles");
     assert_eq!(
-        (
-            role_oids_after.get::<_, i64>(0),
-            role_oids_after.get::<_, i64>(1),
-        ),
+        (role_oids_after.get::<_, i64>(0),),
         role_oids_before,
         "dry-run preserves the shared cluster roles"
     );
@@ -952,12 +873,6 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // wamn-0h0g.9.11.3 (805701ec); `deploy/sql/control-portable-store.sql` owns
     // them and `control_portable_store` pins them. This verb applies the
     // catalog record only, so from-zero must NOT produce them.
-    for table in ["authoring_command_audit"] {
-        assert!(
-            !table_exists(su, "catalog", table).await,
-            "the portable store's relation catalog.{table} is not this verb's to provision"
-        );
-    }
 
     // Functional smoke as the runtime principal: the sections' grants + RLS
     // hold. wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
@@ -975,14 +890,14 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // and read 0 where it demanded 1. The login name is DERIVED by the
     // production builder, never spelled, so the digest under test is the digest
     // `provision-project-env` would mint.
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
-    seed_run_admission_facts(su, "t2", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev").await;
+    seed_run_admission_facts(su, "t2", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,flow_id,flow_version,package_id, \
+             (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
-             VALUES ('acme--billing--dev','r1','f',1,'cat','dev'), \
-                    ('t2','r2','f',1,'cat','dev'); \
+             VALUES ('acme--billing--dev','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
+                    ('t2','r2','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
     ))
     .await
@@ -998,8 +913,8 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
-               (env_key,run_id,flow_id,flow_version,package_id,environment) \
-             VALUES ('acme--billing--dev','r3','f',1,'cat','dev')"
+               (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) \
+             VALUES ('acme--billing--dev','r3','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev')"
         ),
         format!(
             "INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev','r3')"
@@ -1046,23 +961,15 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .query_one(
             "SELECT pg_get_userbyid((SELECT relowner FROM pg_class \
                                       WHERE oid = \
-                                        'public.wamn_app_role_sentinel'::regclass)), \
-                    pg_get_userbyid((SELECT relowner FROM pg_class \
-                                      WHERE oid = \
-                                        'public.wamn_scenario_author_role_sentinel'::regclass))",
+                                        'public.wamn_app_role_sentinel'::regclass))",
             &[],
         )
         .await
         .expect("read cross-database runtime-role ownership sentinels");
     let app_owner: String = sentinel_owners.get(0);
-    let author_owner: String = sentinel_owners.get(1);
     assert_eq!(
         app_owner, "wamn_app",
         "from-zero reconciliation preserves sibling-database runtime ownership"
-    );
-    assert_eq!(
-        author_owner, "wamn_scenario_author",
-        "from-zero reconciliation preserves sibling-database author ownership"
     );
     drop(sentinel);
     drop_database(su, sentinel_database).await;
@@ -1090,8 +997,8 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     let schema = schema();
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
-           (env_key, expected_environment, durability_class) \
-         VALUES ('acme--billing--dev', 'dev', 'standard')"
+           (env_key, expected_environment) \
+         VALUES ('acme--billing--dev', 'dev')"
     ))
     .await
     .expect("seed projected environment policy");

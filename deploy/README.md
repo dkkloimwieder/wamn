@@ -6,7 +6,6 @@ These files supply infrastructure, platform workloads, test Jobs, and database s
 - [platform/](platform/): platform workloads, environment overlays, and credential examples.
 - [kind/](kind/): the local cluster document and registry Service.
 - [gcp/](gcp/): Google Cloud project and cluster definitions, application inputs, and the cost guard function. Deployment integration remains unfinished.
-- [gates/](gates/): application-independent test Jobs and their support workloads.
 - [sql/](sql/): control, catalog, run-state, and test database schema inputs.
 - `deploy/mvp/ at 1bff09574`: retired bootstrap scripts that ran before the other deployment groups.
 

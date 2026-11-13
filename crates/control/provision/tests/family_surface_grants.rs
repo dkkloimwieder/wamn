@@ -170,16 +170,7 @@ fn reset(admin_url: &str, database: &str) {
     // The roles the two artifacts GRANT to or CREATE. A `GRANT … TO` a missing
     // role fails the whole apply, so the ones the files do not create themselves
     // are re-minted below.
-    roles.extend(
-        [
-            "wamn_app",
-            "wamn_scenario_author",
-            "wamn_control_author",
-            "wamn_run_retention",
-            "wamn_platform",
-        ]
-        .map(str::to_owned),
-    );
+    roles.extend(["wamn_app", "wamn_run_retention", "wamn_platform"].map(str::to_owned));
     let mut script = String::from(
         "DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
@@ -200,10 +191,8 @@ fn reset(admin_url: &str, database: &str) {
     }
     script.push_str(
         "CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;\n\
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-         CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           NOINHERIT NOREPLICATION NOBYPASSRLS;\n",
+         \n\
+         \n",
     );
     run_admin(admin_url, "reset the family-surface fixture", &script);
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
@@ -384,7 +373,6 @@ fn expected_executor_grants() -> Vec<String> {
     // the manual grain of `insert_manual_run_sql`
     // (docs/architecture/execution.md#environment-workflows).
     for column in [
-        "durability_class",
         "event_source_run_id",
         "event_root_run_id",
         "event_depth",
@@ -556,7 +544,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'INSERT'), \
            'the executor admits only the event run columns, never a whole row'; \
          ASSERT has_table_privilege(r, 'wamn_run.environment_policies', 'SELECT'), \
-           'an event admission reads the durability class'; \
+           'the executor can read the environment policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.environment_policies', 'UPDATE'), \
            'the executor never changes a policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'DELETE'), \
@@ -577,7 +565,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for column in [
         "run_id",
         "binding_world_json",
-        "flow_id",
         "capture_mode",
         "invocation_context",
         "caller_outcome_json",
@@ -605,7 +592,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for column in [
         "input_json",
         "binding_world_json",
-        "durability_class",
         "wiring_id",
         "wiring_version",
         "wiring_hash",
@@ -635,7 +621,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in ["priority", "stream_seq", "max_attempts", "enqueued_at"] {
+    for column in ["max_attempts", "enqueued_at"] {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
@@ -661,8 +647,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
                (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
-               (env_key, expected_environment, durability_class) \
-             VALUES ('t1', 'dev', 'standard');\n\
+               (env_key, expected_environment) \
+             VALUES ('t1', 'dev');\n\
              INSERT INTO wamn_run.runs \
                (env_key, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
@@ -985,7 +971,7 @@ fn control_routes_cannot_write_release_connections_or_bindings() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     run_admin(database.url(),"release connection grants",&format!(
-        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF; IF to_regrole('wamn_scenario_author') IS NULL THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
+        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF;  END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
             FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP
               FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP

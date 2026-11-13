@@ -23,13 +23,7 @@ use serde_json::{Value, json};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 
 /// The guests that the component-builder stage compiles in one invocation.
-const COMPONENTS: &[&str] = &[
-    "http-route",
-    "materializer",
-    "busyloop",
-    "connection-http-standard",
-    "sockprobe",
-];
+const COMPONENTS: &[&str] = &["http-route", "materializer"];
 
 /// Files that every target hashes besides its own inputs. The manifests
 /// matter to every target because one Cargo invocation unifies the features
@@ -76,7 +70,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             dropped: none,
         },
         "ctl" => Declared {
-            native: &["wamn-ctl", "wamn-scenario-worker", "wamn-runtime"],
+            native: &["wamn-ctl", "wamn-runtime"],
             components: COMPONENTS,
             paths: &["tools/guest-rustflags", "deploy"],
             dropped: &["deploy/platform/release/Chart.yaml"],
@@ -411,7 +405,6 @@ pub(super) mod tests {
             &[("wamn-test-infrastructure", Some("dev"))],
         ),
         ("wamn-cdc-reader", "services/cdc-reader", "", &[]),
-        ("wamn-scenario-worker", "services/scenario-worker", "", &[]),
         (
             "wamn-test-infrastructure",
             "test-support/infrastructure",
@@ -424,14 +417,6 @@ pub(super) mod tests {
     const APPS: &[Fake] = &[
         ("http-route", "apps/platform/http-route", "", &[]),
         ("materializer", "apps/platform/materializer", "", &[]),
-        ("busyloop", "apps/platform/busyloop", "", &[]),
-        (
-            "connection-http-standard",
-            "apps/platform/connection",
-            "",
-            &[],
-        ),
-        ("sockprobe", "apps/platform/sockprobe", "", &[]),
     ];
 
     /// `cargo metadata` of a fake workspace with one lib target per package.

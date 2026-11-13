@@ -68,7 +68,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
-         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_http_admitter'))",
+         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))",
         &[],
     ).await?.get(0);
     anyhow::ensure!(
@@ -79,7 +79,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
         .batch_execute(
             "CREATE EXTENSION pg_stat_statements; \
          CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+          \
          CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;
@@ -185,7 +185,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
         .map(|operation| {
             (
                 (*operation).to_owned(),
-                json!({"registered-operation": operation, "permissions": [operation]}),
+                json!({"registered-operation": operation, "input-ports": [], "output-ports": [], "parameters": []}),
             )
         })
         .collect();
@@ -195,8 +195,8 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
-        "components": [{"package-id": "session_test", "operations": operations,
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
+        "components": [{"package-id": "session_test",
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": operations, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}

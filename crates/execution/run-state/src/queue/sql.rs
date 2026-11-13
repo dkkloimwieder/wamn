@@ -57,7 +57,7 @@ pub fn select_production_claim_sql() -> String {
                     q.attempts < q.max_attempts \
                     OR q.lease_expires_at IS NULL \
                 ) \
-              ORDER BY q.available_at, q.stream_seq, q.run_id \
+              ORDER BY q.available_at, q.run_id \
               FOR UPDATE OF selected_run, q SKIP LOCKED \
               LIMIT 1 \
          ) \
@@ -66,12 +66,10 @@ pub fn select_production_claim_sql() -> String {
                 r.wiring_id, r.wiring_version, \
                 COALESCE( \
                     r.trigger_source IN ('http','internal','studio') \
-                    OR (r.flow_id IS NULL AND r.flow_version IS NULL \
-                        AND r.trigger_source IN ('scenario-draft','test-case')), false \
+                    OR r.trigger_source IN ('scenario-draft','test-case'), false \
                 ) AS router_caller_attached, \
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
                     AS durable_caller_attached, \
-                r.flow_id, r.flow_version, \
                 r.wiring_hash, r.binding_world_json::text, r.package_id, \
                 r.service_principal_id::text, r.trigger_source, \
                 r.execution_principal_id::text, r.execution_role, \
@@ -212,7 +210,6 @@ pub fn release_production_claim_sql() -> String {
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.env_key, q.run_id, selected_run.status, \
-                selected_run.flow_id, selected_run.flow_version, \
                 selected_run.wiring_id, \
                 selected_run.wiring_version \
            FROM run_queue AS q \
@@ -227,7 +224,7 @@ pub fn select_exhausted_production_sql() -> String {
                     + ($1::bigint * interval '1 millisecond') <= now() \
                 AND q.attempts >= q.max_attempts \
             AND selected_run.status IN ('{dispatched}', '{running}') \
-          ORDER BY q.available_at, q.stream_seq, q.run_id \
+          ORDER BY q.available_at, q.run_id \
           FOR UPDATE OF selected_run, q SKIP LOCKED \
           LIMIT 1",
         dispatched = RunStatus::Dispatched.as_sql(),
@@ -308,8 +305,7 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
         candidate_result = if fail_type.is_some() {
             "true"
         } else {
-            "r.flow_id IS NULL AND r.flow_version IS NULL \
-                            AND r.wiring_hash IS NOT NULL \
+            "r.wiring_hash IS NOT NULL \
                             AND r.binding_world_json IS NOT NULL"
         },
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \

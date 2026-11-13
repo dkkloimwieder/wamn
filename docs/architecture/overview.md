@@ -39,7 +39,6 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-environment-control` | Environment provisioning, reconciliation, and platform operations |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
-| `wamn-scenario-worker` | The authoring admission API |
 
 The CLI and test support call each control crate directly.
 The dependency order is package, release, environment, then development.
@@ -51,7 +50,7 @@ Package artifacts contain three tar layers and no browser files.
 `wamn web build` binds browser files to the compiled package manifest digest recorded in `build.json`.
 `wamn web push` publishes a deterministic OCI artifact under an immutable tag.
 [Web clients](../operations/web-upload.md#build-and-push) defines its layout and commands.
-A deployed service never depends on these four control crates. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
+A deployed service reads package facts through `wamn-package-artifact`.
 A control operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
 The four control crates live under `crates/control/{package,release,environment,dev}`.
@@ -81,11 +80,8 @@ The provisioning owner locks and compares environment identity before refreshing
 That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.
 
-Wiring admission checks the document against admitted component facts.
-Wiring documents carry no test cases.
-Reports are immutable and keyed by the wiring hash within the environment.
-Concurrent attempts return the stored winner for that hash.
-Application tests run separately.
+Workflow authorship validates the graph against the environment’s serving release.
+The application tests exercise effects through runtime interfaces.
 
 ## Release identity
 
@@ -231,7 +227,7 @@ The platform UI reads status through a control operation with a read-only Servic
 
 ### Control rows during deletion
 
-6. In one transaction, delete the control rows of the tenant, leaves first: `authoring_command_audit`, `wamn_run.gate_reports` (`delete.rs::CONTROL_TABLES`; the other control tables were dropped by wamn-vavs4, wamn-unffv, wamn-t7gif and wamn-jqdja). Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
+6. Delete the environment’s control rows in one transaction.
 
 ### Deletion refusals
 

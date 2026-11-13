@@ -36,13 +36,11 @@ pub use replica_identity::{
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    ScenarioAuthorRoleObservation, catalog_schema_present_sql, ensure_scenario_author_role_sql,
-    plan_run_plane, rewrite_schema, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    catalog_schema_present_sql, plan_run_plane, rewrite_schema, select_app_run_queue_authority_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
     select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
-    select_run_plane_helper_functions_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_indexes_sql, select_schema_triggers_sql,
 };

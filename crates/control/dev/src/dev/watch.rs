@@ -337,12 +337,17 @@ impl FilesystemInvalidationSource {
                     errno_to_io(source),
                 )
             })?;
-        let inotify = AsyncFd::new(descriptor).map_err(|source| {
+        // SAFETY: OwnedFd keeps the descriptor open and unchanged until AsyncFd drops it.
+        #[expect(
+            unsafe_code,
+            reason = "Tokio requires an explicit descriptor lifetime guarantee"
+        )]
+        let inotify = unsafe { AsyncFd::register(descriptor) }.map_err(|source| {
             FilesystemInvalidationError::with_source(
                 FilesystemInvalidationErrorType::Watch,
                 git.repository_root(),
                 "cannot register filesystem notification with the async runtime",
-                source,
+                io::Error::from(source),
             )
         })?;
         let mut source = Self {

@@ -45,7 +45,7 @@ pub fn select_org_placement_sql() -> &'static str {
 /// return and a row-mapper reads by index (`org` is the caller's key, not
 /// returned). `recovery_domain` is cast to `text` for serde.
 const ENV_POLICY_COLUMNS: &str = "name, recovery_domain::text, promotion_rank, instances, \
-     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation, durability_class";
+     storage, cpu, memory, image, backup_cadence, wal_retention, hibernation";
 
 /// Select one org's whole env-policy set, ordered by `promotion_rank` (so
 /// `provision-org` sees `dev` before `prod`). Param: `$1` org id. Columns:
@@ -75,13 +75,12 @@ pub fn select_env_policy_sql() -> String {
 /// back to template values. Params: `$1` org, `$2` name, `$3` recovery_domain
 /// (JSON text, cast `::text::jsonb`), `$4` promotion_rank, `$5` instances, `$6`
 /// storage, `$7` cpu, `$8` memory, `$9` image, `$10` backup_cadence, `$11`
-/// wal_retention, `$12` hibernation, `$13` durability_class.
+/// wal_retention, `$12` hibernation.
 pub fn stamp_env_policy_sql() -> &'static str {
     "INSERT INTO registry.env_policies \
        (org, name, recovery_domain, promotion_rank, instances, \
-        storage, cpu, memory, image, backup_cadence, wal_retention, hibernation, \
-        durability_class) \
-     VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+        storage, cpu, memory, image, backup_cadence, wal_retention, hibernation) \
+     VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
      ON CONFLICT (org, name) DO NOTHING"
 }
 

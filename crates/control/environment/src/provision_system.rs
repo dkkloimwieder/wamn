@@ -230,10 +230,7 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
             }
             state => anyhow::bail!("{state}"),
         }
-        admin
-            .batch_execute(&sql::ensure_control_author_acl_role_sql())
-            .await
-            .context("ensure the portable store's control-author ACL role")?;
+
         admin
             .batch_execute(sql::ensure_db_owner_role_sql())
             .await

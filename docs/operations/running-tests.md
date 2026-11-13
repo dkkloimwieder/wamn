@@ -372,7 +372,7 @@ The floors do not take the lock.
 | Floor | Function | Installs |
 | --- | --- | --- |
 | system | `wamn_control_provision::test_database::system()` | the control store, applied as `wamn_system`, which owns the database |
-| tenant | `wamn_catalog::test_database::tenant()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` and `wamn_scenario_author` roles |
+| tenant | `wamn_catalog::test_database::tenant()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
 | tenant+platform | `wamn_project_state::test_database::tenant_platform()` | the tenant floor and `deploy/sql/app-schema.sql` |
 
 A test of provisioning, migrations, or grants executes that operation and does not start from a floor that already performed it.
@@ -516,7 +516,7 @@ If the user requests the separate contract command, run it after the sweep, incl
 tools/contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
 ```
 
-It runs the authoring contract and guest `http-route` adversarial tests.
+It runs the guest `http-route` adversarial tests.
 The guest test belongs to another workspace, so the root sweep cannot reach it.
 `tools/contract-diff dry-run` only prints the commands.
 
@@ -558,9 +558,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs the platform NATS inputs below. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
-| `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
 | `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored in live-nats, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
-| `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: runs through `wamn-gates cdcbench`, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -617,7 +615,6 @@ RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.inv
   development_identity_survives_target_recreation_and_owned_teardown -- --ignored --exact
 ```
 
-On a disposable stack, the `pat_for_disposable_stack` example of `wamn-test-infrastructure` issues one management-author PAT into a mode 0600 file. It starts and stops this identity process, and its header gives the usage.
 
 ### Local saved-edit acceptance
 
@@ -1033,21 +1030,6 @@ cargo test --locked --offline -p wamn-environment-control --test file_fixture_li
   native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
 ```
 
-### Registry image archive in kind
-
-This test runs `case_release::image_archive` of `wamn-gate-harness` against a private registry with a login and TLS.
-It needs the local `registry:2`, `httpd:2-alpine` and kind node images.
-Tell the other sessions on the machine before the run, because it creates a kind cluster.
-
-```bash
-cargo test --locked --offline -p wamn-conformance-tests --test registry_image_archive \
-  -- --ignored --exact kind_nodes_import_the_pinned_digest_and_hold_no_credential --nocapture
-```
-
-The test pushes an image and a guest by digest, and two kind nodes import the image archive.
-It makes sure that CRI reports the tag and only the pinned digest, and that no node holds the login.
-It removes its cluster, registry container, images and private directory.
-
 ## Application generation and SQLx
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
@@ -1389,28 +1371,9 @@ Report unresolved cleanup failures and keep only output needed for current work 
 Before removing a worktree, preserve its source changes and branch.
 Remove only that worktree and its owned target after no process uses them.
 
-## Retained benchmark commands
+## Benchmarks
 
-The `wamn-gates` binary exposes these retained commands:
-
-- `cdcbench` measures database change capture drain rate, lag, and logging cost.
-- `walbench` measures PostgreSQL write-ahead log volume for individual operations and mixed workloads.
-- `streambench` tests event storage, duplicate suppression, delivery order, and recovery.
-
-Inspect their inputs without starting a run:
-
-```bash
-cargo run --locked --offline -p wamn-gates --bin wamn-gates -- cdcbench --help
-cargo run --locked --offline -p wamn-gates --bin wamn-gates -- walbench --help
-cargo run --locked --offline -p wamn-gates --bin wamn-gates -- streambench --help
-```
-
-The database benchmarks start disposable PostgreSQL through the existing test owner.
-CDC also needs a built `wamn-cdc-reader` and an explicitly selected disposable NATS service.
-`WAMN_CDC_READER_BIN` can select the reader executable.
-Stream tests also need an explicitly selected disposable NATS service.
-`streambench --mode all` refuses fewer than three replicas before it connects.
-Do not use the frozen cluster as a fixture.
+`tools/bench` owns benchmark programs and scripts.
 
 ## Host and package runtime
 
@@ -1420,12 +1383,10 @@ Run the combined host's lifecycle tests:
 cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
 ```
 
-The shared queue tests run real admission, active-work cancellation, lease recovery, and authority cleanup.
-They start a disposable PostgreSQL server.
-The ignored cases of the module need more inputs and do not run here.
+Queue shutdown recovery and event admission tests use PostgreSQL 18:
 
 ```bash
-cargo test --locked --offline -p wamn-workflow --lib queue::automation_live:: -- --nocapture
+cargo test -p wamn-workflow --lib queue::admission_live::
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).

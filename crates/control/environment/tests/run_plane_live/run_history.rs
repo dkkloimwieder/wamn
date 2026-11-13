@@ -17,12 +17,12 @@ pub(super) async fn persisted_literal_leg(su: &Client) {
         .await
         .expect("apply run-queue");
     // A run whose runaway verdict we will try to record.
-    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,flow_id,flow_version,package_id, \
+             (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
-             VALUES ('t1','r-budget','f',1,'cat','dev');"
+             VALUES ('t1','r-budget','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev');"
     ))
     .await
     .expect("seed a run");

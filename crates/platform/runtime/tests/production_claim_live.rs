@@ -32,16 +32,16 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let plugin = &fixture.plugin;
     let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
 
-    // Exact release-wide global FIFO: stream sequence, then run id, breaks equal
+    // Run id breaks equal
     // timestamps across package boundaries. An earlier foreign-package row does
     // not enter the mounted release's one SQL turn.
-    seed_run(admin, "fifo-foreign", "cat_foreign", 0).await?;
-    for (run_id, package_id, stream_seq) in [
-        ("fifo-c", PACKAGE_ID, 2),
-        ("fifo-b", "cat_overlay", 1),
-        ("fifo-a", PACKAGE_ID, 1),
+    seed_run(admin, "fifo-foreign", "cat_foreign").await?;
+    for (run_id, package_id) in [
+        ("fifo-c", PACKAGE_ID),
+        ("fifo-b", "cat_overlay"),
+        ("fifo-a", PACKAGE_ID),
     ] {
-        seed_run(admin, run_id, package_id, stream_seq).await?;
+        seed_run(admin, run_id, package_id).await?;
     }
     let mut fifo = Vec::new();
     for _ in 0..3 {
@@ -67,8 +67,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     // A second claimer skips the exact FIFO head while the first claimer holds
     // its production row locks, then the rolled-back head remains claimable.
-    seed_run(admin, "double-a", "cat_main", 10).await?;
-    seed_run(admin, "double-b", "cat_main", 11).await?;
+    seed_run(admin, "double-a", "cat_main").await?;
+    seed_run(admin, "double-b", "cat_main").await?;
     let first_claimer = connect(url).await?;
     first_claimer
         .batch_execute(&format!(
@@ -113,9 +113,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
+                   (env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
-                 VALUES ($1,'janitor','root',1,'running','cat_main','{POD_MANIFEST_DIGEST}', \
+                 VALUES ($1,'janitor','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','running','cat_main','{POD_MANIFEST_DIGEST}', \
                          'test',$2,$3,'http')"
             ),
             &[&ENV_KEY, &WIRING_ID, &WIRING_VERSION],
@@ -125,9 +125,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (env_key,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                   (env_key,run_id,available_at,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
-                 VALUES ($1,'janitor','2000-01-01',60,'dead','2000-01-01',3,3)"
+                 VALUES ($1,'janitor','2000-01-01','dead','2000-01-01',3,3)"
             ),
             &[&ENV_KEY],
         )
@@ -153,7 +153,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         )
         .await?;
     let janitor_body = json!({"error": {
-        "code": "infrastructure-failure", "flow-id": "root", "flow-version": 1,
+        "code": "infrastructure-failure", "wiring-id": WIRING_ID, "wiring-version": WIRING_VERSION,
         "run-id": "janitor"
     }});
     assert_eq!(janitor.get::<_, String>(0), "infrastructure-failure");
@@ -170,7 +170,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert!(janitor.get::<_, bool>(5));
     assert!(!janitor.get::<_, bool>(6));
 
-    seed_exhausted_run(admin, "janitor-callerless", 61).await?;
+    seed_exhausted_run(admin, "janitor-callerless").await?;
     make_callerless(admin, "janitor-callerless").await?;
     assert_eq!(
         plugin
@@ -182,7 +182,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_callerless_terminal(admin, "janitor-callerless", "infrastructure-failure").await?;
 
-    seed_exhausted_run(admin, "janitor-winner", 62).await?;
+    seed_exhausted_run(admin, "janitor-winner").await?;
     let janitor_winner = install_prior_caller_winner(admin, "janitor-winner").await?;
     assert_eq!(
         plugin
@@ -209,7 +209,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // tenant forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
-    seed_run(admin, "grant-refused", "cat_main", 65).await?;
+    seed_run(admin, "grant-refused", "cat_main").await?;
     admin
         .execute(
             &format!(
@@ -273,7 +273,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     //
     // Admission pins the release by its manifest digest. A matching pod claims
     // the run and never writes the pin.
-    seed_run(admin, "release-record", PACKAGE_ID, 70).await?;
+    seed_run(admin, "release-record", PACKAGE_ID).await?;
     let recorded = Some(POD_MANIFEST_DIGEST.to_string());
     assert_eq!(release_record(admin, "release-record").await?, recorded);
     assert_eq!(
@@ -373,7 +373,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')", &[&ENV_KEY, &ENVIRONMENT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment) VALUES ($1, $2)", &[&ENV_KEY, &ENVIRONMENT]).await?;
     let actor = wamn_project_state::PlatformComponent::Executor
         .principal_id()
         .to_string();
@@ -413,7 +413,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
         .execute("DELETE FROM wamn_run.run_queue WHERE run_id=$1", &[&run_id])
         .await?;
 
-    seed_run(admin, "history-claim", PACKAGE_ID, 0).await?;
+    seed_run(admin, "history-claim", PACKAGE_ID).await?;
     let claimed = ready_run(
         plugin
             .claim_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
@@ -447,7 +447,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
         } else {
             "last-expiry"
         };
-        seed_run(admin, run, PACKAGE_ID, 1).await?;
+        seed_run(admin, run, PACKAGE_ID).await?;
         admin
             .execute(
                 "UPDATE wamn_run.run_queue SET max_attempts=3 WHERE run_id=$1",
@@ -574,7 +574,7 @@ async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
     let packages = [PACKAGE_ID.to_owned()];
     for attempts in [0_i32, 1, 2, 8, 9, 18] {
         let run = format!("backoff-{attempts}");
-        seed_run(admin, &run, PACKAGE_ID, i64::from(attempts)).await?;
+        seed_run(admin, &run, PACKAGE_ID).await?;
         let claim = plugin
             .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;

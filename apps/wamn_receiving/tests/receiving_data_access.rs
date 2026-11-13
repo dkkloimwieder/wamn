@@ -944,7 +944,7 @@ mod tests {
                 "CREATE SCHEMA receiving; \
                  CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                 CREATE ROLE wamn_scenario_author NOLOGIN",
+                 ",
             )
             .await
             .context("create the Receiving schema and the application role")?;

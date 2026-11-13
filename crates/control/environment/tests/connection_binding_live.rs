@@ -862,16 +862,22 @@ fn provision_project_components_for_http_manifest()
     [wamn_catalog::ServingComponent {
         package_id: PACKAGE.into(),
         runtime_schema: None,
-        descriptor,
-        operations: BTreeMap::from([(
-            operation.into(),
-            wamn_catalog::ServingComponentOperation {
-                registered_operation: None,
-                permissions: std::collections::BTreeSet::new(),
-                statements: BTreeMap::new(),
-                committed_result_schema: None,
-            },
-        )]),
+        descriptor: {
+            let mut descriptor = descriptor;
+            descriptor.operations = BTreeMap::from([(
+                operation.into(),
+                wamn_catalog::AdmittedComponentOperation {
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    registered_operation: None,
+                    statements: BTreeMap::new(),
+                    committed_result_schema: None,
+                },
+            )]);
+            descriptor
+        },
         statement_instances: BTreeMap::new(),
     }]
     .into()

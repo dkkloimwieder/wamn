@@ -171,8 +171,6 @@ Each experiment is cheap, isolates one option, and uses `tools/bench/local.sh` a
 
 Order suggested by cost: M1, M4 and M5 need no code and answer the two biggest questions (how much of the host part is instantiation; how much of the Postgres part is triggers). M2 and M3 need small instrumentation. M6–M8 are one-line config runs.
 
-Gate: `wamn-benchmark-gate --local` refuses a 20% throughput drop on any call; every option that lands runs it.
-
 ## Other candidates
 
 Found while reading around the request path. None is measured; each is a small, independent check.

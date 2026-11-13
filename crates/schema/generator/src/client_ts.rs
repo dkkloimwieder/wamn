@@ -107,9 +107,7 @@ impl std::error::Error for ClientTsError {}
 /// CRUD input contracts spell `request_id` that way.
 ///
 /// `int64` and `numeric` are strings, because that is what the wire carries.
-/// `canonical_numeric` in `crates/client/core/src/request.rs` writes a decimal
-/// string, and `canonical_integer` writes an `int64` as a string when the route
-/// schema states no type. A TypeScript number loses precision above 2^53.
+/// A TypeScript number loses precision above 2^53.
 ///
 /// # Errors
 ///

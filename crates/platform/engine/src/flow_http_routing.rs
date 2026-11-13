@@ -1521,8 +1521,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingAttachment,
-        ServingComponent, ServingComponentOperation, ServingRelease, ServingRoute,
+        AdmittedComponentOperation, DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME,
+        ServingAttachment, ServingComponent, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1541,16 +1541,21 @@ mod tests {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "cat".into(),
-            operations: BTreeMap::from([(
-                "request".into(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: None,
-                    permissions: BTreeSet::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            descriptor: wamn_catalog::ComponentDescriptor::named("http-request", "0.1", COMPONENT),
+            descriptor: wamn_catalog::ComponentDescriptor {
+                operations: BTreeMap::from([(
+                    "request".into(),
+                    AdmittedComponentOperation {
+                        committed_result_schema: None,
+                        registered_operation: None,
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        statements: BTreeMap::new(),
+                    },
+                )]),
+                ..wamn_catalog::ComponentDescriptor::named("http-request", "0.1", COMPONENT)
+            },
         }])
     }
 

@@ -11,7 +11,7 @@ name = "wamn-bench"
 path = "src/main.rs"
 
 [dependencies]
-wamn-client.workspace = true
+wamn-digest.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 reqwest = { workspace = true, features = ["rustls", "json"] }

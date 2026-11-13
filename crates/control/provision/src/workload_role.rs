@@ -6,21 +6,8 @@ use sha2::{Digest as _, Sha256};
 use wamn_run_state::{AuthorityClass, CredentialGeneration, app_scope_hash};
 
 use crate::APP_ROLE;
-use crate::name::{
-    CONTROL_AUTHOR_SECRET_PREFIX, GUEST_SECRET_PREFIX, MANAGEMENT_ADMITTER_SECRET_PREFIX,
-};
+use crate::name::GUEST_SECRET_PREFIX;
 
-/// Stable NOLOGIN role used by control-author generations.
-pub const CONTROL_AUTHOR_ROLE: &str = "wamn_control_author";
-/// Stable NOLOGIN role used by management-admission generations.
-pub const MANAGEMENT_ADMITTER_ROLE: &str = "wamn_management_admitter";
-/// Frozen generation prefix for the management-admitter family (`wamn-0h0g.13.62`).
-///
-/// The stable ACL role name is 24 bytes, so reusing it as the generation prefix
-/// would mint a 67-byte identifier and PostgreSQL caps identifiers at 63. This
-/// shorter frozen prefix keeps the derived login at 61 bytes with the 160-bit
-/// scope digest and `_a`/`_b` suffix intact.
-const MANAGEMENT_ADMITTER_GENERATION_PREFIX: &str = "wamn_mgmt_admitter";
 /// Stable NOLOGIN role used by service-reader generations.
 pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
 /// Stable NOLOGIN role used by run-retention generations.
@@ -115,8 +102,6 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// control family, the credential of an org's control host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
-    ControlAuthor,
-    ManagementAdmitter,
     ServiceReader,
     App,
     Retention,
@@ -139,9 +124,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 15] = [
-        Self::ControlAuthor,
-        Self::ManagementAdmitter,
+    pub const ALL: [Self; 13] = [
         Self::ServiceReader,
         Self::App,
         Self::Retention,
@@ -160,8 +143,6 @@ impl WorkloadRoleFamily {
     /// Stable NOLOGIN ACL role inherited by this family's generations.
     pub const fn acl_role(self) -> &'static str {
         match self {
-            Self::ControlAuthor => CONTROL_AUTHOR_ROLE,
-            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_ROLE,
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
             Self::Retention => RETENTION_ROLE,
@@ -182,8 +163,7 @@ impl WorkloadRoleFamily {
     ///
     /// Equal to [`Self::acl_role`] for every family whose stable role name still
     /// fits the PostgreSQL identifier cap once the scope digest and generation
-    /// suffix are appended. `ManagementAdmitter` (`wamn-0h0g.13.62`),
-    /// `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
+    /// suffix are appended. `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
     /// carries its own shorter frozen prefix. `SessionRoleReader` also needs
     /// a shorter prefix. `RegistryReader` and
     /// `IdentityReader` (`wamn-0h0g.13.63`) are the first families to fit
@@ -192,7 +172,6 @@ impl WorkloadRoleFamily {
     /// exactness is pinned by test rather than left to be rediscovered.
     pub const fn generation_prefix(self) -> &'static str {
         match self {
-            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_GENERATION_PREFIX,
             Self::EventMaterializer => EVENT_MATERIALIZER_GENERATION_PREFIX,
             Self::SessionRoleReader => SESSION_ROLE_READER_GENERATION_PREFIX,
@@ -204,8 +183,7 @@ impl WorkloadRoleFamily {
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
             Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::EnvKey,
-            Self::ManagementAdmitter
-            | Self::ServiceReader
+            Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
@@ -213,10 +191,9 @@ impl WorkloadRoleFamily {
             | Self::Administration => WorkloadRoleScopeKind::ProjectEnvironment,
             // Scope follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
-            Self::ControlAuthor
-            | Self::RegistryReader
-            | Self::IdentityReader
-            | Self::ConnectionReader => WorkloadRoleScopeKind::Control,
+            Self::RegistryReader | Self::IdentityReader | Self::ConnectionReader => {
+                WorkloadRoleScopeKind::Control
+            }
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
             Self::Control => WorkloadRoleScopeKind::Org,
@@ -246,7 +223,6 @@ impl WorkloadRoleFamily {
     ///   cross-tenant read `wamn-0h0g.22.6` closed.
     /// * A [`WorkloadRoleScopeKind::Control`] or [`WorkloadRoleScopeKind::Org`]
     ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
-    ///   `TO wamn_control_author` arm on a different authority derivation
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
     ///   on any relation carrying the project-plane floor, so membership would
     ///   be authority without a reader.
@@ -339,8 +315,6 @@ impl WorkloadRoleFamily {
     /// on the constants themselves.
     pub fn secret_prefix(self) -> String {
         match self {
-            Self::ControlAuthor => CONTROL_AUTHOR_SECRET_PREFIX.to_string(),
-            Self::ManagementAdmitter => MANAGEMENT_ADMITTER_SECRET_PREFIX.to_string(),
             Self::App => GUEST_SECRET_PREFIX.to_string(),
             _ => format!("wamn-{}-", self.cli_stem()),
         }
@@ -348,8 +322,6 @@ impl WorkloadRoleFamily {
 
     pub(crate) const fn scope_domain(self) -> &'static [u8] {
         match self {
-            Self::ControlAuthor => b"wamn.control-author.scope.v0.1",
-            Self::ManagementAdmitter => b"wamn.management-admitter.scope.v0.1",
             Self::ServiceReader => b"wamn.service-reader.scope.v0.1",
             Self::App => b"wamn.app.scope.v0.1",
             Self::Retention => b"wamn.run-retention.scope.v0.1",
@@ -376,8 +348,7 @@ impl WorkloadRoleFamily {
 /// ever needs two families, that row returns as its own owner question rather
 /// than growing an arm.
 ///
-/// The direction is deliberate and one-way. Several families (`ControlAuthor`,
-/// `ServiceReader`, `Retention`, and `ManagementAdmitter`) carry no authority class at all, so the inverse is not
+/// The direction is deliberate and one-way. Several families (`ServiceReader` and `Retention`) carry no authority class at all, so the inverse is not
 /// a function and is not offered.
 impl From<AuthorityClass> for WorkloadRoleFamily {
     fn from(class: AuthorityClass) -> Self {
@@ -656,108 +627,7 @@ mod tests {
         }
     }
 
-    /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
-    /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
-    /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen; `wamn-a40n.2`:
-    /// administration and control).
-    const FAMILIES: [WorkloadRoleFamily; 15] = [
-        WorkloadRoleFamily::ControlAuthor,
-        WorkloadRoleFamily::ManagementAdmitter,
-        WorkloadRoleFamily::ServiceReader,
-        WorkloadRoleFamily::App,
-        WorkloadRoleFamily::Retention,
-        WorkloadRoleFamily::ExecutorPlatform,
-        WorkloadRoleFamily::HttpAdmitter,
-        WorkloadRoleFamily::EventMaterializer,
-        WorkloadRoleFamily::RegistryReader,
-        WorkloadRoleFamily::IdentityReader,
-        WorkloadRoleFamily::SessionRoleReader,
-        WorkloadRoleFamily::AuditRetention,
-        WorkloadRoleFamily::Administration,
-        WorkloadRoleFamily::Control,
-        WorkloadRoleFamily::ConnectionReader,
-    ];
-
-    #[test]
-    fn family_set_and_scope_classes_are_closed() {
-        // A fifteenth variant fails to compile here as well as in the
-        // implementation, so the pinned vocabulary cannot silently grow.
-        for (index, family) in FAMILIES.into_iter().enumerate() {
-            let pinned = match family {
-                WorkloadRoleFamily::ControlAuthor => 0,
-                WorkloadRoleFamily::ManagementAdmitter => 1,
-                WorkloadRoleFamily::ServiceReader => 2,
-                WorkloadRoleFamily::App => 3,
-                WorkloadRoleFamily::Retention => 4,
-                WorkloadRoleFamily::ExecutorPlatform => 5,
-                WorkloadRoleFamily::HttpAdmitter => 6,
-                WorkloadRoleFamily::EventMaterializer => 7,
-                WorkloadRoleFamily::RegistryReader => 8,
-                WorkloadRoleFamily::IdentityReader => 9,
-                WorkloadRoleFamily::ConnectionReader => 14,
-                WorkloadRoleFamily::SessionRoleReader => 10,
-                WorkloadRoleFamily::AuditRetention => 11,
-                WorkloadRoleFamily::Administration => 12,
-                WorkloadRoleFamily::Control => 13,
-            };
-            assert_eq!(index, pinned, "{family:?}");
-        }
-        assert_eq!(
-            FAMILIES.map(WorkloadRoleFamily::scope_kind),
-            [
-                WorkloadRoleScopeKind::Control,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::EnvKey,
-                WorkloadRoleScopeKind::EnvKey,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::Control,
-                WorkloadRoleScopeKind::Control,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::EnvKey,
-                WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::Org,
-                WorkloadRoleScopeKind::Control,
-            ],
-        );
-        assert_eq!(
-            FAMILIES.map(WorkloadRoleFamily::acl_role),
-            [
-                "wamn_control_author",
-                "wamn_management_admitter",
-                "wamn_service_reader",
-                "wamn_app",
-                "wamn_run_retention",
-                "wamn_executor_platform",
-                "wamn_http_admitter",
-                "wamn_event_materializer",
-                "wamn_registry_reader",
-                "wamn_identity_reader",
-                "wamn_session_role_reader",
-                "wamn_audit_retention",
-                "wamn_administration",
-                "wamn_control",
-                "wamn_conn_reader",
-            ],
-        );
-        assert_eq!(
-            WorkloadRoleFamily::project_env_families().collect::<Vec<_>>(),
-            FAMILIES[..13]
-                .iter()
-                .copied()
-                .chain([WorkloadRoleFamily::ConnectionReader])
-                .collect::<Vec<_>>(),
-            "only the org-scoped control family is left to provision-org"
-        );
-        assert!(!WorkloadRoleFamily::Control.is_platform_grain());
-        assert_eq!(WorkloadRoleFamily::Control.label(), "control");
-        assert_eq!(
-            crate::name::org_workload_secret_name(WorkloadRoleFamily::Control, "dkk"),
-            "wamn-control-dkk"
-        );
-    }
+    const FAMILIES: [WorkloadRoleFamily; 13] = WorkloadRoleFamily::ALL;
 
     #[test]
     fn wrong_scope_grain_refuses() {
@@ -779,24 +649,6 @@ mod tests {
     #[test]
     fn every_role_fits_postgres_and_generations_differ() {
         let scopes = [
-            (
-                WorkloadRoleFamily::ControlAuthor,
-                WorkloadRoleScope::Control {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "control",
-                },
-            ),
-            (
-                WorkloadRoleFamily::ManagementAdmitter,
-                WorkloadRoleScope::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
             (
                 WorkloadRoleFamily::ServiceReader,
                 WorkloadRoleScope::ProjectEnvironment {
@@ -959,37 +811,6 @@ mod tests {
                 assert_ne!(from_short, from_long, "{family:?}: two tenants, two roles");
             }
         }
-    }
-
-    #[test]
-    fn management_admitter_generation_identity_is_frozen_and_distinct_from_its_acl_role() {
-        assert_eq!(
-            WorkloadRoleFamily::ManagementAdmitter.acl_role(),
-            MANAGEMENT_ADMITTER_ROLE
-        );
-        // The owner froze this prefix at 19 bytes or fewer so the derived
-        // login stays under the PostgreSQL identifier cap.
-        assert!(MANAGEMENT_ADMITTER_GENERATION_PREFIX.len() <= 19);
-        assert_ne!(
-            MANAGEMENT_ADMITTER_GENERATION_PREFIX,
-            MANAGEMENT_ADMITTER_ROLE
-        );
-        let role = workload_generation_role(
-            WorkloadRoleFamily::ManagementAdmitter,
-            WorkloadRoleScope::ProjectEnvironment {
-                org: "acme",
-                project: "billing",
-                environment: "dev",
-                database: "wamn-db-acme--billing--dev--k3m9x2p7",
-            },
-            CredentialGeneration::A,
-        )
-        .unwrap();
-        assert_eq!(
-            role,
-            "wamn_mgmt_admitter_c1e0f3849ce98895f9593009bc5f60e870150758_a"
-        );
-        assert_eq!(role.len(), 61);
     }
 
     #[test]

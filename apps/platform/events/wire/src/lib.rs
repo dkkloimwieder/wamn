@@ -6,8 +6,7 @@
 //!
 //! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). These shapes are the
 //! Phase-2 cutover contract: the reader service (wamn-l5i9.10) publishes them,
-//! the materializer (wamn-l5i9.17) consumes them, and `readerbench` /
-//! `streambench` (wamn-gates) bind this crate directly — no stand-in copy.
+//! the materializer (wamn-l5i9.17) consumes them, and runtime consumers bind this crate directly.
 //! Compatibility rule (the WIT-freeze discipline): 0.1.x admits only additive
 //! or clarifying changes; any breaking change waits for 0.2. Field removal or
 //! rename must break a named golden test below.

@@ -109,11 +109,7 @@ pub(super) async fn project_database(
     let target = connect(target_url.as_str()).await?;
     target
         .batch_execute(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
-                                        WHERE rolname = 'wamn_scenario_author') THEN \
-               CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOBYPASSRLS; \
-             END IF; END $$; \
+            " \
              CREATE SCHEMA wamn_run;",
         )
         .await?;

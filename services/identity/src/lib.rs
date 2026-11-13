@@ -82,7 +82,7 @@ impl IdentityConfig {
         self
     }
 
-    /// Enable exchanges only for explicitly provisioned, nonduplicated audiences.
+    /// Configure password login for provisioned, distinct audiences.
     pub fn with_session_targets(
         mut self,
         targets: Vec<SessionTarget>,
@@ -120,8 +120,6 @@ struct Inner {
     reopening: Mutex<()>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
-    // Key reads remain available while a signer waits on the rotation barrier.
-    signing: Option<Mutex<Database>>,
     targets: BTreeMap<String, ConfiguredTarget>,
 }
 
@@ -204,11 +202,6 @@ impl IdentityService {
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let database = connect(&config).await?;
         let issuance = Mutex::new(connect(&config).await?);
-        let signing = if config.targets.is_empty() {
-            None
-        } else {
-            Some(Mutex::new(connect(&config).await?))
-        };
         let passwords = if let Some(mail) = config.mail.clone() {
             Some(password::State::new(mail, config.connection.clone())?)
         } else {
@@ -223,7 +216,6 @@ impl IdentityService {
                 database: std::sync::RwLock::new(Arc::new(database)),
                 reopening: Mutex::new(()),
                 issuance,
-                signing,
                 targets: config
                     .targets
                     .into_iter()
@@ -271,13 +263,6 @@ impl IdentityService {
             && request.uri().query().is_none()
         {
             return Ok(pat::respond(&self.inner, request, operator).await);
-        }
-        if request.method() == Method::POST
-            && request.uri().path() == "/session"
-            && request.uri().query().is_none()
-            && !self.inner.targets.is_empty()
-        {
-            return Ok(session::respond(&self.inner, request).await);
         }
         let response = if request.method() != Method::GET || request.uri().query().is_some() {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
@@ -354,7 +339,7 @@ pub fn tls_config(
 
 /// Trust only the dedicated operator CA for optional TLS client authentication.
 ///
-/// Anonymous clients retain access to public keys and configured PAT exchanges.
+/// Anonymous clients can read public keys and use password login.
 /// Only a verified client certificate authorizes PAT issuance.
 pub fn tls_config_with_operator_ca(
     certificate_pem: &[u8],

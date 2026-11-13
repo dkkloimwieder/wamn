@@ -267,15 +267,18 @@ pub(crate) mod test_util {
     use std::collections::BTreeMap;
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope, PackageCoordinate,
-        ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
+        ServingComponent, ServingManifest, ServingRelease,
     };
 
     pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
 
     pub(crate) async fn release() -> EdgeRelease {
-        let operation = ServingComponentOperation {
+        let operation = AdmittedComponentOperation {
+            host_transaction: false,
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
             registered_operation: Some(OPERATION.into()),
-            permissions: BTreeSet::from([OPERATION.into()]),
             committed_result_schema: None,
             statements: BTreeMap::new(),
         };
@@ -312,8 +315,12 @@ pub(crate) mod test_util {
                 runtime_schema: None,
                 statement_instances: BTreeMap::new(),
                 package_id: "scale".into(),
-                descriptor: ComponentDescriptor::named("device", "0.1", &fact.component_digest),
-                operations: BTreeMap::from([(OPERATION.into(), operation)]),
+                descriptor: {
+                    let mut descriptor =
+                        ComponentDescriptor::named("device", "0.1", &fact.component_digest);
+                    descriptor.operations = BTreeMap::from([(OPERATION.into(), operation)]);
+                    descriptor
+                },
             }]),
             BTreeSet::new(),
             BTreeMap::new(),

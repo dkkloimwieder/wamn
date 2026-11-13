@@ -315,20 +315,13 @@ pub fn validate_component_in_release(
     );
     let digest = ArtifactHash::parse(component.component_digest.clone())
         .context("component fact carries a non-canonical artifact hash")?;
-    // Publish folds each export's call graph into the root operation, so the
-    // release carries a superset of the admitted fact. The runtime trusts it.
+    // The descriptor carries the admitted operations without another projection.
     let carried = manifest.components.iter().any(|served| {
         served.package_id == component.scope.package_id
             && served.descriptor.component == component.component
             && served.descriptor.interface_version == component.interface_version
             && served.descriptor.component_digest == digest.as_str()
-            && served.operations.len() == component.operations.len()
-            && component.operations.iter().all(|(name, operation)| {
-                served
-                    .operations
-                    .get(name)
-                    .is_some_and(|served| served.carries(operation))
-            })
+            && served.descriptor.operations == component.operations
     });
     anyhow::ensure!(carried, "component-not-in-carried-release");
     Ok(())
@@ -360,7 +353,7 @@ mod tests {
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        PackageCoordinate, ServingComponent, ServingComponentOperation, ServingRelease,
+        AdmittedComponentOperation, PackageCoordinate, ServingComponent, ServingRelease,
         UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
@@ -378,16 +371,23 @@ mod tests {
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "cat".into(),
-                operations: BTreeMap::from([(
-                    "map".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: wamn_catalog::ComponentDescriptor::named("transform", "0.1", COMPONENT),
+                descriptor: {
+                    let mut descriptor =
+                        wamn_catalog::ComponentDescriptor::named("transform", "0.1", COMPONENT);
+                    descriptor.operations = BTreeMap::from([(
+                        "map".into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+                            registered_operation: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
             }]),
             BTreeSet::new(),
             BTreeMap::new(),

@@ -10,7 +10,7 @@ use plan::authoritative_environment_policy;
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
-use wamn_control_registry::{DurabilityClass, EnvPolicy};
+use wamn_control_registry::EnvPolicy;
 
 pub use plan::AuthoritativeEnvironmentPolicy;
 
@@ -18,7 +18,6 @@ pub async fn read_authoritative_environment_policy(
     system_database_url: &str,
     source_policy_org: &str,
     environment: &str,
-    require_durability_column: bool,
 ) -> anyhow::Result<AuthoritativeEnvironmentPolicy> {
     anyhow::ensure!(
         !source_policy_org.is_empty(),
@@ -30,11 +29,7 @@ pub async fn read_authoritative_environment_policy(
         .context("connect to the authoritative environment-policy store")?;
     let connection_task = tokio::spawn(connection);
     let loaded = async {
-        let policy = if require_durability_column {
-            crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
-        } else {
-            crate::env_policies::observe_env_policy(&source, source_policy_org, environment).await?
-        }
+        let policy = crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
         .with_context(|| {
             format!(
                 "environment-policy-source-absent: environment {environment:?} names no policy owned by organization {source_policy_org:?}"
@@ -70,7 +65,6 @@ mod tests {
             backup_cadence: String::new(),
             wal_retention: String::new(),
             hibernation: "eligible".to_owned(),
-            durability_class: wamn_control_registry::DurabilityClass::Standard,
         }
     }
 

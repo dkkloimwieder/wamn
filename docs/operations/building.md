@@ -49,8 +49,7 @@ Build native programs in debug mode by default:
 
 ```bash
 cargo build --locked --offline -p wamn-host -p wamn-ctl -p wamn-identity \
-  -p wamn-scenario-worker \
-  -p wamn-cdc-reader -p wamn-gates
+  -p wamn-cdc-reader
 cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 ```
 
@@ -222,12 +221,11 @@ A build script without such lines gets the same treatment as a procedural macro.
 | Image | Packages | Other inputs |
 | --- | --- | --- |
 | `host` | `wamn-host`, `wamn-runtime`, `wamn-cdc-reader` | none |
-| `ctl` | `wamn-ctl`, `wamn-scenario-worker`, and the five guests | `tools/guest-rustflags` |
+| `ctl` | `wamn-ctl` and the two guests | `tools/guest-rustflags` |
 | `identity` | `wamn-identity` | none |
 | `edge-web` | `wamn-edge` | none |
-| `gates` | `wamn-host`, `wamn-runtime`, `wamn-gates`, `wamn-ctl`, `wamn-cdc-reader`, and the five guests of the component builder | `tools/guest-rustflags` |
 
-The five guests are `http-route`, `materializer`, `busyloop`, `connection-http-standard`, and `sockprobe`.
+The two guests are `http-route` and `materializer`.
 The command ignores a file that no `COPY` from the build context reaches, and a file that `.dockerignore` drops.
 The `wamn.dev/source-head` label is not an input.
 
@@ -567,7 +565,7 @@ The Dockerfile stage `build-edge-web` builds `wamn-edge` with the `web` feature 
 Keep one Cargo process per target directory.
 
 Each checkout keeps its own Docker target cache and its own host target directory.
-The native images `host`, `ctl`, `identity`, and `gates` use one `build-native` stage.
+The native images `host`, `ctl`, and `identity` use one `build-native` stage.
 The host image also carries `wamn-cdc-reader`.
 It compiles every native package in one `cargo build`, so features unify once.
 The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
