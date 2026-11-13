@@ -73,7 +73,9 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     tx.rollback().await.unwrap();
     let root = std::env::temp_dir().join(format!("wamn-authdrops-pat-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
-    let bootstrap = crate::dev::pat_issuer::start(url.as_str(), &root).unwrap();
+    let bootstrap = crate::dev::pat_issuer::start(url.as_str(), &root)
+        .await
+        .unwrap();
     sqlx::raw_sql("RESET ROLE")
         .execute(&mut client)
         .await
@@ -120,7 +122,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
             .len(),
         1
     );
-    bootstrap.stop().unwrap();
+    bootstrap.stop().await.unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     drop(client);
     system

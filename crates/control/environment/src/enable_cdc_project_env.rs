@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 pub(super) mod plan;
-pub(crate) use plan::cdc_sql_bundle;
+pub use plan::cdc_sql_bundle;
 
 use std::path::PathBuf;
 use std::time::Duration;

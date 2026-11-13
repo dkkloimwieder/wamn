@@ -80,13 +80,7 @@ fn system_job(document: &ClusterDocument, image: &str) -> Value {
         "platform-system",
         image,
         &["/usr/local/bin/wamn-ctl"],
-        &[
-            "provision-system",
-            "--platform-domain",
-            domain,
-            "--db-host",
-            &database_host(&document.org),
-        ],
+        &["provision-system", "--platform-domain", domain],
     )
 }
 
@@ -120,8 +114,6 @@ fn issuer_credential_job(document: &ClusterDocument, image: &str) -> Value {
             &super::identity::issuer(&document.org),
             "--namespace",
             &document.org,
-            "--db-host",
-            &database_host(&document.org),
         ],
     )
 }

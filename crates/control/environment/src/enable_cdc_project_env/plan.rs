@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 /// and exclusion maps, then the replication role's grants. Package apply owns
 /// the map rows. Apply the role SQL to the cluster before this bundle.
 /// Every statement is idempotent (safe to apply again).
-pub(crate) fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
+pub fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
     let mut bundle = sql::create_failover_slot_sql(cdc_name);
     if schemas.is_empty() {
         writeln!(

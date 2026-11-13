@@ -940,6 +940,14 @@ File-backed credential storage and `WAMN_CREDENTIAL_DIR` are removed.
 Deployed hosts read connection credentials through their in-cluster ServiceAccount.
 Local development hosts have no connection credential store.
 A credential read returns `no credential store in local mode` and logs that reason.
+Local startup still provisions the disposable databases and starts identity, control and web services.
+Those processes use explicit operator connection URLs with verified TLS.
+They do not supply a local connection credential store.
+Session target files accept an explicit role URL for these local processes.
+Cluster session targets use native credential and CA references.
+Each `sessionTargetSecrets` chart entry contains its ConfigMap `name` and its public `connection` configuration.
+The chart grants identity access to the credential and CA named by that configuration, including dedicated cluster CAs.
+
 The HTTP interface keeps its `credential-unavailable` result.
 
 `wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.

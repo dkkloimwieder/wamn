@@ -57,6 +57,35 @@ pub fn session_audience(
     ))
 }
 
+/// A native cluster reference or an explicit operator URL for a local process.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum SessionConnection {
+    References(ConnectionConfig),
+    Operator(String),
+}
+
+impl std::fmt::Debug for SessionConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionConnection([REDACTED])")
+    }
+}
+impl SessionConnection {
+    /// Input for the shared SQLx constructor.
+    pub fn input(&self) -> anyhow::Result<String> {
+        match self {
+            Self::References(config) => config.to_json(),
+            Self::Operator(input) => Ok(input.clone()),
+        }
+    }
+    pub fn database(&self) -> anyhow::Result<String> {
+        Ok(wamn_postgres::identity(&self.input()?)?.1)
+    }
+    pub fn username(&self) -> anyhow::Result<String> {
+        Ok(wamn_postgres::identity(&self.input()?)?.0)
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TargetDocument {
@@ -66,7 +95,7 @@ struct TargetDocument {
     env: String,
     instance_suffix: String,
     project_env_key: String,
-    connection: ConnectionConfig,
+    connection: SessionConnection,
 }
 
 /// One validated target; cloning preserves its exact target and redacted diagnostics.
@@ -107,8 +136,16 @@ impl SessionTarget {
             triple.env.as_str(),
             instance_suffix,
         );
-        let connection: ConnectionConfig = serde_json::from_str(database_url)
-            .map_err(|_| refused("session connection configuration refused"))?;
+        let connection = if database_url.trim_start().starts_with('{') {
+            SessionConnection::References(
+                serde_json::from_str(database_url)
+                    .map_err(|_| refused("session connection configuration refused"))?,
+            )
+        } else {
+            SessionConnection::Operator(database_url.to_owned())
+        };
+        let (username, selected_database) = wamn_postgres::identity(database_url)
+            .map_err(|_| refused("session reader configuration refused"))?;
         let role = crate::workload_login(
             crate::WorkloadRoleFamily::SessionRoleReader,
             crate::WorkloadRoleIdentity::ProjectEnvironment {
@@ -119,7 +156,7 @@ impl SessionTarget {
             },
         )
         .map_err(|_| refused("session reader identity refused"))?;
-        if connection.database != database || connection.username != role {
+        if selected_database != database || username != role {
             return Err(refused("session reader configuration names another target"));
         }
         Ok(Self {
@@ -151,12 +188,10 @@ impl SessionTarget {
             &document.project_env_key,
             &document
                 .connection
-                .to_json()
+                .input()
                 .map_err(|_| refused("session connection refused"))?,
         )?;
-        if target.document.audience != document.audience
-            || target.document.connection.database != document.connection.database
-        {
+        if target.document.audience != document.audience {
             return Err(refused("session target target mismatch"));
         }
         Ok(target)
@@ -184,7 +219,67 @@ impl SessionTarget {
         &self.document.project_env_key
     }
     /// Borrow the validated reader capability for the database driver only.
-    pub fn connection(&self) -> &ConnectionConfig {
+    pub fn connection(&self) -> &SessionConnection {
         &self.document.connection
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_connections_keep_their_target_for_cluster_and_local_inputs() {
+        let triple = Triple::new("acme", "dev", "orders");
+        let instance = "aaaaaaa1";
+        let database = project_env_database_name("acme", "orders", "dev", instance);
+        let username = crate::workload_login(
+            crate::WorkloadRoleFamily::SessionRoleReader,
+            crate::WorkloadRoleIdentity::ProjectEnvironment {
+                org: "acme",
+                project: "orders",
+                environment: "dev",
+                database: &database,
+            },
+        )
+        .unwrap();
+        let native = ConnectionConfig {
+            host: "database.acme.svc".into(),
+            port: 5432,
+            database: database.clone(),
+            username: username.clone(),
+            credentials: wamn_postgres::SecretRef {
+                namespace: "acme".into(),
+                name: "reader".into(),
+            },
+            server_ca: wamn_postgres::SecretRef {
+                namespace: "acme".into(),
+                name: "database-ca".into(),
+            },
+        };
+        let key = wamn_registry::project_env_key("acme", "orders", "dev");
+        let explicit = format!("postgres://{username}:password@localhost/{database}");
+        for input in [native.to_json().unwrap(), explicit] {
+            let target = SessionTarget::new(&triple, instance, &key, &input).unwrap();
+            assert!(SessionTarget::from_json(target.to_json().unwrap().as_bytes()).is_ok());
+        }
+        assert!(
+            SessionTarget::new(
+                &triple,
+                instance,
+                &key,
+                &format!("postgres://other@localhost/{database}")
+            )
+            .is_err()
+        );
+        assert!(
+            SessionTarget::new(
+                &triple,
+                instance,
+                &key,
+                r#"{"url":"postgres://other@localhost/database"}"#
+            )
+            .is_err()
+        );
     }
 }

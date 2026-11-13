@@ -18,6 +18,9 @@ pub fn objects(
     path: &str,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
+    let edge = Path::new(path)
+        .file_name()
+        .is_some_and(|name| name == "letsencrypt.yaml");
     let hosts = matches!(
         Path::new(path)
             .file_name()
@@ -31,10 +34,12 @@ pub fn objects(
         if hosts || object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
             object["metadata"]["namespace"] = document.org.clone().into();
         }
-        if matches!(
-            object["metadata"]["namespace"].as_str(),
-            Some("hosts" | "identity")
-        ) {
+        if !edge
+            && matches!(
+                object["metadata"]["namespace"].as_str(),
+                Some("hosts" | "identity")
+            )
+        {
             object["metadata"]["namespace"] = document.org.clone().into();
         }
         if let Some(subjects) = object["subjects"].as_array_mut() {

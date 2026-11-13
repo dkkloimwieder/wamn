@@ -244,8 +244,8 @@ pub(super) async fn open_stream(
                     .send(Ok((columns.clone(), wal_position)))
                     .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
                 let mut query = sqlx::query(sqlx::AssertSqlSafe(statement.exact_sql.to_string()));
-                for bind in &binds {
-                    query = query.bind(PgParam(bind));
+                for (index, bind) in binds.iter().enumerate() {
+                    query = query.bind(PgParam::prepared(bind, &prepared, index));
                 }
                 pump(
                     query.fetch(&mut *conn),

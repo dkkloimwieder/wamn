@@ -127,19 +127,14 @@ pub fn target_objects(
             // Only deploy/rollback persist the selected release pair by replacement.
             host_rules.push(json!({"apiGroups":[""],"resources":["configmaps"],"resourceNames":[coordinate],"verbs":["update"]}));
         }
-        role(&mut objects, &document.org, &name, &host_rules);
         if privileged {
-            role(
-                &mut objects,
-                &document.org,
-                &name,
-                &[
-                    json!({"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-apply",format!("{cluster}-superuser"),format!("{cluster}-ca"),"wamn-pg-ca"],"verbs":["get"]}),
-                    json!({"apiGroups":["postgresql.cnpg.io"],"resources":["databases"],"resourceNames":[database],"verbs":["get","list","watch","patch"]}),
-                    json!({"apiGroups":["postgresql.cnpg.io"],"resources":["clusters"],"resourceNames":[cluster],"verbs":["get","patch"]}),
-                ],
-            );
+            host_rules.extend([
+                json!({"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-apply",format!("{cluster}-superuser"),format!("{cluster}-ca"),"wamn-pg-ca"],"verbs":["get"]}),
+                json!({"apiGroups":["postgresql.cnpg.io"],"resources":["databases"],"resourceNames":[database],"verbs":["get","list","watch","patch"]}),
+                json!({"apiGroups":["postgresql.cnpg.io"],"resources":["clusters"],"resourceNames":[cluster],"verbs":["get","patch"]}),
+            ]);
         }
+        role(&mut objects, &document.org, &name, &host_rules);
     }
     Ok(objects)
 }

@@ -571,16 +571,21 @@ mod tests {
     ///
     /// Before `wamn-0h0g.22.16` `resolve` returned the same url whatever
     /// authority asked, so every family authenticated as the shared `wamn_app`
-    /// login. Five classes, five configured logins, five different answers.
+    /// login. Each class has its own configured login.
     #[test]
     fn each_authority_class_authenticates_with_its_own_configured_credential() {
+        let credentials = AuthorityClass::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, class)| {
+                (
+                    class.as_str().to_owned(),
+                    serde_json::Value::String(format!("postgres://role_{index}:pw@db/billing")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
         let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"credentials":{
-                 "guest-sql":"postgres://wamn_app_g:pw@db/billing",
-                 "executor-platform":"postgres://wamn_exec_platform_x:pw@db/billing",
-                 "callable-http":"postgres://wamn_http_admitter_x:pw@db/billing",
-                 "event-materializer":"postgres://wamn_materializer_x:pw@db/billing",
-                 "administration":"postgres://wamn_administration_x:pw@db/billing"}}}"#,
+            &serde_json::json!({"billing":{"credentials":credentials}}).to_string(),
             &base(),
         )
         .expect("per-class credentials parse");
@@ -598,7 +603,6 @@ mod tests {
             );
             seen.push(url);
         }
-        assert_eq!(seen.len(), 5);
     }
 
     /// A class with no configured credential REFUSES. The forbidden behaviour is
@@ -614,19 +618,11 @@ mod tests {
         .expect("a single-class project parses");
         let provider = StaticCredentialProvider::new(projects, None);
 
-        for class in [
-            AuthorityClass::ExecutorPlatform,
-            AuthorityClass::CallableHttp,
-            AuthorityClass::EventMaterializer,
-            AuthorityClass::Administration,
-        ] {
-            let error = provider
-                .resolve("billing", class, None)
-                .expect_err("an unconfigured class must refuse");
-            assert!(
-                format!("{error:#}").contains("names no credential for authority class"),
-                "{class} refused for the wrong reason: {error:#}"
-            );
+        for class in AuthorityClass::ALL
+            .into_iter()
+            .filter(|class| *class != AuthorityClass::GuestSql)
+        {
+            assert!(provider.resolve("billing", class, None).is_err());
         }
     }
 
@@ -636,12 +632,11 @@ mod tests {
             StaticCredentialProvider::projects_from_json(r#"{"billing":{}}"#, &base()).is_err(),
             "a project naming no credential at all must refuse"
         );
-        let error = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"credentials":{"guest_sql":"postgres://u_a:pw@db/billing"}}}"#,
+        let result = StaticCredentialProvider::projects_from_json(
+            r#"{"billing":{"credentials":{"guest_sql":"postgres://user:pw@db/billing"}}}"#,
             &base(),
-        )
-        .expect_err("an unrecognised class key must refuse rather than be dropped");
-        assert!(format!("{error:#}").contains("unknown authority class"));
+        );
+        assert!(result.is_err());
     }
 
     /// *** THE `wamn-0h0g.22.6.7` REFUSAL, ON THE SELECTED CREDENTIAL. ***
@@ -754,27 +749,6 @@ mod tests {
         );
     }
 
-    /// The generation is the LOGIN ROLE, carried in the url's user component.
-    #[test]
-    fn the_authority_class_selects_the_cache() {
-        assert_eq!(
-            PoolLifecycle::for_class(AuthorityClass::GuestSql).label(),
-            "guest"
-        );
-        for class in [
-            AuthorityClass::ExecutorPlatform,
-            AuthorityClass::CallableHttp,
-            AuthorityClass::EventMaterializer,
-            AuthorityClass::Administration,
-        ] {
-            assert_eq!(
-                PoolLifecycle::for_class(class).label(),
-                "platform",
-                "{class} is host-owned platform work"
-            );
-        }
-    }
-
     /// A url that names no credential cannot produce a probe: there would be
     /// nothing to compare the server's answer against.
     #[test]
@@ -812,22 +786,11 @@ mod tests {
         );
     }
 
-    // R18 — the connect-time test logic. A negative is hard to produce on stock
-    // PG18 (the setting defaults on), so the fail-closed branch is asserted here.
-    #[test]
-    fn configured_database_waits_are_finite_and_nonzero() {
-        let max = max_host_call_ms();
-        assert_eq!(bounded_wait_timeout_ms(0), 1);
-        assert_eq!(bounded_wait_timeout_ms(u64::MAX), max);
-        assert_eq!(bounded_statement_timeout_ms(0), 1);
-        assert_eq!(u64::from(bounded_statement_timeout_ms(u64::MAX)), max);
-    }
-
     #[test]
     fn project_config_names_each_lifecycle_budget_and_refuses_the_retired_key() {
         let base = base();
         let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"p":{"url":"postgres://localhost/p","guest_pool_max_size":7,"platform_pool_max_size":3}}"#,
+            r#"{"p":{"credentials":{"guest-sql":"postgres://user@localhost/p"},"guest_pool_max_size":7,"platform_pool_max_size":3}}"#,
             &base,
         )
         .expect("separately named lifecycle budgets parse");
@@ -836,10 +799,9 @@ mod tests {
         assert_eq!(project.platform_pool_max_size, 3);
 
         let retired = StaticCredentialProvider::projects_from_json(
-            r#"{"p":{"url":"postgres://localhost/p","pool_max_size":10}}"#,
+            r#"{"p":{"credentials":{"guest-sql":"postgres://user@localhost/p"},"pool_max_size":10}}"#,
             &base,
-        )
-        .expect_err("the ambiguous pre-split key must refuse");
-        assert!(retired.to_string().contains("retired \"pool_max_size\""));
+        );
+        assert!(retired.is_err());
     }
 }

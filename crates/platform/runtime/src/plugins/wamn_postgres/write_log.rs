@@ -277,7 +277,7 @@ impl OperationTransaction {
             }
             let mut query = sqlx::query(sql);
             for value in &params {
-                query = query.bind(PgParam(value));
+                query = query.bind(PgParam(value, None));
             }
             query
                 .fetch_all(connection.connection())
@@ -396,7 +396,7 @@ impl WriteLogStore {
             .await?;
         let mut query = sqlx::query(sql);
         for value in &params {
-            query = query.bind(PgParam(value));
+            query = query.bind(PgParam(value, None));
         }
         let result = query.fetch_all(&mut *connection).await;
         match result {

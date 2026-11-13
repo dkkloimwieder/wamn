@@ -63,6 +63,7 @@ const POSTGRES_TYPES: &[(&[&str], SqlValueType)] = &[
             "varchar",
             "character varying",
             "bpchar",
+            "char",
             "character",
             "name",
             "unknown",
@@ -148,6 +149,7 @@ mod tests {
             ("INT2", SqlValueType::Int32),
             ("float4", SqlValueType::Float64),
             ("BPCHAR", SqlValueType::Text),
+            ("CHAR", SqlValueType::Text),
             ("varchar", SqlValueType::Text),
             ("name", SqlValueType::Text),
         ] {

@@ -170,11 +170,11 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    super::resources::apply_object(
-        target,
-        &identity_ca(&secret_text(&tls, "ca.crt")?, &document.org),
-    )
-    .await
+    let ca = secret_text(&tls, "ca.crt")?;
+    for namespace in [&document.org, "hosts"] {
+        super::resources::apply_object(target, &identity_ca(&ca, namespace)).await?;
+    }
+    Ok(())
 }
 
 fn operator_secret(mut secret: Value, name: &str, namespace: &str) -> Value {
@@ -380,7 +380,8 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
             "http"
         )
     );
-    let forward = wamn_kubernetes::forward::port_forward(target, "hosts", &service, 80).await?;
+    let forward =
+        wamn_kubernetes::forward::port_forward(target, &document.org, &service, 80).await?;
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -588,9 +589,8 @@ mod tests {
             variables
                 .iter()
                 .any(|value| value["name"] == "WAMN_CONTROL_URL"
-                    && value["valueFrom"]["secretKeyRef"]
-                        == json!({"name":"wamn-control-acme", "key":"url"})
-                    && value.get("value").is_none())
+                    && value["value"] == "/etc/wamn/control-administration/control.json"
+                    && value.get("valueFrom").is_none())
         );
         let mounts = group["volumeMounts"].as_array().unwrap();
         for path in variables

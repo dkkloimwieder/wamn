@@ -295,7 +295,23 @@ impl Fixture {
             resend_from: "",
             invite_url: "",
             mode: identity::Mode::Session {
-                targets: vec!["retained-target".into()],
+                targets: vec![identity::SessionTargetMount {
+                    name: "retained-target".into(),
+                    connection: wamn_postgres::ConnectionConfig {
+                        host: "dedicated-rw.identity.svc".into(),
+                        port: 5432,
+                        database: "environment".into(),
+                        username: "reader".into(),
+                        credentials: wamn_postgres::SecretRef {
+                            namespace: "identity".into(),
+                            name: "reader-credential".into(),
+                        },
+                        server_ca: wamn_postgres::SecretRef {
+                            namespace: "identity".into(),
+                            name: "dedicated-ca".into(),
+                        },
+                    },
+                }],
                 nats: None,
             },
         })?;

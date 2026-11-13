@@ -745,19 +745,23 @@ mod tests {
         ))));
         let mut references = std::collections::BTreeMap::new();
         collect_references(pod, &mut references)?;
-        for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
-            if credential.host_variable.is_some() {
-                assert!(references.contains_key(&(
-                    "Secret".into(),
-                    wamn_control_provision::workload_secret_name(
-                        credential.family,
-                        "example",
-                        "orders",
-                        "dev"
-                    )
-                )));
-            }
-        }
+        assert!(references.contains_key(&(
+            "ConfigMap".into(),
+            wamn_control_provision::project_env_secret_name("example", "orders", "dev")
+        )));
+        let host = pod["containers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|container| container["name"] == "host")
+            .unwrap();
+        let postgres = host["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variable| variable["name"] == "WAMN_PG_URL")
+            .unwrap();
+        assert_eq!(postgres["value"], "/etc/wamn/postgres/app.json");
         assert!(!references.contains_key(&("Secret".into(), "operator-example".into())));
         assert!(
             objects

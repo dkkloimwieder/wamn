@@ -280,7 +280,7 @@ async fn setup(raw: &str) -> Fixture {
     }
     let databases: Vec<String> = targets
         .iter()
-        .map(|t| t.connection().database.as_str().to_owned())
+        .map(|t| t.connection().database().unwrap())
         .collect();
     let exists: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[])) OR EXISTS (SELECT FROM pg_database WHERE datname=ANY($2::text[]))").bind(&roles).bind(&databases).fetch_one(&mut system.client)
         .await.expect_redacted("exact fixture names must be absent").get(0);
@@ -356,7 +356,10 @@ async fn setup(raw: &str) -> Fixture {
     let mut environments = Vec::new();
     for target in &targets {
         let mut url = admin.clone();
-        url.set_path(&format!("/{}", target.connection().database.as_str()));
+        url.set_path(&format!(
+            "/{}",
+            target.connection().database().unwrap().as_str()
+        ));
         let mut environment = connect(url.as_str()).await;
         for schema in [
             wamn_catalog::CATALOG_SCHEMA_SQL,
@@ -388,7 +391,7 @@ async fn setup(raw: &str) -> Fixture {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "REVOKE TEMPORARY ON DATABASE {} FROM PUBLIC",
-                escape_identifier(target.connection().database.as_str())
+                escape_identifier(target.connection().database().unwrap().as_str())
             ))
                 .to_string(),
         ))
@@ -399,8 +402,8 @@ async fn setup(raw: &str) -> Fixture {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::SessionRoleReader,
-                target.connection().database.as_str(),
-                target.connection().username.as_str(),
+                target.connection().database().unwrap().as_str(),
+                target.connection().username().unwrap().as_str(),
                 PASSWORD,
             ))
                 .to_string(),
@@ -447,7 +450,7 @@ async fn cleanup(fixture: Fixture) {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (&format!(
                 "DROP DATABASE {} WITH (FORCE)",
-                escape_identifier(target.connection().database.as_str())
+                escape_identifier(target.connection().database().unwrap().as_str())
             ))
                 .to_string(),
         ))

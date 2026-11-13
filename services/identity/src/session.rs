@@ -221,7 +221,7 @@ pub(super) async fn authorized_roles(
     let mut retained = configured.reader.lock().await;
     let mut roles_database = match retained.take() {
         Some(database) => database,
-        None => connect_database(&target.connection().to_json().map_err(|_| failed())?)
+        None => connect_database(&target.connection().input().map_err(|_| failed())?)
             .await
             .map_err(|_| failed())?,
     };

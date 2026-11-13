@@ -139,7 +139,17 @@ impl<'r> Decode<'r, sqlx::Postgres> for Numeric {
 
 /// A guest value binds with its native PostgreSQL type.
 #[derive(Debug)]
-pub(super) struct PgParam<'a>(pub(super) &'a SqlValue);
+pub(super) struct PgParam<'a>(pub(super) &'a SqlValue, pub(super) Option<&'a PgTypeInfo>);
+
+impl<'a> PgParam<'a> {
+    pub(super) fn prepared(value: &'a SqlValue, statement: &'a PgStatement, index: usize) -> Self {
+        let ty = match statement.parameters() {
+            Some(sqlx::Either::Left(parameters)) => parameters.get(index),
+            _ => None,
+        };
+        Self(value, ty)
+    }
+}
 
 impl Type<sqlx::Postgres> for PgParam<'_> {
     fn type_info() -> PgTypeInfo {
@@ -152,6 +162,9 @@ impl Type<sqlx::Postgres> for PgParam<'_> {
 
 impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
     fn produces(&self) -> Option<PgTypeInfo> {
+        if let Some(ty) = self.1 {
+            return Some(ty.clone());
+        }
         Some(match self.0 {
             SqlValue::Null => Self::type_info(),
             SqlValue::Boolean(_) => bool::type_info(),
@@ -174,8 +187,18 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
         match self.0 {
             SqlValue::Null => Ok(sqlx::encode::IsNull::Yes),
             SqlValue::Boolean(value) => value.encode_by_ref(buffer),
+            SqlValue::Int32(value) if self.1.is_some_and(|ty| ty.name() == "INT2") => {
+                i16::try_from(*value)?.encode_by_ref(buffer)
+            }
             SqlValue::Int32(value) => value.encode_by_ref(buffer),
             SqlValue::Int64(value) => value.encode_by_ref(buffer),
+            SqlValue::Float64(value) if self.1.is_some_and(|ty| ty.name() == "FLOAT4") => {
+                let narrowed = *value as f32;
+                if value.is_finite() && !narrowed.is_finite() {
+                    return Err("value is outside the PostgreSQL REAL range".into());
+                }
+                narrowed.encode_by_ref(buffer)
+            }
             SqlValue::Float64(value) => value.encode_by_ref(buffer),
             SqlValue::Bytes(value) => {
                 <Vec<u8> as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)

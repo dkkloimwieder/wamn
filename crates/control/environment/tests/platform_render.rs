@@ -10,7 +10,23 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
     for mode in [
         identity::Mode::Foundation,
         identity::Mode::Session {
-            targets: vec!["fixture-target".into()],
+            targets: vec![identity::SessionTargetMount {
+                name: "fixture-target".into(),
+                connection: wamn_postgres::ConnectionConfig {
+                    host: "dedicated-rw.fixture-identity.svc".into(),
+                    port: 5432,
+                    database: "environment".into(),
+                    username: "reader".into(),
+                    credentials: wamn_postgres::SecretRef {
+                        namespace: "fixture-identity".into(),
+                        name: "reader-credential".into(),
+                    },
+                    server_ca: wamn_postgres::SecretRef {
+                        namespace: "fixture-identity".into(),
+                        name: "dedicated-ca".into(),
+                    },
+                },
+            }],
             nats: None,
         },
     ] {
@@ -32,13 +48,15 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
         })?;
         let rendered = wamn_kubernetes::helm::template(&entry)?;
         assert_eq!(entry["values"]["authNats"]["url"], "");
+        let role = rendered
+            .iter()
+            .find(|object| object["kind"] == "Role")
+            .unwrap();
+        let names = role["rules"][0]["resourceNames"].as_array().unwrap();
+        assert_eq!(names.iter().any(|name| name == "dedicated-ca"), !foundation);
         assert_eq!(
-            entry["values"]["sessionTargetSecrets"],
-            if foundation {
-                json!([])
-            } else {
-                json!(["fixture-target"])
-            }
+            names.iter().any(|name| name == "reader-credential"),
+            !foundation
         );
         let deployment = rendered
             .iter()
@@ -54,7 +72,8 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
             variables
                 .iter()
                 .any(|variable| variable["name"] == "WAMN_IDENTITY_DATABASE_URL"
-                    && variable["valueFrom"]["secretKeyRef"]["name"] == "fixture-db")
+                    && variable["valueFrom"]["configMapKeyRef"]["name"]
+                        == "fixture-db-configuration")
         );
         assert!(
             volumes
@@ -64,7 +83,7 @@ fn identity_chart_mounts_only_the_selected_credentials() -> anyhow::Result<()> {
         assert_eq!(
             volumes
                 .iter()
-                .any(|volume| volume["secret"]["secretName"] == "fixture-target"),
+                .any(|volume| volume["configMap"]["name"] == "fixture-target"),
             !foundation
         );
     }
@@ -210,11 +229,23 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let cluster = "database-owner";
     let database = "recorded-environment-database";
     let objects = operations::target_objects(&document, cluster, database)?;
+    let mut identities = std::collections::BTreeSet::new();
+    for object in &objects {
+        assert!(
+            identities.insert((
+                object["apiVersion"].to_string(),
+                object["kind"].to_string(),
+                object["metadata"]["namespace"].to_string(),
+                object["metadata"]["name"].to_string()
+            )),
+            "duplicate resource identity would replace its rules"
+        );
+    }
     for account in objects
         .iter()
         .filter(|object| object["kind"] == "ServiceAccount")
     {
-        assert_eq!(account["metadata"]["namespace"], "platform");
+        assert_eq!(account["metadata"]["namespace"], document.org);
         let name = account["metadata"]["name"].as_str().unwrap();
         let privileged = name.ends_with("-sql");
         for binding in objects
@@ -234,12 +265,9 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                         && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
                 })
                 .unwrap();
-            assert!(matches!(
-                role["metadata"]["namespace"].as_str(),
-                Some("platform" | "hosts")
-            ));
+            assert_eq!(role["metadata"]["namespace"], document.org);
             for rule in role["rules"].as_array().unwrap() {
-                if role["metadata"]["namespace"] == "hosts" {
+                if role["metadata"]["namespace"] == document.org {
                     let resources = rule["resources"].as_array().unwrap();
                     let verbs = rule["verbs"].as_array().unwrap();
                     if resources.iter().any(|resource| resource == "secrets") {
@@ -273,7 +301,18 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                     .iter()
                     .any(|group| group == "postgresql.cnpg.io")
                 {
-                    assert_eq!(rule["resourceNames"], json!([database]));
+                    assert!(privileged);
+                    let target = if rule["resources"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| value == "databases")
+                    {
+                        database
+                    } else {
+                        cluster
+                    };
+                    assert_eq!(rule["resourceNames"], json!([target]));
                     assert!(
                         !rule["verbs"]
                             .as_array()
@@ -282,17 +321,14 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                             .any(|verb| verb == "create" || verb == "delete")
                     );
                 }
-                if role["metadata"]["namespace"] == "platform"
+                if rule["resourceNames"].as_array().is_some()
                     && rule["resources"]
                         .as_array()
                         .unwrap()
                         .iter()
                         .any(|value| value == "secrets")
                 {
-                    assert!(
-                        privileged,
-                        "a code worker can read platform administrator Secrets"
-                    );
+                    assert!(privileged, "only a SQL worker reads administrator Secrets");
                     assert!(
                         rule["resourceNames"]
                             .as_array()
@@ -305,8 +341,16 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         }
         assert_eq!(
             objects.iter().any(|object| object["kind"] == "Role"
-                && object["metadata"]["namespace"] == "platform"
-                && object["metadata"]["name"] == name),
+                && object["metadata"]["name"] == name
+                && object["rules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|rule| rule["apiGroups"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| value == "postgresql.cnpg.io"))),
             privileged
         );
     }

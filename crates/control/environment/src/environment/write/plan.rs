@@ -45,7 +45,11 @@ pub(in crate::environment) fn host_group(
         );
         variables.push(serde_yaml::from_str(&format!(
             "{{name: {variable}, value: /etc/wamn/postgres/{}.json}}",
-            credential.family.component_stem()
+            if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
+                "app".to_owned()
+            } else {
+                credential.family.component_stem()
+            }
         ))?);
     }
     let mut group = serde_json::to_value(group)?;

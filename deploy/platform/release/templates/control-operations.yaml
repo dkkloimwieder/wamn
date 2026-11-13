@@ -3,7 +3,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: c-{{ .Values.org }}-status
-  namespace: hosts
+  namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -11,13 +11,13 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: wamn-control-{{ .Values.org }}
-  namespace: hosts
+  namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: c-{{ .Values.org }}-operations
-  namespace: platform
+  namespace: {{ .Release.Namespace }}
 rules:
 - apiGroups: [batch]
   resources: [jobs]
@@ -33,7 +33,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: c-{{ .Values.org }}-operations
-  namespace: platform
+  namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -41,5 +41,5 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: wamn-control-{{ .Values.org }}
-  namespace: hosts
+  namespace: {{ .Release.Namespace }}
 {{- end }}

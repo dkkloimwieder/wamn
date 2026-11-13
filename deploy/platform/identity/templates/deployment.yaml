@@ -163,7 +163,7 @@ spec:
         {{- range $index, $secret := .Values.sessionTargetSecrets }}
         - name: {{ printf "session-target-%d" $index }}
           configMap:
-            name: {{ required "Each sessionTargetSecrets entry must name a connection ConfigMap." $secret | quote }}
+            name: {{ required "Each sessionTargetSecrets entry must name a connection ConfigMap." $secret.name | quote }}
             optional: false
             defaultMode: 0400
             items:

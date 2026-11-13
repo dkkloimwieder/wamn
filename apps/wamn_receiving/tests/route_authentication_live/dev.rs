@@ -475,7 +475,7 @@ pub(super) async fn assert_dev_command(
     }
     .await;
 
-    let stopped = environment.issuer.stop();
+    let stopped = environment.issuer.stop().await;
 
     command_result?;
     stopped?;

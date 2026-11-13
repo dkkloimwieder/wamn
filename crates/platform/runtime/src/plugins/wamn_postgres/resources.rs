@@ -255,8 +255,8 @@ pub(super) async fn run_query(
         .map_err(|e| map_pg_error(&e))?;
         let columns = columns_of(&stmt);
         let mut query = sqlx::query(stmt.sql().clone());
-        for param in params {
-            query = query.bind(PgParam(param));
+        for (index, param) in params.iter().enumerate() {
+            query = query.bind(PgParam::prepared(param, &stmt, index));
         }
         let stream = query.fetch(&mut *conn);
         futures_util::pin_mut!(stream);
@@ -303,8 +303,8 @@ pub(super) async fn run_execute(
         .map_err(|e| map_pg_error(&e))?;
         {
             let mut query = sqlx::query(stmt.sql().clone());
-            for param in params {
-                query = query.bind(PgParam(param));
+            for (index, param) in params.iter().enumerate() {
+                query = query.bind(PgParam::prepared(param, &stmt, index));
             }
             query
                 .execute(&mut *conn)
@@ -343,8 +343,8 @@ pub(super) async fn run_verified_query(
         validate_prepared_statement(statement_path, statement, &prepared)?;
         let columns = columns_of(&prepared);
         let mut query = sqlx::query(prepared.sql().clone());
-        for bind in binds {
-            query = query.bind(PgParam(bind));
+        for (index, bind) in binds.iter().enumerate() {
+            query = query.bind(PgParam::prepared(bind, &prepared, index));
         }
         let stream = query.fetch(&mut *conn);
         futures_util::pin_mut!(stream);
@@ -921,8 +921,8 @@ async fn txn_open_cursor<T: 'static>(
                     .await?;
                     {
                         let mut query = sqlx::query(stmt.sql().clone());
-                        for param in &params {
-                            query = query.bind(PgParam(param));
+                        for (index, param) in params.iter().enumerate() {
+                            query = query.bind(PgParam::prepared(param, &stmt, index));
                         }
                         query
                             .execute(connection.connection())

@@ -16,8 +16,12 @@ rules:
     resourceNames:
       - {{ .Values.databaseSecret | quote }}
       - wamn-pg-ca
-      {{- range .Values.sessionTargetSecrets }}
-      - {{ printf "wamn-session-role-reader-%s" (trimPrefix "wamn-db-" .) | quote }}
+      {{- range $target := .Values.sessionTargetSecrets }}
+      {{- if or (ne $target.connection.credentials.namespace $.Release.Namespace) (ne $target.connection.server_ca.namespace $.Release.Namespace) }}
+      {{- fail "Session credentials and CA must share the identity namespace." }}
+      {{- end }}
+      - {{ $target.connection.credentials.name | quote }}
+      - {{ $target.connection.server_ca.name | quote }}
       {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

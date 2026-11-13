@@ -54,7 +54,7 @@ pub async fn deploy(
                 &wamn_registry::name::control_resource(&document.org),
             )
             .await?,
-            resources::release_values(&target, "identity", "identity").await?,
+            resources::release_values(&target, &document.org, "identity").await?,
         )
     } else {
         (None, None)
@@ -259,6 +259,11 @@ async fn infrastructure(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let payload = chart.directory().join("platform/resources");
+    resources::apply_object(
+        target,
+        &serde_json::json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":document.org}}),
+    )
+    .await?;
     for object in resources::runtime_namespaces() {
         resources::apply_object(target, &object).await?;
     }
@@ -378,11 +383,6 @@ async fn infrastructure(
     ] {
         apply(target, &manifests::objects(&payload, manifest, document)?).await?;
     }
-    resources::apply_object(
-        target,
-        &serde_json::json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":document.org}}),
-    )
-    .await?;
     apply(
         target,
         &manifests::objects(&payload, "cnpg-cluster.yaml", document)?,

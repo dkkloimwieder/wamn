@@ -92,13 +92,16 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         &document,
     )
     .await?;
-    inputs.cdc_reader = Some(enable_cdc(
-        &args,
-        &inputs,
-        &mut admin,
-        &environment.route.database_url,
-        &environment.identity,
-    )?);
+    inputs.cdc_reader = Some(
+        enable_cdc(
+            &args,
+            &inputs,
+            &mut admin,
+            &environment.route.database_url,
+            &environment.identity,
+        )
+        .await?,
+    );
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
@@ -109,27 +112,128 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         &environment.identity,
     )?;
 
-    let web = super::control::start(&args, &environment);
+    let web = super::control::start(&args, &environment).await;
     if let Err(error) = web {
-        environment.issuer.stop()?;
+        environment.issuer.stop().await?;
         return Err(error);
     }
     environment.issuer.retain(&args.root.canonicalize()?)?;
     Ok(config)
 }
 
-/// Enable CDC for the environment with the cluster's verb and record what the
-/// loop's reader needs. The verb provisions the event streams with the
-/// materializer consumers of the packages, and records the registration. The
-/// role SQL applies here. The CDC SQL holds the slot, so the loop applies it to
-/// each target it creates.
-fn enable_cdc(
+/// Write private local process input without creating a credential backend.
+pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    Ok(())
+}
+
+async fn enable_cdc(
     args: &DevUpRequest,
-    _inputs: &DevEnvironmentInputs,
+    inputs: &DevEnvironmentInputs,
     admin: &mut sqlx::PgConnection,
-    _target_url: &str,
-    _identity: &super::activation::DevActivationIdentity,
+    target_url: &str,
+    identity: &super::activation::DevActivationIdentity,
 ) -> anyhow::Result<super::config::CdcReader> {
-    let _ = (args, admin);
-    anyhow::bail!("no credential store in local mode")
+    let triple = wamn_registry::Triple::new(
+        &identity.org,
+        identity.environment.clone(),
+        &identity.project,
+    );
+    let manifests = inputs
+        .package_sources
+        .iter()
+        .map(|root| super::config::read_package_manifest(root))
+        .collect::<Result<Vec<_>, _>>()?;
+    let schemas = manifests
+        .iter()
+        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
+        &args.system_database_url,
+        &triple,
+    )
+    .await?;
+    let name = wamn_control_provision::cdc_object_name(
+        &identity.org,
+        &identity.project,
+        &identity.environment,
+        &instance,
+    );
+    let role = name.clone();
+    let cdc_url = super::credentials::login(target_url, &role, None, "").await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER ROLE {} REPLICATION",
+        postgres_protocol::escape::escape_identifier(&role)
+    )))
+    .execute(&mut *admin)
+    .await?;
+    let consumers = wamn_broker::events::entity_consumers(
+        &triple,
+        manifests
+            .iter()
+            .flat_map(wamn_compiler::manifest::PackageManifest::entity_pairs),
+    );
+    let js = async_nats::jetstream::new(inputs.nats.connect().await?);
+    wamn_broker::streams::provision(
+        &js,
+        &triple,
+        inputs.stream_replicas,
+        std::time::Duration::from_secs(inputs.dup_window_secs),
+        &consumers,
+    )
+    .await?;
+    let (_, database) = wamn_postgres::identity(target_url)?;
+    let mut sql = wamn_environment_control::enable_cdc_project_env::cdc_sql_bundle(
+        &schemas, &name, &database,
+    );
+    for model in manifests
+        .iter()
+        .flat_map(|manifest| manifest.models.values())
+    {
+        sql.push_str(&wamn_schema_control::alter_replica_identity_sql(
+            &model.schema,
+            &model.table,
+            wamn_schema_control::ReplicaIdentity::Full,
+        ));
+        sql.push(';');
+    }
+    sql.push_str(&wamn_control_provision::sql::create_publication_schemas_sql(&name, &schemas));
+    let cdc_sql_file = args.root.join("cdc.sql");
+    write_private(&cdc_sql_file, sql.as_bytes())?;
+    wamn_environment_control::enable_cdc_project_env::record_event_reader(
+        &args.system_database_url,
+        &triple,
+        &schemas,
+        &name,
+        None,
+    )
+    .await?;
+    let coordinate = super::environment::JourneyTarget {
+        org: identity.org.clone(),
+        project: identity.project.clone(),
+        environment: identity.environment.clone(),
+    };
+    let registry = super::credentials::workload(
+        &args.system_database_url,
+        &coordinate,
+        wamn_control_provision::WorkloadRoleFamily::RegistryReader,
+    )
+    .await?;
+    Ok(super::config::CdcReader {
+        binary: args.cdc_reader_binary.canonicalize()?,
+        system_database_url: registry,
+        cdc_url,
+        cdc_sql_file,
+    })
 }

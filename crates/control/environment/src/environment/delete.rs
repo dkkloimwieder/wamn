@@ -43,7 +43,6 @@ use super::Platform;
 use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
 use super::lock::LifecycleLock;
-use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 use wamn_postgres::connect;
 use wamn_release_control::release_chart;
 
@@ -256,17 +255,26 @@ async fn delete_locked(
             lines.push(format!("revoked the PAT of {secret}"));
         }
     }
-    let mut secrets = vec![
+    let configurations = [
         wamn_control_provision::project_env_secret_name(org, project, env),
         wamn_control_provision::project_env_cdc_secret_name(org, project, env),
     ];
-    secrets.extend(HOST_CREDENTIALS.iter().map(|credential| {
-        wamn_control_provision::workload_secret_name(credential.family, org, project, env)
-    }));
+    let mut arguments = vec!["delete", "configmap", "--ignore-not-found"];
+    arguments.extend(configurations.iter().map(String::as_str));
+    let deleted = kubectl(platform, org, &arguments, None).await?;
+    if !deleted.is_empty() {
+        lines.push(deleted);
+    }
+    let mut secrets = WorkloadRoleFamily::project_env_families()
+        .map(|family| wamn_control_provision::workload_secret_name(family, org, project, env))
+        .collect::<Vec<_>>();
+    secrets.push(wamn_control_provision::project_env_cdc_secret_name(
+        org, project, env,
+    ));
     secrets.extend(pat_secrets);
     let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
     arguments.extend(secrets.iter().map(String::as_str));
-    let deleted = kubectl(platform, namespace, &arguments, None).await?;
+    let deleted = kubectl(platform, org, &arguments, None).await?;
     if !deleted.is_empty() {
         lines.push(deleted);
     }
@@ -480,19 +488,4 @@ async fn delete_locked(
     drops.project_env_key(&project_env_key);
     changes.publish(drops).await;
     Ok(lines)
-}
-
-/// Delete one stream; a stream delete removes its consumers. Returns whether
-/// it was present.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_instance_roles_are_the_cdc_role_then_a_and_b_of_each_family() {
-        let roles =
-            instance_roles(&Triple::new("dkk", "dev", "receiving"), "zf7o454t", "dev").unwrap();
-        assert_eq!(roles.len(), 1 + instance_families().count() * 2);
-        assert!(roles.iter().all(|role| role.len() <= 63));
-    }
 }

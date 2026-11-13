@@ -1149,7 +1149,7 @@ The browser opens the Projects table controls and selects Create project.
 The form returns to Projects after submission.
 The browser opens the new `browser-project` from the table.
 The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
-It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
+Local development uses explicit database role URLs in its private control configuration. It has no connection credential store. A local host connection call returns `no credential store in local mode` until S10 moves development into the cluster.
 
 The browser opens separate membership forms from the User and Project table toolbars.
 Each form returns to its owning table after submission.

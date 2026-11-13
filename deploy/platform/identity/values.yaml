@@ -25,8 +25,8 @@ localMail: ""
 # Restart the service after a CA change to close existing TLS connections.
 operatorCaSecret: ""
 
-# Each Secret contains one provisioner-generated target.json document.
-# Each target configures password login for one project environment.
+# Each entry contains a target ConfigMap name and its public connection configuration.
+# The connection names the reader credential and CA Secrets in this namespace.
 # Restart after credential rotation.
 sessionTargetSecrets: []
 

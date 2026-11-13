@@ -33,9 +33,16 @@ pub enum Mode {
     Foundation,
     /// Session exchange with explicit targets and optional revocation transport.
     Session {
-        targets: Vec<String>,
+        targets: Vec<SessionTargetMount>,
         nats: Option<(String, String)>,
     },
+}
+
+/// A mounted target and the public database references used by its reader.
+#[derive(Debug, serde::Serialize)]
+pub struct SessionTargetMount {
+    pub name: String,
+    pub connection: wamn_postgres::ConnectionConfig,
 }
 
 /// Identity chart inputs.
@@ -71,6 +78,13 @@ pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
     };
     let (nats_url, nats_secret) =
         nats.map_or(("", ""), |(url, secret)| (url.as_str(), secret.as_str()));
+    for target in targets {
+        ensure!(
+            target.connection.credentials.namespace == input.namespace
+                && target.connection.server_ca.namespace == input.namespace,
+            "session credentials and CA must share the identity namespace"
+        );
+    }
     Ok(
         json!({"chart":input.chart, "version":wamn_release_control::release_chart::read_platform_version(&input.chart.join("Chart.yaml"))?,
         "name":input.name, "namespace":input.namespace,

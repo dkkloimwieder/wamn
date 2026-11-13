@@ -61,7 +61,7 @@ pub async fn resize(
             let kubeconfig = work_directory.join(format!("{}.kubeconfig", document.cluster_name));
             let context = document.provider.kubeconfig(document, &kubeconfig).await?;
             let started = Instant::now();
-            postgres_ready(&kubeconfig, &context).await?;
+            postgres_ready(&kubeconfig, &context, &document.org).await?;
             progress(&format!(
                 "pod wamn-pg-1: Ready {:.1}s",
                 started.elapsed().as_secs_f64()
@@ -95,14 +95,14 @@ pub async fn resize(
 
 /// The `Cluster` keeps its old Ready condition while its pod is gone,
 /// so wait for the pod itself, within one 900 s deadline.
-async fn postgres_ready(kubeconfig: &Path, context: &str) -> anyhow::Result<()> {
+async fn postgres_ready(kubeconfig: &Path, context: &str, namespace: &str) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_mins(15);
-    while kubectl::get::<Value>(kubeconfig, context, "platform", "pod", "wamn-pg-1")
+    while kubectl::get::<Value>(kubeconfig, context, namespace, "pod", "wamn-pg-1")
         .await?
         .is_none()
     {
         if Instant::now() >= deadline {
-            bail!("pod platform/wamn-pg-1 does not exist after 900s");
+            bail!("pod {namespace}/wamn-pg-1 does not exist after 900s");
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
@@ -110,7 +110,7 @@ async fn postgres_ready(kubeconfig: &Path, context: &str) -> anyhow::Result<()> 
     kubectl::wait(
         kubeconfig,
         context,
-        "platform",
+        namespace,
         "pod",
         "wamn-pg-1",
         "condition=Ready",

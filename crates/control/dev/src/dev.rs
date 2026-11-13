@@ -13,6 +13,7 @@ pub mod config;
 pub mod control;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
+mod credentials;
 pub mod edge_bundle;
 pub mod environment;
 #[cfg(target_os = "linux")]

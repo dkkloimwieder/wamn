@@ -24,7 +24,6 @@ use std::str::FromStr as _;
 
 use crate::identifier::Identifier;
 use anyhow::Context as _;
-use reqwest::Url;
 
 use wamn_control_provision::{platform_principals_sql, sql as provision_sql};
 use wamn_environment_control::provision_project_env::{
@@ -117,8 +116,99 @@ pub async fn provision(
     platform_domain: &str,
     document: &wamn_environment_control::environment::document::EnvironmentDocument,
 ) -> anyhow::Result<DevEnvironment> {
-    let _ = (system_url, admin, root, platform_domain, document);
-    anyhow::bail!("no credential store in local mode")
+    wamn_control_provision::validate_platform_domain(platform_domain)?;
+    let identity = dev_activation_identity(document);
+    let version: String = sqlx::query_scalar("SHOW server_version_num")
+        .fetch_one(&mut *admin)
+        .await?;
+    anyhow::ensure!(
+        version.parse::<u32>()? >= 180_000,
+        "the development environment requires PostgreSQL 18 or newer"
+    );
+    anyhow::ensure!(
+        !root.join("identity-process.json").exists(),
+        "stop the existing development environment before provisioning again"
+    );
+    let coordinate = JourneyTarget {
+        org: identity.org.clone(),
+        project: identity.project.clone(),
+        environment: identity.environment.clone(),
+    };
+    provision_journey_control(&coordinate, system_url, admin).await?;
+    wamn_environment_control::provision_system::set_platform_domain(admin, platform_domain).await?;
+    let route_secret = root.join("operator-pat.json");
+    let management_secret = root.join("management-author-pat.json");
+    let mut args = provisioning_args(
+        &coordinate,
+        system_url,
+        root,
+        &route_secret,
+        Some(&management_secret),
+    );
+    args.emit_management_author_pat_secret = None;
+    args.emit_operator_pat_secret = None;
+    args.policy = Some(document.policy.clone());
+    provision_project_env::provision_project_env(&args).await?;
+    let project_url = prepare_route_database(system_url, admin, root).await?;
+    let mut project = connect(&project_url).await?;
+    install_journey_platform_base_grants(&mut project, platform_domain).await?;
+    let mut tx = project.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    ))
+    .execute(&mut *tx)
+    .await?;
+    wamn_environment_control::environment::document::write_revocation_configuration(
+        &mut tx, document,
+    )
+    .await?;
+    tx.commit().await?;
+    drop(project);
+    reconcile_journey_run_plane(&coordinate, system_url, &project_url).await?;
+    let credentials = prepare_journey_credentials(&coordinate, system_url, &project_url).await?;
+    let reader = super::credentials::workload(
+        &project_url,
+        &coordinate,
+        wamn_control_provision::WorkloadRoleFamily::SessionRoleReader,
+    )
+    .await?;
+    let instance =
+        provision_project_env::read_project_env_instance(system_url, &document.triple()).await?;
+    let target = wamn_control_provision::session_target::SessionTarget::new(
+        &document.triple(),
+        &instance,
+        &coordinate.project_env_key(),
+        &reader,
+    )?;
+    let target_path = root.join("identity-target.json");
+    provision_project_env::write_secret_json(
+        &target_path,
+        &serde_json::from_str(&target.to_json()?)?,
+    )?;
+    let issuer = super::pat_issuer::start_environment(system_url, root, &target_path).await?;
+    args.emit_management_author_pat_secret = Some(management_secret.clone());
+    args.emit_operator_pat_secret = Some(route_secret);
+    args.pat_issuer = issuer.args.clone();
+    if let Err(error) = provision_project_env::provision_project_env(&args).await {
+        issuer.stop().await?;
+        return Err(error);
+    }
+    let route = route_credentials(project_url, root, Some(&management_secret))?;
+    provision_project_env::write_secret_json(
+        &root.join("identity-trust.json"),
+        &serde_json::json!({"issuer":issuer.args.endpoint,"ca":issuer.args.server_ca,"instance_suffix":instance}),
+    )?;
+    let template =
+        prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
+    Ok(DevEnvironment {
+        template,
+        route,
+        credentials,
+        identity,
+        issuer,
+    })
 }
 
 pub const ORG: &str = "acme";
@@ -162,11 +252,7 @@ pub async fn connect(input: &str) -> anyhow::Result<Client> {
 }
 
 fn database_url(admin_url: &str, database: &str) -> anyhow::Result<String> {
-    let mut url = Url::parse(admin_url).context("parse disposable PostgreSQL URL")?;
-    url.set_path(&format!("/{database}"));
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.into())
+    wamn_postgres::database_configuration(admin_url, database)
 }
 
 fn provisioning_args(
@@ -254,7 +340,7 @@ pub async fn provision_route(
     management_secret: Option<&Path>,
 ) -> anyhow::Result<ProvisionedRoute> {
     let route_secret = root.join("operator-pat.json");
-    let issuer = super::pat_issuer::start(system_url, root)?;
+    let issuer = super::pat_issuer::start(system_url, root).await?;
     let mut args = provisioning_args(
         coordinate,
         system_url,
@@ -264,7 +350,7 @@ pub async fn provision_route(
     );
     args.pat_issuer = issuer.args.clone();
     let provisioned = provision_project_env::provision_project_env(&args).await;
-    let stopped = issuer.stop();
+    let stopped = issuer.stop().await;
     if let Err(error) = provisioned {
         let context = if stopped.is_err() {
             "project-environment provisioning failed and identity bootstrap cleanup also failed"
@@ -308,8 +394,7 @@ async fn prepare_route_database(
     .context("stand in for the emitted Database CR")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         std::fs::read_to_string(root.join("privileges.sql"))
-            .context("read emitted privilege SQL")?
-            .clone(),
+            .context("read emitted privilege SQL")?,
     ))
     .execute(&mut *admin)
     .await
@@ -351,6 +436,25 @@ pub struct JourneyCredentials {
     pub administration: String,
     pub identity_reader: String,
     pub connection_reader: String,
+}
+
+/// Install the same stable role surfaces on the operator's disposable local database.
+pub async fn prepare_journey_credentials(
+    coordinate: &JourneyTarget,
+    system_url: &str,
+    project_url: &str,
+) -> anyhow::Result<JourneyCredentials> {
+    use wamn_control_provision::WorkloadRoleFamily as Family;
+    let workload = super::credentials::workload;
+    Ok(JourneyCredentials {
+        guest_sql: workload(project_url, coordinate, Family::App).await?,
+        executor_platform: workload(project_url, coordinate, Family::ExecutorPlatform).await?,
+        event_materializer: workload(project_url, coordinate, Family::EventMaterializer).await?,
+        http_admitter: workload(project_url, coordinate, Family::HttpAdmitter).await?,
+        administration: workload(project_url, coordinate, Family::Administration).await?,
+        identity_reader: workload(system_url, coordinate, Family::IdentityReader).await?,
+        connection_reader: workload(system_url, coordinate, Family::ConnectionReader).await?,
+    })
 }
 
 /// The email of the journey org's admin, the first user of the store, who
