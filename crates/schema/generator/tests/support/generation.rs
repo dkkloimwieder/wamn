@@ -1,9 +1,9 @@
 use serde_json::{Value, json};
-use wamn_catalog::manifest::PackageManifest;
-use wamn_scalar::SqlValueType;
-use wamn_schema_generator::{
+use wamn_compiler::manifest::PackageManifest;
+use wamn_compiler::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
 
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
@@ -113,15 +113,6 @@ pub(super) fn projection_operation() -> Value {
             "internal_error"
         ],
 
-        "relations": [{
-            "schema": "inventory",
-            "table": "gadget",
-            "select_fields": ["id"],
-            "insert_fields": [],
-            "update_fields": [],
-            "lock": false,
-            "constraints": []
-        }],
         "statements": {
             "load_gadget_part": {
                 "path": "query/quality_gadget_part.sql",
@@ -183,7 +174,7 @@ pub(super) fn manifest() -> Value {
                 "table": "gadget",
                 "owner": "platform_gadget",
                 "server_owned_fields": [
-                    "part_code", "status", "row_version", "created_at"
+                    "part_code", "status", "row_version"
                 ],
                 "enum_fields": {"status": ["open", "complete", "cancelled"]},
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
@@ -250,7 +241,7 @@ pub(super) fn run(
     catalog: &CatalogIr,
     value: &Value,
     sources: &[AuthoredSql<'_>],
-) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
+) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
     run_with_bases(catalog, value, sources, &[manifest()])
 }
 
@@ -259,21 +250,23 @@ pub(super) fn run_with_bases(
     manifest: &Value,
     sources: &[AuthoredSql<'_>],
     bases: &[Value],
-) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
+) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
     let bases = bases
         .iter()
         .map(|base| PackageManifest::from_slice(&serde_json::to_vec(base).unwrap()).unwrap())
         .collect::<Vec<_>>();
-    let bytes = serde_json::to_vec(manifest).unwrap();
-    generate(
-        &GenerationInput::new(
-            catalog,
-            &bytes,
-            sources,
-            &StatementTransactionality::default(),
-        )
-        .with_base_manifests(&bases),
-    )
+    let bytes = wamn_compiler::derive_manifest(
+        catalog,
+        &serde_json::to_vec(manifest).unwrap(),
+        sources,
+        &bases,
+    )?;
+    generate(&GenerationInput::new(
+        catalog,
+        &bytes,
+        sources,
+        &StatementTransactionality::default(),
+    ))
 }
 
 pub(super) fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {

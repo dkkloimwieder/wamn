@@ -235,7 +235,7 @@ cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::si
 The following commands select individual test targets:
 
 ```bash
-cargo test --locked --offline -p wamn-schema-generator --test platform_generation
+cargo test --locked --offline -p wamn-compiler --test platform_generation
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p receiving --all-targets
@@ -1062,7 +1062,7 @@ The loop compares these inputs with the inputs of its last successful preparatio
 A new session prepares once. A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-The loop calls `wamn_schema_generator::prepare_sqlx_metadata` in its own process, with the URL of the target database.
+The loop calls `wamn_compiler::prepare_sqlx_metadata` in its own process, with the URL of the target database.
 The verifier requires SQLx CLI 0.9.0.
 No separate command prepares the metadata by hand.
 
@@ -1071,7 +1071,7 @@ No separate command prepares the metadata by hand.
 The live build tests use the PostgreSQL 18 binaries and start their own server, as the other generator database tests do:
 
 ```bash
-cargo test --locked --offline -p wamn-schema-generator --test build_live
+cargo test --locked --offline -p wamn-compiler --test build_live
 ```
 
 They copy the platform fixture and build it into their own output root.
@@ -1089,12 +1089,12 @@ Run `pnpm install --offline` at the repository root first.
 The compilation test skips with a message only when the workspace `tsc` executable is absent.
 
 ```bash
-cargo test --locked --offline -p wamn-schema-generator --test client_ts_emitter
+cargo test --locked --offline -p wamn-compiler --test client_ts_emitter
 ```
 To compile the bindings for the platform fixture, run:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example compile_client_ts
+cargo run --locked --offline -p wamn-compiler --example compile_client_ts
 ```
 
 The command emits the fixture bindings into a temporary directory, writes a strict `tsconfig.json` beside them, and runs `tsc --project` on that directory.
@@ -1113,7 +1113,7 @@ Every web script that reads the clients writes them first through `web/host-rout
 To write them without a web script, run:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
+cargo run --locked --offline -p wamn-compiler --example materialize_host_route_client
 ```
 
 `pnpm run lint` in `apps/platform_ui` compiles them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
@@ -1330,7 +1330,7 @@ Run `pnpm install --offline` at the repository root first.
 The existing manual test uses the same test code:
 
 ```bash
-TMPDIR=/var/tmp cargo run --offline -p wamn-schema-generator --example compile_client_components
+TMPDIR=/var/tmp cargo run --offline -p wamn-compiler --example compile_client_components
 ```
 
 The command writes temporary modules and removes them after the test.

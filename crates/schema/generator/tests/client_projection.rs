@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use wamn_schema_generator::client_ir::{
+use wamn_compiler::client_ir::{
     ClientContractIr, OperationIr, ReplayIr, ResponseIr, RevisionBindingIr, RouteIr, leaf_fields,
 };
 
@@ -654,22 +654,22 @@ fn revision_roles_use_declared_paths_and_platform_fields_only() {
     let mut command = operation(&ir, "apply_title").clone();
     command.idempotent_by = Some(json!({"state": {"guards": {"stock": "another_revision"}}}));
     assert_eq!(
-        wamn_schema_generator::client_ir::revision_inputs(&command),
+        wamn_compiler::client_ir::revision_inputs(&command),
         vec!["another_revision", "version_seen"]
     );
     command.record = None;
     command.idempotent_by = None;
     assert_eq!(
-        wamn_schema_generator::client_ir::revision_inputs(&command),
+        wamn_compiler::client_ir::revision_inputs(&command),
         vec!["version_seen"]
     );
 }
 
 /// One leaf of `fields` by its exact path.
 fn leaf<'a>(
-    fields: &'a [wamn_schema_generator::client_ir::FieldIr],
+    fields: &'a [wamn_compiler::client_ir::FieldIr],
     path: &str,
-) -> &'a wamn_schema_generator::client_ir::FieldIr {
+) -> &'a wamn_compiler::client_ir::FieldIr {
     leaf_fields(fields)
         .into_iter()
         .find(|field| field.path == path)
@@ -770,12 +770,12 @@ fn a_published_response_takes_its_text_from_the_terminal() {
     let package = fixture::generate_fixture();
     let contracts = fixture::contracts(&package);
     let identity = "platform-fixture:widget/get@2.1.1";
-    let served = |path: &str| wamn_schema_generator::client_ir::FieldIr {
+    let served = |path: &str| wamn_compiler::client_ir::FieldIr {
         path: path.to_owned(),
         type_name: "text".to_owned(),
         nullable: false,
         required: true,
-        revision: wamn_catalog::manifest::Revision::default(),
+        revision: wamn_compiler::manifest::Revision::default(),
         children: Vec::new(),
         minimum: None,
         maximum: None,
@@ -926,7 +926,7 @@ fn authored_refusal_text_reaches_the_client_ir() {
         .flat_map(|model| &model.operations)
         .find(|operation| operation.name == "archive")
         .expect("the fixture declares archive");
-    let text = |errors: &[wamn_schema_generator::client_ir::ErrorCaseIr], literal: &str| {
+    let text = |errors: &[wamn_compiler::client_ir::ErrorCaseIr], literal: &str| {
         errors
             .iter()
             .find(|case| case.literal == literal)

@@ -339,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn receiving_views_read_lines_and_filtered_totals_with_column_grants() -> Result<()> {
-        use wamn_schema_generator::{
+        use wamn_compiler::{
             DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
             render_effective_data_access_sql,
         };
@@ -528,7 +528,7 @@ mod tests {
 
     #[tokio::test]
     async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {
-        use wamn_schema_generator::{
+        use wamn_compiler::{
             DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
             render_effective_data_access_sql,
         };
@@ -699,11 +699,11 @@ mod tests {
     /// read, run as `wamn_app`, returns only the base columns that it declares.
     #[tokio::test]
     async fn an_overlay_update_logs_a_diff_that_folds_to_the_effective_row() -> Result<()> {
-        use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
-        use wamn_schema_generator::{
+        use wamn_compiler::{
             DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
             render_effective_data_access_sql,
         };
+        use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
 
         // The fixture creates the shared role wamn_app, so the test starts its own server.
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
@@ -1073,7 +1073,7 @@ mod tests {
     /// triggers that apply-package derives from the `audit_log` declarations of
     /// one package manifest.
     async fn install_record_history(client: &Client, manifest: &[u8]) -> Result<()> {
-        let manifest: wamn_catalog::manifest::PackageManifest =
+        let manifest: wamn_compiler::manifest::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
         let logs = manifest.models.values().filter_map(|model| {
             model.log_retention().map(|retention| {
@@ -1089,7 +1089,7 @@ mod tests {
         });
         let triggers = manifest.models.values().filter_map(|model| {
             let audit_log = model.audit_log.as_ref()?;
-            let columns = wamn_catalog::manifest::RecordHistoryColumn::ALL
+            let columns = wamn_compiler::manifest::RecordHistoryColumn::ALL
                 .into_iter()
                 .filter(|column| audit_log.columns.contains(column))
                 .map(|column| format!("'{}'", column.as_str()))

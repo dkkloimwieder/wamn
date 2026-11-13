@@ -49,14 +49,14 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
     let statement = include_bytes!("query/read_file_id.sql");
     std::fs::create_dir_all(package.join("query"))?;
     std::fs::write(package.join("query/read_file_id.sql"), statement)?;
-    let generated = wamn_schema_generator::generate(&wamn_schema_generator::GenerationInput::new(
+    let generated = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
         &catalog,
         super::files::PACKAGE.as_bytes(),
-        &[wamn_schema_generator::AuthoredSql::new(
+        &[wamn_compiler::AuthoredSql::new(
             "query/read_file_id.sql",
             statement,
         )],
-        &wamn_schema_generator::StatementTransactionality::default(),
+        &wamn_compiler::StatementTransactionality::default(),
     ))?;
     for file in generated.files() {
         if file.path().starts_with("generated/") {

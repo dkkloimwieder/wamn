@@ -3,8 +3,8 @@
 use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
-use wamn_catalog::manifest::OperationErrorDetailKey;
-use wamn_catalog::manifest::{
+use crate::manifest::OperationErrorDetailKey;
+use crate::manifest::{
     OperationErrorDetailDeclaration, binding_identifier, rust_identifier, rust_type_identifier,
 };
 

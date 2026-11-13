@@ -5,102 +5,22 @@ use super::{
     GenerationInput, QUERY_LIMIT, Table, column, contains_schema_qualified_reference,
     custom_operation_constraint_origin, logged_history_tables, relation, server_owned_fields,
 };
-use wamn_catalog::manifest::FilterMatch;
-use wamn_catalog::manifest::StaticSqlRelationDeclaration;
-use wamn_catalog::manifest::{
+use crate::manifest::FilterMatch;
+use crate::manifest::StaticSqlRelationDeclaration;
+use crate::manifest::{
     AuthoredSqlDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode,
     ModelDeclaration, OperationDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
     SortDeclaration, TombstoneColumn, rust_identifier, validate_identifier,
-    validate_operation_vocabulary,
 };
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::ViewColumn;
-
-/// Refuse a client package name that a package manifest cannot carry.
-///
-/// The rule is npm's own: at most 214 characters, lowercase, one optional
-/// `@scope/` prefix, and each segment starting with a letter or a digit.
-fn validate_client_package_name(package: &str, name: &str) -> Result<(), GenerateError> {
-    let refuse = |reason: &str| {
-        Err(GenerateError::new(
-            GenerateErrorType::InvalidClientPackage,
-            format!("{package} declares client package name {name:?}: {reason}"),
-        ))
-    };
-    if name.is_empty() {
-        return refuse("the name must not be empty");
-    }
-    if name.len() > 214 {
-        return refuse("the name must be 214 characters or fewer");
-    }
-    let segments = match name.strip_prefix('@') {
-        Some(scoped) => match scoped.split_once('/') {
-            Some((scope, package)) => vec![scope, package],
-            None => return refuse("a scoped name needs a scope and a package, as @scope/name"),
-        },
-        None => vec![name],
-    };
-    for segment in segments {
-        if !segment
-            .bytes()
-            .next()
-            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
-        {
-            return refuse("each part must start with a lowercase letter or a digit");
-        }
-        if !segment.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.' | b'_')
-        }) {
-            return refuse("each part admits only lowercase letters, digits, and - . _");
-        }
-    }
-    Ok(())
-}
-
-/// Refuse screen text on the envelope bound, which has no screen.
-///
-/// The `line` bound owns the repeated group a form renders. The envelope is
-/// the submission itself, and a label on it would be a member nothing reads.
-fn validate_count_text(
-    operation_name: &str,
-    operation: &wamn_catalog::manifest::CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let Some(envelope) = &operation.input.envelope else {
-        return Ok(());
-    };
-    if envelope.label.is_some() || envelope.description.is_some() {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!(
-                "{operation_name} states screen text on its envelope bound, which has no screen. \
-                 The line bound carries the repeated group's text."
-            ),
-        ));
-    }
-    Ok(())
-}
 
 pub(super) fn validate(
     input: &GenerationInput<'_>,
     manifest: &PackageManifest,
 ) -> Result<(), GenerateError> {
-    validate_operation_vocabulary(manifest)?;
-    validate_identifier(
-        &manifest.required_platform_policy_contract.id,
-        "platform policy contract",
-    )?;
-    if manifest.models.is_empty() && !manifest.declares_no_sql() && !manifest.uses_only_base_sql() {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidManifest,
-            "manifest must declare at least one model",
-        ));
-    }
-    if let Some(client) = &manifest.client_package {
-        validate_client_package_name(&manifest.package.id, &client.name)?;
-    }
-
     for (model_name, model) in &manifest.models {
         validate_model(input.catalog, manifest, model_name, model)?;
     }
@@ -122,33 +42,10 @@ pub(super) fn validate(
             ));
         }
     }
-    validate_connections(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
     validate_authored_query_filters(manifest, input.authored_sql)?;
     refuse_generator_owned_queries(input.catalog, manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
-        if operation.append_only {
-            let revision = operation
-                .input
-                .fields
-                .iter()
-                .find(|field| field.revision.is_revision())
-                .map(|field| field.path.as_str())
-                .or_else(|| match &operation.idempotent_by {
-                    Some(wamn_catalog::manifest::CommandIdempotence::State(state)) => {
-                        state.guards.values().next().map(String::as_str)
-                    }
-                    _ => None,
-                });
-            if let Some(revision) = revision {
-                return Err(GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!(
-                        "{operation_name} declares append_only = true with revision guard {revision}"
-                    ),
-                ));
-            }
-        }
         validate_custom_operation_sql(
             input.catalog,
             manifest,
@@ -156,8 +53,6 @@ pub(super) fn validate(
             operation_name,
             operation,
         )?;
-        validate_count_text(operation_name, operation)?;
-        validate_lists(manifest, operation_name, operation)?;
         let feed_source = crate::feed::derive(
             input.catalog,
             manifest,
@@ -173,74 +68,6 @@ pub(super) fn validate(
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidOperation,
                 format!("{operation_name} feed_source differs from its statement and view catalog"),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Refuse a read that a table shows when it states no row key, and a `lists`
-/// whose key or model the package does not declare.
-///
-/// A table names each row by its key: a load refuses a key it reads twice, and
-/// an edit or a child table finds its row by it. A row position is no key,
-/// because the same row moves when the list changes.
-fn validate_lists(
-    manifest: &PackageManifest,
-    operation_name: &str,
-    operation: &wamn_catalog::manifest::CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let refuse = |message: String| {
-        Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            message,
-        ))
-    };
-    let table = operation.type_ == wamn_catalog::manifest::CustomOperationType::Projection
-        && operation.result.as_ref().is_some_and(|result| {
-            matches!(result.class, ResultClass::BoundedList | ResultClass::Page)
-        });
-    let Some(lists) = &operation.lists else {
-        if table {
-            return refuse(format!(
-                "{operation_name} answers a list of rows and states no `lists` key. \
-                 State the result fields that name one row."
-            ));
-        }
-        return Ok(());
-    };
-    if let Some(model) = &lists.model
-        && !manifest.models.contains_key(model)
-    {
-        return refuse(format!(
-            "{operation_name} lists records of {model}, which the package does not declare"
-        ));
-    }
-    let fields = operation
-        .result
-        .as_ref()
-        .map_or(&[][..], |result| &result.fields[..]);
-    if lists.key_field.is_empty() {
-        return refuse(format!(
-            "{operation_name} states a `lists` key with no field"
-        ));
-    }
-    for key in &lists.key_field {
-        if !fields.iter().any(|field| &field.path == key) {
-            return refuse(format!(
-                "{operation_name} keys its rows on {key}, which is not a field of its result"
-            ));
-        }
-    }
-    if let Some(display_field) = &lists.display_field {
-        if !table {
-            return refuse(format!(
-                "{operation_name} declares a display field outside a list query"
-            ));
-        }
-        if !fields.iter().any(|field| field.path == *display_field) {
-            return refuse(format!(
-                "{operation_name} display field {display_field} must name a field of its result"
             ));
         }
     }
@@ -1001,7 +828,7 @@ fn validate_custom_operation_sql(
 
 fn validate_static_sql_relation_fields(
     operation: &str,
-    relation: &wamn_catalog::manifest::StaticSqlRelationDeclaration,
+    relation: &crate::manifest::StaticSqlRelationDeclaration,
     columns: &BTreeSet<&str>,
     fields: &[String],
 ) -> Result<(), GenerateError> {
@@ -1470,18 +1297,6 @@ fn validate_authored_variants(
     Ok(())
 }
 
-fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
-    for name in manifest.connections.keys() {
-        if !wamn_catalog::manifest::valid_connection_name(name) {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidConnection,
-                "connection name must match ^[a-z][a-z0-9-]{0,62}$",
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn validate_authored_sources(
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
@@ -1718,8 +1533,8 @@ mod tests {
     use super::{derive_relations, validate_custom_operation_sql};
     use crate::AuthoredSql;
     use crate::data_access::{derive_data_access_overlay, validate_data_access_contribution};
+    use crate::manifest::PackageManifest;
     use serde_json::json;
-    use wamn_catalog::manifest::PackageManifest;
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{
         CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn,

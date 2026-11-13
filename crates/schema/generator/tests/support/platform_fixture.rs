@@ -3,8 +3,8 @@ use wamn_scalar::SqlValueType;
 
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
-use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
-use wamn_schema_generator::{
+use wamn_compiler::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
+use wamn_compiler::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
 use wamn_schema_introspection::ir::{
@@ -32,7 +32,7 @@ pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPack
 pub(crate) fn try_generate_with(
     catalog: &CatalogIr,
     value: &Value,
-) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
+) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
     try_generate_with_sql(catalog, value, &authored_sql())
 }
 
@@ -42,11 +42,7 @@ pub(crate) fn try_generate_with_sql(
     catalog: &CatalogIr,
     value: &Value,
     authored: &[(String, Vec<u8>)],
-) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
-    let bases = [wamn_catalog::manifest::PackageManifest::from_slice(
-        &serde_json::to_vec(&manifest()).unwrap(),
-    )
-    .unwrap()];
+) -> Result<GeneratedPackage, wamn_compiler::ManifestError> {
     let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
     let sources = authored
         .iter()
@@ -60,15 +56,12 @@ pub(crate) fn try_generate_with_sql(
                     .contains(source.path())
         })
         .collect::<Vec<_>>();
-    generate(
-        &GenerationInput::new(
-            catalog,
-            &manifest,
-            &sources,
-            &StatementTransactionality::default(),
-        )
-        .with_base_manifests(&bases),
-    )
+    generate(&GenerationInput::new(
+        catalog,
+        &manifest,
+        &sources,
+        &StatementTransactionality::default(),
+    ))
 }
 
 pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>> {
@@ -657,7 +650,7 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 /// # Panics
 /// Panics when the fixture application's manifest is not valid JSON.
 pub(crate) fn manifest() -> Value {
-    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
+    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
     serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
         .expect("the fixture application manifest is JSON")

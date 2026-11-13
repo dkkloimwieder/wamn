@@ -13,7 +13,9 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::{DATA_ACCESS_ROLE, read_catalog_excluding_relations};
 
 use crate::StatementTransactionality;
-use crate::authoring::{COMPILED_MANIFEST, compile_manifest, is_authored, package_manifest_path};
+use crate::authoring::{
+    COMPILED_MANIFEST, compile_authored_manifest, is_authored, package_manifest_path,
+};
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
@@ -23,10 +25,10 @@ use crate::data_access::{
     derive_effective_data_access, render_effective_data_access_sql,
 };
 use crate::generate::GeneratedFile;
-use crate::{AuthoredSql, GeneratedPackage, GenerationInput, generate};
-use wamn_catalog::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
+use crate::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
+use crate::{AuthoredSql, GeneratedPackage, GenerationInput};
 
-pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.13";
+pub(crate) const GENERATOR_ID: &str = "wamn-compiler/0.1.13";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 #[derive(Debug)]
@@ -443,18 +445,12 @@ fn generate_package(
     transactional: &StatementTransactionality,
 ) -> Result<crate::GeneratedPackage> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    let bases = crate::inheritance::load_base_manifests(
-        package_root,
-        &crate::build::default_output_root(package_root),
-        &manifest,
-    )?;
     generate_from_manifest(
         catalog,
         &manifest_bytes,
         &manifest,
         package_root,
         transactional,
-        &bases,
     )
 }
 
@@ -466,7 +462,6 @@ pub(crate) fn generate_from_manifest(
     manifest: &PackageManifest,
     package_root: &Path,
     transactional: &StatementTransactionality,
-    bases: &[PackageManifest],
 ) -> Result<crate::GeneratedPackage> {
     let source_files = load_authored_sql(package_root, manifest)?;
     let authored_sql = source_files
@@ -474,9 +469,9 @@ pub(crate) fn generate_from_manifest(
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
 
-    generate(
-        &GenerationInput::new(catalog, manifest_bytes, &authored_sql, transactional)
-            .with_base_manifests(bases),
+    crate::generate::generate_compiled(
+        &GenerationInput::new(catalog, manifest_bytes, &authored_sql, transactional),
+        manifest,
     )
     .context("generate package artifacts")
 }
@@ -489,12 +484,7 @@ fn statement_corpus(
     catalog: &CatalogIr,
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    let bases = crate::inheritance::load_base_manifests(
-        package_root,
-        &crate::build::default_output_root(package_root),
-        &manifest,
-    )?;
-    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root, &bases)
+    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root)
 }
 
 /// The statement corpus and derived grants of compiled manifest bytes that the
@@ -504,7 +494,6 @@ pub(crate) fn statement_corpus_from_manifest(
     manifest_bytes: &[u8],
     manifest: &PackageManifest,
     package_root: &Path,
-    bases: &[PackageManifest],
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let mut corpus = std::collections::BTreeMap::new();
     for source in load_authored_sql(package_root, manifest)? {
@@ -516,7 +505,6 @@ pub(crate) fn statement_corpus_from_manifest(
         manifest,
         package_root,
         &StatementTransactionality::default(),
-        bases,
     )?;
     for file in discovery.files() {
         if std::path::Path::new(file.path())
@@ -579,13 +567,17 @@ pub async fn materialize_package_verified_with_catalog(
 /// it here, so generation reads the source and never the committed output.
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
     let manifest_bytes = if is_authored(package_root) {
-        compile_manifest(package_root)?
+        compile_authored_manifest(package_root)?
     } else {
         let manifest_path = package_manifest_path(package_root);
         fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?
     };
-    let manifest =
-        PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
+    let manifest = if is_authored(package_root) {
+        PackageManifest::parse_authored(&manifest_bytes)
+    } else {
+        PackageManifest::from_slice(&manifest_bytes)
+    }
+    .context("parse package manifest")?;
     Ok((manifest_bytes, manifest))
 }
 
@@ -606,19 +598,13 @@ fn load_compiled_manifest(
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
     let bases = crate::inheritance::load_base_manifests(
-        package_root,
         &crate::build::default_output_root(package_root),
-        &manifest,
+        &manifest.base_dependencies,
     )?;
-    let bytes = crate::inheritance::complete_manifest(&bytes, &bases)?;
-    let derived = crate::derive_manifest(catalog, &bytes, &authored_sql)
+    let mut manifest = manifest;
+    crate::generate::derive_model(catalog, &mut manifest, &authored_sql, &bases)
         .context("derive the compiled manifest")?;
-    // The canonical bytes (RFC 8785) that `wamn build` writes, so a package
-    // materialized here and the same package built carry one manifest digest.
-    let compiled = wamn_digest::canonical_json_bytes(
-        &serde_json::from_slice(&derived).context("parse the derived manifest")?,
-    );
-    let manifest = PackageManifest::from_slice(&compiled).context("parse package manifest")?;
+    let compiled = wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?);
     Ok((compiled, manifest))
 }
 
@@ -648,6 +634,13 @@ pub(crate) fn load_authored_sql(
             .map(|statement| statement.path.as_str()),
     );
 
+    read_sql_sources(package_root, paths)
+}
+
+pub(crate) fn read_sql_sources<'a>(
+    package_root: &Path,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<SourceFile>> {
     paths
         .into_iter()
         .map(|path| {
@@ -1061,7 +1054,7 @@ mod tests {
     impl TestPackage {
         fn new(name: &str) -> Self {
             let scratch = std::env::temp_dir().join(format!(
-                "wamn-schema-generator-materialize-{}-{name}",
+                "wamn-compiler-materialize-{}-{name}",
                 std::process::id()
             ));
             if scratch.exists() {

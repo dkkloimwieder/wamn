@@ -334,7 +334,7 @@ T08. `wamn-runtime`: Capability adapters, route execution authority, and deliver
 
 T09. `wamn-workflow`: Wiring walk, lowering, durable queue, and workflow operations. It absorbs `wamn-router` as a private algorithm module. Allowed repository dependencies: T01, T04, T05, T08.
 
-T10. `wamn-build`: Package generation, introspection, component composition, and virtualization. It combines `wamn-schema-generator`, `wamn-schema-introspection`, `wamn-component-composer`, and `wamn-component-virtualizer`. Allowed repository dependencies: T01.
+T10. `wamn-build`: Package generation, introspection, component composition, and virtualization. It combines `wamn-compiler`, `wamn-schema-introspection`, `wamn-component-composer`, and `wamn-component-virtualizer`. Allowed repository dependencies: T01.
 
 T11. Control: deferred (owner review 2026-10-31). `wamn-control` does not absorb `wamn-ctl`. The README splits control into `wamn-package-control`, `wamn-release-control` and `wamn-environment-control` plus `wamn-ctl` and `wamn-dev`. Both shapes wait for the B1-4 re-read after the Group 1 deletions. Allowed repository dependencies: T01, T03–T10.
 

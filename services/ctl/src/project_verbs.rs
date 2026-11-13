@@ -30,7 +30,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     match command {
         ProjectCommand::Render(args) => {
             let project = ProjectDocument::compile(&args.file)?;
-            let bytes = wamn_schema_generator::render_project_tofu(
+            let bytes = wamn_compiler::render_project_tofu(
                 &project.canonical_json()?,
                 &args.state_bucket,
                 &args.state_prefix,

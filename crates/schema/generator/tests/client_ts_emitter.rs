@@ -1,8 +1,6 @@
-use wamn_schema_generator::GeneratedFile;
-use wamn_schema_generator::client_ir::ClientContractIr;
-use wamn_schema_generator::client_ts::{
-    ClientTsErrorType, emit_ts_client, to_camel, to_snake, ts_type,
-};
+use wamn_compiler::GeneratedFile;
+use wamn_compiler::client_ir::ClientContractIr;
+use wamn_compiler::client_ts::{ClientTsErrorType, emit_ts_client, to_camel, to_snake, ts_type};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -143,9 +141,9 @@ fn invalid_client_names_refuse_before_emission() {
                             .iter()
                             .flat_map(|route| &route.response.fields),
                     );
-                for field in wamn_schema_generator::client_ir::leaf_fields(
-                    &fields.cloned().collect::<Vec<_>>(),
-                ) {
+                for field in
+                    wamn_compiler::client_ir::leaf_fields(&fields.cloned().collect::<Vec<_>>())
+                {
                     for part in field.path.split('.') {
                         let name = part.trim_end_matches("[]");
                         assert_eq!(to_snake(&to_camel(name)), name, "{}", field.path);
@@ -167,7 +165,7 @@ fn invalid_client_names_refuse_before_emission() {
     }
 
     {
-        use wamn_catalog::ManifestErrorType as GenerateErrorType;
+        use wamn_compiler::ManifestErrorType as GenerateErrorType;
 
         let catalog = fixture::catalog();
         for (name, reason) in [
@@ -269,10 +267,8 @@ fn generation_is_stable_and_row_shape_changes_its_digest() {
 
 #[test]
 fn client_package_is_opt_in_and_carries_its_authored_metadata() {
-    let file = wamn_schema_generator::client_ts::emit_ts_package_json(
-        "@wamn/platform-fixture-client",
-        "1.0.0",
-    );
+    let file =
+        wamn_compiler::client_ts::emit_ts_package_json("@wamn/platform-fixture-client", "1.0.0");
     assert_eq!(file.path(), "generated/client-ts/package.json");
     let source = std::str::from_utf8(file.bytes()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(source).unwrap();
@@ -300,7 +296,7 @@ fn the_host_route_clients_are_written_below_the_output_root() {
     let stale = root.join("wamn_control/client-ts/stale.ts");
     std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
     std::fs::write(&stale, "stale").unwrap();
-    wamn_schema_generator::materialize_host_route_client(&root).unwrap();
+    wamn_compiler::materialize_host_route_client(&root).unwrap();
     for client in ["wamn_control/client-ts", "wamn_control/control/client-ts"] {
         for file in ["index.ts", "package.json"] {
             assert!(root.join(client).join(file).is_file(), "{client}/{file}");

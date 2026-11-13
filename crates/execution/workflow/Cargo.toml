@@ -32,7 +32,7 @@ tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 wamn-digest.workspace = true
-wamn-schema-generator.workspace = true
+wamn-compiler.workspace = true
 wamn-platform-identity = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.

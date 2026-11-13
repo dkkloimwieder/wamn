@@ -3,7 +3,7 @@
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{ConstraintType, Table};
 
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// The supported scalar types of a generated model's key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

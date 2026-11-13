@@ -15,7 +15,7 @@ pub async fn build_fixture(
     PathBuf,
     Vec<wamn_package_control::component_admission::ComponentAdmission>,
 )> {
-    use wamn_schema_generator::{
+    use wamn_compiler::{
         build::{BuildRequest, build_package},
         build_record::{BUILD_RECORD_FILE, BuildComponent},
     };
@@ -80,7 +80,7 @@ pub async fn build_fixture(
         database_url,
     )))
     .await?;
-    let output = wamn_schema_generator::output_root(&package);
+    let output = wamn_compiler::output_root(&package);
     let mut resolve = wit_parser::Resolve::new();
     resolve.push_str(
         "node.wit",

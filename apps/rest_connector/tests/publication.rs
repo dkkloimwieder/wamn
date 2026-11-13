@@ -5,8 +5,8 @@ mod support;
 use serde_json::json;
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
+use wamn_compiler::operation_reference::{AuthoredDocument, read_authored_document};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
-use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 #[tokio::test]
 async fn both_applications_publish_with_exact_dependencies_and_private_state() -> anyhow::Result<()>

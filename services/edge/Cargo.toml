@@ -65,7 +65,7 @@ web = ["dep:object_store", "dep:wamn-kubernetes"]
 
 [dev-dependencies]
 wamn-test-postgres = { workspace = true }
-wamn-schema-generator.workspace = true
+wamn-compiler.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # The release tests build a manifest from parts, which wamn-catalog conditions
 # behind `test-util`. Never add this feature to the normal dependency.

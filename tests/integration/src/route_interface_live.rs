@@ -172,7 +172,7 @@ fn edit_version(answer: &Value) -> anyhow::Result<i64> {
 /// Each fixture route attachment under `/route`, and at its own path an
 /// attachment of a one-node wiring that calls the same export.
 fn attachments(app: &std::path::Path) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
-    let routes = wamn_schema_generator::route_schema::read_package_attachments(app)?;
+    let routes = wamn_compiler::route_schema::read_package_attachments(app)?;
     let mut attachments = BTreeMap::new();
     for (id, attachment) in routes {
         let mut alias = attachment.clone();
@@ -1637,7 +1637,7 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
     let overlay = base.with_file_name("platform_fixture_overlay");
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    let attachments = wamn_schema_generator::route_schema::read_package_attachments(&overlay)?;
+    let attachments = wamn_compiler::route_schema::read_package_attachments(&overlay)?;
     std::fs::write(
         scratch.path().join("environment.k"),
         include_str!("../fixtures/local-environments/platform.k").replace(

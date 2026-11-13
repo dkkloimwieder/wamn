@@ -17,7 +17,7 @@ pub(super) fn web_manifest(
         record.package.version,
         record.outputs.manifest
     );
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(compiled)?;
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(compiled)?;
     ensure!(
         manifest.package.id == record.package.id
             && manifest.package.version == record.package.version,

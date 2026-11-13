@@ -105,9 +105,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         },
         statement_instances: std::collections::BTreeMap::new(),
     });
-    let mut package: wamn_catalog::manifest::PackageManifest = serde_json::from_str(include_str!(
-        "../../package/tests/fixtures/observer_package/wamn.json"
-    ))?;
+    let mut package: wamn_compiler::manifest::PackageManifest = serde_json::from_str(
+        include_str!("../../package/tests/fixtures/observer_package/wamn.json"),
+    )?;
     package.package.id = "integration".into();
     package.package.version = "1.0.0".into();
     package.base_dependencies = serde_json::from_value(json!({
@@ -136,7 +136,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     consumer.base_dependencies.clear();
     let mut operation = consumer.custom_operations.values().next().unwrap().clone();
     operation.permission = Some("item.import".into());
-    operation.visibility = wamn_catalog::manifest::OperationVisibility::Public;
+    operation.visibility = wamn_compiler::manifest::OperationVisibility::Public;
     consumer.custom_operations.clear();
     consumer
         .custom_operations

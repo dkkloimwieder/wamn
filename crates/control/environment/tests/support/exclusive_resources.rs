@@ -18,7 +18,7 @@ struct Fixture {
     database: wamn_test_postgres::Database,
     project_database: wamn_test_postgres::Database,
     document: EnvironmentDocument,
-    packages: Vec<wamn_catalog::manifest::PackageManifest>,
+    packages: Vec<wamn_compiler::manifest::PackageManifest>,
     release: wamn_engine::release_manifest::LoadedRelease,
     credentials: Arc<ConnectionCredentials>,
     postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
@@ -99,7 +99,7 @@ impl Fixture {
             wamn_environment_control::environment::document::DeclaredRelease::Digest(
                 writer.release().manifest_digest.to_string(),
             );
-        let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
+        let package = wamn_compiler::manifest::PackageManifest::from_slice(&serde_json::to_vec(
             &json!({
                 "package":{"id":"modbus_reader","version":"0.1.0"},
                 "required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},
@@ -110,9 +110,9 @@ impl Fixture {
         writer.package.id = "observer_fixture".into();
         writer.connections.insert(
             "registers".into(),
-            wamn_catalog::manifest::ConnectionDeclaration {
+            wamn_compiler::manifest::ConnectionDeclaration {
                 interface: "wamn:modbus/write@1.0.0".into(),
-                mode: wamn_catalog::manifest::ConnectionMode::Write,
+                mode: wamn_compiler::manifest::ConnectionMode::Write,
             },
         );
         let login = format!("exclusive_{}", database.name());

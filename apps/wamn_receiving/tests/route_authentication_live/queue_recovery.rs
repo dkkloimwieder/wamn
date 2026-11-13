@@ -41,8 +41,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
     }))?;
     // The release publishes the record_receipt route, whose intent the queued
     // call logs in its host-owned request element transaction.
-    let mut attachments =
-        wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
+    let mut attachments = wamn_compiler::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(&attachment.target, wamn_catalog::AttachmentTarget::Route { operation, .. }
             if wamn_catalog::sealed_operation_reference(operation)

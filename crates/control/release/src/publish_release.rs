@@ -824,7 +824,7 @@ where
 pub fn publish_release_with_package_manifests(
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     validate_request(request)?;
@@ -978,7 +978,7 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
         .collect();
     let manifests = roots
         .iter()
-        .map(|root| wamn_schema_generator::package_manifest_path(root))
+        .map(|root| wamn_compiler::package_manifest_path(root))
         .collect();
     (attachments, manifests)
 }
@@ -1051,7 +1051,7 @@ fn descriptor_components(
 /// Bind release behavior and ownership to its verified package manifests.
 fn validate_release_package_manifests(
     request: &PublishReleaseManifest<'_>,
-    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
@@ -1846,7 +1846,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn dependency_manifest(digest: &str) -> wamn_catalog::manifest::PackageManifest {
+    fn dependency_manifest(digest: &str) -> wamn_compiler::manifest::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../../package/tests/fixtures/component_package/wamn.json"
         ))
@@ -1965,7 +1965,7 @@ mod tests {
         version: &str,
         base: (&str, &str),
         digest: &str,
-    ) -> wamn_catalog::manifest::PackageManifest {
+    ) -> wamn_compiler::manifest::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
             .expect("the dependency fixture manifest serializes");
         document["package"] = serde_json::json!({"id": id, "version": version});

@@ -23,7 +23,7 @@ use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
-use wamn_schema_generator::build_record::is_input_path;
+use wamn_compiler::build_record::is_input_path;
 
 pub use crate::git_source::{GitSourceError, GitSourceErrorType, GitSourceSnapshot};
 
@@ -216,7 +216,7 @@ impl PackageRoot {
                 source,
             )
         })?;
-        wamn_schema_generator::build_record::require_current(&root).map_err(|source| {
+        wamn_compiler::build_record::require_current(&root).map_err(|source| {
             FilesystemInvalidationError {
                 source: Some(source.into()),
                 ..FilesystemInvalidationError::new(
@@ -816,9 +816,10 @@ mod tests {
                 "{other} is not an input"
             );
         }
-        assert!(!package.is_input(
-            &wamn_schema_generator::output_root(&root).join("components/application.wasm")
-        ));
+        assert!(
+            !package
+                .is_input(&wamn_compiler::output_root(&root).join("components/application.wasm"))
+        );
     }
 
     #[tokio::test]
@@ -1245,7 +1246,7 @@ mod tests {
 
         // The loop writes SQLx metadata into the build output during
         // Generate, so its own output does not rerun the loop.
-        let metadata = wamn_schema_generator::output_root(&repository.package()).join(".sqlx");
+        let metadata = wamn_compiler::output_root(&repository.package()).join(".sqlx");
         fs::create_dir_all(&metadata).expect("create SQLx metadata root");
         fs::write(metadata.join("query.json"), "{\"x\":1}").expect("write SQLx metadata");
         assert!(

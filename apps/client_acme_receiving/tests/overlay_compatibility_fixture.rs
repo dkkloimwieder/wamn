@@ -218,10 +218,10 @@ fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::
 
 /// The schema the package at `root` needs, as its build wrote it.
 fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
-    wamn_schema_generator::build_record::require_current(root)?;
-    let relative = Path::new(wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH)
-        .strip_prefix("generated")?;
-    let path = wamn_schema_generator::output_root(root).join(relative);
+    wamn_compiler::build_record::require_current(root)?;
+    let relative =
+        Path::new(wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH).strip_prefix("generated")?;
+    let path = wamn_compiler::output_root(root).join(relative);
     Ok(serde_json::from_slice(
         &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
     )?)

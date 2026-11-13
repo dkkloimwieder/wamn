@@ -531,7 +531,7 @@ async fn start_with(
     let receiving = repository.join("apps/wamn_receiving");
     let acme = repository.join("apps/client_acme_receiving");
     let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
+        wamn_compiler::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(
             wamn_catalog::sealed_operation_reference(route_operation(attachment)),
@@ -548,7 +548,7 @@ async fn start_with(
         )
     });
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
+        wamn_compiler::route_schema::read_package_attachments(&acme)?;
     for (name, attachment) in overlay_attachments {
         let operation = wamn_catalog::sealed_operation_reference(route_operation(&attachment));
         if matches!(

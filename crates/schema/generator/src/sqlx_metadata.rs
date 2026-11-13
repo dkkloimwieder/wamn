@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result, ensure};
 use serde_json::Value;
 
 use crate::data_access_schemas;
-use wamn_catalog::manifest::PackageManifest;
+use crate::manifest::PackageManifest;
 
 const SQLX_VERSION: &str = "0.9.0";
 
@@ -279,7 +279,7 @@ fn verifier_row(map: &Value, accessor: &Value, row: &str, source: &mut String) -
     writeln!(source, "#[derive(Debug)]\npub struct {verifier} {{")?;
     for field in fields {
         let name = string(field, "name")?;
-        let column = wamn_catalog::manifest::authored_name(name);
+        let column = crate::manifest::authored_name(name);
         let ty = string(field, "type")?;
         let ty = if columns.iter().any(|value| value == column) && !ty.starts_with("Option<") {
             format!("Option<{ty}>")

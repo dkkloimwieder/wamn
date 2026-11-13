@@ -325,7 +325,7 @@ pub async fn install(
     let packages = roots
         .iter()
         .map(|root| {
-            wamn_schema_generator::build_record::require_current(root)?;
+            wamn_compiler::build_record::require_current(root)?;
             Ok(PackageRoot {
                 path: root.clone(),
                 artifact_digest: Some(
@@ -389,8 +389,8 @@ pub async fn install(
     let manifests = roots
         .iter()
         .map(|root| {
-            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
-                &std::fs::read(wamn_schema_generator::package_manifest_path(root))?,
+            Ok(wamn_compiler::manifest::PackageManifest::from_slice(
+                &std::fs::read(wamn_compiler::package_manifest_path(root))?,
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -522,7 +522,7 @@ pub async fn invoke(
         .facts();
     assert!(component.operations[OPERATION].host_transaction);
     let bytes = std::fs::read(
-        wamn_schema_generator::output_root(
+        wamn_compiler::output_root(
             &super::support::repository().join("apps/rest_consumer_fixture"),
         )
         .join("components/rest_consumer_fixture.wasm"),
@@ -547,13 +547,12 @@ pub async fn invoke(
     let source_id = source(&admin, "rest-fixture").await?.to_string();
     // The rest_connector item is an environment workflow, authored, enabled and
     // admitted at one due moment (docs/architecture/execution.md#workflows).
-    let document: wamn_catalog::WiringDocument = serde_json::from_value(
-        wamn_schema_generator::operation_reference::read_authored_document(
+    let document: wamn_catalog::WiringDocument =
+        serde_json::from_value(wamn_compiler::operation_reference::read_authored_document(
             &super::support::repository()
                 .join("apps/rest_connector/publication/wirings/rest_item.json"),
-            wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-        )?,
-    )?;
+            wamn_compiler::operation_reference::AuthoredDocument::Wiring,
+        )?)?;
     let workflow_host = workflow_host(&admin, database, manifest).await?;
     let run = schedule_run(
         database,
@@ -575,10 +574,8 @@ pub async fn invoke(
         .unwrap()
         .facts();
     let connector_bytes = std::fs::read(
-        wamn_schema_generator::output_root(
-            &super::support::repository().join("apps/rest_connector"),
-        )
-        .join("components/rest_connector.wasm"),
+        wamn_compiler::output_root(&super::support::repository().join("apps/rest_connector"))
+            .join("components/rest_connector.wasm"),
     )?;
     let connector_application = host
         .load_application(

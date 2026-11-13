@@ -45,7 +45,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
 hyper-rustls = { workspace = true, features = ["http1"] }
-wamn-schema-generator = { workspace = true }
+wamn-compiler = { workspace = true }
 wamn-package-artifact = { workspace = true }
 object_store = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{NoTls, Transaction};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{PackageDirectory, plan_package_migrations};
 
@@ -149,8 +149,6 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
-        .context("validate package manifest for registration projection")?;
     let policy = validate_migration_policy(&root.path, &directory, &presented)?;
     Ok(PreparedPackage {
         component_source: None,
@@ -442,7 +440,7 @@ async fn installed_physical_fingerprint(
             );
         }
     }
-    let statements = render(manifest, &directory.migrations, &columns)?;
+    let statements = render(&manifest.into(), &directory.migrations, &columns)?;
     Ok(PhysicalSchema {
         columns,
         statements,

@@ -10,8 +10,8 @@ use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
 
 use crate::AuthoredSql;
-use wamn_catalog::manifest::{CustomOperationDeclaration, PackageManifest};
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use crate::manifest::{CustomOperationDeclaration, PackageManifest};
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 use wamn_catalog::feed::{FeedDirection, FeedLink, FeedSource, FeedTable};
 
@@ -153,7 +153,7 @@ pub(crate) fn derive(
         ));
     }
     if let Some(result) = &operation.result {
-        if result.class != wamn_catalog::manifest::ResultClass::BoundedList {
+        if result.class != crate::manifest::ResultClass::BoundedList {
             return Err(fail("a feeding read needs a bounded_list result"));
         }
         for field in &result.fields {
@@ -826,7 +826,7 @@ mod tests {
             .get_mut("load")
             .unwrap()
             .row
-            .push(wamn_catalog::manifest::StaticSqlValueDeclaration {
+            .push(crate::manifest::StaticSqlValueDeclaration {
                 name: "row_version".into(),
                 ty: wamn_scalar::SqlValueType::Int64,
                 nullable: false,
@@ -861,13 +861,14 @@ mod tests {
             json!([{"name": "id", "type": "uuid", "nullable": false}]);
         operation["statements"]["load"]["parameters"] =
             json!([{"name": "value_id", "type": "uuid", "nullable": false}]);
+        operation.as_object_mut().unwrap().remove("relations");
         document["custom_operations"] = json!({"line.load": operation});
         let bytes = serde_json::to_vec(&document).unwrap();
         let sql = [AuthoredSql::new(
             "query/load.sql",
             b"SELECT id FROM screen WHERE ($1::uuid IS NULL OR order_id = $1::uuid) ORDER BY id;",
         )];
-        let derived = crate::derive_manifest(&catalog, &bytes, &sql).unwrap();
+        let derived = crate::derive_manifest(&catalog, &bytes, &sql, &[]).unwrap();
         let output = crate::generate(&crate::GenerationInput::new(
             &catalog,
             &derived,

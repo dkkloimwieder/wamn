@@ -13,12 +13,12 @@ use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
 
-use wamn_package_control::apply_package::{LOCK_SQL, PackageRoot};
-use wamn_schema_generator::{
+use wamn_compiler::{
     DataAccessOverlay, DataAccessRelationFields, EffectiveDataAccess, data_access_schemas,
     derive_effective_data_access, render_effective_data_access_sql,
     validate_data_access_contribution,
 };
+use wamn_package_control::apply_package::{LOCK_SQL, PackageRoot};
 use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
 const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
@@ -288,8 +288,8 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
             .context("validate package directory before data-access reconciliation")?;
         let schemas = data_access_schemas(&directory.manifest_bytes)
             .context("derive package data-access schema set")?;
-        let overlay_path = wamn_schema_generator::output_root(&package_root.path)
-            .join("platform-policy/data-access.json");
+        let overlay_path =
+            wamn_compiler::output_root(&package_root.path).join("platform-policy/data-access.json");
         let overlay_bytes = std::fs::read(&overlay_path)
             .with_context(|| format!("read {}", overlay_path.display()))?;
         let overlay = DataAccessOverlay::from_slice(&overlay_bytes)
@@ -749,8 +749,8 @@ async fn validate_installed_set(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use wamn_compiler::validate_data_access_contribution;
     use wamn_schema_control::plan_package_migrations;
-    use wamn_schema_generator::validate_data_access_contribution;
 
     use super::{
         CoordinateHashes, UndeclaredResidue, prepare_local, render_undeclared_revocation,
@@ -822,7 +822,7 @@ mod tests {
         // The copy below is a working tree, with no verified artifact digest.
         original.artifact_digest = None;
         let overlay_bytes = std::fs::read(
-            wamn_schema_generator::output_root(&source).join("platform-policy/data-access.json"),
+            wamn_compiler::output_root(&source).join("platform-policy/data-access.json"),
         )
         .unwrap();
         let root =

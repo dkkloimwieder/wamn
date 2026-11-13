@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use wamn_schema_generator::client_ir::{ClientContractIr, published_routes};
-use wamn_schema_generator::client_ts::{emit_ts_client, emit_ts_package_json};
+use wamn_compiler::client_ir::{ClientContractIr, published_routes};
+use wamn_compiler::client_ts::{emit_ts_client, emit_ts_package_json};
 
 #[path = "../tests/support/platform_fixture.rs"]
 mod fixture;
@@ -36,8 +36,8 @@ fn main() -> Result<()> {
         );
     }
     for package in packages {
-        wamn_schema_generator::build_record::require_current(&package)?;
-        let output = wamn_schema_generator::output_root(&package);
+        wamn_compiler::build_record::require_current(&package)?;
+        let output = wamn_compiler::output_root(&package);
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(output.join("wamn.json"))?)?;
         let mut contracts = BTreeMap::new();
@@ -58,10 +58,9 @@ fn main() -> Result<()> {
         }
         let read = |name: &str| {
             let path = output.join(name.strip_prefix("generated/").unwrap_or(name));
-            let bytes = std::fs::read(&path).map_err(|_| {
-                wamn_schema_generator::route_schema::RouteSchemaError::unknown(name)
-            })?;
-            wamn_schema_generator::route_schema::parse(name, &bytes)
+            let bytes = std::fs::read(&path)
+                .map_err(|_| wamn_compiler::route_schema::RouteSchemaError::unknown(name))?;
+            wamn_compiler::route_schema::parse(name, &bytes)
         };
         let routes = published_routes(
             &package.join("publication/attachments.json"),
@@ -89,11 +88,7 @@ fn main() -> Result<()> {
                 .context("package version")?,
             &output.join("client-ts"),
         )?;
-        wamn_schema_generator::materialize_client_consumers(
-            &package,
-            id,
-            &output.join("client-ts"),
-        )?;
+        wamn_compiler::materialize_client_consumers(&package, id, &output.join("client-ts"))?;
     }
     Ok(())
 }

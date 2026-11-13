@@ -37,7 +37,9 @@ pub mod feed;
 mod generate;
 mod inheritance;
 mod key;
-mod manifest;
+pub mod manifest;
+mod manifest_error;
+pub use manifest_error::{ManifestError, ManifestErrorType};
 mod materialize;
 pub mod operation_reference;
 mod output;
@@ -51,7 +53,7 @@ mod tofu;
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, compile_environment, compile_manifest,
     compile_schema_file, is_authored, is_package_root, manifest_package_root,
-    package_manifest_path, write_compiled_manifest,
+    package_manifest_path,
 };
 /// The write log's three fixed statements.
 pub use cursor::{

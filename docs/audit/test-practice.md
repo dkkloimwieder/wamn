@@ -209,7 +209,7 @@ The columns are `.clone()` (C), `.to_owned()` (O), `.to_string()` on a `str` or 
 | wamn-ctl | services/ctl | 4146 | 35 | 12 | 1/10 | 1 | 0 | 0 | 8.44 |
 | wamn-schema-control | crates/schema/control | 2662 | 22 | 2 | 62/63 | 0 | 0 | 0 | 8.26 |
 | wamn-number-pattern | crates/platform/number-pattern | 366 | 3 | 0 | 0/0 | 0 | 0 | 0 | 8.20 |
-| wamn-schema-generator | crates/schema/generator | 21916 | 176 | 311 | 3/15 | 12 | 0 | 0 | 8.03 |
+| wamn-compiler | crates/schema/generator | 21916 | 176 | 311 | 3/15 | 12 | 0 | 0 | 8.03 |
 | wamn-runtime | crates/platform/runtime | 23438 | 185 | 151 | 86/192 | 13 | 85 | 0 | 7.89 |
 | wamn-session | crates/identity/session | 431 | 3 | 0 | 0/0 | 0 | 0 | 0 | 6.96 |
 | client-acme-receiving | apps/client_acme_receiving/component | 745 | 5 | 11 | 0/4 | 0 | 0 | 0 | 6.71 |

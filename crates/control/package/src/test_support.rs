@@ -1,7 +1,7 @@
 //! Fixture input for control unit tests.
 
 pub fn fixture_manifest() -> Vec<u8> {
-    wamn_schema_generator::build_record::require_current(&wamn_fixture_package::package_root())
+    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
     wamn_fixture_package::manifest_bytes()
 }
@@ -55,7 +55,7 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
     }
 }
 
-pub fn source_manifest() -> wamn_catalog::manifest::PackageManifest {
+pub fn source_manifest() -> wamn_compiler::manifest::PackageManifest {
     serde_json::from_str(include_str!(
         "../tests/fixtures/component_package/wamn.json"
     ))

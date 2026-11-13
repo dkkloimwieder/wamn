@@ -18,7 +18,7 @@ use super::{
 /// Every package's parsed manifest and the contract type of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
-    BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
+    BTreeMap<String, wamn_compiler::manifest::PackageManifest>,
     RouteContracts,
 );
 
@@ -64,7 +64,7 @@ pub(super) async fn open_application(
                     package.package_version()
                 )
             })?;
-        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
+        let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
         ensure!(
             manifest.package.id == package.package_id()
                 && manifest.package.version == package.package_version(),
@@ -92,7 +92,7 @@ pub(super) fn read_package_manifests(
     let mut manifests = BTreeMap::new();
     let mut contracts = BTreeMap::new();
     for root in roots {
-        let path = wamn_schema_generator::package_manifest_path(root);
+        let path = wamn_compiler::package_manifest_path(root);
         let directory =
             wamn_package_control::apply_package::read_package_directory(root).map_err(|error| {
                 PublishManifestError {
@@ -104,7 +104,7 @@ pub(super) fn read_package_manifests(
                 }
             })?;
         let manifest =
-            wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+            wamn_compiler::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
                 .map_err(|error| {
                     PublishManifestError::with_source(
                         PublishManifestErrorType::PackageManifest,
@@ -112,7 +112,7 @@ pub(super) fn read_package_manifests(
                         error,
                     )
                 })?;
-        wamn_catalog::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
+        wamn_compiler::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("validate package manifest {}", path.display()),
@@ -184,16 +184,14 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             error,
         )
     };
-    wamn_schema_generator::build_record::require_current(root).map_err(|error| {
-        PublishManifestError {
-            source: Some(error.into()),
-            ..PublishManifestError::new(
-                PublishManifestErrorType::PackageManifest,
-                format!("read current package build {}", root.display()),
-            )
-        }
+    wamn_compiler::build_record::require_current(root).map_err(|error| PublishManifestError {
+        source: Some(error.into()),
+        ..PublishManifestError::new(
+            PublishManifestErrorType::PackageManifest,
+            format!("read current package build {}", root.display()),
+        )
     })?;
-    let contracts = wamn_schema_generator::output_root(root).join("contracts");
+    let contracts = wamn_compiler::output_root(root).join("contracts");
     let models = match std::fs::read_dir(&contracts) {
         Ok(models) => models,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -296,9 +294,7 @@ fn read_input_identity(operation_path: &Path) -> Result<Option<String>, PublishM
             error,
         )
     })?;
-    Ok(wamn_schema_generator::client_plan::idempotency_field(
-        &contract,
-    ))
+    Ok(wamn_compiler::client_plan::idempotency_field(&contract))
 }
 
 /// The manifest route of one route attachment of the package at `root`, as
@@ -346,7 +342,7 @@ mod tests {
         for with_migrations in [true, false] {
             let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
             let root = scratch.path().join("source_fixture");
-            let output = wamn_schema_generator::output_root(&root);
+            let output = wamn_compiler::output_root(&root);
             std::fs::create_dir_all(&output).unwrap();
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(

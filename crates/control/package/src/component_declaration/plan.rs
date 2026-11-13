@@ -66,7 +66,7 @@ pub(super) fn render_declaration_document(
     template: &Path,
     document: &mut Value,
     project_env_key: &str,
-    owners: &wamn_catalog::manifest::OperationOwners,
+    owners: &wamn_compiler::manifest::OperationOwners,
 ) -> Result<(), ComponentDeclarationError> {
     let invalid = |detail: String| {
         ComponentDeclarationError::invalid(
@@ -75,7 +75,7 @@ pub(super) fn render_declaration_document(
             detail,
         )
     };
-    wamn_schema_generator::operation_reference::resolve_declaration_document(document, owners)
+    wamn_compiler::operation_reference::resolve_declaration_document(document, owners)
         .map_err(|error| invalid(error.context().to_owned()))?;
     let slot = document
         .pointer_mut("/target/project_env_key")

@@ -688,7 +688,7 @@ mod tests {
 
     fn scratch(name: &str) -> Scratch {
         let root = std::env::temp_dir().join(format!(
-            "wamn-schema-generator-build-record-{}-{name}",
+            "wamn-compiler-build-record-{}-{name}",
             std::process::id()
         ));
         if root.exists() {

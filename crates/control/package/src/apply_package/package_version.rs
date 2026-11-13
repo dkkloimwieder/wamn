@@ -191,10 +191,10 @@ pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory>
 /// ([`read_package_root`] adds it).
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let artifact_digest = None;
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest_path = wamn_compiler::package_manifest_path(root);
     // A hand-written source manifest does not consume package build output.
-    if manifest_path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
-        wamn_schema_generator::build_record::require_current(root)?;
+    if manifest_path.parent() == Some(wamn_compiler::output_root(root).as_path()) {
+        wamn_compiler::build_record::require_current(root)?;
     }
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -210,7 +210,7 @@ fn read_migrations(
     let mut migrations = Vec::new();
     // A package that owns no table has no migrations directory.
     if !migrations_path.exists()
-        && wamn_catalog::manifest::PackageManifest::from_slice(&manifest_bytes)
+        && wamn_compiler::manifest::PackageManifest::from_slice(&manifest_bytes)
             .is_ok_and(|manifest| manifest.owns_no_table())
     {
         return Ok(PackageDirectory {

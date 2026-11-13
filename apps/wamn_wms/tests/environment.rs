@@ -30,10 +30,8 @@ fn package_root() -> PathBuf {
 }
 
 pub(crate) fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
-    wamn_schema_generator::build_record::require_current(&package_root())?;
-    let manifest = read_json(&wamn_schema_generator::package_manifest_path(
-        &package_root(),
-    ))?;
+    wamn_compiler::build_record::require_current(&package_root())?;
+    let manifest = read_json(&wamn_compiler::package_manifest_path(&package_root()))?;
     PackageCoordinate::new(
         manifest["package"]["id"]
             .as_str()

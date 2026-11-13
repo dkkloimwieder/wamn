@@ -4,8 +4,8 @@
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
+use wamn_compiler::{GenerationInput, StatementTransactionality, generate};
 use wamn_environment_control::prune_record_history::prune;
-use wamn_schema_generator::{GenerationInput, StatementTransactionality, generate};
 
 async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
     let database = wamn_platform_identity::test_database::project_platform();

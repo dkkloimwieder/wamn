@@ -25,15 +25,14 @@ use wamn_schema_introspection::ir::{
     CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
 };
 
-use crate::sql;
-use wamn_catalog::manifest::{
+use crate::manifest::{
     AccessOperationErrorLiteral, CrudAction, CursorDirection, CustomOperationDeclaration,
     DeleteMode, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
     PackageManifest, RecordHistoryColumn, StaticSqlFetch, TombstoneColumn,
-    validate_operation_vocabulary,
 };
+use crate::sql;
+use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_catalog::sql_lex::contains_schema_qualified_reference;
-use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
@@ -115,12 +114,11 @@ pub struct GenerationInput<'a> {
     manifest_json: &'a [u8],
     authored_sql: &'a [AuthoredSql<'a>],
     transactional: &'a StatementTransactionality,
-    base_manifests: &'a [PackageManifest],
 }
 
 impl<'a> GenerationInput<'a> {
     /// Construct a generation input from exact in-memory artifacts.
-    /// Supply each overlay model's owner through [`Self::with_base_manifests`].
+    /// Complete inherited declarations with [`derive_manifest`] before generation.
     pub const fn new(
         catalog: &'a CatalogIr,
         manifest_json: &'a [u8],
@@ -132,15 +130,7 @@ impl<'a> GenerationInput<'a> {
             manifest_json,
             authored_sql,
             transactional,
-            base_manifests: &[],
         }
-    }
-
-    /// Supply the compiled manifests of the exact base builds used by this package.
-    #[must_use]
-    pub const fn with_base_manifests(mut self, bases: &'a [PackageManifest]) -> Self {
-        self.base_manifests = bases;
-        self
     }
 }
 
@@ -241,10 +231,11 @@ struct RequiredConstraint {
 /// The author states no relation of a custom operation and no stamp column
 /// (docs/architecture/data-access.md#application-declarations). Each relation
 /// comes from the operation's statements over the catalog, and the compiled
-/// manifest that every reader reads carries it. The other authored members keep
-/// their bytes and order. A model's `enum_fields` are validated here: an authored
+/// manifest that every reader reads carries it. The compiler writes the typed model once. A model's `enum_fields` are validated here: an authored
 /// list only narrows a CHECK's value set or names a set that no CHECK carries,
 /// and generation reads the rest from the CHECKs ([`generate`]).
+///
+/// Supply the resolved compiled bases for every inherited relation owner.
 ///
 /// # Errors
 ///
@@ -255,71 +246,68 @@ pub fn derive_manifest(
     catalog: &CatalogIr,
     manifest_json: &[u8],
     authored_sql: &[AuthoredSql<'_>],
+    bases: &[PackageManifest],
 ) -> Result<Vec<u8>, GenerateError> {
-    let manifest = PackageManifest::from_slice(manifest_json)?;
-    validation::validate_authored_sources(&manifest, authored_sql)?;
+    let mut manifest = PackageManifest::parse_authored(manifest_json)?;
+    derive_model(catalog, &mut manifest, authored_sql, bases)?;
+    serde_json::to_vec(&manifest).map_err(|source| {
+        GenerateError::with_source(
+            GenerateErrorType::InvalidManifest,
+            "serialize compiled facts",
+            source,
+        )
+    })
+}
+
+pub(crate) fn derive_model(
+    catalog: &CatalogIr,
+    manifest: &mut PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
+    bases: &[PackageManifest],
+) -> Result<(), GenerateError> {
+    manifest.refuse_authored_stamps()?;
+    crate::inheritance::inherit_model_fields(manifest, bases)?;
+    validation::validate_authored_sources(manifest, authored_sql)?;
     let mut relations = BTreeMap::new();
     for (name, operation) in &manifest.custom_operations {
-        if !operation.relations.is_empty() {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!(
-                    "{name} states its relations, which generation derives from its statements"
-                ),
-            ));
-        }
         if operation.statements.is_empty() {
             continue;
         }
         relations.insert(
             name.clone(),
-            validation::derive_relations(catalog, &manifest, authored_sql, name, operation)?,
+            validation::derive_relations(catalog, manifest, authored_sql, name, operation)?,
         );
     }
     for (name, model) in &manifest.models {
-        if let Some(stamp) = model.server_owned_fields.iter().find(|field| {
-            RecordHistoryColumn::ALL
-                .iter()
-                .any(|column| column.as_str() == field.as_str())
-        }) {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidModel,
-                format!(
-                    "{name} states stamp column {stamp} as server-owned; generation reads each stamp from the table, so remove it"
-                ),
-            ));
-        }
         let Some(table) = relation(catalog, model) else {
             continue;
         };
         model_enum_fields(name, model, table)?;
     }
-    let compiled =
-        crate::authoring::with_derived_relations(manifest_json, &relations).map_err(|source| {
-            GenerateError::with_source(
-                GenerateErrorType::InvalidManifest,
-                "write the derived members into the compiled manifest",
-                source,
-            )
-        })?;
     let mut feed_sources = BTreeMap::new();
     for (name, operation) in &manifest.custom_operations {
-        if operation.feed_source.is_some() {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!("{name} states feed_source, which generation derives from its view"),
-            ));
-        }
-        if let Some(source) =
-            crate::feed::derive(catalog, &manifest, authored_sql, name, operation)?
+        if let Some(source) = crate::feed::derive(catalog, manifest, authored_sql, name, operation)?
         {
             feed_sources.insert(name.clone(), source);
         }
     }
-    let compiled = crate::authoring::with_derived_feed_sources(&compiled, &feed_sources)
-        .expect("compiled manifest serializes");
-    PackageManifest::from_slice(&compiled)?;
-    Ok(compiled)
+    for (name, derived) in relations {
+        manifest
+            .custom_operations
+            .get_mut(&name)
+            .expect("declared operation")
+            .relations = derived;
+    }
+    for (name, source) in feed_sources {
+        manifest
+            .custom_operations
+            .get_mut(&name)
+            .expect("declared operation")
+            .feed_source = Some(source);
+    }
+    complete_enum_fields(catalog, manifest);
+    manifest.validate()?;
+    Ok(())
 }
 
 /// Generate a package without filesystem, database, clock, or environment I/O.
@@ -328,10 +316,16 @@ pub fn derive_manifest(
 /// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
     let mut manifest = PackageManifest::from_slice(input.manifest_json)?;
-    validate_operation_vocabulary(&manifest)?;
-    crate::inheritance::inherit_model_fields(&mut manifest, input.base_manifests)?;
+    manifest.validate()?;
     complete_enum_fields(input.catalog, &mut manifest);
-    validate(input, &manifest)?;
+    generate_compiled(input, &manifest)
+}
+
+pub(crate) fn generate_compiled(
+    input: &GenerationInput<'_>,
+    manifest: &PackageManifest,
+) -> Result<GeneratedPackage, GenerateError> {
+    validate(input, manifest)?;
 
     let mut files = BTreeMap::<String, Vec<u8>>::new();
     let mut sql_corpus = authored_sql_map(input.authored_sql)?;
@@ -344,7 +338,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             &mut sql_corpus,
             input.transactional,
             input.catalog,
-            &manifest,
+            manifest,
             model_name,
             model,
             table,
@@ -356,15 +350,15 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             &mut sql_corpus,
             input.transactional,
             input.catalog,
-            &manifest,
+            manifest,
             operation_name,
             operation,
         )?;
     }
-    data::emit_package_data(&mut files, &manifest)?;
-    component::emit_package_component(&mut files, &manifest)?;
-    publication::emit_package_publication(&mut files, &manifest)?;
-    let data_access = crate::data_access::derive_data_access_overlay(input.catalog, &manifest)?;
+    data::emit_package_data(&mut files, manifest)?;
+    component::emit_package_component(&mut files, manifest)?;
+    publication::emit_package_publication(&mut files, manifest)?;
+    let data_access = crate::data_access::derive_data_access_overlay(input.catalog, manifest)?;
     insert_canonical_json(
         &mut files,
         crate::data_access::DATA_ACCESS_OVERLAY_PATH,
@@ -373,7 +367,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     insert_canonical_json(
         &mut files,
         REQUIRED_SCHEMA_CONTRACT_PATH,
-        &required_schema_contract(input.catalog, &manifest),
+        &required_schema_contract(input.catalog, manifest),
     )?;
 
     let files = files
@@ -525,7 +519,7 @@ fn operation_error_details(
     operation: &OperationDeclaration,
     model: &ModelDeclaration,
 ) -> BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration> {
-    use wamn_catalog::manifest::AccessOperationErrorLiteral as Code;
+    use crate::manifest::AccessOperationErrorLiteral as Code;
 
     let mut codes = BTreeSet::from([
         Code::InvalidInput,
@@ -562,7 +556,7 @@ fn operation_error_details(
         .map(|code| {
             (
                 code,
-                wamn_catalog::manifest::access_operation_error_detail(action, code),
+                crate::manifest::access_operation_error_detail(action, code),
             )
         })
         .collect()
@@ -1096,9 +1090,69 @@ fn constraint_error(type_: &ConstraintType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{Column, Constraint, Table, check_value_set, model_enum_fields};
-    use wamn_catalog::ManifestErrorType as GenerateErrorType;
-    use wamn_catalog::manifest::ModelDeclaration;
+    use crate::ManifestErrorType as GenerateErrorType;
+    use crate::manifest::ModelDeclaration;
     use wamn_scalar::SqlValueType;
+
+    #[test]
+    fn derivation_inherits_fields_from_the_resolved_base() {
+        use crate::manifest::{FieldRole, PackageManifest};
+        let base: PackageManifest = serde_json::from_value(serde_json::json!({
+            "package": {"id": "base", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "base_access", "state": "satisfied"},
+            "models": {"record": {
+                "schema": "records", "table": "record", "owner": "base",
+                "audit_log": {"columns": ["created_at", "created_by"], "retention": "none"},
+                "fields": {"created_by": {"role": "actor"}},
+                "operations": {"get": {"permission": "record.get", "result": "one"}}
+            }},
+            "connections": {}, "components": {"data": {"connections": ["postgres"]}}
+        }))
+        .unwrap();
+        let authored = serde_json::to_vec(&serde_json::json!({
+            "package": {"id": "overlay", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "overlay_access", "state": "satisfied"},
+            "base_dependencies": {"base": {
+                "package": "base", "version": "1.0.0", "digest": format!("sha256:{}", "a".repeat(64)),
+                "operations": ["record.get"]
+            }},
+            "models": {"record": {
+                "schema": "records", "table": "record", "owner": "base",
+                "operations": {"get": {"permission": "record.get", "result": "one"}}
+            }},
+            "connections": {}, "components": {"data": {"connections": ["postgres"]}}
+        })).unwrap();
+        let catalog = super::CatalogIr::new(vec![Table::new(
+            "records",
+            "record",
+            vec![
+                Column::new("id", SqlValueType::Uuid, false, None, None),
+                Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
+                Column::new("created_by", SqlValueType::Uuid, false, None, None),
+            ],
+            vec![Constraint::primary_key("record_id_pkey", ["id"]).unwrap()],
+            Vec::new(),
+        )]);
+        let bytes = super::derive_manifest(&catalog, &authored, &[], &[base]).unwrap();
+        let compiled = PackageManifest::from_slice(&bytes).unwrap();
+        assert_eq!(
+            compiled.models["record"].fields["created_by"].role,
+            Some(FieldRole::Actor)
+        );
+        super::generate(&super::GenerationInput::new(
+            &catalog,
+            &bytes,
+            &[],
+            &super::StatementTransactionality::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            super::derive_manifest(&catalog, &authored, &[], &[])
+                .unwrap_err()
+                .error_type(),
+            GenerateErrorType::InvalidModel
+        );
+    }
 
     #[test]
     fn only_the_stored_in_form_is_a_value_set() {

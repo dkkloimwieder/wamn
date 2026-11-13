@@ -67,8 +67,8 @@ pub async fn adopt_package_schemas(
             records.len() <= complete.pending.len(),
             "package {id} omits recorded files; select a complete source, repair it, or reset an authorized disposable target"
         );
-        let fingerprint = wamn_schema_generator::build_record::physical_schema_fingerprint(
-            &wamn_schema_generator::output_root(&root.path),
+        let fingerprint = wamn_compiler::build_record::physical_schema_fingerprint(
+            &wamn_compiler::output_root(&root.path),
         )?;
         let mut asserted = Vec::new();
         for file in &complete.pending {

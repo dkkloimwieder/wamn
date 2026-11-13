@@ -17,7 +17,7 @@ use anyhow::{Context as _, ensure};
 use async_nats::jetstream::consumer::pull;
 use serde_json::Value;
 use wamn_broker::events::{advisory_stream_config, source_stream_config};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
@@ -74,10 +74,10 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
     let manifests = manifests
         .iter()
         .map(|path| {
-            if let Some(root) = wamn_schema_generator::manifest_package_root(Path::new(path)) {
-                wamn_schema_generator::build_record::require_current(root)?;
+            if let Some(root) = wamn_compiler::manifest_package_root(Path::new(path)) {
+                wamn_compiler::build_record::require_current(root)?;
             }
-            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
+            Ok(wamn_compiler::manifest::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,
             )?)
         })

@@ -4,8 +4,8 @@ use wamn_schema_introspection::ir::{Column, Table};
 
 use wamn_record_history::history_table_name;
 
-use wamn_catalog::manifest::{CursorDirection, OperationDeclaration};
-use wamn_catalog::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
+use crate::manifest::{CursorDirection, OperationDeclaration};
+use crate::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
 
 // SQL outcomes are shared with the generated result contracts.
 pub(crate) const OUTCOME_NOT_FOUND: &str = "not_found";
@@ -712,9 +712,9 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{changes, delete, get, query, update};
+    use crate::manifest::DeleteMode;
+    use crate::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use tokio_postgres::{NoTls, SimpleQueryMessage};
-    use wamn_catalog::manifest::DeleteMode;
-    use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 

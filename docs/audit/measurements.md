@@ -274,7 +274,7 @@ wamn-conformance-tests -- ./tests/conformance/Cargo.toml:
 	wasmtime-wasi
 wamn-modbus -- ./integrations/modbus/Cargo.toml:
 	dlmalloc
-wamn-schema-generator -- ./crates/schema/generator/Cargo.toml:
+wamn-compiler -- ./crates/schema/generator/Cargo.toml:
 	wamn-event-wire
 wamn-control -- ./crates/control/lib/Cargo.toml:
 	tokio-rustls
@@ -616,7 +616,7 @@ wit-parser v0.259.0
 │       └── wamn-integration-tests v0.1.0
 │       └── wamn-receiving-tests v0.1.0
 │       └── wamn-runtime v0.1.0
-│       └── wamn-schema-generator v0.1.0
+│       └── wamn-compiler v0.1.0
 │       └── wamn-workflow v0.1.0
 │       └── wash-runtime v2.11.0
 │       └── wasi-virt v0.2.0
@@ -854,7 +854,7 @@ Command: `cargo metadata --no-deps --format-version 1`, reduced to in-workspace 
 | `wamn-catalog` | wamn-component-policy,wamn-test-postgres | wamn-catalog,wamn-control-provision,wamn-test-postgres |
 | `wamn-component-policy` | - | - |
 | `wamn-test-postgres` | - | - |
-| `wamn-control-provision` | wamn-control-registry,wamn-pg-core,wamn-project-state,wamn-run-state,wamn-schema-generator,wamn-test-postgres | wamn-catalog,wamn-fixture-package,wamn-schema-control,wamn-test-postgres |
+| `wamn-control-provision` | wamn-control-registry,wamn-pg-core,wamn-project-state,wamn-run-state,wamn-compiler,wamn-test-postgres | wamn-catalog,wamn-fixture-package,wamn-schema-control,wamn-test-postgres |
 | `wamn-control-registry` | - | - |
 | `wamn-pg-core` | - | - |
 | `wamn-project-state` | wamn-catalog,wamn-test-postgres | wamn-catalog,wamn-control-provision,wamn-project-state,wamn-runtime,wamn-test-postgres |
@@ -866,34 +866,34 @@ Command: `cargo metadata --no-deps --format-version 1`, reduced to in-workspace 
 | `wamn-number-pattern` | - | - |
 | `wamn-package-artifact` | wamn-catalog | - |
 | `wamn-platform-identity` | wamn-catalog,wamn-credential-store,wamn-project-state,wamn-session | wamn-control-provision,wamn-project-state,wamn-test-infrastructure,wamn-test-postgres |
-| `wamn-test-infrastructure` | wamn-authoring-model,wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-platform-identity,wamn-schema-generator,wamn-test-postgres | wamn-control |
+| `wamn-test-infrastructure` | wamn-authoring-model,wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-platform-identity,wamn-compiler,wamn-test-postgres | wamn-control |
 | `wamn-authoring-model` | wamn-catalog | - |
-| `wamn-schema-generator` | wamn-catalog,wamn-number-pattern,wamn-schema-introspection | wamn-catalog,wamn-fixture-package,wamn-test-postgres |
+| `wamn-compiler` | wamn-catalog,wamn-number-pattern,wamn-schema-introspection | wamn-catalog,wamn-fixture-package,wamn-test-postgres |
 | `wamn-schema-introspection` | - | wamn-fixture-package,wamn-test-postgres |
 | `wamn-fixture-package` | - | - |
-| `wamn-control` | wamn-authoring-model,wamn-catalog,wamn-component-composer,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-identity-client,wamn-package-artifact,wamn-pg-core,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-schema-introspection,wamn-session,wamn-test-postgres | wamn-catalog,wamn-control-provision,wamn-execution-host,wamn-fixture-package,wamn-acceptance-test-harness,wamn-package-artifact,wamn-project-state,wamn-runtime,wamn-test-infrastructure,wamn-test-postgres,wamn-workflow |
+| `wamn-control` | wamn-authoring-model,wamn-catalog,wamn-component-composer,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-identity-client,wamn-package-artifact,wamn-pg-core,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-compiler,wamn-schema-introspection,wamn-session,wamn-test-postgres | wamn-catalog,wamn-control-provision,wamn-execution-host,wamn-fixture-package,wamn-acceptance-test-harness,wamn-package-artifact,wamn-project-state,wamn-runtime,wamn-test-infrastructure,wamn-test-postgres,wamn-workflow |
 | `wamn-component-composer` | wamn-component-policy | - |
 | `wamn-identity-client` | wamn-platform-identity,wamn-session | - |
-| `wamn-schema-control` | wamn-catalog,wamn-pg-core,wamn-schema-generator | - |
-| `wamn-execution-host` | wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-identity-client,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-generator | wamn-catalog,wamn-component-composer,wamn-control,wamn-control-provision,wamn-fixture-package,wamn-runtime,wamn-schema-control,wamn-session,wamn-test-infrastructure,wamn-test-postgres |
+| `wamn-schema-control` | wamn-catalog,wamn-pg-core,wamn-compiler | - |
+| `wamn-execution-host` | wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-identity-client,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-compiler | wamn-catalog,wamn-component-composer,wamn-control,wamn-control-provision,wamn-fixture-package,wamn-runtime,wamn-schema-control,wamn-session,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-acceptance-test-harness` | wamn-catalog,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-package-artifact,wamn-platform-identity,wamn-test-infrastructure | wamn-schema-control,wamn-test-postgres |
-| `wamn-workflow` | wamn-catalog,wamn-engine,wamn-execution-host,wamn-project-state,wamn-router,wamn-run-state,wamn-runtime | wamn-catalog,wamn-control,wamn-control-provision,wamn-platform-identity,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-test-infrastructure,wamn-test-postgres |
+| `wamn-workflow` | wamn-catalog,wamn-engine,wamn-execution-host,wamn-project-state,wamn-router,wamn-run-state,wamn-runtime | wamn-catalog,wamn-control,wamn-control-provision,wamn-platform-identity,wamn-runtime,wamn-schema-control,wamn-compiler,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-router` | - | - |
-| `wamn-edge` | wamn-catalog,wamn-control-registry,wamn-engine,wamn-run-state,wamn-run-state-sqlite,wamn-session | wamn-catalog,wamn-control,wamn-schema-generator |
+| `wamn-edge` | wamn-catalog,wamn-control-registry,wamn-engine,wamn-run-state,wamn-run-state-sqlite,wamn-session | wamn-catalog,wamn-control,wamn-compiler |
 | `wamn-run-state-sqlite` | wamn-run-state | wamn-run-state |
 | `wamn-identity` | wamn-control-provision,wamn-platform-identity,wamn-session | wamn-catalog,wamn-control-registry,wamn-pg-core,wamn-test-infrastructure,wamn-test-postgres |
-| `wamn-ctl` | wamn-catalog,wamn-control,wamn-control-provision,wamn-control-registry,wamn-package-artifact,wamn-platform-identity,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-workflow | wamn-authoring-model,wamn-catalog,wamn-control,wamn-control-provision,wamn-fixture-package,wamn-pg-core,wamn-project-state,wamn-test-infrastructure,wamn-test-postgres |
+| `wamn-ctl` | wamn-catalog,wamn-control,wamn-control-provision,wamn-control-registry,wamn-package-artifact,wamn-platform-identity,wamn-runtime,wamn-schema-control,wamn-compiler,wamn-workflow | wamn-authoring-model,wamn-catalog,wamn-control,wamn-control-provision,wamn-fixture-package,wamn-pg-core,wamn-project-state,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-scenario-worker` | wamn-authoring-model,wamn-catalog,wamn-control-provision,wamn-control-registry,wamn-package-artifact,wamn-platform-identity,wamn-runtime,wamn-schema-control | wamn-catalog,wamn-control,wamn-control-provision,wamn-session,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-cdc-reader` | wamn-control-provision,wamn-control-registry,wamn-pg-core | wamn-catalog,wamn-test-postgres |
 | `wamn-bench` | - | - |
 | `wamn-submodule-pins` | - | - |
 | `wamn-acceptance-tests` | wamn-conformance-tests,wamn-integration-tests,wamn-runtime,wamn-system-tests | - |
-| `wamn-conformance-tests` | wamn-component-policy,wamn-engine,wamn-acceptance-test-harness,wamn-run-state,wamn-runtime | wamn-execution-host,wamn-fixture-package,wamn-run-state,wamn-schema-generator,wamn-test-postgres |
-| `wamn-integration-tests` | wamn-catalog,wamn-component-composer,wamn-component-policy,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-execution-host,wamn-acceptance-test-harness,wamn-package-artifact,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-session,wamn-test-infrastructure,wamn-workflow | wamn-catalog,wamn-client,wamn-control,wamn-run-state,wamn-schema-introspection,wamn-test-postgres |
+| `wamn-conformance-tests` | wamn-component-policy,wamn-engine,wamn-acceptance-test-harness,wamn-run-state,wamn-runtime | wamn-execution-host,wamn-fixture-package,wamn-run-state,wamn-compiler,wamn-test-postgres |
+| `wamn-integration-tests` | wamn-catalog,wamn-component-composer,wamn-component-policy,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-engine,wamn-execution-host,wamn-acceptance-test-harness,wamn-package-artifact,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-compiler,wamn-session,wamn-test-infrastructure,wamn-workflow | wamn-catalog,wamn-client,wamn-control,wamn-run-state,wamn-schema-introspection,wamn-test-postgres |
 | `wamn-client` | - | - |
 | `wamn-system-tests` | wamn-run-state,wamn-runtime | wamn-run-state |
-| `wamn-receiving-tests` | - | wamn-authoring-model,wamn-catalog,wamn-cdc-reader,wamn-client,wamn-component-composer,wamn-control,wamn-control-provision,wamn-control-registry,wamn-engine,wamn-acceptance-test-harness,wamn-integration-tests,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-schema-generator,wamn-schema-introspection,wamn-test-infrastructure,wamn-test-postgres,wamn-workflow |
-| `wamn-wms-tests` | - | wamn-authoring-model,wamn-catalog,wamn-cdc-reader,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-acceptance-test-harness,wamn-integration-tests,wamn-platform-identity,wamn-project-state,wamn-runtime,wamn-schema-generator,wamn-test-infrastructure,wamn-test-postgres |
+| `wamn-receiving-tests` | - | wamn-authoring-model,wamn-catalog,wamn-cdc-reader,wamn-client,wamn-component-composer,wamn-control,wamn-control-provision,wamn-control-registry,wamn-engine,wamn-acceptance-test-harness,wamn-integration-tests,wamn-platform-identity,wamn-project-state,wamn-run-state,wamn-runtime,wamn-schema-control,wamn-compiler,wamn-schema-introspection,wamn-test-infrastructure,wamn-test-postgres,wamn-workflow |
+| `wamn-wms-tests` | - | wamn-authoring-model,wamn-catalog,wamn-cdc-reader,wamn-control,wamn-control-provision,wamn-control-registry,wamn-credential-store,wamn-acceptance-test-harness,wamn-integration-tests,wamn-platform-identity,wamn-project-state,wamn-runtime,wamn-compiler,wamn-test-infrastructure,wamn-test-postgres |
 | `wamn-component-virtualizer` | - | - |
 
 ## 11. Tools not run

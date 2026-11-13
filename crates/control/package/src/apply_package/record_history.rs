@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
@@ -68,7 +68,7 @@ pub(super) async fn create_history_tables(
             .get::<_, bool>(0);
         // The package-owner role owns the relation, so it owns its history table.
         set_package_owner_role(tx, &manifest.package.id).await?;
-        tx.batch_execute(&history_table_sql(model))
+        tx.batch_execute(&history_table_sql(&model.into()))
             .await
             .with_context(|| format!("create history table {}.{history}", model.schema))?;
         reset_host_role(tx).await?;
@@ -124,7 +124,7 @@ pub(super) async fn reconcile_record_history_triggers(
     for ((_, model), relation) in owned.into_iter().zip(&relations) {
         let (quoted, definitions) = &installed[relation];
         let columns = read_relation_columns(tx, &model.schema, &model.table).await?;
-        let generated = history_triggers(model, &columns)?;
+        let generated = history_triggers(&model.into(), &columns)?;
         let names = generated
             .iter()
             .map(|trigger| trigger.function_name.as_str())

@@ -14,13 +14,13 @@ use wamn_scalar::SqlValueType;
 
 use super::wit::access_error_literal;
 use super::{AccessorBind, Table, WamnApi, column, insert_bytes, query_variants, sql};
+use crate::ManifestError as GenerateError;
 use crate::key::{KeyType, key_type};
-use wamn_catalog::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
+use crate::manifest::{
     AccessOperationErrorLiteral, CrudAction, ModelDeclaration, OperationDeclaration,
     PackageManifest, rust_identifier, rust_type_identifier,
 };
-use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, access_operation_error_detail};
+use crate::manifest::{FilterMatch, OperationErrorDetailKey, access_operation_error_detail};
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
 
@@ -615,8 +615,8 @@ fn emit_query(
     for (field, direction) in query_variants(operation) {
         let direction_name = sql::direction_name(direction);
         let direction_type = match direction {
-            wamn_catalog::manifest::CursorDirection::Ascending => "Direction::Ascending",
-            wamn_catalog::manifest::CursorDirection::Descending => "Direction::Descending",
+            crate::manifest::CursorDirection::Ascending => "Direction::Ascending",
+            crate::manifest::CursorDirection::Descending => "Direction::Descending",
         };
         let key_column = column(table, field).expect("validation resolved the sort field");
         let key_type = cursor_key_type(key_column.column_type());
@@ -656,8 +656,8 @@ fn emit_query(
         .expect("writing to a String cannot fail");
     }
     let default_direction = match default.direction {
-        wamn_catalog::manifest::CursorDirection::Ascending => "Direction::Ascending",
-        wamn_catalog::manifest::CursorDirection::Descending => "Direction::Descending",
+        crate::manifest::CursorDirection::Ascending => "Direction::Ascending",
+        crate::manifest::CursorDirection::Descending => "Direction::Descending",
     };
     if operation
         .filters
@@ -884,7 +884,7 @@ pub(super) fn emit_package_data(
         .iter()
         .filter(|(_, operation)| operation.feed == Some(true))
     {
-        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
+        let stem = crate::manifest::custom_artifact_stem(name);
         writeln!(
             source,
             "\n/// The authored `{name}` feed.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
@@ -909,7 +909,7 @@ pub(super) fn emit_package_data(
 /// key carries exactly the values the default pattern names (`per=`,
 /// `reset=` and `{field:}`), as text; it is not a record. A pattern that
 /// names none takes no key: `next()` and `peek()`.
-fn emit_sequences(sequences: &[(&String, &wamn_catalog::manifest::SequenceDeclaration)]) -> String {
+fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
     let mut source = String::from(HEADER);
     source.push_str("// The sequences of the package.\n");
     for (name, sequence) in sequences {

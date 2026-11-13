@@ -18,10 +18,10 @@ use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
+use wamn_compiler::build_record::{self, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
-use wamn_schema_generator::build_record::{self, BuildRecord};
 
 use crate::package_artifact::PackageRegistry;
 use crate::web_config::{CONFIG_CACHE, CONFIG_CONTENT_TYPE, CONFIG_FILE};
@@ -92,7 +92,7 @@ impl std::error::Error for WebArtifactError {
 
 /// The directory that holds `dist/` and `web.json` for one standalone build.
 pub fn artifact_output(package_root: &Path) -> PathBuf {
-    wamn_schema_generator::output_root(package_root).join(ARTIFACT_DIRECTORY)
+    wamn_compiler::output_root(package_root).join(ARTIFACT_DIRECTORY)
 }
 
 /// Build browser files against the contract in the package's build record.
@@ -107,7 +107,7 @@ pub fn artifact_output(package_root: &Path) -> PathBuf {
 /// or a failed Vite build.
 pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtifactError> {
     async {
-        let output = wamn_schema_generator::output_root(package_root);
+        let output = wamn_compiler::output_root(package_root);
         let record = build_record::read(&output)?;
         let path = output.join("wamn.json");
         let compiled = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
@@ -127,7 +127,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
         if sidecar.exists() {
             std::fs::remove_file(&sidecar)?;
         }
-        wamn_schema_generator::build::build_web_client(package_root, &root.join("dist")).await?;
+        wamn_compiler::build::build_web_client(package_root, &root.join("dist")).await?;
         std::fs::write(&sidecar, manifest.to_bytes())
             .with_context(|| format!("write {}", sidecar.display()))?;
         Ok(root)
@@ -634,9 +634,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use wamn_compiler::build_record::{self, BuildRecord};
     use wamn_digest::{bytes_sha256, canonical_json_bytes};
     use wamn_package_artifact::registry_pull::test_server::Server;
-    use wamn_schema_generator::build_record::{self, BuildRecord};
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
     use super::{
@@ -648,7 +648,7 @@ mod tests {
         let package = scratch.path().join("apps/web_fixture");
         fs::create_dir_all(package.join("web")).unwrap();
         fs::write(package.join("web/package.json"), r#"{"version":"0.2.0"}"#).unwrap();
-        let output = wamn_schema_generator::output_root(&package);
+        let output = wamn_compiler::output_root(&package);
         fs::create_dir_all(&output).unwrap();
         fs::write(
             output.join(build_record::BUILD_RECORD_FILE),
@@ -664,7 +664,7 @@ mod tests {
         let scratch = ScratchRoot::create().unwrap();
         let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         let package = write_build(&scratch, &record, &compiled);
-        let read = build_record::read(&wamn_schema_generator::output_root(&package)).unwrap();
+        let read = build_record::read(&wamn_compiler::output_root(&package)).unwrap();
         let metadata = web_manifest(&read, &compiled, "0.2.0".into()).unwrap();
         assert_eq!(
             metadata.to_bytes(),
@@ -778,7 +778,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert_eq!(metadata.contract_digest, record.outputs.manifest);
         assert_eq!(metadata.version, "0.2.1");
         assert_eq!(
-            build_record::read(&wamn_schema_generator::output_root(&package)).unwrap(),
+            build_record::read(&wamn_compiler::output_root(&package)).unwrap(),
             record
         );
         fs::write(source.join("build.cjs"), "process.exit(1);").unwrap();

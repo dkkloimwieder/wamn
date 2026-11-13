@@ -35,12 +35,10 @@ use crate::build_record::{
 pub use crate::components::{build_components, build_guest};
 use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
+use crate::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
 use crate::materialize::{
     classify_statements, client_bindings, expected_files, generate_from_manifest,
-    introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
-};
-use wamn_catalog::manifest::{
-    CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
+    introspect_with_manifest, statement_corpus_from_manifest, write_files,
 };
 use wamn_digest::bytes_sha256;
 
@@ -49,9 +47,6 @@ const RECORD_HISTORY_APP_GRANTS_SQL: &str =
     include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 /// The hand-written manifest of a package that is not authored in `wamn.k`.
 const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
-/// The type that stands in for an undeclared statement value type while the
-/// build reads facts that do not depend on it.
-const PLACEHOLDER_TYPE: &str = "text";
 /// The web client's source directory, relative to the package root.
 const WEB_SOURCE: &str = "web";
 
@@ -235,11 +230,12 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)
         .context("parse the authored manifest")?;
     let provisional =
-        PackageManifest::from_slice(&serde_json::to_vec(&with_placeholder_types(&authored))?)
-            .context("parse the authored manifest")?;
+        ManifestSources::from_document(&authored).context("parse the authored manifest")?;
     let dependencies = dependencies(package_root, &request.output_root, &provisional)?;
-    let bases =
-        crate::inheritance::load_base_manifests(package_root, &request.output_root, &provisional)?;
+    let bases = crate::inheritance::load_base_manifests(
+        &request.output_root,
+        &provisional.base_dependencies,
+    )?;
 
     let database = VerificationDatabase::create(&request.database_url).await?;
     let built = pass_one_and_two(
@@ -278,13 +274,13 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
 async fn pass_one_and_two(
     package_root: &Path,
     database_url: &str,
-    provisional: &PackageManifest,
+    provisional: &ManifestSources,
     authored: &mut Value,
     bases: &[PackageManifest],
 ) -> Result<(Vec<u8>, BTreeMap<PathBuf, Vec<u8>>)> {
     // Pass one.
     migrate(database_url, package_root, provisional).await?;
-    let sources = load_authored_sql(package_root, provisional)?;
+    let sources = provisional.load_sql(package_root)?;
     let corpus = sources
         .iter()
         .map(|source| (source.path.clone(), source.bytes.clone()))
@@ -292,8 +288,8 @@ async fn pass_one_and_two(
     let described = describe_statements(database_url, &corpus).await?;
     apply_statement_types(authored, &described)?;
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
-    let typed = crate::inheritance::complete_manifest(&typed, bases)?;
-    let manifest = PackageManifest::from_slice(&typed).context("parse the typed manifest")?;
+    let mut manifest =
+        PackageManifest::parse_authored(&typed).context("parse the typed manifest")?;
     let catalog = introspect_with_manifest(database_url, &manifest).await?;
     // The build refuses correctness only (owner ruling 2026-10-18): a missing
     // pagination index is a warning.
@@ -304,15 +300,11 @@ async fn pass_one_and_two(
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
-    let derived = crate::derive_manifest(&catalog, &typed, &authored_sql)
+    crate::generate::derive_model(&catalog, &mut manifest, &authored_sql, bases)
         .context("derive the statement relations")?;
-    let canonical = canonical_json_bytes(
-        &serde_json::from_slice(&derived).context("parse the derived manifest")?,
-    );
+    let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
 
     // Pass two: every consumer from the canonical bytes.
-    let manifest =
-        PackageManifest::from_slice(&canonical).context("parse the canonical manifest")?;
     for (name, operation) in &manifest.custom_operations {
         if let Some(source) = &operation.feed_source {
             for warning in crate::feed::missing_indexes(&catalog, name, source) {
@@ -321,7 +313,7 @@ async fn pass_one_and_two(
         }
     }
     let (corpus, grants) =
-        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root, bases)?;
+        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -333,14 +325,8 @@ async fn pass_one_and_two(
         .await
         .context("join PostgreSQL connection task")?
         .context("drive PostgreSQL connection")?;
-    let package = generate_from_manifest(
-        &catalog,
-        &canonical,
-        &manifest,
-        package_root,
-        &verdicts?,
-        bases,
-    )?;
+    let package =
+        generate_from_manifest(&catalog, &canonical, &manifest, package_root, &verdicts?)?;
     let client = client_bindings(package_root, &manifest, &package)?;
     let mut files = expected_files(&package)?
         .into_iter()
@@ -407,7 +393,7 @@ async fn physical_schema(
                     .collect(),
             );
         }
-        let statements = render(manifest, &migrations, &columns)?;
+        let statements = render(&manifest.into(), &migrations, &columns)?;
         Ok(PhysicalSchema {
             columns,
             statements,
@@ -568,7 +554,7 @@ fn authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
 fn dependencies(
     package_root: &Path,
     output_root: &Path,
-    manifest: &PackageManifest,
+    manifest: &ManifestSources,
 ) -> Result<Vec<BuildDependency>> {
     manifest
         .base_dependencies
@@ -636,24 +622,6 @@ fn values_mut<'a>(
         .into_iter()
         .flatten()
         .filter_map(Value::as_object_mut)
-}
-
-/// A copy of the authored manifest in which every statement value states a
-/// type, so that it parses for the facts that do not depend on those types.
-fn with_placeholder_types(authored: &Value) -> Value {
-    let mut copy = authored.clone();
-    for_each_statement(&mut copy, |_, statement| {
-        for member in ["parameters", "row"] {
-            for value in values_mut(statement, member) {
-                value
-                    .entry("type")
-                    .or_insert_with(|| Value::from(PLACEHOLDER_TYPE));
-            }
-        }
-        Ok(())
-    })
-    .expect("the placeholder visit refuses nothing");
-    copy
 }
 
 /// Apply what describe says to the statement values of the authored manifest
@@ -788,16 +756,15 @@ fn apply_type(
 async fn migrate(
     database_url: &str,
     package_root: &Path,
-    manifest: &PackageManifest,
+    manifest: &ManifestSources,
 ) -> Result<()> {
-    let mut schemas = application_schemas(manifest).context("resolve application schemas")?;
+    let mut schemas = manifest.schemas();
     let mut directories = Vec::new();
     for dependency in manifest.base_dependencies.values() {
         let root = crate::output::dependency_root(package_root, &dependency.package);
         let authored: Value = serde_json::from_slice(&authored_manifest(&root)?)?;
-        let base =
-            PackageManifest::from_slice(&serde_json::to_vec(&with_placeholder_types(&authored))?)?;
-        schemas.extend(application_schemas(&base)?);
+        let base = ManifestSources::from_document(&authored)?;
+        schemas.extend(base.schemas());
         directories.push(root.join("migrations"));
     }
     schemas.sort();
@@ -866,7 +833,7 @@ async fn migrate(
 /// Create the history table of each relation the package keeps a log of.
 async fn create_history_tables(
     client: &tokio_postgres::Client,
-    manifest: &PackageManifest,
+    manifest: &ManifestSources,
 ) -> Result<()> {
     let logged = manifest
         .models
@@ -912,7 +879,7 @@ async fn create_history_tables(
     for model in logged {
         client
             .batch_execute(&wamn_schema_control::physical_schema::history_table_sql(
-                model,
+                &model.into(),
             ))
             .await
             .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
@@ -1078,7 +1045,12 @@ mod tests {
         fs::write(root.join("migrations/0001_initial.sql"),
             "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
         let database = wamn_test_postgres::database();
-        let result = migrate(database.url(), &root, &manifest).await;
+        let result = migrate(
+            database.url(),
+            &root,
+            &ManifestSources::from_document(&serde_json::to_value(&manifest).unwrap()).unwrap(),
+        )
+        .await;
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
         let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
@@ -1274,9 +1246,13 @@ mod tests {
     /// migrations.
     async fn missing_indexes(root: &Path, manifest: &PackageManifest) -> Vec<String> {
         let database = wamn_test_postgres::database();
-        migrate(database.url(), root, manifest)
-            .await
-            .expect("migrate the test package");
+        migrate(
+            database.url(),
+            root,
+            &ManifestSources::from_document(&serde_json::to_value(manifest).unwrap()).unwrap(),
+        )
+        .await
+        .expect("migrate the test package");
         let catalog = introspect_with_manifest(database.url(), manifest)
             .await
             .expect("introspect the migrated package");
@@ -1430,12 +1406,61 @@ mod tests {
         );
         assert!(map["wamn_accessors"][1].get("sqlx_view_columns").is_none());
     }
+}
 
-    #[test]
-    fn placeholder_types_leave_declared_types_alone() {
-        let copy = with_placeholder_types(&manifest(false, Some("int64")));
-        let statement = &copy["custom_operations"]["adjust"]["statements"]["select_quantity"];
-        assert_eq!(statement["parameters"][0]["type"], PLACEHOLDER_TYPE);
-        assert_eq!(statement["row"][0]["type"], "int64");
+/// Source metadata used before the database describes statement values.
+#[derive(Debug, serde::Deserialize)]
+struct ManifestSources {
+    package: crate::manifest::PackageIdentity,
+    #[serde(default)]
+    base_dependencies: BTreeMap<String, crate::manifest::BaseDependencyRequirement>,
+    models: BTreeMap<String, crate::manifest::ModelDeclaration>,
+    #[serde(default)]
+    custom_operations: BTreeMap<String, OperationSources>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OperationSources {
+    #[serde(default)]
+    statements: BTreeMap<String, StatementSource>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StatementSource {
+    path: String,
+}
+
+impl ManifestSources {
+    fn from_document(document: &Value) -> Result<Self> {
+        Ok(serde::Deserialize::deserialize(document)?)
+    }
+
+    fn schemas(&self) -> Vec<String> {
+        self.models
+            .values()
+            .map(|model| model.schema.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    fn load_sql(&self, root: &Path) -> Result<Vec<crate::materialize::SourceFile>> {
+        let paths = self
+            .models
+            .values()
+            .flat_map(|model| model.operations.values())
+            .filter_map(|operation| operation.authored_sql.as_ref())
+            .flat_map(|sql| {
+                std::iter::once(sql.default.as_str())
+                    .chain(sql.variants.iter().map(|variant| variant.path.as_str()))
+            })
+            .chain(
+                self.custom_operations
+                    .values()
+                    .flat_map(|operation| operation.statements.values())
+                    .map(|statement| statement.path.as_str()),
+            )
+            .collect::<BTreeSet<_>>();
+        crate::materialize::read_sql_sources(root, paths)
     }
 }

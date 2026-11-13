@@ -588,7 +588,7 @@ Rows use the root key as their collection key.
 
 [`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
 `emit_model` exports each model's `*_SHAPE_DIGEST`.
-[`materialize.rs`](../../crates/schema/generator/src/materialize.rs), `GENERATOR_ID`, is `wamn-schema-generator/0.1.10` for this emission.
+[`materialize.rs`](../../crates/schema/generator/src/materialize.rs), `GENERATOR_ID`, is `wamn-compiler/0.1.10` for this emission.
 
 [`persistence.ts`](../../web/runtime/src/sync/persistence.ts), `rowsPersistence`, deletes saved entries with unknown shape digests before its first storage operation.
 It also deletes malformed keys.

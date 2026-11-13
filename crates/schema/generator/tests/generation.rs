@@ -2,17 +2,17 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wamn_catalog::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::{
+use wamn_compiler::ManifestErrorType as GenerateErrorType;
+use wamn_compiler::client_ir::{ClientContractIr, ResponseIr, RouteIr};
+use wamn_compiler::client_ts::emit_ts_client;
+use wamn_compiler::manifest::{
     CrudAction, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
     resolve_operation_reference, validate_operation_vocabulary,
 };
-use wamn_scalar::SqlValueType;
-use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
-use wamn_schema_generator::client_ts::emit_ts_client;
-use wamn_schema_generator::{
+use wamn_compiler::{
     AuthoredSql, DATA_ACCESS_OVERLAY_PATH, GeneratedPackage, REQUIRED_SCHEMA_CONTRACT_PATH,
 };
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, Table,
@@ -2188,7 +2188,7 @@ fn tombstone_catalog() -> CatalogIr {
     ])
 }
 
-fn statement(package: &wamn_schema_generator::GeneratedPackage, path: &str) -> String {
+fn statement(package: &wamn_compiler::GeneratedPackage, path: &str) -> String {
     std::str::from_utf8(package.file(path).unwrap().bytes())
         .unwrap()
         .to_owned()
@@ -3342,10 +3342,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
         );
         // Intent identity is independent of the record id: reads have none,
         // while a create still claims its declared text key.
-        assert_eq!(
-            wamn_schema_generator::client_plan::idempotency_field(&input),
-            None
-        );
+        assert_eq!(wamn_compiler::client_plan::idempotency_field(&input), None);
         let mut create = manifest.clone();
         create["models"]["gadget"]["operations"]["create"] =
             create_manifest()["models"]["gadget"]["operations"]["create"].clone();
@@ -3363,7 +3360,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
             "{sql}"
         );
         assert_eq!(
-            wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
+            wamn_compiler::client_plan::idempotency_field(&input).as_deref(),
             Some("idempotency_key")
         );
     }

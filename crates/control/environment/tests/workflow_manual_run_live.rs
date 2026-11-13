@@ -176,7 +176,7 @@ fn jsonata_declaration() -> Value {
 }
 
 fn jsonata_bytes() -> Vec<u8> {
-    wamn_schema_generator::build_record::require_current(
+    wamn_compiler::build_record::require_current(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
     )
     .unwrap_or_else(|error| panic!("{error:#}"));

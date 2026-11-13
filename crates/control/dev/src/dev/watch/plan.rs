@@ -6,7 +6,7 @@ impl PackageRoot {
     }
 
     pub(super) fn owns_generated(&self, path: &Path) -> bool {
-        path.starts_with(wamn_schema_generator::output_root(&self.root))
+        path.starts_with(wamn_compiler::output_root(&self.root))
     }
 }
 

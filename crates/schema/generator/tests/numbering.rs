@@ -3,9 +3,9 @@
 //! SQL executed in PostgreSQL.
 
 use serde_json::{Value, json};
-use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_compiler::ManifestErrorType as GenerateErrorType;
+use wamn_compiler::{DATA_ACCESS_OVERLAY_PATH, GeneratedPackage};
 use wamn_scalar::SqlValueType;
-use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GeneratedPackage};
 use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 
 #[path = "support/generation.rs"]
