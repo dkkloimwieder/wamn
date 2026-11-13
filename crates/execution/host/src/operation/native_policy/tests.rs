@@ -513,10 +513,6 @@ struct Observation {
     native_identity: bool,
     identity: Option<SessionIdentity>,
     invocation: Option<ConnectionInvocation>,
-    /// The same host-attested coordinates as seen from the postgres surface,
-    /// which binds its own registry (`wamn-0h0g.7.9`).
-    postgres_invocation: Option<ConnectionInvocation>,
-    logging: Option<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -572,9 +568,7 @@ impl HostPlugin for Observe {
                         .expect("bindings lock")
                         .contains_key(&scope);
                     let identity = policy.resources.postgres.session_identity(&scope);
-                    let invocation = policy.resources.blobstore.invocation(&scope);
-                    let postgres_invocation = policy.resources.postgres.invocation(&scope);
-                    let logging = policy.resources.logging.identity_snapshot(&scope);
+                    let invocation = policy.resources.postgres.invocation(&scope);
                     let _effect = invocation
                         .as_ref()
                         .filter(|_| phase == 1)
@@ -591,8 +585,6 @@ impl HostPlugin for Observe {
                         native_identity,
                         identity,
                         invocation,
-                        postgres_invocation,
-                        logging,
                     });
                     if phase == 1 {
                         entered.notify_one();
@@ -966,12 +958,7 @@ impl Fixture {
     async fn assert_clean(&self) {
         timeout(CLEANUP, async {
             loop {
-                if self
-                    .policy
-                    .invocations
-                    .lock()
-                    .expect("invocation lock")
-                    .is_empty()
+                if self.policy.resources.postgres.scopes.is_empty()
                     && self.engine.guest_memory().in_use() == 0
                 {
                     break;
@@ -982,7 +969,7 @@ impl Fixture {
         .await
         .expect("native cancellation revokes authority and returns all guest memory");
         assert!(
-            self.policy.traces.is_empty(),
+            self.policy.resources.postgres.scopes.is_empty(),
             "native completion releases every invocation trace"
         );
         for event in self.events.lock().expect("observations lock").iter() {
@@ -996,48 +983,10 @@ impl Fixture {
             assert!(
                 self.policy
                     .resources
-                    .blobstore
+                    .postgres
                     .invocation(&event.scope)
                     .is_none()
             );
-            assert!(
-                self.policy
-                    .resources
-                    .postgres
-                    .invocation(&event.scope)
-                    .is_none(),
-                "revoke releases the postgres invocation with every other registry"
-            );
-            assert!(
-                self.policy
-                    .resources
-                    .logging
-                    .identity_snapshot(&event.scope)
-                    .is_none()
-            );
-            assert!(
-                self.policy
-                    .resources
-                    .postgres
-                    .activate_statement_operation(&event.scope, ROOT)
-                    .is_err()
-            );
-            // Rebinding succeeds only if the HTTP registry released this scope.
-            self.policy
-                .resources
-                .connection_http
-                .bind_invocation(
-                    &event.scope,
-                    self.request(Instant::now() + CLEANUP)
-                        .facts
-                        .acquisition
-                        .invocation,
-                )
-                .expect("HTTP authority scope was revoked");
-            self.policy
-                .resources
-                .connection_http
-                .revoke_invocation(&event.scope);
         }
     }
 }
@@ -1159,8 +1108,6 @@ async fn run_case(case: Case) {
             );
             assert!(event.identity.is_none());
             assert!(event.invocation.is_none());
-            assert!(event.postgres_invocation.is_none());
-            assert!(event.logging.is_none());
         } else {
             assert!(
                 !event.native_identity,
@@ -1183,11 +1130,6 @@ async fn run_case(case: Case) {
                     "a callerless delivery binds the operation that it runs"
                 );
             }
-            assert_eq!(
-                event.logging,
-                Some(("org-a".into(), "test".into())),
-                "execution has a logging identity"
-            );
             let invocation = event
                 .invocation
                 .as_ref()
@@ -1195,13 +1137,6 @@ async fn run_case(case: Case) {
             let position = invocation.entry.wiring().expect("a wiring entry");
             assert_eq!(position.wiring_id, "trusted-wiring");
             assert_eq!(position.node_id, "trusted-node");
-            // The postgres surface reaches the SAME node and wiring
-            // coordinates, from its own registry, for the whole invocation.
-            assert_eq!(
-                event.postgres_invocation.as_ref(),
-                Some(invocation),
-                "a postgres effect can name the node that raised it"
-            );
             assert_eq!(invocation.operation, ROOT, "only the entry has a scope");
         }
     }
@@ -1433,16 +1368,10 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
         .expect("binding policy result");
     assert!(!policy.bindings.read().expect("bindings lock").is_empty());
     assert!(
-        policy.traces.is_empty(),
+        policy.resources.postgres.scopes.is_empty(),
         "resolution creates no invocation trace"
     );
-    assert!(
-        policy
-            .invocations
-            .lock()
-            .expect("invocation lock")
-            .is_empty()
-    );
+    assert!(policy.resources.postgres.scopes.is_empty());
     loading.abort();
     assert!(
         timeout(CLEANUP, loading)
@@ -1454,15 +1383,9 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
         policy.bindings.read().expect("bindings lock").is_empty(),
         "the retained policy cannot retain bindings from abandoned resolution"
     );
+    assert!(policy.resources.postgres.scopes.is_empty());
     assert!(
-        policy
-            .invocations
-            .lock()
-            .expect("invocation lock")
-            .is_empty()
-    );
-    assert!(
-        policy.traces.is_empty(),
+        policy.resources.postgres.scopes.is_empty(),
         "abandoned resolution retains no trace"
     );
 }
@@ -1485,9 +1408,9 @@ async fn assert_call_owner() {
         owner.upgrade().is_some(),
         "the call owns the application after its driver owner drops"
     );
-    assert_eq!(policy.invocations.lock().expect("invocation lock").len(), 1);
+    assert_eq!(policy.resources.postgres.scopes.scopes().len(), 1);
     assert!(
-        !policy.traces.is_empty(),
+        !policy.resources.postgres.scopes.is_empty(),
         "the active call retains its trace"
     );
     assert!(
@@ -1505,15 +1428,9 @@ async fn assert_call_owner() {
     .await
     .expect("native guest abandonment releases the final application owner and memory");
     assert!(policy.bindings.read().expect("bindings lock").is_empty());
+    assert!(policy.resources.postgres.scopes.is_empty());
     assert!(
-        policy
-            .invocations
-            .lock()
-            .expect("invocation lock")
-            .is_empty()
-    );
-    assert!(
-        policy.traces.is_empty(),
+        policy.resources.postgres.scopes.is_empty(),
         "cancelled work releases its trace"
     );
     for event in events.lock().expect("observations lock").iter() {

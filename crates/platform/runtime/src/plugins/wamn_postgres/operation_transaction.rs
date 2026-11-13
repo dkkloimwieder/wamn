@@ -9,8 +9,8 @@
 //! call the host commits or rolls it back. An entry uses `operation.commit`;
 //! dropping its Store rolls back unfinished work.
 
+use crate::invocation::Authority;
 use sqlx::Row as _;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::resources::{
@@ -268,9 +268,6 @@ impl wamn_engine::operation::Transaction for OperationTransaction {
     }
 }
 
-/// The operation transactions bound to invocation scopes.
-pub(super) type OperationTransactions = HashMap<String, OperationTransaction>;
-
 impl WamnPostgres {
     /// Begin the host transaction of one operation request element under the identity that
     /// `scope` binds.
@@ -308,32 +305,28 @@ impl WamnPostgres {
         scope: &str,
         transaction: &OperationTransaction,
     ) -> anyhow::Result<()> {
-        let mut bound = self
-            .operation_transactions
-            .lock()
-            .expect("operation transactions lock poisoned");
-        anyhow::ensure!(
-            !bound.contains_key(scope),
-            "operation-transaction-scope-already-bound"
-        );
-        bound.insert(scope.to_owned(), transaction.clone());
-        Ok(())
+        self.scopes
+            .update_existing::<Authority, _>(scope, |record| {
+                anyhow::ensure!(
+                    record.transaction.is_none(),
+                    "operation-transaction-scope-already-bound"
+                );
+                record.transaction = Some(transaction.clone());
+                Ok(())
+            })
+            .unwrap_or_else(|| Err(anyhow::anyhow!("invocation scope was revoked")))
     }
 
     /// Drop the binding of `scope`. The transaction stays open for its owner.
     pub fn revoke_operation_transaction(&self, scope: &str) {
-        self.operation_transactions
-            .lock()
-            .expect("operation transactions lock poisoned")
-            .remove(scope);
+        self.scopes
+            .update_existing::<Authority, _>(scope, |record| record.transaction = None);
     }
 
     pub(super) fn operation_transaction_for(&self, scope: &str) -> Option<OperationTransaction> {
-        self.operation_transactions
-            .lock()
-            .expect("operation transactions lock poisoned")
-            .get(scope)
-            .cloned()
+        self.scopes
+            .read::<Authority, _>(scope, |record| record.transaction.clone())
+            .flatten()
     }
 
     /// The refusal of `call` when `scope` has a host transaction, which the

@@ -70,7 +70,7 @@ BTreeSet::from([ServingComponent {
                     relations: Vec::new(),
                     transactional: false, ..statement.clone()
                 })]),
-            }), (OPERATION.into(), AdmittedComponentOperation { host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
+            }), (OPERATION.into(), AdmittedComponentOperation { host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.into()),
                 committed_result_schema: None,
                 statements: BTreeMap::from([("update.sql".into(), statement)]),
@@ -480,7 +480,7 @@ async fn refused_statement_authority_returns_unknown_statement() {
 async fn anonymous_read_authorization_needs_no_database_credentials() {
     let (postgres, release) = offline_fixture();
     run_guest(Arc::clone(&postgres), release, 19).await;
-    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    assert!(postgres.scopes.is_empty());
 }
 
 #[tokio::test]
@@ -496,7 +496,7 @@ async fn reads_authorize_without_a_transaction_and_refuse_begin() {
         .unwrap()
         .get(0);
     assert_eq!(count, 0);
-    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    assert!(postgres.scopes.is_empty());
 }
 
 #[tokio::test]
@@ -519,7 +519,7 @@ async fn unbound_control_entry_links_but_refuses_every_operation_call() {
     )
     .await;
     assert!(postgres.operation_workloads.read().unwrap().is_empty());
-    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    assert!(postgres.scopes.is_empty());
 }
 
 #[tokio::test]
@@ -552,7 +552,7 @@ async fn rollback_removes_the_claim_and_statement_effects() {
     let (database, postgres, release) = fixture().await;
     run_guest(Arc::clone(&postgres), release, 14).await;
     assert_eq!(value(&database).await, 1);
-    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    assert!(postgres.scopes.is_empty());
     let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
         .fetch_one(&mut connect(&database).await)
         .await
@@ -644,7 +644,7 @@ async fn store_drop_rolls_back_the_statement_and_claim() {
     let (database, postgres, release) = fixture().await;
     run_guest(Arc::clone(&postgres), release, 2).await;
     assert_eq!(value(&database).await, 1);
-    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    assert!(postgres.scopes.is_empty());
     let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
         .fetch_one(&mut connect(&database).await)
         .await
@@ -777,7 +777,8 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             .unwrap()
             .get(WORKLOAD)
             .unwrap()
-            .applications[OPERATION],
+            .operations[OPERATION]
+            .application,
         "receiving"
     );
     assert!(

@@ -7,7 +7,6 @@
 //! policy refuses session changes, hidden execution, and platform writes.
 
 use std::collections::HashSet;
-#[cfg(feature = "wasm_component_model_implements")]
 use std::sync::Arc;
 
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
@@ -29,7 +28,7 @@ mod production_lease;
 mod resources;
 mod run_stream;
 mod session_identity;
-mod statements;
+pub(crate) mod statements;
 mod types;
 mod wiring_resolution;
 mod workflow_resolution;
@@ -512,6 +511,10 @@ impl HostPlugin for WamnPostgres {
             // Calls on an unbound instance refuse before accessing SQL or identity.
         }
         // The wash host path: one workload, one bind, both halves in order.
+        item.add_plugin(
+            wamn_engine::invocation_scope::INVOCATION_SCOPES_ID,
+            Arc::clone(&self.scopes) as _,
+        );
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces)?;
         let component = item.component().clone();
         self.add_linker_entries(item.linker()?, &component, &interfaces)
@@ -609,3 +612,5 @@ mod tests {
 pub(crate) use session_identity::SessionGrantRefusal;
 
 pub use session_identity::valid_runner;
+
+pub(crate) use session_identity::validate_identity;

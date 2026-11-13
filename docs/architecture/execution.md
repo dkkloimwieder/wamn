@@ -294,7 +294,11 @@ On the edge it is the SQLite intent store of `wamn-run-state-sqlite`, one file w
 Its `intents` table holds one row for each operation call, unique by `project` and idempotency key.
 Here, `project` holds the edge organization ID.
 A begin with a known key and another input hash is a conflict.
-A begin with a finished key answers the stored outcome, and an open intent with no outcome is uncertain until an operator resolves it.
+A begin with a finished key answers the stored outcome.
+The cloud answers an unfinished claim with `in-progress` for 30 seconds, then `outcome-unknown`.
+A late completion records its result, and the next retry returns it.
+The client checks the external system before sending a new key.
+The edge keeps its current intent resolution until its invocation path changes.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
 Publish writes the key field (`idempotency`) into the serving manifest route.
 The server hashes parsed JSON with sorted object keys. It leaves out `request_id` and the key field.
@@ -418,9 +422,10 @@ It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
 The pure router, `wamn-router`, owns deterministic graph decisions.
-After initialization, the host records caller, SQL, identity, causation, and effect authority in an invocation scope.
-Native callbacks restore the trace context from that target.
-Cleanup revokes the target and clears bindings after success, failure, cancellation, or owner shutdown.
+Before execution, the host admits one invocation record with caller, SQL, identity, causation, effect authority and trace context.
+PostgreSQL, HTTP, storage and logging read that record from one registry.
+The record retains signing authority through commit and replay.
+Cancellation or shutdown revokes the record. Normal completion releases it after result signing.
 The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue leases and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.

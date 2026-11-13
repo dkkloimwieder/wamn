@@ -6,7 +6,7 @@
 //! that store. An operation without SQL claims in two steps on a connection of
 //! its own: [`WriteLogStore`] commits the claim before the call and the result
 //! after it, and a claim that never finishes keeps a null `result`, which is
-//! uncertain.
+//! unfinished until it records a result or retention removes it.
 //!
 //! The row's `request` holds the engine's hash or the entry's unchanged hash
 //! bytes. Its `operation` is the operation without its `@version`, so a retry
@@ -62,7 +62,7 @@ fn claim_statement(
 }
 
 /// Read the request and the result that a committed claim of one key holds.
-pub const READ_SQL: &str = "SELECT request, result FROM platform.write_log \
+pub const READ_SQL: &str = "SELECT request, result, extract(epoch FROM (clock_timestamp() - created_at))::float8 FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text";
 
 /// Store the result in a claim that has none.
@@ -120,9 +120,69 @@ fn contract(operation: &'static str, detail: String) -> StoreError {
     StoreError::new(StoreErrorType::Contract, operation, detail)
 }
 
-/// Run one write log statement on `run`, and answer the begin of `intent`.
-///
-/// `run` executes one statement and returns its rows.
+/// Claim opaque request bytes on either the operation transaction or an autocommit connection.
+async fn claim_with<F, Fut>(
+    operation: &str,
+    key: &str,
+    request: Vec<u8>,
+    result: Option<&str>,
+    run: F,
+) -> Result<Option<Claim>, PgError>
+where
+    F: Fn(&'static str, Vec<SqlValue>) -> Fut,
+    Fut: Future<Output = Result<Vec<Row>, PgError>>,
+{
+    let operation = log_operation(operation);
+    let (sql, params) = claim_statement(
+        vec![
+            SqlValue::Text(operation.to_owned()),
+            SqlValue::Text(key.to_owned()),
+            SqlValue::Bytes(request.clone()),
+        ],
+        result,
+    );
+    if !run(sql, params).await?.is_empty() {
+        return Ok(Some(Claim::New));
+    }
+    let rows = run(
+        READ_SQL,
+        vec![
+            SqlValue::Text(operation.to_owned()),
+            SqlValue::Text(key.to_owned()),
+        ],
+    )
+    .await?;
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let stored: Vec<u8> = row.get(0);
+    let result: Option<String> = row.get(1);
+    if stored != request {
+        return Ok(Some(Claim::Conflict));
+    }
+    Ok(Some(match result {
+        Some(result) => Claim::Finished(result),
+        None => unfinished(row.get(2)),
+    }))
+}
+
+fn opaque_claim(claim: Option<Claim>) -> Result<Claim, PgError> {
+    claim.ok_or_else(|| {
+        PgError::QueryError((
+            "P0002".to_owned(),
+            "the write log claim has no row".to_owned(),
+        ))
+    })
+}
+
+fn unfinished(age_seconds: f64) -> Claim {
+    if age_seconds > wamn_engine::engine::MAX_HOST_CALL_DURATION.as_secs_f64() {
+        Claim::OutcomeUnknown
+    } else {
+        Claim::InProgress
+    }
+}
+
 async fn begin_with<F, Fut>(
     intent: &Intent<'_>,
     result: Option<&str>,
@@ -132,71 +192,51 @@ where
     F: Fn(&'static str, Vec<SqlValue>) -> Fut,
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
 {
-    let operation = log_operation(intent.operation).to_owned();
-    let key = intent.idempotency_key.to_owned();
-    let request = intent.input_hash.as_bytes().to_vec();
-    let id = intent_id(&operation, &key);
-    let (sql, params) = claim_statement(
-        vec![
-            SqlValue::Text(operation.clone()),
-            SqlValue::Text(key.clone()),
-            SqlValue::Bytes(request.clone()),
-        ],
+    let claim = claim_with(
+        intent.operation,
+        intent.idempotency_key,
+        intent.input_hash.as_bytes().to_vec(),
         result,
-    );
-    let claimed = run(sql, params).await.map_err(storage("begin"))?;
-    if !claimed.is_empty() {
-        return Ok(Begun::New(id));
-    }
-    let rows = run(
-        READ_SQL,
-        vec![SqlValue::Text(operation), SqlValue::Text(key)],
+        run,
     )
     .await
-    .map_err(storage("begin"))?;
-    let row = rows
-        .first()
-        .ok_or_else(|| contract("begin", format!("claim {} has no row", id.0)))?;
-    let stored: Vec<u8> = row.get(0);
-    let result: Option<String> = row.get(1);
-    if stored != request {
-        return Ok(Begun::Conflict(id));
-    }
-    match result {
-        Some(result) => serde_json::from_str(&result)
-            .map(|value| Begun::Finished(StoredOutcome(value)))
-            .map_err(|error| contract("begin", format!("stored result is not JSON: {error}"))),
-        None => Ok(Begun::Uncertain(id)),
-    }
+    .map_err(storage("begin"))?
+    .ok_or_else(|| contract("begin", "the write log claim has no row".to_owned()))?;
+    let id = intent_id(log_operation(intent.operation), intent.idempotency_key);
+    Ok(match claim {
+        Claim::New => Begun::New(id),
+        Claim::Conflict => Begun::Conflict(id),
+        Claim::InProgress => Begun::InProgress(id),
+        Claim::OutcomeUnknown => Begun::OutcomeUnknown(id),
+        Claim::Finished(result) => {
+            Begun::Finished(StoredOutcome(serde_json::from_str(&result).map_err(
+                |error| contract("begin", format!("stored result is not JSON: {error}")),
+            )?))
+        }
+    })
 }
 
-/// Store `outcome` in the claim `id` through `run`.
-async fn finish_with<F, Fut>(
-    id: &IntentId,
-    outcome: &StoredOutcome,
+/// Return whether completing the claim changed an open record.
+async fn complete_with<F, Fut>(
+    operation: &str,
+    key: &str,
+    result: String,
     run: F,
-) -> Result<(), StoreError>
+) -> Result<bool, PgError>
 where
     F: Fn(&'static str, Vec<SqlValue>) -> Fut,
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
 {
-    let (operation, key) = claim_of("finish", id)?;
-    let result = serde_json::to_string(&outcome.0)
-        .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
     let rows = run(
         FINISH_SQL,
         vec![
-            SqlValue::Text(operation.to_owned()),
+            SqlValue::Text(log_operation(operation).to_owned()),
             SqlValue::Text(key.to_owned()),
             SqlValue::Text(result),
         ],
     )
-    .await
-    .map_err(storage("finish"))?;
-    if rows.is_empty() {
-        return Err(contract("finish", format!("claim {} is not open", id.0)));
-    }
-    Ok(())
+    .await?;
+    Ok(!rows.is_empty())
 }
 
 impl OperationTransaction {
@@ -206,41 +246,16 @@ impl OperationTransaction {
         operation: &str,
         key: &str,
         request: Vec<u8>,
-    ) -> Result<OpaqueBegun, PgError> {
-        let operation = log_operation(operation).to_owned();
-        let (sql, params) = claim_statement(
-            vec![
-                SqlValue::Text(operation.clone()),
-                SqlValue::Text(key.to_owned()),
-                SqlValue::Bytes(request.clone()),
-            ],
+    ) -> Result<Claim, PgError> {
+        let claim = claim_with(
+            operation,
+            key,
+            request,
             self.known_result.as_deref(),
-        );
-        let claimed = self.log_statement(sql, params).await?;
-        if !claimed.is_empty() {
-            return Ok(OpaqueBegun::New);
-        }
-        let rows = self
-            .log_statement(
-                READ_SQL,
-                vec![SqlValue::Text(operation), SqlValue::Text(key.to_owned())],
-            )
-            .await?;
-        let row = rows.first().ok_or_else(|| {
-            PgError::QueryError((
-                "P0002".to_owned(),
-                "the write log claim has no row".to_owned(),
-            ))
-        })?;
-        let stored: Vec<u8> = row.get(0);
-        let result: Option<String> = row.get(1);
-        if stored != request {
-            return Ok(OpaqueBegun::Conflict);
-        }
-        Ok(match result {
-            Some(result) => OpaqueBegun::Finished(result),
-            None => OpaqueBegun::Uncertain,
-        })
+            |sql, params| self.log_statement(sql, params),
+        )
+        .await?;
+        opaque_claim(claim)
     }
 
     /// Stage the application's result text for the existing commit pipeline.
@@ -305,10 +320,11 @@ impl OperationTransaction {
 
 /// The write log has no operator resolution, so it never returns `resolved`.
 #[derive(Debug)]
-pub(super) enum OpaqueBegun {
+pub enum Claim {
     New,
     Finished(String),
-    Uncertain,
+    InProgress,
+    OutcomeUnknown,
     Conflict,
 }
 
@@ -374,6 +390,17 @@ pub struct WriteLogStore {
     project_env_key: String,
 }
 
+fn require_open_claim(changed: bool) -> Result<(), PgError> {
+    if changed {
+        Ok(())
+    } else {
+        Err(PgError::QueryError((
+            "P0002".to_owned(),
+            "claim is not open".to_owned(),
+        )))
+    }
+}
+
 impl WriteLogStore {
     /// The write log of `project_env_key`'s database in `project`.
     pub fn new(postgres: Arc<WamnPostgres>, project: String, project_env_key: String) -> Self {
@@ -382,6 +409,62 @@ impl WriteLogStore {
             project,
             project_env_key,
         }
+    }
+
+    /// Commit a claim before a call that has external effects.
+    pub async fn claim(
+        &self,
+        operation: &str,
+        key: &str,
+        request: Vec<u8>,
+    ) -> Result<Claim, PgError> {
+        let claim = claim_with(operation, key, request, None, |sql, params| {
+            self.statement(sql, params)
+        })
+        .await?;
+        opaque_claim(claim)
+    }
+
+    /// Record late completion without changing an already completed outcome.
+    pub async fn complete(
+        &self,
+        operation: &str,
+        key: &str,
+        result: String,
+    ) -> Result<(), PgError> {
+        let changed = self.complete_claim(operation, key, result).await?;
+        require_open_claim(changed)
+    }
+
+    async fn complete_claim(
+        &self,
+        operation: &str,
+        key: &str,
+        result: String,
+    ) -> Result<bool, PgError> {
+        complete_with(operation, key, result, |sql, params| {
+            self.statement(sql, params)
+        })
+        .await
+    }
+
+    /// Release a refused external claim without recording a result.
+    pub async fn release_claim(&self, operation: &str, key: &str) -> Result<(), PgError> {
+        let changed = self.release_open_claim(operation, key).await?;
+        require_open_claim(changed)
+    }
+
+    async fn release_open_claim(&self, operation: &str, key: &str) -> Result<bool, PgError> {
+        let rows = self
+            .statement(
+                RELEASE_SQL,
+                vec![
+                    SqlValue::Text(log_operation(operation).to_owned()),
+                    SqlValue::Text(key.to_owned()),
+                ],
+            )
+            .await?;
+        Ok(!rows.is_empty())
     }
 
     /// Run one write log statement alone, so it commits at once.
@@ -425,25 +508,31 @@ impl IntentStore for WriteLogStore {
     }
 
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        finish_with(id, outcome, |sql, params| self.statement(sql, params)).await
+        let (operation, key) = claim_of("finish", id)?;
+        let result = serde_json::to_string(&outcome.0)
+            .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
+        let changed = self
+            .complete_claim(operation, key, result)
+            .await
+            .map_err(storage("finish"))?;
+        if changed {
+            Ok(())
+        } else {
+            Err(contract("finish", format!("claim {} is not open", id.0)))
+        }
     }
 
     async fn release(&self, id: &IntentId) -> Result<(), StoreError> {
         let (operation, key) = claim_of("release", id)?;
-        let rows = self
-            .statement(
-                RELEASE_SQL,
-                vec![
-                    SqlValue::Text(operation.to_owned()),
-                    SqlValue::Text(key.to_owned()),
-                ],
-            )
+        let changed = self
+            .release_open_claim(operation, key)
             .await
             .map_err(storage("release"))?;
-        if rows.is_empty() {
-            return Err(contract("release", format!("claim {} is not open", id.0)));
+        if changed {
+            Ok(())
+        } else {
+            Err(contract("release", format!("claim {} is not open", id.0)))
         }
-        Ok(())
     }
 
     async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {

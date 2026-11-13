@@ -329,7 +329,7 @@ impl FileHost {
 
     fn bind_operation(&self) -> anyhow::Result<AuthenticatedCaller> {
         let digest = format!("sha256:{}", "a".repeat(64));
-        self.blobstore.bind_invocation(
+        self.postgres.bind_invocation(
             "file-operation",
             ConnectionInvocation {
                 origin: ConnectionOrigin {
@@ -1033,7 +1033,7 @@ async fn native_operation_signed_url_reads_private_bytes_then_expires_and_caps_l
     );
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(client.get(&url).send().await?.status(), 403);
-    fixture.blobstore.revoke_invocation("file-operation");
+    fixture.postgres.revoke_invocation("file-operation");
     let refused = fixture
         .routes
         .signed_url(

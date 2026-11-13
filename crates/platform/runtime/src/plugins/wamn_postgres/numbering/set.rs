@@ -22,7 +22,7 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
-use super::super::write_log::OpaqueBegun;
+use super::super::write_log::Claim;
 use super::super::{SessionIdentity, WamnPostgres};
 use super::SEQUENCE_SQL;
 
@@ -238,9 +238,9 @@ impl WamnPostgres {
             }
         };
         let stored = match begun {
-            OpaqueBegun::New => None,
-            OpaqueBegun::Finished(result) => Some(result),
-            OpaqueBegun::Conflict => {
+            Claim::New => None,
+            Claim::Finished(result) => Some(result),
+            Claim::Conflict => {
                 let _ = transaction.rollback().await;
                 return Err(refused(
                     set,
@@ -248,7 +248,7 @@ impl WamnPostgres {
                     CounterSetRefusal::IdempotencyConflict,
                 ));
             }
-            OpaqueBegun::Uncertain => {
+            Claim::InProgress | Claim::OutcomeUnknown => {
                 let _ = transaction.rollback().await;
                 return Err(failed(
                     set,

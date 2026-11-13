@@ -373,6 +373,20 @@ async fn settle_request_element<H: ApplicationHost>(
     let id = match begun {
         Begun::New(id) => id,
         Begun::Finished(StoredOutcome(body)) => return Ok(answer(body)),
+        Begun::InProgress(id) => {
+            return Ok(answer(refusal(
+                "in-progress",
+                "the operation is still running".to_owned(),
+                json!({"claim": id.0}),
+            )));
+        }
+        Begun::OutcomeUnknown(id) => {
+            return Ok(answer(refusal(
+                "outcome-unknown",
+                "check the external system before sending a new key".to_owned(),
+                json!({"claim": id.0}),
+            )));
+        }
         Begun::Uncertain(id) => return Ok(answer(uncertain(&id))),
         Begun::Resolved { id, basis } => {
             return Ok(answer(refusal(
