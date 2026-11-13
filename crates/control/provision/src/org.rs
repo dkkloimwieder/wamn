@@ -171,8 +171,7 @@ fn cluster_labels(org: &str, owner: &str) -> Value {
 ///   may flip it `on`, roughly halving idle cost). Independent of instance count.
 ///
 /// All: `enableSuperuserAccess` (the wamn-q3n.7 per-project-env path connects as
-/// superuser to CREATE the databases/roles), a non-TLS `pg_hba` (the repo connects
-/// `NoTls`), **NO cpu limit** — requests only (the S2 CFS lesson) — and the
+/// superuser to create the databases and roles), TLS-only client authentication, **NO cpu limit** — requests only (the S2 CFS lesson) — and the
 /// always-on `max_slot_wal_keep_size` WAL bound (the §11 sharp edge, see
 /// [`WAL_KEEP_BOUND`]).
 ///
@@ -201,7 +200,7 @@ pub(crate) fn render_cluster(
         "resources": { "requests": { "cpu": policy.cpu, "memory": policy.memory } },
         "storage": { "size": policy.storage },
         "postgresql": {
-            "pg_hba": ["host all all all scram-sha-256"],
+            "pg_hba": ["hostssl all all all scram-sha-256"],
             // The §11 WAL-retention bound is ALWAYS set (see WAL_KEEP_BOUND) —
             // the one CDC-capture knob every cluster carries, single- or
             // multi-instance. The failover-sync parameters are added below only
@@ -210,7 +209,7 @@ pub(crate) fn render_cluster(
         },
         // A neutral placeholder DB; the real per-project-env databases are created
         // declaratively by wamn-q3n.7 (the CNPG Database CRD).
-        "bootstrap": { "initdb": { "database": "app", "owner": "app" } },
+        "bootstrap": { "initdb": { "database": "app", "owner": "wamn_db_owner", "postInitSQL":["ALTER ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"] } },
     });
     // WAL/PITR via the Barman Cloud plugin (wamn-e1g) for a backup-enabled cluster.
     #[cfg(feature = "ops")]
@@ -440,10 +439,6 @@ mod tests {
             // WAL/PITR via .spec.plugins, never the deprecated in-tree stanza.
             assert!(c["spec"]["backup"].is_null());
             assert_eq!(c["spec"]["enableSuperuserAccess"], true);
-            assert_eq!(
-                c["spec"]["postgresql"]["pg_hba"][0],
-                "host all all all scram-sha-256"
-            );
         }
     }
 

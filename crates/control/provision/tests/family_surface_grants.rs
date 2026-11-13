@@ -35,9 +35,9 @@ use std::process::{Command, Stdio};
 
 use url::Url;
 
+use wamn_control_provision::WorkloadRoleFamily;
 use wamn_control_provision::sql;
-use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_login};
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
@@ -130,7 +130,7 @@ fn sqlstate(url: &str, statement: &str) -> Option<String> {
 }
 
 fn generation(family: WorkloadRoleFamily, database: &str) -> String {
-    workload_generation_role(
+    workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
@@ -138,7 +138,6 @@ fn generation(family: WorkloadRoleFamily, database: &str) -> String {
             environment: ENV,
             database,
         },
-        CredentialGeneration::A,
     )
     .expect("these families take a project-environment target")
 }
@@ -216,12 +215,11 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     run_admin(
         &admin,
         "prepare the event-materializer generation",
-        &sql::prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::EventMaterializer,
             &database,
             &login,
             GENERATION_PW,
-            "2099-01-01T00:00:00Z",
         ),
     );
 
@@ -445,12 +443,11 @@ fn the_executor_platform_role_holds_exactly_its_measured_lease_surface() {
     run_admin(
         &admin,
         "prepare the executor-platform generation",
-        &sql::prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ExecutorPlatform,
             &database,
             &login,
             GENERATION_PW,
-            "2099-01-01T00:00:00Z",
         ),
     );
     run_admin(
@@ -721,12 +718,11 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     run_admin(
         &admin,
         "prepare the callable-HTTP generation",
-        &sql::prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::HttpAdmitter,
             &database,
             &login,
             GENERATION_PW,
-            "2099-01-01T00:00:00Z",
         ),
     );
 
@@ -861,7 +857,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     //
     // Unlike the executor arm above, this one does NOT re-apply
     // `platform_group_membership_sql`. The edge is converged by
-    // `prepare_workload_generation_sql` itself, through
+    // `test_database::login_sql` itself, through
     // `normalize_workload_generation_membership_sql`, so re-applying it here
     // would MASK the day that stops being true — which is precisely the
     // regression the counts below exist to catch.
@@ -971,7 +967,7 @@ fn control_routes_cannot_write_release_connections_or_bindings() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     run_admin(database.url(),"release connection grants",&format!(
-        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF;  END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
+        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN NOINHERIT; END IF;  END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
             FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP
               FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP

@@ -4,6 +4,9 @@
 //! the stamped template and restores its captured database ACL. The lease
 //! prevents another session or reset command from replacing a serving target.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+use sqlx::postgres::PgConnectOptions as PostgresConfig;
 pub(super) mod plan;
 pub use plan::template_fingerprint;
 
@@ -14,7 +17,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::identifier::Identifier;
-use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
+
 use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::DevActivationIdentity;
@@ -36,14 +39,16 @@ async fn recorded_disposable(
             && document.env == identity.environment,
         "local environment differs from dev.json identity"
     );
-    let system = wamn_package_control::database::connect(config.system_database_url()).await?;
-    Ok(system
-        .query_opt(
-            wamn_registry::sql::CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE,
-            &[&document.org, &document.project, &document.env],
-        )
-        .await?
-        .map(|row| row.get(0)))
+    let mut system = wamn_postgres::connect(config.system_database_url()).await?;
+    Ok(
+        sqlx::query(wamn_registry::sql::CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE)
+            .bind(&document.org)
+            .bind(&document.project)
+            .bind(&document.env)
+            .fetch_optional(&mut system)
+            .await?
+            .map(|row| row.get(0)),
+    )
 }
 
 /// Compare local source recipes with the same records and decision used by deployment.
@@ -162,7 +167,7 @@ pub async fn adopt_schema(
         &identity.project_env_key(),
     )
     .await?;
-    let lease = acquire(&config).await?;
+    let mut lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let mut roots = BTreeMap::new();
     for source in config.package_sources() {
@@ -225,7 +230,7 @@ pub async fn schema_operation(
         return Ok(diffs);
     }
     let changes = wamn_broker::Publisher::new(config.nats().connect().await?);
-    let lease = acquire(&config).await?;
+    let mut lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let initial_state = wamn_environment_control::environment::sql::schema::database_state(
         config.target_database_url(),
@@ -419,7 +424,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
         recorded_disposable(&config, &document).await? == Some(true),
         "local environment is not recorded as disposable"
     );
-    let lease = acquire(&config).await?;
+    let mut lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let instance = lease.recreate(&config).await?;
     Ok(instance)
@@ -528,7 +533,7 @@ impl TargetSpec {
                 )
                 .with_source(source)
             })?;
-        let database = maintenance.get_dbname().ok_or_else(|| {
+        let database = maintenance.get_database().ok_or_else(|| {
             TargetDatabaseError::new(
                 TargetDatabaseErrorType::InvalidConfiguration,
                 "set target_database_url to a valid PostgreSQL URL with an explicit database",
@@ -548,9 +553,9 @@ impl TargetSpec {
                 TargetDatabaseErrorType::InvalidConfiguration,
                 "set target_database_url to a database name PostgreSQL can quote",
             )
-            .with_source(source)
+            .with_source(std::io::Error::other(source))
         })?;
-        maintenance.dbname(MAINTENANCE_DATABASE);
+        maintenance = maintenance.database(MAINTENANCE_DATABASE);
         Ok(Self {
             maintenance,
             database,
@@ -562,7 +567,7 @@ impl TargetSpec {
 pub fn database_name(url: &str) -> Option<String> {
     PostgresConfig::from_str(url)
         .ok()?
-        .get_dbname()
+        .get_database()
         .map(str::to_owned)
 }
 
@@ -634,7 +639,6 @@ pub(crate) struct ResetInputs {
 pub struct TargetLease {
     client: Client,
     spec: TargetSpec,
-    connection: tokio::task::JoinHandle<()>,
 }
 
 impl fmt::Debug for TargetLease {
@@ -646,18 +650,11 @@ impl fmt::Debug for TargetLease {
     }
 }
 
-impl Drop for TargetLease {
-    fn drop(&mut self) {
-        // Closing this connection releases PostgreSQL's session advisory lock.
-        self.connection.abort();
-    }
-}
-
 impl TargetLease {
     /// Verify the retained maintenance connection before serving another candidate.
-    pub async fn require_current_lease(&self) -> Result<(), TargetDatabaseError> {
-        self.client
-            .simple_query("SELECT 1")
+    pub async fn require_current_lease(&mut self) -> Result<(), TargetDatabaseError> {
+        sqlx::query("SELECT 1")
+            .fetch_one(&mut self.client)
             .await
             .map_err(|source| {
                 TargetDatabaseError::new(
@@ -671,7 +668,7 @@ impl TargetLease {
 
     /// Validate or converge captured database privileges without retaining obsolete grants.
     pub(crate) async fn reconcile_configuration(
-        &self,
+        &mut self,
         prepared: &PreparedConfiguration,
         apply: bool,
     ) -> anyhow::Result<()> {
@@ -681,33 +678,38 @@ impl TargetLease {
             prepared.database == self.spec.database,
             "prepared privileges name another local target"
         );
-        self.client.batch_execute("BEGIN").await?;
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut self.client)
+            .await
+            .map(drop)?;
         let result = async {
-            let rows = self.client.query(
-                "SELECT DISTINCT grant_row.grantee, pg_catalog.pg_get_userbyid(grant_row.grantee)::text
+            let rows = sqlx::query("SELECT DISTINCT grant_row.grantee, pg_catalog.pg_get_userbyid(grant_row.grantee)::text
                  FROM pg_catalog.pg_database AS database,
                       LATERAL pg_catalog.aclexplode(COALESCE(database.datacl, pg_catalog.acldefault('d', database.datdba))) AS grant_row
-                 WHERE database.datname = $1", &[&self.spec.database.as_str()],
-            ).await?;
+                 WHERE database.datname = $1").bind(self.spec.database.as_str()).fetch_all(&mut self.client).await?;
             for row in rows {
-                let grantee: u32 = row.get(0);
-                let role = if grantee == 0 { "PUBLIC".to_owned() } else { Identifier::new(row.get::<_, String>(1))?.quoted() };
-                self.client.batch_execute(&format!("REVOKE ALL ON DATABASE {} FROM {role}", self.spec.database.quoted())).await?;
+                let grantee: u32 = row.get::<sqlx::postgres::types::Oid, _>(0).0;
+                let role = if grantee == 0 { "PUBLIC".to_owned() } else { Identifier::new(row.get::<String, _>(1))?.quoted() };
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!("REVOKE ALL ON DATABASE {} FROM {role}", self.spec.database.quoted()))).execute(&mut self.client).await.map(drop)?;
             }
-            self.client.batch_execute(&prepared.privileges).await?;
-            self.client.batch_execute(&prepared.acl).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(prepared.privileges.clone())).execute(&mut self.client).await.map(drop)?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(prepared.acl.clone())).execute(&mut self.client).await.map(drop)?;
             Ok::<_, anyhow::Error>(())
         }.await;
         match result {
             Ok(()) => {
-                self.client
-                    .batch_execute(if apply { "COMMIT" } else { "ROLLBACK" })
-                    .await?;
+                sqlx::raw_sql(sqlx::AssertSqlSafe(
+                    (if apply { "COMMIT" } else { "ROLLBACK" }).to_string(),
+                ))
+                .execute(&mut self.client)
+                .await
+                .map(drop)?;
             }
             Err(error) => {
-                self.client
-                    .batch_execute("ROLLBACK")
+                sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut self.client)
                     .await
+                    .map(drop)
                     .context("roll back target privilege validation")?;
                 return Err(error);
             }
@@ -716,7 +718,7 @@ impl TargetLease {
     }
 
     /// Read the owned database identity independently of the optional catalog cache.
-    pub(crate) async fn instance(&self, config: &DevConfig) -> anyhow::Result<String> {
+    pub(crate) async fn instance(&mut self, config: &DevConfig) -> anyhow::Result<String> {
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             config.target_database_url(),
@@ -724,14 +726,12 @@ impl TargetLease {
             &identity.environment,
         )
         .await?;
-        let instance: u32 = self
-            .client
-            .query_one(
-                "SELECT oid FROM pg_catalog.pg_database WHERE datname=$1",
-                &[&self.spec.database.as_str()],
-            )
-            .await?
-            .get(0);
+        let instance: i64 =
+            sqlx::query("SELECT oid::bigint FROM pg_catalog.pg_database WHERE datname=$1")
+                .bind(self.spec.database.as_str())
+                .fetch_one(&mut self.client)
+                .await?
+                .get::<i64, _>(0);
         Ok(instance.to_string())
     }
 
@@ -742,7 +742,7 @@ impl TargetLease {
     /// catalogs, names another creation of the database, or when the local
     /// target marker no longer matches. The caller then reads the catalogs again.
     pub(crate) async fn retained_target(
-        &self,
+        &mut self,
         config: &DevConfig,
     ) -> Option<(String, Vec<String>, BTreeMap<String, CatalogIr>)> {
         let bytes =
@@ -750,15 +750,13 @@ impl TargetLease {
         let mut record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
         let build_inputs = serde_json::from_value(record["build-inputs"].take()).ok()?;
         let catalogs = serde_json::from_value(record["catalogs"].take()).ok()?;
-        let instance: u32 = self
-            .client
-            .query_one(
-                "SELECT oid FROM pg_catalog.pg_database WHERE datname = $1",
-                &[&self.spec.database.as_str()],
-            )
-            .await
-            .ok()?
-            .get(0);
+        let instance: i64 =
+            sqlx::query("SELECT oid::bigint FROM pg_catalog.pg_database WHERE datname = $1")
+                .bind(self.spec.database.as_str())
+                .fetch_one(&mut self.client)
+                .await
+                .ok()?
+                .get(0);
         let instance = instance.to_string();
         if record["database-instance"] != instance.as_str() {
             return None;
@@ -776,7 +774,7 @@ impl TargetLease {
 
     /// Resolve and validate template inputs before interrupting a serving application.
     pub(crate) async fn prepare_reset(
-        &self,
+        &mut self,
         config: &DevConfig,
     ) -> Result<ResetInputs, TargetDatabaseError> {
         let selected = TargetSpec::from_config(config)?;
@@ -807,32 +805,27 @@ impl TargetLease {
             &system_database,
             config.activation_identity(),
         );
-        validate_template(&self.client, &template, &fingerprint).await?;
+        validate_template(&mut self.client, &template, &fingerprint).await?;
         let substrate = async {
             use wamn_environment_control::platform_migrations::{self, ProjectReset};
             use wamn_control_provision::schema_migrations::MigrationDatabase;
             let mut template_url = PostgresConfig::from_str(config.target_database_url())?;
-            template_url.dbname(template.as_str());
-            let (template_client, connection) = template_url.connect(NoTls).await?;
-            let connection = tokio::spawn(connection);
+            template_url = template_url.database(template.as_str());
+            let mut template_client = wamn_postgres::connect(template_url.clone()).await?;
+
             let result = async {
                 let image = platform_migrations::embedded_sources(MigrationDatabase::Project);
-                let exists: bool = self.client
-                    .query_one(
-                        "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
-                        &[&self.spec.database.as_str()],
-                    )
+                let exists: bool = sqlx::query("SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)").bind(self.spec.database.as_str()).fetch_one(&mut self.client)
                     .await?
                     .get(0);
-                let target = if exists {
-                    Some(wamn_package_control::database::connect(config.target_database_url()).await?)
+                let mut target = if exists {
+                    Some(wamn_postgres::connect(config.target_database_url()).await?)
                 } else {
                     None
                 };
-                let mut recorded_client = &template_client;
-                if let Some(target) = &target {
-                    let initialized: bool = target
-                        .query_one("SELECT to_regclass('platform.schema_baseline') IS NOT NULL", &[])
+                let mut recorded_client = &mut template_client;
+                if let Some(target) = &mut target {
+                    let initialized: bool = sqlx::query("SELECT to_regclass('platform.schema_baseline') IS NOT NULL").fetch_one(&mut *target)
                         .await?
                         .get(0);
                     if initialized {
@@ -840,7 +833,7 @@ impl TargetLease {
                     }
                 }
                 let recorded = ProjectReset::read(recorded_client, &image).await?;
-                let template_state = ProjectReset::read(&template_client, &image).await?;
+                let template_state = ProjectReset::read(&mut template_client, &image).await?;
                 anyhow::ensure!(
                     template_state.applied.len() <= recorded.applied.len()
                         && recorded.applied.starts_with(&template_state.applied),
@@ -850,7 +843,6 @@ impl TargetLease {
             }
             .await;
             drop(template_client);
-            connection.await??;
             result
         }
         .await
@@ -870,13 +862,13 @@ impl TargetLease {
     }
 
     /// Recreate only the target named by this still-held lease.
-    pub async fn recreate(&self, config: &DevConfig) -> Result<String, TargetDatabaseError> {
+    pub async fn recreate(&mut self, config: &DevConfig) -> Result<String, TargetDatabaseError> {
         let inputs = self.prepare_reset(config).await?;
         self.recreate_prepared(config, &inputs).await
     }
 
     pub(crate) async fn recreate_prepared(
-        &self,
+        &mut self,
         config: &DevConfig,
         inputs: &ResetInputs,
     ) -> Result<String, TargetDatabaseError> {
@@ -887,7 +879,7 @@ impl TargetLease {
             substrate,
         } = inputs;
         let instance =
-            replace_database(&self.client, &self.spec, template, fingerprint, acl).await?;
+            replace_database(&mut self.client, &self.spec, template, fingerprint, acl).await?;
         let identity = config.activation_identity();
         let marker = wamn_runtime::local_application::local_target_marker(
             &identity.project_env_key(),
@@ -896,21 +888,22 @@ impl TargetLease {
                 .parse()
                 .expect("database instance is a PostgreSQL oid"),
         );
-        self.client
-            .batch_execute(&format!(
-                "COMMENT ON DATABASE {} IS '{}'",
-                self.spec.database.quoted(),
-                marker,
-            ))
-            .await
-            .map_err(|source| {
-                TargetDatabaseError::new(
-                    TargetDatabaseErrorType::CreateFailed,
-                    "stamp the owned local target before serving the application",
-                )
-                .with_source(source)
-            })?;
-        let mut target = wamn_package_control::database::connect(config.target_database_url())
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "COMMENT ON DATABASE {} IS '{}'",
+            self.spec.database.quoted(),
+            marker,
+        )))
+        .execute(&mut self.client)
+        .await
+        .map(drop)
+        .map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorType::CreateFailed,
+                "stamp the owned local target before serving the application",
+            )
+            .with_source(std::io::Error::other(source))
+        })?;
+        let mut target = wamn_postgres::connect(config.target_database_url())
             .await
             .map_err(|source| TargetDatabaseError {
                 source: Some(source.into_boxed_dyn_error()),
@@ -919,9 +912,20 @@ impl TargetLease {
                     "connect to the recreated local database",
                 )
             })?;
-        target.batch_execute("UPDATE platform.schema_baseline SET installed_at=clock_timestamp() WHERE singleton")
-            .await.map_err(|source| TargetDatabaseError::new(TargetDatabaseErrorType::CreateFailed,
-                "record the recreated database initialization identity").with_source(source))?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("UPDATE platform.schema_baseline SET installed_at=clock_timestamp() WHERE singleton")
+                .to_string(),
+        ))
+        .execute(&mut target)
+        .await
+        .map(drop)
+        .map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorType::CreateFailed,
+                "record the recreated database initialization identity",
+            )
+            .with_source(std::io::Error::other(source))
+        })?;
         wamn_environment_control::platform_migrations::restore_project(&mut target, substrate)
             .await
             .map_err(|source| TargetDatabaseError {
@@ -938,25 +942,18 @@ impl TargetLease {
 /// Refuse concurrent sessions or reset commands before any target mutation.
 pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseError> {
     let spec = TargetSpec::from_config(config)?;
-    let (client, connection) = spec.maintenance.connect(NoTls).await.map_err(|source| {
-        TargetDatabaseError::new(
-            TargetDatabaseErrorType::InvalidConfiguration,
-            "make the PostgreSQL maintenance database reachable with the target credential",
-        )
-        .with_source(source)
-    })?;
-    let connection = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let lease = TargetLease {
-        client,
-        spec,
-        connection,
-    };
-    let acquired: bool = lease.client.query_one(
-        "SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))",
-        &[&lease.spec.database.as_str()],
-    ).await.map(|row| row.get(0)).map_err(|source| {
+    let client = wamn_postgres::connect(spec.maintenance.clone())
+        .await
+        .map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorType::InvalidConfiguration,
+                "make the PostgreSQL maintenance database reachable with the target credential",
+            )
+            .with_source(std::io::Error::other(source))
+        })?;
+
+    let mut lease = TargetLease { client, spec };
+    let acquired: bool = sqlx::query("SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))").bind(lease.spec.database.as_str()).fetch_one(&mut lease.client).await.map(|row| row.get(0)).map_err(|source| {
         TargetDatabaseError::new(TargetDatabaseErrorType::LeaseFailed,
             "ensure the target credential can acquire session advisory locks on the postgres maintenance database")
             .with_source(source)
@@ -971,24 +968,26 @@ pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseEr
 }
 
 async fn validate_template(
-    client: &Client,
+    client: &mut Client,
     template: &Identifier,
     fingerprint: &str,
 ) -> Result<(), TargetDatabaseError> {
     // A missing template is a stale standup and not a lifecycle failure. It is
     // validated before the drop, so a run that cannot restore the database never
     // destroys it.
-    let present: bool = client
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)",
-            &[&template.as_str()],
-        )
-        .await
-        .map(|row| row.get(0))
-        .map_err(|source| {
-            TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
+    let present: bool =
+        sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)")
+            .bind(template.as_str())
+            .fetch_one(&mut *client)
+            .await
+            .map(|row| row.get(0))
+            .map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorType::StaleStandup,
+                    STALE_STANDUP_REMEDY,
+                )
                 .with_source(source)
-        })?;
+            })?;
     if !present {
         return Err(TargetDatabaseError::new(
             TargetDatabaseErrorType::TemplateMissing,
@@ -999,18 +998,18 @@ async fn validate_template(
     // The template is pristine only for the standup it was taken from. Both
     // tests run BEFORE the drop, so a run that cannot restore the database
     // never destroys it.
-    let stamped: Option<String> = client
-        .query_one(
-            "SELECT pg_catalog.shobj_description(oid, 'pg_database')
+    let stamped: Option<String> = sqlx::query(
+        "SELECT pg_catalog.shobj_description(oid, 'pg_database')
                FROM pg_catalog.pg_database WHERE datname = $1",
-            &[&template.as_str()],
-        )
-        .await
-        .map(|row| row.get(0))
-        .map_err(|source| {
-            TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
-                .with_source(source)
-        })?;
+    )
+    .bind(template.as_str())
+    .fetch_one(&mut *client)
+    .await
+    .map(|row| row.get(0))
+    .map_err(|source| {
+        TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
+            .with_source(source)
+    })?;
     if stamped.as_deref() != Some(fingerprint) {
         return Err(TargetDatabaseError::new(
             TargetDatabaseErrorType::TemplateForeign,
@@ -1029,7 +1028,7 @@ async fn validate_template(
 /// so the server is the authority and nothing here invents a value. A timestamp
 /// would have been a guess about identity; this is the identity itself.
 async fn replace_database(
-    client: &Client,
+    client: &mut Client,
     spec: &TargetSpec,
     template: &Identifier,
     fingerprint: &str,
@@ -1039,75 +1038,81 @@ async fn replace_database(
 
     // A replication slot blocks the drop, and the loop makes a new slot on
     // the new database. Its CDC reader stopped before this point.
-    client
-        .execute(
-            "SELECT pg_catalog.pg_drop_replication_slot(slot_name)
+    sqlx::query(
+        "SELECT pg_catalog.pg_drop_replication_slot(slot_name)
                FROM pg_catalog.pg_replication_slots WHERE database = $1",
-            &[&spec.database.as_str()],
+    )
+    .bind(spec.database.as_str())
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(|source| {
+        TargetDatabaseError::new(
+            TargetDatabaseErrorType::DropFailed,
+            "stop the CDC reader of the disposable database before it is replaced",
         )
-        .await
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorType::DropFailed,
-                "stop the CDC reader of the disposable database before it is replaced",
-            )
-            .with_source(source)
-        })?;
-    client
-        .batch_execute(&format!(
-            "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-            spec.database.quoted()
-        ))
-        .await
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorType::DropFailed,
-                "grant the target credential authority to drop its disposable database",
-            )
-            .with_source(source)
-        })?;
+        .with_source(source)
+    })?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+        spec.database.quoted()
+    )))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .map_err(|source| {
+        TargetDatabaseError::new(
+            TargetDatabaseErrorType::DropFailed,
+            "grant the target credential authority to drop its disposable database",
+        )
+        .with_source(source)
+    })?;
     // The whole provisioned state arrives here: schemas, tables, functions and
     // every object-level privilege. A clone of a pristine template is pristine,
     // so freshness is a property of the copy rather than of a replay this
     // module got right.
-    client
-        .batch_execute(&format!(
-            "CREATE DATABASE {} TEMPLATE {}",
-            spec.database.quoted(),
-            template.quoted()
-        ))
-        .await
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorType::CreateFailed,
-                "grant the target credential CREATEDB authority for its disposable database",
-            )
-            .with_source(source)
-        })?;
-    // CREATE DATABASE copies objects and not the ACL of the database itself, so
-    // ownership, the PUBLIC revoke and the workload CONNECT grants are the one
-    // thing to re-issue.
-    client.batch_execute(acl).await.map_err(|source| {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE {} TEMPLATE {}",
+        spec.database.quoted(),
+        template.quoted()
+    )))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .map_err(|source| {
         TargetDatabaseError::new(
-            TargetDatabaseErrorType::AclFailed,
-            "re-emit the environment database ACL with wamn dev up",
+            TargetDatabaseErrorType::CreateFailed,
+            "grant the target credential CREATEDB authority for its disposable database",
         )
         .with_source(source)
     })?;
-    let instance: u32 = client
-        .query_one(
-            "SELECT oid FROM pg_catalog.pg_database WHERE datname = $1",
-            &[&spec.database.as_str()],
-        )
+    // CREATE DATABASE copies objects and not the ACL of the database itself, so
+    // ownership, the PUBLIC revoke and the workload CONNECT grants are the one
+    // thing to re-issue.
+    sqlx::raw_sql(sqlx::AssertSqlSafe((acl).to_string()))
+        .execute(&mut *client)
         .await
-        .map(|row| row.get(0))
+        .map(drop)
         .map_err(|source| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorType::CreateFailed,
-                "grant the target credential CREATEDB authority for its disposable database",
+                TargetDatabaseErrorType::AclFailed,
+                "re-emit the environment database ACL with wamn dev up",
             )
-            .with_source(source)
+            .with_source(std::io::Error::other(source))
         })?;
+    let instance: i64 =
+        sqlx::query("SELECT oid::bigint FROM pg_catalog.pg_database WHERE datname = $1")
+            .bind(spec.database.as_str())
+            .fetch_one(&mut *client)
+            .await
+            .map(|row| row.get::<i64, _>(0))
+            .map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorType::CreateFailed,
+                    "grant the target credential CREATEDB authority for its disposable database",
+                )
+                .with_source(std::io::Error::other(source))
+            })?;
     Ok(instance.to_string())
 }
 
@@ -1124,9 +1129,9 @@ mod tests {
         let _lock = wamn_test_postgres::lock();
         let system = wamn_control_provision::test_database::system();
         let target = wamn_catalog::test_database::project();
-        let system_client = wamn_package_control::database::connect(system.url()).await?;
-        system_client
-            .batch_execute(&format!(
+        let mut system_client = wamn_postgres::connect(system.url()).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "{} UPDATE registry.environments SET disposable=true;",
                 wamn_control_provision::test_database::seed_org_project_env_sql(
                     "acme",
@@ -1134,46 +1139,61 @@ mod tests {
                     "fixture-dev"
                 ),
             ))
-            .await?;
-        let target_client = wamn_package_control::database::connect(target.url()).await?;
-        target_client
-            .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-            .await?;
-        wamn_package_control::schema_baseline::record_project(&target_client).await?;
-        target_client
-            .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-            .await?;
-        target_client
-            .batch_execute(&format!(
+                .to_string(),
+        ))
+        .execute(&mut system_client)
+        .await
+        .map(drop)?;
+        let mut target_client = wamn_postgres::connect(target.url()).await?;
+        sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+            .execute(&mut target_client)
+            .await
+            .map(drop)?;
+        wamn_package_control::schema_baseline::record_project(&mut target_client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+        ))
+        .execute(&mut target_client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "GRANT CREATE ON DATABASE {} TO wamn_db_owner",
                 Identifier::new(target.name())?.quoted()
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut target_client)
+        .await
+        .map(drop)?;
         let endpoint = url::Url::parse(target.url())?.socket_addrs(|| None)?[0];
         let mut config = crate::dev::config::tests::complete_document(&[endpoint; 10]);
         config["target_database_url"] = json!(target.url());
         config["system_database_url"] = json!(system.url());
         let config_bytes = serde_json::to_vec(&config)?;
         let config = super::super::config::parse_config(&config_bytes)?;
-        let instance: u32 = target_client
-            .query_one(
-                "SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()",
-                &[],
-            )
-            .await?
-            .get(0);
+        let instance: i64 = sqlx::query(
+            "SELECT oid::bigint FROM pg_catalog.pg_database WHERE datname=current_database()",
+        )
+        .fetch_one(&mut target_client)
+        .await?
+        .get(0);
         let marker = wamn_runtime::local_application::local_target_marker(
             &config.activation_identity().project_env_key(),
             "fixture-dev",
-            instance,
+            u32::try_from(instance)?,
         );
-        target_client
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "COMMENT ON DATABASE {} IS {}",
                 Identifier::new(target.name())?.quoted(),
                 postgres_protocol::escape::escape_literal(&marker)
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut target_client)
+        .await
+        .map(drop)?;
         let scratch = ScratchRoot::create()?;
         let root = scratch.path().join("package");
         std::fs::create_dir_all(root.join("migrations"))?;
@@ -1211,11 +1231,13 @@ mod tests {
             None,
         )
         .await?;
-        target_client
-            .batch_execute(
-                "INSERT INTO inventory.item VALUES ('00000000-0000-4000-8000-000000000001')",
-            )
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("INSERT INTO inventory.item VALUES ('00000000-0000-4000-8000-000000000001')")
+                .to_string(),
+        ))
+        .execute(&mut target_client)
+        .await
+        .map(drop)?;
         let mut document = EnvironmentDocument::from_json(br#"{
             "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev",
             "applications":{"alpha":{"current":"none","hostname":"alpha.invalid","packages":["source_fixture"]}}
@@ -1262,21 +1284,25 @@ mod tests {
         document.schema.mode = Some(SchemaMode::Migrate);
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
         document.schema.mode = Some(SchemaMode::Reset);
-        system_client
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "BEGIN; {} UPDATE registry.environments SET disposable=false; COMMIT;",
                 wamn_control_provision::bind_platform_principal_sql(
                     wamn_control_provision::PlatformComponent::Provisioning
                 ),
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut system_client)
+        .await
+        .map(drop)?;
         let durable = schema_changes(&config, &document, &roots).await?;
         assert!(validate_schema_reset(&document, &roots, &durable).is_err());
         assert_eq!(
-            target_client
-                .query_one("SELECT id::text FROM inventory.item", &[])
+            sqlx::query("SELECT id::text FROM inventory.item")
+                .fetch_one(&mut target_client)
                 .await?
-                .get::<_, String>(0),
+                .get::<String, _>(0),
             "00000000-0000-4000-8000-000000000001"
         );
         Ok(())
@@ -1306,33 +1332,37 @@ mod tests {
         document["local_artifacts"] = json!({"directory": directory, "flow_http_component": directory.join("http.wasm"),
                 "materializer_component": directory.join("materializer.wasm")});
         let config = super::super::config::parse_config(&serde_json::to_vec(&document)?)?;
-        let (admin, admin_driver) = tokio_postgres::connect(admin_database.url(), NoTls).await?;
-        let admin_driver = tokio::spawn(admin_driver);
-        admin
-            .batch_execute("CREATE ROLE wamn_app; CREATE ROLE fixture_reader;")
-            .await?;
-        let fingerprint = template_fingerprint("target", "system", config.activation_identity());
-        admin
-            .batch_execute(&format!(
-                "COMMENT ON DATABASE \"target_template\" IS '{fingerprint}'"
-            ))
-            .await?;
-        let (template, driver) = tokio_postgres::connect(template_database.url(), NoTls).await?;
-        let driver = tokio::spawn(driver);
-        template
-            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-            .await?;
-        template
-            .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-            .await?;
-        wamn_package_control::schema_baseline::record_project(&template).await?;
-        template
-            .batch_execute("CREATE TABLE saved_data(value text);")
-            .await?;
-        drop(template);
-        driver.await??;
+        let mut admin = wamn_postgres::connect(admin_database.url()).await?;
 
-        let lease = acquire(&config).await?;
+        sqlx::raw_sql("CREATE ROLE wamn_app; CREATE ROLE fixture_reader;")
+            .execute(&mut admin)
+            .await
+            .map(drop)?;
+        let fingerprint = template_fingerprint("target", "system", config.activation_identity());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "COMMENT ON DATABASE \"target_template\" IS '{fingerprint}'"
+        )))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+        let mut template = wamn_postgres::connect(template_database.url()).await?;
+
+        sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+            .execute(&mut template)
+            .await
+            .map(drop)?;
+        sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+            .execute(&mut template)
+            .await
+            .map(drop)?;
+        wamn_package_control::schema_baseline::record_project(&mut template).await?;
+        sqlx::raw_sql("CREATE TABLE saved_data(value text);")
+            .execute(&mut template)
+            .await
+            .map(drop)?;
+        drop(template);
+
+        let mut lease = acquire(&config).await?;
         assert_eq!(
             acquire(&config).await.unwrap_err().error_type(),
             TargetDatabaseErrorType::LeaseUnavailable
@@ -1361,17 +1391,18 @@ mod tests {
             .await
             .is_err()
         );
-        let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
-        let driver = tokio::spawn(driver);
-        target
-            .batch_execute("INSERT INTO saved_data VALUES ('retained');")
-            .await?;
+        let mut target = wamn_postgres::connect(target_database.url()).await?;
+
+        sqlx::raw_sql("INSERT INTO saved_data VALUES ('retained');")
+            .execute(&mut target)
+            .await
+            .map(drop)?;
         lease.require_current_lease().await?;
         assert_eq!(
-            target
-                .query_one("SELECT value FROM saved_data", &[])
+            sqlx::query("SELECT value FROM saved_data")
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, String>(0),
+                .get::<String, _>(0),
             "retained"
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
@@ -1380,13 +1411,10 @@ mod tests {
             .reconcile_configuration(&prepared_configuration, false)
             .await?;
         assert!(
-            admin
-                .query_one(
-                    "SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')",
-                    &[]
-                )
+            sqlx::query("SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')")
+                .fetch_one(&mut admin)
                 .await?
-                .get::<_, bool>(0)
+                .get::<bool, _>(0)
         );
         std::fs::remove_file(&privileges)?;
         std::fs::write(&acl, "GRANT ALL ON DATABASE target TO PUBLIC;")?;
@@ -1395,13 +1423,10 @@ mod tests {
             .await?;
         std::fs::write(&privileges, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
         assert!(
-            !admin
-                .query_one(
-                    "SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')",
-                    &[]
-                )
+            !sqlx::query("SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')")
+                .fetch_one(&mut admin)
                 .await?
-                .get::<_, bool>(0)
+                .get::<bool, _>(0)
         );
         std::fs::write(&acl, "this is invalid SQL;")?;
         assert!(
@@ -1411,10 +1436,10 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            target
-                .query_one("SELECT count(*) FROM saved_data", &[])
+            sqlx::query("SELECT count(*) FROM saved_data")
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, i64>(0),
+                .get::<i64, _>(0),
             1
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
@@ -1442,43 +1467,54 @@ JOIN platform.external_system AS external ON external.id = integration.external_
         let actor = wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::ApplyPackage,
         );
-        target
-            .batch_execute(&format!("BEGIN; {actor} {projection}"))
-            .await?;
-        let selected: String = target.query_one(read_projection, &[]).await?.get(0);
-        target.batch_execute("ROLLBACK").await?;
-        assert!(target.query(read_projection, &[]).await?.is_empty());
-        target
-            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
-            .await?;
-        let stamped: bool = target.query_one(
-            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection",
-            &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
-        ).await?.get(0);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {actor} {projection}")))
+            .execute(&mut target)
+            .await
+            .map(drop)?;
+        let selected: String = sqlx::query(sqlx::AssertSqlSafe((read_projection).to_string()))
+            .fetch_one(&mut target)
+            .await?
+            .get(0);
+        sqlx::raw_sql("ROLLBACK")
+            .execute(&mut target)
+            .await
+            .map(drop)?;
+        assert!(
+            sqlx::query(sqlx::AssertSqlSafe((read_projection).to_string()))
+                .fetch_all(&mut target)
+                .await?
+                .is_empty()
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "BEGIN; {actor} {projection} COMMIT;"
+        )))
+        .execute(&mut target)
+        .await
+        .map(drop)?;
+        let stamped: bool = sqlx::query("SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection").bind(&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()).fetch_one(&mut target).await?.get(0);
         assert!(stamped, "release connections stamp wamn:apply-package");
-        target
-            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "BEGIN; {actor} {projection} COMMIT;"
+        )))
+        .execute(&mut target)
+        .await
+        .map(drop)?;
         assert_eq!(
             selected,
-            target
-                .query_one(read_projection, &[])
+            sqlx::query(sqlx::AssertSqlSafe((read_projection).to_string()))
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, String>(0)
+                .get::<String, _>(0)
         );
         assert_eq!(
-            target
-                .query_one(
-                    "SELECT count(*) FROM catalog.release_connection_history",
-                    &[]
-                )
+            sqlx::query("SELECT count(*) FROM catalog.release_connection_history")
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, i64>(0),
+                .get::<i64, _>(0),
             1,
             "replaying the release connection leaves its history unchanged"
         );
         drop(target);
-        driver.await??;
 
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
@@ -1490,43 +1526,46 @@ JOIN platform.external_system AS external ON external.id = integration.external_
             .await?
             .initialization_identity;
         assert_ne!(first_initialization, second_initialization);
-        let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
-        let driver = tokio::spawn(driver);
+        let mut target = wamn_postgres::connect(target_database.url()).await?;
+
         assert_eq!(
-            target
-                .query_one("SELECT count(*) FROM saved_data", &[])
+            sqlx::query("SELECT count(*) FROM saved_data")
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, i64>(0),
+                .get::<i64, _>(0),
             0
         );
-        assert!(target.query(read_projection, &[]).await?.is_empty());
-        assert_eq!(
-            target
-                .query_one("SELECT count(*) FROM catalog.release_connection", &[])
+        assert!(
+            sqlx::query(sqlx::AssertSqlSafe((read_projection).to_string()))
+                .fetch_all(&mut target)
                 .await?
-                .get::<_, i64>(0),
+                .is_empty()
+        );
+        assert_eq!(
+            sqlx::query("SELECT count(*) FROM catalog.release_connection")
+                .fetch_one(&mut target)
+                .await?
+                .get::<i64, _>(0),
             0
         );
-        target
-            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
-            .await?;
-        let stamped: bool = target.query_one(
-            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection",
-            &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
-        ).await?.get(0);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "BEGIN; {actor} {projection} COMMIT;"
+        )))
+        .execute(&mut target)
+        .await
+        .map(drop)?;
+        let stamped: bool = sqlx::query("SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection").bind(&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()).fetch_one(&mut target).await?.get(0);
         assert!(stamped, "release connections stamp wamn:apply-package");
         assert_eq!(
             selected,
-            target
-                .query_one(read_projection, &[])
+            sqlx::query(sqlx::AssertSqlSafe((read_projection).to_string()))
+                .fetch_one(&mut target)
                 .await?
-                .get::<_, String>(0)
+                .get::<String, _>(0)
         );
         drop(target);
-        driver.await??;
         drop(lease);
         drop(admin);
-        admin_driver.await??;
         std::fs::remove_dir_all(directory)?;
         server.stop()?;
         Ok(())

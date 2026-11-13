@@ -3,6 +3,7 @@ mod consumer_live;
 mod support;
 
 use serde_json::json;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
 use wamn_compiler::operation_reference::{AuthoredDocument, read_authored_document};
@@ -139,14 +140,12 @@ async fn composed_sql_uses_released_schemas(
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (client, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(connection);
-    let guest_url = consumer_live::install(&client, &database, roots, release).await?;
-    let source = consumer_live::source(&client, "sql-proof").await?;
-    let (mut guest, guest_connection) =
-        tokio_postgres::connect(&guest_url, tokio_postgres::NoTls).await?;
-    let guest_driver = tokio::spawn(guest_connection);
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    let guest_url = consumer_live::install(&mut client, &database, roots, release).await?;
+    let source = consumer_live::source(&mut client, "sql-proof").await?;
+    let mut guest = wamn_postgres::connect(&guest_url).await?;
+
     for (package, expected_schema) in [
         ("rest_connector", "wamn_integration"),
         ("rest_consumer_fixture", "rest_consumer_fixture"),
@@ -159,15 +158,13 @@ async fn composed_sql_uses_released_schemas(
             })
             .unwrap();
         assert_eq!(component.runtime_schema.as_deref(), Some(expected_schema));
-        let transaction = guest.transaction().await?;
-        transaction
-            .query_one(
-                "SELECT set_config('search_path', $1, true)",
-                &[&component.runtime_schema],
-            )
+        let mut transaction = guest.begin().await?;
+        sqlx::query("SELECT set_config('search_path', $1, true)")
+            .bind(&component.runtime_schema)
+            .fetch_one(&mut *transaction)
             .await?;
-        let schema: String = transaction
-            .query_one("SELECT current_schema()::text", &[])
+        let schema: String = sqlx::query("SELECT current_schema()::text")
+            .fetch_one(&mut *transaction)
             .await?
             .get(0);
         assert_eq!(schema, expected_schema);
@@ -185,45 +182,49 @@ async fn composed_sql_uses_released_schemas(
                     .sql
                     .as_str()
             };
-            transaction
-                .query(
-                    sql("command/setting/write.sql"),
-                    &[&"last_synced_at", &json!("2026-10-21T12:00:00Z")],
-                )
-                .await?;
-            let value: serde_json::Value = transaction
-                .query_one(sql("command/setting/read.sql"), &[&"last_synced_at"])
-                .await?
-                .get(0);
+            sqlx::query(sqlx::AssertSqlSafe(
+                (sql("command/setting/write.sql")).to_string(),
+            ))
+            .bind(&"last_synced_at")
+            .bind(&json!("2026-10-21T12:00:00Z"))
+            .fetch_all(&mut *transaction)
+            .await?;
+            let value: serde_json::Value = sqlx::query(sqlx::AssertSqlSafe(
+                (sql("command/setting/read.sql")).to_string(),
+            ))
+            .bind(&"last_synced_at")
+            .fetch_one(&mut *transaction)
+            .await?
+            .get(0);
             assert_eq!(value, json!("2026-10-21T12:00:00Z"));
-            transaction
-                .query_one(
-                    sql("command/setting/write.sql"),
-                    &[&"last_synced_at", &json!("2026-10-21T12:01:00Z")],
-                )
-                .await?;
-            transaction
-                .query(
-                    sql("command/log/append.sql"),
-                    &[&"delivery", &"item", &"pushed", &None::<serde_json::Value>],
-                )
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(
+                (sql("command/setting/write.sql")).to_string(),
+            ))
+            .bind(&"last_synced_at")
+            .bind(&json!("2026-10-21T12:01:00Z"))
+            .fetch_one(&mut *transaction)
+            .await?;
+            sqlx::query(sqlx::AssertSqlSafe(
+                (sql("command/log/append.sql")).to_string(),
+            ))
+            .bind(&"delivery")
+            .bind(&"item")
+            .bind(&"pushed")
+            .bind(&None::<serde_json::Value>)
+            .fetch_all(&mut *transaction)
+            .await?;
             assert!(
-                transaction
-                    .query_one("SELECT to_regclass('item') IS NULL", &[])
+                sqlx::query("SELECT to_regclass('item') IS NULL")
+                    .fetch_one(&mut *transaction)
                     .await?
-                    .get::<_, bool>(0)
+                    .get::<bool, _>(0)
             );
         } else {
-            transaction
-                .query_one(
-                    wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL,
-                    &[
-                        &"rest-consumer-fixture:item/record",
-                        &"sql-proof",
-                        &vec![1_u8],
-                    ],
-                )
+            sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL)
+                .bind(&"rest-consumer-fixture:item/record")
+                .bind(&"sql-proof")
+                .bind(&vec![1_u8])
+                .fetch_one(&mut *transaction)
                 .await?;
             let statement = component
                 .descriptor
@@ -232,22 +233,25 @@ async fn composed_sql_uses_released_schemas(
                 .flat_map(|operation| operation.statements.values())
                 .next()
                 .unwrap();
-            let key: String = transaction
-                .query_one(&statement.sql, &[&"item", &"name", &source])
+            let key: String = sqlx::query(sqlx::AssertSqlSafe((&statement.sql).to_string()))
+                .bind(&"item")
+                .bind(&"name")
+                .bind(&source)
+                .fetch_one(&mut *transaction)
                 .await?
                 .get(0);
             assert_eq!(key, "item");
-            transaction
-                .query_one(
-                    wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL,
-                    &[&"rest-consumer-fixture:item/record", &"sql-proof", &"{}"],
-                )
+            sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL)
+                .bind(&"rest-consumer-fixture:item/record")
+                .bind(&"sql-proof")
+                .bind(&"{}")
+                .fetch_one(&mut *transaction)
                 .await?;
             assert!(
-                transaction
-                    .query_one("SELECT to_regclass('setting') IS NULL", &[])
+                sqlx::query("SELECT to_regclass('setting') IS NULL")
+                    .fetch_one(&mut *transaction)
                     .await?
-                    .get::<_, bool>(0)
+                    .get::<bool, _>(0)
             );
         }
         transaction.commit().await?;
@@ -256,35 +260,27 @@ async fn composed_sql_uses_released_schemas(
         "released connector SQL, consumer item insert, write-log claim and finish all passed under the App login"
     );
     consumer_live::invoke(&database, &guest_url, release, admissions).await?;
-    let checkpoint: serde_json::Value = client
-        .query_one(
-            "SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'",
-            &[],
-        )
-        .await?
-        .get(0);
+    let checkpoint: serde_json::Value =
+        sqlx::query("SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'")
+            .fetch_one(&mut client)
+            .await?
+            .get(0);
     assert_eq!(
         checkpoint,
         json!("2026-10-21T12:01:00Z"),
         "a failing consumer leaves last_synced_at unchanged"
     );
-    let stored = client
-        .query_one(
-            "SELECT item.name, log.result::jsonb FROM rest_consumer_fixture.item AS item \
+    let stored = sqlx::query("SELECT item.name, log.result::jsonb FROM rest_consumer_fixture.item AS item \
              CROSS JOIN platform.write_log AS log \
              WHERE item.key = 'native-item' AND log.operation = 'rest-consumer-fixture:item/record' \
-             AND log.idempotency_key = 'live-key'",
-            &[],
-        )
+             AND log.idempotency_key = 'live-key'").fetch_one(&mut client)
         .await?;
-    assert_eq!(stored.get::<_, String>(0), "native name");
+    assert_eq!(stored.get::<String, _>(0), "native name");
     assert_eq!(
-        stored.get::<_, serde_json::Value>(1),
+        stored.get::<serde_json::Value, _>(1),
         json!({"value":{"keys":["native-item"]}})
     );
     drop(guest);
-    guest_driver.await??;
     drop(client);
-    driver.await??;
     Ok(())
 }

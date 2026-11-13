@@ -1,10 +1,12 @@
 //! Integration administration under project authority and environment locks.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use tokio_postgres::{Client, NoTls, Transaction};
+
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::HostAttachment;
@@ -40,8 +42,8 @@ impl ControlRoutes<'_> {
         let result = self
             .integration_administration_in(&mut writer, attachment, caller, payload)
             .await;
-        writer
-            .query_one("SELECT pg_advisory_unlock_all()", &[])
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .fetch_one(&mut *writer)
             .await?;
         result
     }
@@ -59,7 +61,7 @@ impl ControlRoutes<'_> {
             code: "invalid_input",
             detail: json!({"field":"value"}),
         })?;
-        let transaction = self
+        let mut transaction = self
             .begin_in_environment(
                 writer,
                 attachment,
@@ -71,7 +73,7 @@ impl ControlRoutes<'_> {
         if operation == "connection.copy"
             && !self
                 .admits_environment(
-                    &transaction,
+                    &mut transaction,
                     caller,
                     Some(&project),
                     request["source_env"].as_str(),
@@ -87,7 +89,7 @@ impl ControlRoutes<'_> {
                 Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
             })?;
             let context = administration::execute(
-                &transaction,
+                &mut transaction,
                 self.org,
                 operation,
                 payload,
@@ -101,7 +103,7 @@ impl ControlRoutes<'_> {
                 .parse::<uuid::Uuid>()
                 .map_err(|error| Refusal::Failed(error.into()))?;
             let url = oauth
-                .authorize(&transaction, &context, caller)
+                .authorize(&mut transaction, &context, caller)
                 .await
                 .map_err(|error| Refusal::Failed(error.into()))?;
             transaction.commit().await?;
@@ -109,7 +111,7 @@ impl ControlRoutes<'_> {
         }
         if attachment.route.type_.is_read() {
             let mut result = administration::execute(
-                &transaction,
+                &mut transaction,
                 self.org,
                 operation,
                 payload,
@@ -129,17 +131,15 @@ impl ControlRoutes<'_> {
             transaction.commit().await?;
             return Ok(result);
         }
-        transaction
-            .query_one(
-                "SELECT pg_advisory_xact_lock(hashtextextended('connections:' || $1,0))",
-                &[&self.org],
-            )
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('connections:' || $1,0))")
+            .bind(self.org)
+            .fetch_one(&mut *transaction)
             .await?;
         let deleting = operation.ends_with(".delete");
         let group = operation.split_once('.').expect("route group").0;
         if deleting {
             administration::configure(
-                &transaction,
+                &mut transaction,
                 self.org,
                 "integration.lock_project",
                 &json!({"project":project}),
@@ -151,20 +151,14 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let environments: Vec<(String, String)> = transaction
-            .query(
-                wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN,
-                &[&self.org, &project, &projection_env],
-            )
+        let environments: Vec<(String, String)> = sqlx::query(wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN).bind(self.org).bind(&project).bind(projection_env).fetch_all(&mut *transaction)
             .await?
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
             .collect();
         if group == "connection" {
             for (_, env) in &environments {
-                let held: bool=transaction.query_one(
-                    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))", &[&self.org,&project,env],
-                ).await?.get(0);
+                let held: bool=sqlx::query("SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))").bind(self.org).bind(&project).bind(env).fetch_one(&mut *transaction).await?.get(0);
                 if !held {
                     return Err(Refusal::Declared {
                         code: "deployment_in_progress",
@@ -174,12 +168,9 @@ impl ControlRoutes<'_> {
             }
         }
         let identity = if deleting {
-            let id = deletion_identity(&transaction, self.org, group, &request).await?;
+            let id = deletion_identity(&mut transaction, self.org, group, &request).await?;
             for (_, env) in &environments {
-                let held: bool = transaction.query_one(
-                    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))",
-                    &[&self.org, &project, &env],
-                ).await?.get(0);
+                let held: bool = sqlx::query("SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))").bind(self.org).bind(&project).bind(env).fetch_one(&mut *transaction).await?.get(0);
                 if !held {
                     return Err(Refusal::Declared {
                         code: "deployment_in_progress",
@@ -195,32 +186,32 @@ impl ControlRoutes<'_> {
         let logins = self.logins(&environments)?;
         let mut clients = Vec::new();
         for url in logins {
-            let (client, driver) =
-                tokio::time::timeout(Duration::from_secs(5), tokio_postgres::connect(&url, NoTls))
-                    .await
-                    .context("environment connection timed out")??;
-            tokio::spawn(driver);
+            let client = tokio::time::timeout(Duration::from_secs(5), wamn_postgres::connect(&url))
+                .await
+                .context("environment connection timed out")??;
             clients.push(client);
         }
         let mut targets = Vec::new();
         for client in &mut clients {
-            let target = client.transaction().await?;
-            target
-                .execute(
-                    "SELECT set_config('app.user_id',$1,true),set_config('app.operation',$2,true)",
-                    &[&caller.to_string().as_str(), &attachment.operation],
-                )
-                .await?;
+            let mut target = client.begin().await?;
+            sqlx::query(
+                "SELECT set_config('app.user_id',$1,true),set_config('app.operation',$2,true)",
+            )
+            .bind(caller.to_string().as_str())
+            .bind(&attachment.operation)
+            .execute(&mut *target)
+            .await
+            .map(|result| result.rows_affected())?;
             if let Some(id) = &identity {
-                references::refuse_environment_references(&target, group, id).await?;
+                references::refuse_environment_references(&mut target, group, id).await?;
             }
             targets.push(target);
         }
         let mut result = if group == "connection"
-            && let Some(target) = targets.first()
+            && let Some(target) = targets.first_mut()
         {
             administration::execute_in_environment(
-                &transaction,
+                &mut transaction,
                 target,
                 self.org,
                 operation,
@@ -231,7 +222,7 @@ impl ControlRoutes<'_> {
             .await?
         } else {
             administration::execute(
-                &transaction,
+                &mut transaction,
                 self.org,
                 operation,
                 payload,
@@ -249,7 +240,7 @@ impl ControlRoutes<'_> {
         transaction.commit().await?;
         self.changes.publish(drops).await;
         self.changes.publish(connection_drops).await;
-        let source = self
+        let mut source = self
             .begin_in_environment(
                 writer,
                 attachment,
@@ -260,14 +251,18 @@ impl ControlRoutes<'_> {
             .await?;
         let mut completed = Vec::new();
         let mut projected_drops = Vec::new();
-        for (target, (project, env)) in targets.into_iter().zip(&environments) {
+        for (mut target, (project, env)) in targets.into_iter().zip(&environments) {
             let projected = async {
                 if let Some(id) = &identity {
-                    references::remove_projection(&target, group, id).await?;
+                    references::remove_projection(&mut target, group, id).await?;
                 } else {
                     projected_drops.push(
                         references::project_administration(
-                            &source, &target, self.org, project, env,
+                            &mut source,
+                            &mut target,
+                            self.org,
+                            project,
+                            env,
                         )
                         .await?,
                     );
@@ -294,7 +289,7 @@ impl ControlRoutes<'_> {
 }
 
 async fn deletion_identity(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     group: &str,
     request: &Value,

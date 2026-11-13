@@ -71,8 +71,8 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let database = wamn_test_postgres::database();
-    let (admin, driver) = tokio_postgres::connect(database.url(), NoTls).await?;
-    let driver = tokio::spawn(driver);
+    let mut admin = wamn_postgres::connect(database.url()).await?;
+
     let (_nats, client) = nats().await;
     let connection = "00000000-0000-4000-8000-000000000001".parse()?;
     let target = "00000000-0000-4000-8000-000000000002".parse()?;
@@ -92,7 +92,7 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
         .await?
         .context("host A needs an exclusive call")?;
     let key = format!("resource:{target}:tcp:device:502");
-    let pid: i32 = admin.query_one("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1", &[&key]).await?.get(0);
+    let pid: i32 = sqlx::query("SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1").bind(&key).fetch_one(&mut admin).await?.get(0);
 
     let (b, leases_b) = facts(&client, database.url(), &fact).await?;
     let probes_b = ProbeState::default();
@@ -106,7 +106,7 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
     let pending = tokio::spawn(async move { b.exclusive_call(connection).await });
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let waiting: bool = admin.query_one("SELECT EXISTS(SELECT FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1)", &[&key]).await?.get(0);
+            let waiting: bool = sqlx::query("SELECT EXISTS(SELECT FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1)").bind(&key).fetch_one(&mut admin).await?.get(0);
             if waiting { return Ok::<_, anyhow::Error>(()); }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -167,13 +167,11 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
     ready(address).await?;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if !admin
-                .query_one(
-                    "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid=$1)",
-                    &[&pid],
-                )
+            if !sqlx::query("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid=$1)")
+                .bind(&pid)
+                .fetch_one(&mut admin)
                 .await?
-                .get::<_, bool>(0)
+                .get::<bool, _>(0)
             {
                 return Ok::<_, anyhow::Error>(());
             }
@@ -186,6 +184,5 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
     let _ = stop_probe.send(());
     probe.await?;
     drop(admin);
-    driver.await??;
     Ok(())
 }

@@ -29,7 +29,9 @@
 
 use anyhow::Context as _;
 use serde_json::Value;
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
+
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::RunStore as _;
@@ -48,7 +50,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// stable role name does not fit the 63-byte identifier cap once an identity digest
 /// and an A/B suffix are appended, so a login that reads like a real generation
 /// has to start here.
-const GENERATION: &str = "wamn_exec_platform_surface_live_a";
+const GENERATION: &str = "wamn_exec_platform_surface_live";
 const GENERATION_PASSWORD: &str = "executor-surface-test-password";
 
 /// The second database the wrong-`current_database` arm connects to.
@@ -66,12 +68,8 @@ fn digest(fill: &str) -> String {
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            eprintln!("executor-platform surface live connection failed: {error}");
-        }
-    });
+    let mut client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -94,11 +92,12 @@ fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String>
 /// The three plan-supply statements take the project as `$1` and read no GUC, so
 /// the identity is not what fences them; it is set because it IS what the host
 /// injects, and because the `run_queue` leg below depends on it.
-async fn begin_bound(client: &Client) -> anyhow::Result<()> {
-    client.batch_execute("BEGIN").await?;
-    client
-        .execute("SELECT set_config('app.project_env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&PROJECT_ENV_KEY, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
-        .await?;
+async fn begin_bound(client: &mut Client) -> anyhow::Result<()> {
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)").bind(&PROJECT_ENV_KEY).bind(&wamn_control_provision::PlatformComponent::Executor.principal_id().to_string()).bind(&wamn_control_provision::PlatformComponent::Executor.principal_name()).execute(&mut *client).await.map(|result| result.rows_affected())?;
     Ok(())
 }
 
@@ -109,10 +108,10 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:executor-surface-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:executor-surface-fixture', false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
 
@@ -131,17 +130,20 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // removes that ACL entry with it. `CREATE`/`DROP DATABASE` cannot run
     // inside a transaction block, so each is its own `batch_execute` — a
     // multi-statement simple query is wrapped in an implicit transaction.
-    admin
-        .batch_execute(&format!("DROP DATABASE IF EXISTS {ELSEWHERE}"))
-        .await
-        .context("drop the elsewhere database")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {ELSEWHERE}"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("drop the elsewhere database")?;
 
     // THE GENERATION IS DROPPED BEFORE IT IS MINTED, INSIDE AN EXISTENCE CHECK.
     // Roles are CLUSTER-wide, so a login left behind by an earlier run of this
     // suite satisfies every `IF NOT EXISTS` in the builder and would let a
     // MUTATED builder pass on the previous run's role.
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
@@ -160,54 +162,64 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
               \
              BEGIN; {catalog_ddl} {run_state_ddl} {run_queue_ddl} {app_schema} COMMIT;"
         ))
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("install the run and catalog planes")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {ELSEWHERE}")))
+        .execute(&mut admin)
         .await
-        .context("install the run and catalog planes")?;
-    admin
-        .batch_execute(&format!("CREATE DATABASE {ELSEWHERE}"))
-        .await
+        .map(drop)
         .context("create the elsewhere database")?;
 
-    // ONE BUILDER CALL AND NOTHING ELSE. `prepare_workload_generation_sql`
+    // ONE BUILDER CALL AND NOTHING ELSE. `test_database::login_sql`
     // carries `grant_executor_platform_surface_sql` as its stable surface, the
     // `wamn_platform` group edge, the generation role, its password and its
     // `CONNECT`. Every plan-supply leg below therefore stands on exactly what
     // provisioning emits; no grant is manufactured here.
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ExecutorPlatform,
             &database,
             GENERATION,
             GENERATION_PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await
-        .context("provision the executor-platform generation")?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("provision the executor-platform generation")?;
     // The wrong-membership arm names a role that must EXIST: `pg_has_role`
     // raises on an unknown role, which the probe reports as an UNAVAILABLE
     // probe rather than a mismatch, and the arm would then pass for the wrong
     // reason. This is the family's own builder, not a hand-rolled role.
-    admin
-        .batch_execute(&sql::ensure_workload_acl_role_sql(
-            WorkloadRoleFamily::HttpAdmitter,
-        ))
-        .await
-        .context("ensure the http-admitter acl role")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter)).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("ensure the http-admitter acl role")?;
     // `CONNECT` on the second database is FIXTURE PLUMBING for the
     // wrong-`current_database` arm — the ability to open a socket, not a
     // run-plane authority. `ELSEWHERE` carries no schema, no relation and no
     // grant that any statement in this file reads.
-    admin
-        .batch_execute(&format!(
-            "GRANT CONNECT ON DATABASE {ELSEWHERE} TO \"{GENERATION}\";"
-        ))
-        .await
-        .context("let the generation reach the elsewhere database")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "GRANT CONNECT ON DATABASE {ELSEWHERE} TO \"{GENERATION}\";"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("let the generation reach the elsewhere database")?;
 
     // THE PRINCIPAL, ASSERTED BEFORE ANY LEG RUNS. A superuser or a BYPASSRLS
     // login satisfies every read below and every `pg_has_role` above while
     // showing nothing about either, and it would do it SILENTLY.
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DO $$ BEGIN \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_authid \
@@ -234,8 +246,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                  'the generation must not reach the callable-http role'; \
              END $$;"
         ))
-        .await
-        .context("assert the generation identity")?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("assert the generation identity")?;
 
     let component_digest = digest("a");
     let imports_fingerprint = digest("b");
@@ -246,8 +262,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let manifest_body = format!(
         r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}}}}"#,
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO catalog.packages \
                (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
@@ -274,34 +289,33 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              SELECT '{PROJECT_ENV_KEY}','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
                     '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}','test-case' FROM catalog.releases; \
              INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('{PROJECT_ENV_KEY}','run-1');",
-        ))
-        .await
+        ))).execute(&mut admin).await.map(drop)
         .context("seed the plan-supply fixture")?;
 
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
     let platform_url = generation_url(admin_url, None)?;
-    let generation = connect(&platform_url).await?;
-    begin_bound(&generation).await?;
+    let mut generation = connect(&platform_url).await?;
+    begin_bound(&mut generation).await?;
 
-    let manifest_digest: String = admin
-        .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1",
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?
-        .get(0);
-    let release = generation
-        .query_one(
-            RELEASE_COMPONENTS_SQL,
-            &[&PROJECT_ENV_KEY, &manifest_digest],
-        )
+    let manifest_digest: String =
+        sqlx::query("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1")
+            .bind(&PROJECT_ENV_KEY)
+            .fetch_one(&mut admin)
+            .await?
+            .get(0);
+    let release = sqlx::query(RELEASE_COMPONENTS_SQL)
+        .bind(&PROJECT_ENV_KEY)
+        .bind(&manifest_digest)
+        .fetch_one(&mut generation)
         .await?;
-    let components: Value = serde_json::from_str(&release.get::<_, String>(0))?;
+    let components: Value = serde_json::from_str(&release.get::<String, _>(0))?;
     assert_eq!(components.as_array().map(Vec::len), Some(1));
     assert_eq!(components[0]["component-digest"], component_digest);
     assert!(
-        generation
-            .query(RELEASE_COMPONENTS_SQL, &[&PROJECT_ENV_KEY, &digest("e")])
+        sqlx::query(RELEASE_COMPONENTS_SQL)
+            .bind(&PROJECT_ENV_KEY)
+            .bind(&digest("e"))
+            .fetch_all(&mut generation)
             .await?
             .is_empty()
     );
@@ -310,28 +324,30 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // `TO` clause and keys on `app.project_env_key`, so the SAME connection reads one
     // row with the identity injected and ZERO without it. This is why every arm in
     // this file asserts rows rather than privileges.
-    let bound_rows: i64 = generation
-        .query_one("SELECT count(*) FROM wamn_run.run_queue", &[])
+    let bound_rows: i64 = sqlx::query("SELECT count(*) FROM wamn_run.run_queue")
+        .fetch_one(&mut generation)
         .await?
         .get(0);
     assert_eq!(bound_rows, 1, "the bound session read no queue row");
-    generation.batch_execute("COMMIT").await?;
-    let unbound_rows: i64 = generation
-        .query_one("SELECT count(*) FROM wamn_run.run_queue", &[])
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut generation)
+        .await
+        .map(drop)?;
+    let unbound_rows: i64 = sqlx::query("SELECT count(*) FROM wamn_run.run_queue")
+        .fetch_one(&mut generation)
         .await?
         .get(0);
     assert_eq!(
         unbound_rows, 0,
         "an unbound session read the queue that the project identity is supposed to fence"
     );
-    let acl_says_yes: bool = generation
-        .query_one(
-            "SELECT pg_catalog.has_table_privilege( \
+    let acl_says_yes: bool = sqlx::query(
+        "SELECT pg_catalog.has_table_privilege( \
                current_user, 'wamn_run.run_queue', 'SELECT')",
-            &[],
-        )
-        .await?
-        .get(0);
+    )
+    .fetch_one(&mut generation)
+    .await?
+    .get(0);
     assert!(
         acl_says_yes,
         "the ACL blindness leg needs the privilege it is blind about"
@@ -383,7 +399,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
     exact
-        .probe_pooled(&generation)
+        .probe_pooled(&mut generation)
         .await
         .map_err(|error| anyhow::anyhow!("the exact credential was refused: {error}"))?;
 
@@ -394,14 +410,14 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // `current_database()`, and its connection type shows it was
     // reached over the wire rather than decided from the url.
     let elsewhere_url = generation_url(admin_url, Some(ELSEWHERE))?;
-    let elsewhere = connect(&elsewhere_url).await?;
-    let observed_elsewhere: String = elsewhere
-        .query_one("SELECT current_database()::text", &[])
+    let mut elsewhere = connect(&elsewhere_url).await?;
+    let observed_elsewhere: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut elsewhere)
         .await?
         .get(0);
     assert_eq!(observed_elsewhere, ELSEWHERE);
     let wrong_database = exact
-        .probe_pooled(&elsewhere)
+        .probe_pooled(&mut elsewhere)
         .await
         .expect_err("a connection on another database must be refused");
     assert_eq!(
@@ -440,7 +456,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ),
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&generation)
+    .probe_pooled(&mut generation)
     .await
     .expect_err("a membership the generation does not hold must be refused");
     assert_eq!(
@@ -479,7 +495,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ),
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&generation)
+    .probe_pooled(&mut generation)
     .await
     .map_err(|error| {
         anyhow::anyhow!("a genuinely absent membership was reported present: {error}")
@@ -506,7 +522,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ),
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?
-    .probe_pooled(&generation)
+    .probe_pooled(&mut generation)
     .await
     .expect_err("an ACL fact the family does not hold must be refused");
     assert_eq!(
@@ -591,15 +607,23 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
                     FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key, run_id) \
                     WHERE r.project_env_key = $1 AND r.run_id = 'run-1'";
-    let before: Value = admin.query_one(snapshot, &[&PROJECT_ENV_KEY]).await?.get(0);
-    admin
-        .batch_execute(&format!(
+    let before: Value = sqlx::query(sqlx::AssertSqlSafe((snapshot).to_string()))
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_one(&mut admin)
+        .await?
+        .get(0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE wamn_executor_platform FROM {GENERATION}; \
              GRANT USAGE ON SCHEMA catalog, wamn_run TO {GENERATION}; \
              GRANT SELECT, INSERT, UPDATE, DELETE \
                ON ALL TABLES IN SCHEMA catalog, wamn_run TO {GENERATION};"
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let packages = [PACKAGE_ID.to_string()];
     let completion = ProductionCompletion::completed(serde_json::json!({"done": true}), None);
     for result in [
@@ -623,18 +647,26 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         let error = result.expect_err("broad table grants must not replace executor membership");
         assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
     }
-    let after: Value = admin.query_one(snapshot, &[&PROJECT_ENV_KEY]).await?.get(0);
+    let after: Value = sqlx::query(sqlx::AssertSqlSafe((snapshot).to_string()))
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_one(&mut admin)
+        .await?
+        .get(0);
     assert_eq!(
         after, before,
         "every refused operation must leave the run and queue unchanged"
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, wamn_run FROM {GENERATION}; \
              REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run FROM {GENERATION}; \
              GRANT wamn_executor_platform TO {GENERATION} WITH INHERIT TRUE, SET FALSE;"
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     assert_eq!(
         plugin
             .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)

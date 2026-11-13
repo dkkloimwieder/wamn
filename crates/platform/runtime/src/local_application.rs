@@ -3,6 +3,7 @@
 use crate::plugins::wamn_postgres::CandidateConnectionBinding;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use wamn_catalog::{
@@ -112,9 +113,14 @@ impl LocalApplication {
 
     pub(crate) async fn require_instance(
         &self,
-        client: &tokio_postgres::Client,
+        client: &mut sqlx::PgConnection,
     ) -> anyhow::Result<()> {
-        let instance: u32 = client.query_one("SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()", &[]).await?.try_get(0)?;
+        let instance = sqlx::query_scalar::<_, sqlx::postgres::types::Oid>(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+        )
+        .fetch_one(&mut *client)
+        .await?
+        .0;
         anyhow::ensure!(
             instance == self.instance,
             "local application target was recreated; load the new candidate"
@@ -124,7 +130,7 @@ impl LocalApplication {
 
     pub(crate) async fn bindings_ready(
         &self,
-        client: &tokio_postgres::Client,
+        client: &mut sqlx::PgConnection,
         digests: &[String],
     ) -> anyhow::Result<bool> {
         self.require_instance(client).await?;
@@ -161,7 +167,7 @@ impl LocalApplication {
 
     pub(crate) async fn effect_snapshot(
         &self,
-        client: &tokio_postgres::Client,
+        client: &mut sqlx::PgConnection,
         project_env_key: &str,
         lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
@@ -244,7 +250,7 @@ impl LocalApplication {
 /// The same entry rule as the Postgres snapshot: a route needs only its origin
 /// export, and a wiring node must name the origin component.
 async fn entry_facts(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     manifest: &ServingManifest,
     target: &ReleaseTarget,
     facts: &LocalApplicationFacts,
@@ -270,11 +276,8 @@ async fn entry_facts(
             (None, facts.components.iter().any(origin_exports))
         }
         Some(position) => {
-            let Some(row) = client.query_opt(
-                "SELECT graph_json::text FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
-                &[&target.project_env_key, &target.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
-            ).await? else { return Ok(None); };
-            let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
+            let Some(row) = sqlx::query("SELECT graph_json::text FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5").bind(&target.project_env_key).bind(&target.environment).bind(lookup.entry.package_id).bind(position.wiring_id).bind(position.wiring_version).fetch_optional(&mut *client).await? else { return Ok(None); };
+            let value: serde_json::Value = serde_json::from_str(&row.get::<String, _>(0))?;
             let document = WiringDocument::parse(&value)?;
             let Some(application) = target.applications.get(lookup.entry.package_id) else {
                 return Ok(None);
@@ -298,10 +301,10 @@ async fn entry_facts(
 }
 
 async fn read_local_connection_name(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     instance: &str,
 ) -> anyhow::Result<Option<String>> {
-    Ok(client.query_one("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid", &[&instance]).await?.get(0))
+    Ok(sqlx::query("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid").bind(instance).fetch_one(&mut *client).await?.get(0))
 }
 
 /// Build the local selection from resolved administration facts.
@@ -351,7 +354,7 @@ pub struct LocalBindingTarget<'a> {
 
 /// Resolve a local selection from the same catalog records as released calls.
 pub async fn read_local_binding(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     target: &LocalBindingTarget<'_>,
     requirement: &ComponentConnectionRequirement,
     connection: &str,
@@ -363,16 +366,13 @@ pub async fn read_local_binding(
 }
 
 async fn read_binding(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     target: &LocalBindingTarget<'_>,
     requirement: &ComponentConnectionRequirement,
     connection: &str,
     credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
-    let row=client.query_opt(
-        "SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(project_env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.project_env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'",
-        &[&target.project_env_key,&target.package_id,&requirement.component_digest(),&requirement.store_alias(),&target.manifest_digest,&connection],
-    ).await?.context("local connection binding unavailable")?;
+    let row=sqlx::query("SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(project_env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.project_env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'").bind(target.project_env_key).bind(target.package_id).bind(requirement.component_digest()).bind(requirement.store_alias()).bind(target.manifest_digest).bind(connection).fetch_optional(&mut *client).await?.context("local connection binding unavailable")?;
     let integration_type: String = row.get(0);
     let descriptor = wamn_catalog::RequirementType::for_integration(&integration_type)
         .context("local binding requires a host integration")?
@@ -413,12 +413,12 @@ async fn read_binding(
     let credential_set_handle = if integration_type == "gcs" {
         None
     } else {
-        let name: String=client.query_one("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid",&[&connection]).await?.get(0);
+        let name: String=sqlx::query("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid").bind(connection).fetch_one(&mut *client).await?.get(0);
         Some(credentials.connection_handle(&name, fact.active_generation)?)
     };
     Ok((
         CandidateConnectionBinding {
-            read_only: row.get::<_, String>(1) == "read",
+            read_only: row.get::<String, _>(1) == "read",
             component_digest: requirement.component_digest().into(),
             store_alias: requirement.store_alias().into(),
             requirement_hash,
@@ -666,7 +666,7 @@ pub async fn require_local_target(
 
 /// Read the comment of the connected local target after testing its marker.
 pub async fn read_local_target_comment(
-    client: &impl tokio_postgres::GenericClient,
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<LocalTargetComment> {
@@ -680,34 +680,28 @@ async fn read_local_target(
     project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<u32> {
-    let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+    let options = wamn_postgres::connect_options(database_url).await?;
+    let mut client = wamn_postgres::connect(options)
         .await
         .context("connect to the local application target")?;
-    let connection = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let result = read_target_comment(&client, project_env_key, environment)
+    read_target_comment(&mut client, project_env_key, environment)
         .await
-        .map(|(instance, _)| instance);
-    drop(client);
-    connection.abort();
-    result
+        .map(|(instance, _)| instance)
 }
 
 async fn read_target_comment(
-    client: &impl tokio_postgres::GenericClient,
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     environment: &str,
 ) -> anyhow::Result<(u32, LocalTargetComment)> {
-    let row = client
-        .query_one(
-            "SELECT oid, pg_catalog.shobj_description(oid, 'pg_database') \
+    let row = sqlx::query(
+        "SELECT oid, pg_catalog.shobj_description(oid, 'pg_database') \
              FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-            &[],
-        )
-        .await
-        .context("read the local target ownership marker")?;
-    let instance: u32 = row.try_get(0)?;
+    )
+    .fetch_one(&mut *client)
+    .await
+    .context("read the local target ownership marker")?;
+    let instance = row.try_get::<sqlx::postgres::types::Oid, _>(0)?.0;
     let comment: Option<String> = row.try_get(1)?;
     let comment = comment
         .as_deref()
@@ -724,6 +718,7 @@ async fn read_target_comment(
 #[cfg(test)]
 mod tests {
     use super::local_target_marker;
+    use sqlx::Row as _;
 
     fn fixture() -> (super::LocalApplicationFacts, wamn_catalog::ServingManifest) {
         use std::collections::{BTreeMap, BTreeSet};
@@ -754,10 +749,8 @@ mod tests {
         use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
         let _lock = wamn_test_postgres::lock();
         let database = wamn_catalog::test_database::project();
-        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        let task = tokio::spawn(connection);
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
         let target = wamn_engine::release_manifest::ReleaseTarget::new("org-a", "dev");
         let (facts, manifest) = fixture();
         let digest = facts.components[0].component_digest.clone();
@@ -780,7 +773,7 @@ mod tests {
             candidate_binding: None,
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &target, &facts, &route)
+            super::entry_facts(&mut client, &manifest, &target, &facts, &route)
                 .await
                 .unwrap(),
             Some((None, true))
@@ -790,7 +783,7 @@ mod tests {
             ..route
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &target, &facts, &unexported)
+            super::entry_facts(&mut client, &manifest, &target, &facts, &unexported)
                 .await
                 .unwrap(),
             Some((None, false))
@@ -803,12 +796,11 @@ mod tests {
             ..route
         };
         assert_eq!(
-            super::entry_facts(&client, &manifest, &target, &facts, &foreign)
+            super::entry_facts(&mut client, &manifest, &target, &facts, &foreign)
                 .await
                 .unwrap(),
             None
         );
-        task.abort();
     }
 
     #[test]
@@ -885,14 +877,12 @@ mod tests {
         let _lock = wamn_test_postgres::lock();
         let mut authority = crate::connection_credentials::test_util::Fixture::new().await;
         authority.put("erp", "secret", &["project-a"]).await;
-        let row=authority.admin.query_one("SELECT c.id::text,i.id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a' AND i.name='erp'",&[]).await.unwrap();
+        let row=sqlx::query("SELECT c.id::text,i.id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a' AND i.name='erp'").fetch_one(&mut authority.admin).await.unwrap();
         let connection: String = row.get(0);
         let integration: String = row.get(1);
         let database = wamn_platform_identity::test_database::project_platform();
-        let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        tokio::spawn(driver);
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
         let (mut facts, manifest) = fixture();
         let component = facts.components[0].clone();
         let requirement = wamn_catalog::ComponentConnectionRequirement::new(
@@ -900,17 +890,21 @@ mod tests {
             "erp",
             wamn_catalog::ConnectionTypeDescriptor::http_v1(),
         );
-        client.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-local-binding',true)").await.unwrap();
-        client.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1::text::uuid,'http','erp','active');",&[&integration]).await.unwrap();
-        client.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1::text::uuid,$2::text::uuid,'http','active')",&[&connection,&integration]).await.unwrap();
-        client.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('org-a',$1,$2)",&[&facts.manifest_digest.as_str(),&manifest.canonical_bytes()]).await.unwrap();
-        client.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES('org-a',$1,'orders','erp','wamn:connection/http@0.1.0','read')",&[&component.component_digest]).await.unwrap();
-        client.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('org-a',$1,$2::text::uuid,1)",&[&facts.manifest_digest.as_str(),&connection]).await.unwrap();
-        client.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('org-a',$1,$2,'orders','erp',$3::text::uuid)",&[&facts.manifest_digest.as_str(),&component.component_digest,&connection]).await.unwrap();
-        client.batch_execute("COMMIT").await.unwrap();
+        sqlx::raw_sql("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-local-binding',true)").execute(&mut client).await.map(drop).unwrap();
+        sqlx::query("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1::text::uuid,'http','erp','active');").bind(&integration).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1::text::uuid,$2::text::uuid,'http','active')").bind(&connection).bind(&integration).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('org-a',$1,$2)").bind(&facts.manifest_digest.as_str()).bind(&manifest.canonical_bytes()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES('org-a',$1,'orders','erp','wamn:connection/http@0.1.0','read')").bind(&component.component_digest).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('org-a',$1,$2::text::uuid,1)").bind(&facts.manifest_digest.as_str()).bind(&connection).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('org-a',$1,$2,'orders','erp',$3::text::uuid)").bind(&facts.manifest_digest.as_str()).bind(&component.component_digest).bind(&connection).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .unwrap();
         let credentials = std::sync::Arc::new(authority.reader("project-a").await);
         let selection = super::read_local_binding(
-            &client,
+            &mut client,
             &super::LocalBindingTarget {
                 project_env_key: "org-a",
                 environment: "dev",
@@ -939,20 +933,21 @@ mod tests {
             manifest,
             target,
             facts,
-            instance: client
-                .query_one(
-                    "SELECT oid FROM pg_database WHERE datname=current_database()",
-                    &[],
-                )
+            instance: sqlx::query("SELECT oid FROM pg_database WHERE datname=current_database()")
+                .fetch_one(&mut client)
                 .await
                 .unwrap()
-                .get(0),
+                .get::<sqlx::postgres::types::Oid, _>(0)
+                .0,
             credentials: std::sync::Arc::default(),
         };
         local.set_connection_credentials(credentials, "project-a");
         assert!(
             local
-                .bindings_ready(&client, std::slice::from_ref(&component.component_digest))
+                .bindings_ready(
+                    &mut client,
+                    std::slice::from_ref(&component.component_digest)
+                )
                 .await
                 .unwrap()
         );
@@ -977,7 +972,7 @@ mod tests {
             candidate_binding: Some(&forged),
         };
         let snapshot = local
-            .effect_snapshot(&client, "org-a", &lookup)
+            .effect_snapshot(&mut client, "org-a", &lookup)
             .await
             .unwrap()
             .unwrap();
@@ -987,14 +982,20 @@ mod tests {
         forged_local.facts.bindings[0].selection.read_only = false;
         assert!(
             !forged_local
-                .bindings_ready(&client, std::slice::from_ref(&component.component_digest))
+                .bindings_ready(
+                    &mut client,
+                    std::slice::from_ref(&component.component_digest)
+                )
                 .await
                 .unwrap()
         );
-        client.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:remove-binding',true); DELETE FROM catalog.connection_binding; COMMIT").await.unwrap();
+        sqlx::raw_sql("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:remove-binding',true); DELETE FROM catalog.connection_binding; COMMIT").execute(&mut client).await.map(drop).unwrap();
         assert!(
             local
-                .bindings_ready(&client, std::slice::from_ref(&component.component_digest))
+                .bindings_ready(
+                    &mut client,
+                    std::slice::from_ref(&component.component_digest)
+                )
                 .await
                 .is_err()
         );

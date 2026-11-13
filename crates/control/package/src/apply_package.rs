@@ -1,10 +1,11 @@
 //! Initialize or explicitly advance package SQL from verified files.
 
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{NoTls, Transaction};
+
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{PackageDirectory, plan_package_migrations};
@@ -247,10 +248,10 @@ async fn apply_request(
     package
         .component_source
         .clone_from(&request.component_source);
-    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
+    let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("connect to project environment")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = apply(
         &mut client,
         &request.project_env_key(),
@@ -264,19 +265,11 @@ async fn apply_request(
         request.changes.publish(outcome.drops.clone()).await;
     }
     drop(client);
-    if result.is_err() {
-        connection_task.abort();
-    } else {
-        connection_task
-            .await
-            .context("join package database connection")?
-            .context("drive package database connection")?;
-    }
     result
 }
 
 async fn apply(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     package: &PreparedPackage,
     local_environment: Option<&str>,
@@ -290,10 +283,10 @@ async fn apply(
     crate::migrations::lock_session(
         client,
         LOCK_PACKAGE_SQL,
-        &[&project_env_key, &presented.coordinate.package_id()],
+        &[project_env_key, presented.coordinate.package_id()],
     )
     .await?;
-    let tx = migration::begin(client, project_env_key).await?;
+    let mut tx = migration::begin(client, project_env_key).await?;
     let package_root = &package.root;
     let directory = &package.directory;
     let manifest = &package.manifest;
@@ -308,7 +301,7 @@ async fn apply(
     let local_comment = match local_environment {
         Some(environment) => Some(
             wamn_runtime::local_application::read_local_target_comment(
-                &tx,
+                &mut tx,
                 project_env_key,
                 environment,
             )
@@ -329,7 +322,7 @@ async fn apply(
                 .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
         )
     };
-    let applied = load_applied_package(&tx, project_env_key, &package_id).await?;
+    let applied = load_applied_package(&mut tx, project_env_key, &package_id).await?;
     // Executable selection, reapply, and rollback never advance SQL, even if
     // the selected artifact carries older or edited migration inputs.
     if !advance_schema && let Some(installed) = &applied {
@@ -346,7 +339,7 @@ async fn apply(
             drops: wamn_broker::auth_changes::AuthDrops::default(),
         });
     }
-    let recorded = read_package_migrations(&tx, project_env_key, &package_id).await?;
+    let recorded = read_package_migrations(&mut tx, project_env_key, &package_id).await?;
     let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
     crate::migrations::validate_resolution(
         crate::migrations::ResolutionTarget::Package(&package_id),
@@ -366,7 +359,7 @@ async fn apply(
             .filter(|mutation| paths.contains(mutation.relative_path.as_ref()))
             .collect::<Vec<_>>();
         validate_definition_ownership_before_apply(
-            &tx,
+            &mut tx,
             project_env_key,
             coordinate_text,
             &package_id,
@@ -386,8 +379,8 @@ async fn apply(
     tx.rollback()
         .await
         .context("finish package migration planning")?;
-    let keys: [(&str, &(dyn tokio_postgres::types::ToSql + Sync)); 2] = [
-        ("project_env_key", &project_env_key),
+    let keys: [(&str, &str); 2] = [
+        ("project_env_key", project_env_key),
         ("package_id", &package_id),
     ];
     let table = crate::migrations::MigrationTable {
@@ -426,7 +419,7 @@ async fn apply(
 }
 
 async fn installed_physical_fingerprint(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     directory: &PackageDirectory,
     manifest: &PackageManifest,
 ) -> anyhow::Result<String> {
@@ -451,16 +444,20 @@ async fn installed_physical_fingerprint(
 /// Bind `wamn:apply-package` as the actor and the operation of the
 /// transaction, so its writes, including the admin role, record that
 /// component.
-pub(crate) async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
-    tx.batch_execute(&bind_platform_principal_sql(
+pub(crate) async fn bind_apply_package_principal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
         PlatformComponent::ApplyPackage,
-    ))
+    )))
+    .execute(&mut **tx)
     .await
+    .map(drop)
     .context("bind wamn:apply-package as the transaction actor and operation")
 }
 
 async fn ensure_model_schemas(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     plan: &wamn_schema_control::PackageMigrationPlan,
     manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
@@ -475,15 +472,19 @@ async fn ensure_model_schemas(
         )
         .collect::<BTreeSet<_>>();
     let package = &manifest.package.id;
-    tx.batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
-        package,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_package_owner_role_sql(package),
     ))
+    .execute(&mut **tx)
     .await
+    .map(drop)
     .context("provision the package owner")?;
-    tx.batch_execute(&wamn_control_provision::sql::package_owner_grants_sql(
-        package,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::package_owner_grants_sql(package),
     ))
+    .execute(&mut **tx)
     .await
+    .map(drop)
     .context("grant the package history surface")?;
     let role = postgres_protocol::escape::escape_identifier(
         &wamn_control_provision::package_owner_role(package),
@@ -491,16 +492,17 @@ async fn ensure_model_schemas(
     for schema in schemas {
         let schema = wamn_schema_control::BareSchemaName::new(schema)
             .context("validate manifest model schema for creation")?;
-        tx.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {role}; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted()))
-            .await
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {role}; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted()))).execute(&mut **tx).await.map(drop)
             .with_context(|| format!("ensure package model schema {schema}"))?;
-        let unowned: bool = tx.query_one(
-            "SELECT NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE schema_name = $1 AND definition_type = 'relation')",
-            &[&schema.as_str()],
-        ).await?.get(0);
+        let unowned: bool = sqlx::query("SELECT NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE schema_name = $1 AND definition_type = 'relation')").bind(schema.as_str()).fetch_one(&mut **tx).await?.get(0);
         if unowned {
-            tx.batch_execute(&format!("ALTER SCHEMA {} OWNER TO {role}", schema.quoted()))
-                .await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER SCHEMA {} OWNER TO {role}",
+                schema.quoted()
+            )))
+            .execute(&mut **tx)
+            .await
+            .map(drop)?;
         }
     }
     Ok(())

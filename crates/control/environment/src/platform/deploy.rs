@@ -31,7 +31,7 @@ pub async fn deploy(
     let mut target = Target {
         kubeconfig,
         context: context.unwrap_or_default(),
-        namespace: "platform".into(),
+        namespace: document.org.clone(),
     };
     // Resolve the platform default and both service selections before any mutation.
     let operator_values = if existing {
@@ -50,7 +50,7 @@ pub async fn deploy(
         (
             resources::release_values(
                 &target,
-                "hosts",
+                &document.org,
                 &wamn_registry::name::control_resource(&document.org),
             )
             .await?,
@@ -151,28 +151,14 @@ pub async fn update(
             .await?
             .context("host update requires existing release platform/wamn")?;
         let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
-        let secret: bootstrap::SecretData = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            "platform",
-            "secret",
-            "wamn-pg-superuser",
-        )
-        .await?
-        .context("host update requires Secret platform/wamn-pg-superuser")?;
         let forward =
-            wamn_kubernetes::forward::port_forward(target, "platform", "service/wamn-pg-rw", 5432)
-                .await?;
-        let mut url = url::Url::parse("postgresql://postgres@127.0.0.1/wamn_system")?;
-        url.set_port(Some(forward.port))
-            .map_err(|()| anyhow::anyhow!("set database port"))?;
-        url.set_password(Some(&bootstrap::secret_text(&secret, "password")?))
-            .map_err(|()| anyhow::anyhow!("set database password"))?;
+            super::database::forward(target, &document.org, "wamn-pg", "wamn_system").await?;
         let lock = match &coordinate.1 {
             Some(application) => {
-                LifecycleLock::acquire_application(url.as_str(), &coordinate.0, application).await?
+                LifecycleLock::acquire_application(&forward.input, &coordinate.0, application)
+                    .await?
             }
-            None => LifecycleLock::acquire(url.as_str(), &coordinate.0).await?,
+            None => LifecycleLock::acquire(&forward.input, &coordinate.0).await?,
         };
         let result = async {
             release_chart::recover_pending(&owner, &name).await?;
@@ -392,6 +378,11 @@ async fn infrastructure(
     ] {
         apply(target, &manifests::objects(&payload, manifest, document)?).await?;
     }
+    resources::apply_object(
+        target,
+        &serde_json::json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":document.org}}),
+    )
+    .await?;
     apply(
         target,
         &manifests::objects(&payload, "cnpg-cluster.yaml", document)?,
@@ -400,7 +391,7 @@ async fn infrastructure(
     kubectl::wait(
         &target.kubeconfig,
         &target.context,
-        "platform",
+        &document.org,
         "cluster.postgresql.cnpg.io",
         "wamn-pg",
         "condition=Ready",

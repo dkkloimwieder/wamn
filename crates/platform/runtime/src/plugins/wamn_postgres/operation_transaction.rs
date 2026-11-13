@@ -9,6 +9,7 @@
 //! call the host commits or rolls it back. An entry uses `operation.commit`;
 //! dropping its Store rolls back unfinished work.
 
+use sqlx::Row as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -77,13 +78,12 @@ impl OperationTransaction {
     /// Read the WAL position on this operation's connection.
     pub(super) async fn wal_position(&self) -> Result<String, PgError> {
         self.start().await?;
-        let connection = StatementConnectionGuard::new(
+        let mut connection = StatementConnectionGuard::new(
             take_conn(&self.transaction.state)?,
             Arc::clone(&self.transaction.destroyed),
         );
-        let row = connection
-            .connection()
-            .query_one("SELECT pg_current_wal_lsn()::text", &[])
+        let row = sqlx::query("SELECT pg_current_wal_lsn()::text")
+            .fetch_one(&mut *connection.connection())
             .await
             .map_err(|error| super::types::map_pg_error(&error))?;
         connection.restore(&self.transaction.state);
@@ -104,7 +104,7 @@ impl OperationTransaction {
             .expect("request element identity lock poisoned")
             .take();
         if let Some(identity) = identity {
-            let connection = StatementConnectionGuard::new(
+            let mut connection = StatementConnectionGuard::new(
                 take_conn(&self.transaction.state)?,
                 Arc::clone(&self.transaction.destroyed),
             );
@@ -119,9 +119,7 @@ impl OperationTransaction {
     pub(super) async fn with_host_connection<T, F, Fut>(&self, op: F) -> Result<T, PgError>
     where
         F: FnOnce(StatementConnectionGuard) -> Fut,
-        Fut: std::future::Future<
-                Output = (StatementConnectionGuard, Result<T, tokio_postgres::Error>),
-            >,
+        Fut: std::future::Future<Output = (StatementConnectionGuard, Result<T, sqlx::Error>)>,
     {
         self.start().await?;
         with_txn_conn(&self.transaction.state, &self.transaction.destroyed, op).await
@@ -142,77 +140,50 @@ impl OperationTransaction {
         self.start().await.map_err(PgCommitFailure::RolledBack)?;
         let state = &self.transaction.state;
         let connection = take_conn(state).map_err(PgCommitFailure::RolledBack)?;
-        let connection =
+        let mut connection =
             StatementConnectionGuard::new(connection, Arc::clone(&self.transaction.destroyed));
         let mark_finished = || {
             if let Ok(mut transaction) = state.lock() {
                 transaction.finished = true;
             }
         };
-        if connection.connection().is_closed() {
-            mark_finished();
-            return Err(PgCommitFailure::RolledBack(PgError::ConnectionUnavailable));
-        }
-        // Prepare every statement before polling any part of the commit pipeline.
-        let commit = connection
-            .connection()
-            .prepare_cached("COMMIT")
-            .await
-            .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
-        let causation = match &self.causation {
-            Some(run) => Some(
-                super::session_identity::transactions::prepare_causation(
-                    connection.connection(),
-                    run,
-                )
-                .await
-                .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?,
-            ),
-            None => None,
-        };
-        let commit = async {
-            let (emitted, committed) = tokio::join!(biased;
-                async {
-                    if let Some((statement, json)) = &causation {
-                        connection.connection().execute(statement, &[json]).await?;
-                    }
-                    Ok::<_, tokio_postgres::Error>(())
-                },
-                connection.connection().execute(&commit, &[]));
-            emitted?;
-            committed.map(drop)
-        };
         let finish = self
             .finish
             .lock()
             .expect("request element finish lock poisoned")
             .take();
-        let result = if let Some(params) = finish {
-            // Prepare before polling COMMIT: a cache miss must not reorder the writes.
-            let statement = connection
-                .connection()
-                .prepare_cached(super::write_log::COMMIT_FINISH_SQL)
-                .await
-                .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
-            let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
-                .iter()
-                .map(|value| value as &(dyn tokio_postgres::types::ToSql + Sync))
-                .collect();
-            let (finished, committed) = tokio::join!(biased;
-                connection.connection().query(&statement, &params),
-                commit);
-            if let Err(error) = finished {
+        if let Some([key, status, output]) = finish {
+            let result = sqlx::query(super::write_log::COMMIT_FINISH_SQL)
+                .bind(&key)
+                .bind(&status)
+                .bind(&output)
+                .execute(connection.connection())
+                .await;
+            if let Err(error) = result {
                 mark_finished();
-                return Err(if error.as_db_error().is_some() {
-                    PgCommitFailure::RolledBack(super::types::map_pg_error(&error))
-                } else {
-                    PgCommitFailure::Uncertain(super::types::map_pg_error(&error))
-                });
+                return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
+                    &error,
+                )));
             }
-            committed
-        } else {
-            commit.await
-        };
+        }
+        if let Some(run) = &self.causation {
+            let json = serde_json::to_string(run).expect("Causation serializes to JSON");
+            if let Err(error) =
+                sqlx::query("SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)")
+                    .bind(json)
+                    .execute(connection.connection())
+                    .await
+            {
+                mark_finished();
+                return Err(PgCommitFailure::RolledBack(super::types::map_pg_error(
+                    &error,
+                )));
+            }
+        }
+        let result = sqlx::query("COMMIT")
+            .execute(connection.connection())
+            .await
+            .map(drop);
         match result {
             Ok(()) => {
                 mark_finished();
@@ -221,7 +192,7 @@ impl OperationTransaction {
             }
             Err(error) => {
                 mark_finished();
-                let answered = error.as_db_error().is_some();
+                let answered = error.as_database_error().is_some();
                 drop(connection);
                 let error = super::types::map_pg_error(&error);
                 Err(if answered {

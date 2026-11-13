@@ -29,7 +29,6 @@
 /// The closed authority a trusted caller selects its credential under.
 pub mod authority_class;
 /// The two reusable credential-generation slots.
-mod credential_generation;
 /// The intent store case set that every store runs.
 #[cfg(feature = "test-util")]
 pub mod intent_cases;
@@ -56,7 +55,6 @@ mod status;
 pub mod transitions;
 
 pub use authority_class::AuthorityClass;
-pub use credential_generation::CredentialGeneration;
 pub use intent_store::IntentStore;
 #[cfg(feature = "project-key")]
 pub use project_identity::app_identity_hash;

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
+use sqlx::{Connection as _, Row as _};
 use tokio::time::Instant;
 
 use crate::connection_credentials::ConnectionCredentials;
@@ -127,10 +128,10 @@ where
     Fut: Future<Output = anyhow::Result<Fetched>>,
 {
     let mut database = request.reader.oauth_database().await?;
-    let tx = database.transaction().await?;
-    lock(&tx, request).await?;
+    let mut tx = database.begin().await?;
+    lock(&mut tx, request).await?;
     let started = Instant::now();
-    let stored = read_row(&tx, request.connection, envelope).await?;
+    let stored = read_row(&mut tx, request.connection, envelope).await?;
     if let Some(stored) = &stored {
         if let Some(access) = &stored.token.access_token
             && stored.healthy
@@ -157,19 +158,18 @@ where
     Ok(Ok(available))
 }
 
-async fn lock(tx: &tokio_postgres::Transaction<'_>, request: &Request<'_>) -> anyhow::Result<()> {
-    let generation: Option<i64> = tx
-        .query_one(
-            wamn_registry::sql::PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK,
-            &[
-                &request.reader.org()?,
-                &request.project,
-                &request.environment,
-                &request.connection,
-            ],
-        )
-        .await?
-        .get(0);
+async fn lock(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    request: &Request<'_>,
+) -> anyhow::Result<()> {
+    let generation: Option<i64> =
+        sqlx::query_scalar(wamn_registry::sql::PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK)
+            .bind(request.reader.org()?)
+            .bind(request.project)
+            .bind(request.environment)
+            .bind(request.connection)
+            .fetch_one(&mut **tx)
+            .await?;
     anyhow::ensure!(
         generation == Some(request.generation),
         "OAuth connection generation changed"
@@ -184,24 +184,22 @@ struct Stored {
 }
 
 async fn read_row(
-    tx: &tokio_postgres::Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: uuid::Uuid,
     envelope: &Envelope,
 ) -> anyhow::Result<Option<Stored>> {
-    let Some(row) = tx
-        .query_opt(
+    let Some(row) = sqlx::query(
             "SELECT ciphertext,nonce,wrapped_key,key_id,\
              extract(epoch FROM expires_at)::double precision-extract(epoch FROM clock_timestamp())::double precision AS seconds_left,\
              refresh_status='ok' AS healthy,\
              refresh_status='failing' AND updated_at > clock_timestamp()-interval '30 seconds' AS cooling \
              FROM identity.oauth_token WHERE connection_id=$1",
-            &[&connection],
-        )
+        ).bind(connection).fetch_optional(&mut **tx)
         .await?
     else {
         return Ok(None);
     };
-    anyhow::ensure!(!row.get::<_, bool>("cooling"), "OAuth refresh retry window");
+    anyhow::ensure!(!row.get::<bool, _>("cooling"), "OAuth refresh retry window");
     let plaintext = envelope
         .decrypt(&Encrypted {
             ciphertext: row.get("ciphertext"),
@@ -219,7 +217,7 @@ async fn read_row(
 }
 
 async fn fetch_and_write<F, Fut>(
-    tx: deadpool_postgres::Transaction<'_>,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
     connection: uuid::Uuid,
     envelope: &Envelope,
     old: Option<Token>,
@@ -242,7 +240,7 @@ where
     };
     let fetched_at = Instant::now();
     let Ok(mut fetched) = fetch(old).await else {
-        record_failure(&tx, connection, marker.as_ref()).await?;
+        record_failure(&mut tx, connection, marker.as_ref()).await?;
         tx.commit().await?;
         anyhow::bail!("OAuth provider unavailable");
     };
@@ -252,13 +250,13 @@ where
     let seconds = Duration::from_secs(fetched.expires_in.unwrap_or(0)).as_secs_f64();
     let token = fetched.token;
     let Ok(encrypted) = envelope.encrypt(&serde_json::to_vec(&token)?).await else {
-        record_failure(&tx, connection, marker.as_ref()).await?;
+        record_failure(&mut tx, connection, marker.as_ref()).await?;
         tx.commit().await?;
         anyhow::bail!("OAuth encryption unavailable");
     };
     // PostgreSQL owns expiry and retry times. A missing expiry is always due.
     let remaining = (seconds - fetched_at.elapsed().as_secs_f64()).max(0.0);
-    write_row(&tx, connection, &encrypted, remaining).await?;
+    write_row(&mut tx, connection, &encrypted, remaining).await?;
     tx.commit().await?;
     Ok(Available {
         token: token.access_token.context("OAuth access token missing")?,
@@ -267,53 +265,36 @@ where
 }
 
 pub(crate) async fn write_row(
-    tx: &tokio_postgres::Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: uuid::Uuid,
     encrypted: &Encrypted,
     remaining: f64,
 ) -> anyhow::Result<()> {
-    tx.execute(
+    sqlx::query(
         "INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
          VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6::double precision*interval '1 second','ok',clock_timestamp()) \
          ON CONFLICT(connection_id) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,nonce=EXCLUDED.nonce,\
          wrapped_key=EXCLUDED.wrapped_key,key_id=EXCLUDED.key_id,expires_at=EXCLUDED.expires_at,\
-         refresh_status=EXCLUDED.refresh_status,updated_at=EXCLUDED.updated_at",
-        &[
-            &connection,
-            &encrypted.ciphertext,
-            &encrypted.nonce,
-            &encrypted.wrapped_key,
-            &encrypted.key_id,
-            &remaining,
-        ],
-    )
-    .await?;
+         refresh_status=EXCLUDED.refresh_status,updated_at=EXCLUDED.updated_at").bind(connection).bind(&encrypted.ciphertext).bind(&encrypted.nonce)
+        .bind(&encrypted.wrapped_key).bind(&encrypted.key_id).bind(remaining)
+        .execute(&mut **tx).await?;
     Ok(())
 }
 
 async fn record_failure(
-    tx: &tokio_postgres::Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: uuid::Uuid,
     marker: Option<&Encrypted>,
 ) -> anyhow::Result<()> {
     if let Some(marker) = marker {
-        tx.execute(
+        sqlx::query(
             "INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) \
-             VALUES($1,$2,$3,$4,$5,'-infinity','failing',clock_timestamp())",
-            &[
-                &connection,
-                &marker.ciphertext,
-                &marker.nonce,
-                &marker.wrapped_key,
-                &marker.key_id,
-            ],
-        )
-        .await?;
+             VALUES($1,$2,$3,$4,$5,'-infinity','failing',clock_timestamp())").bind(connection).bind(&marker.ciphertext).bind(&marker.nonce)
+            .bind(&marker.wrapped_key).bind(&marker.key_id).execute(&mut **tx).await?;
     } else {
-        tx.execute(
+        sqlx::query(
             "UPDATE identity.oauth_token SET refresh_status='failing',updated_at=clock_timestamp() WHERE connection_id=$1",
-            &[&connection],
-        )
+        ).bind(connection).fetch_optional(&mut **tx)
         .await?;
     }
     Ok(())

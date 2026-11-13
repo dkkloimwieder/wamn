@@ -1,11 +1,11 @@
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, bail, ensure};
-use tokio_postgres::Transaction;
 use wamn_compiler::manifest::PackageManifest;
 
 pub(super) async fn reconcile_entity_maps(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     plan: &wamn_schema_control::PackageMigrationPlan,
     manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
@@ -20,13 +20,19 @@ pub(super) async fn reconcile_entity_maps(
         )
         .collect::<BTreeSet<_>>();
     for schema in schemas {
-        tx.batch_execute(&wamn_control_provision::sql::ensure_entity_map_sql(schema))
-            .await
-            .with_context(|| format!("ensure {schema}.wamn_entities"))?;
-        tx.batch_execute(&wamn_control_provision::sql::ensure_cdc_exclusion_map_sql(
-            schema,
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_entity_map_sql(schema),
         ))
+        .execute(&mut **tx)
         .await
+        .map(drop)
+        .with_context(|| format!("ensure {schema}.wamn_entities"))?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_cdc_exclusion_map_sql(schema),
+        ))
+        .execute(&mut **tx)
+        .await
+        .map(drop)
         .with_context(|| format!("ensure {schema}.wamn_cdc_exclusions"))?;
     }
 
@@ -50,8 +56,10 @@ pub(super) async fn reconcile_entity_maps(
             schema.quoted(),
             schema.quoted()
         );
-        let Some(mapping) = tx
-            .query_opt(&mapping_sql, &[&model.schema, &model.table])
+        let Some(mapping) = sqlx::query(sqlx::AssertSqlSafe(mapping_sql.clone()))
+            .bind(&model.schema)
+            .bind(&model.table)
+            .fetch_optional(&mut **tx)
             .await
             .with_context(|| {
                 format!(
@@ -67,11 +75,11 @@ pub(super) async fn reconcile_entity_maps(
                 model.table
             );
         };
-        let mapped_package = mapping.get::<_, Option<String>>(0);
-        let mapped_entity = mapping.get::<_, Option<String>>(1);
-        let mapped_table = mapping.get::<_, Option<String>>(2);
+        let mapped_package = mapping.get::<Option<String>, _>(0);
+        let mapped_entity = mapping.get::<Option<String>, _>(1);
+        let mapped_table = mapping.get::<Option<String>, _>(2);
         ensure!(
-            !mapping.get::<_, bool>(3),
+            !mapping.get::<bool, _>(3),
             "package-relation-classification-conflict: {}.{} is already CDC-excluded and cannot also map to model {}",
             model.schema,
             model.table,
@@ -93,18 +101,21 @@ pub(super) async fn reconcile_entity_maps(
                 continue;
             }
         }
-        let mapped = tx
-            .execute(
-                &wamn_control_provision::sql::upsert_entity_map_sql(&model.schema),
-                &[relation_owner, &model.model_id, &model.table],
+        let mapped = sqlx::query(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::upsert_entity_map_sql(&model.schema),
+        ))
+        .bind(relation_owner)
+        .bind(&model.model_id)
+        .bind(&model.table)
+        .execute(&mut **tx)
+        .await
+        .map(|result| result.rows_affected())
+        .with_context(|| {
+            format!(
+                "upsert entity map {}.{} ({})",
+                model.schema, model.table, model.model_id
             )
-            .await
-            .with_context(|| {
-                format!(
-                    "upsert entity map {}.{} ({})",
-                    model.schema, model.table, model.model_id
-                )
-            })?;
+        })?;
         ensure!(mapped == 1, "package-entity-map-write-refused");
     }
 
@@ -123,8 +134,10 @@ pub(super) async fn reconcile_entity_maps(
             schema.quoted(),
             schema.quoted()
         );
-        let Some(mapping) = tx
-            .query_opt(&mapping_sql, &[&excluded.schema, &excluded.table])
+        let Some(mapping) = sqlx::query(sqlx::AssertSqlSafe(mapping_sql.clone()))
+            .bind(&excluded.schema)
+            .bind(&excluded.table)
+            .fetch_optional(&mut **tx)
             .await
             .with_context(|| {
                 format!(
@@ -141,14 +154,14 @@ pub(super) async fn reconcile_entity_maps(
             );
         };
         ensure!(
-            !mapping.get::<_, bool>(3),
+            !mapping.get::<bool, _>(3),
             "package-relation-classification-conflict: {}.{} is already entity-mapped and cannot also be CDC-excluded",
             excluded.schema,
             excluded.table
         );
-        let mapped_package = mapping.get::<_, Option<String>>(0);
-        let mapped_relation = mapping.get::<_, Option<String>>(1);
-        let mapped_table = mapping.get::<_, Option<String>>(2);
+        let mapped_package = mapping.get::<Option<String>, _>(0);
+        let mapped_relation = mapping.get::<Option<String>, _>(1);
+        let mapped_table = mapping.get::<Option<String>, _>(2);
         if let (Some(mapped_package), Some(mapped_relation)) =
             (mapped_package.as_deref(), mapped_relation.as_deref())
         {
@@ -167,18 +180,21 @@ pub(super) async fn reconcile_entity_maps(
                 continue;
             }
         }
-        let mapped = tx
-            .execute(
-                &wamn_control_provision::sql::upsert_cdc_exclusion_map_sql(&excluded.schema),
-                &[&manifest.package.id, &excluded.relation_id, &excluded.table],
+        let mapped = sqlx::query(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::upsert_cdc_exclusion_map_sql(&excluded.schema),
+        ))
+        .bind(&manifest.package.id)
+        .bind(&excluded.relation_id)
+        .bind(&excluded.table)
+        .execute(&mut **tx)
+        .await
+        .map(|result| result.rows_affected())
+        .with_context(|| {
+            format!(
+                "upsert CDC exclusion {}.{} ({})",
+                excluded.schema, excluded.table, excluded.relation_id
             )
-            .await
-            .with_context(|| {
-                format!(
-                    "upsert CDC exclusion {}.{} ({})",
-                    excluded.schema, excluded.table, excluded.relation_id
-                )
-            })?;
+        })?;
         ensure!(mapped == 1, "package-cdc-exclusion-map-write-refused");
     }
     Ok(())

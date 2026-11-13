@@ -71,7 +71,6 @@
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
 -- `provisioning` = operations state, empty today; `identity` = first-party platform principals,
 -- local user credential hashes, project-role assignments (wamn-ctc8.6), and
--- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
 -- ---------------------------------------------------------------------------
@@ -255,9 +254,7 @@ CREATE FUNCTION registry.control_org() RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT o.id FROM registry.orgs o
     WHERE session_user::text = 'wamn_control_' ||
-        left(encode(sha256(pg_catalog.int8send(octet_length(convert_to('wamn.control.identity.v0.1', 'UTF8'))::bigint) || convert_to('wamn.control.identity.v0.1', 'UTF8') || pg_catalog.int8send(octet_length(convert_to('org', 'UTF8'))::bigint) || convert_to('org', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8') || pg_catalog.int8send(octet_length(convert_to('database', 'UTF8'))::bigint) || convert_to('database', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint) || convert_to(current_database(), 'UTF8')), 'hex'), 40) || '_a'
-       OR session_user::text = 'wamn_control_' ||
-        left(encode(sha256(pg_catalog.int8send(octet_length(convert_to('wamn.control.identity.v0.1', 'UTF8'))::bigint) || convert_to('wamn.control.identity.v0.1', 'UTF8') || pg_catalog.int8send(octet_length(convert_to('org', 'UTF8'))::bigint) || convert_to('org', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8') || pg_catalog.int8send(octet_length(convert_to('database', 'UTF8'))::bigint) || convert_to('database', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint) || convert_to(current_database(), 'UTF8')), 'hex'), 40) || '_b'
+        left(encode(sha256(pg_catalog.int8send(octet_length(convert_to('wamn.control.identity.v0.1', 'UTF8'))::bigint) || convert_to('wamn.control.identity.v0.1', 'UTF8') || pg_catalog.int8send(octet_length(convert_to('org', 'UTF8'))::bigint) || convert_to('org', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8') || pg_catalog.int8send(octet_length(convert_to('database', 'UTF8'))::bigint) || convert_to('database', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint) || convert_to(current_database(), 'UTF8')), 'hex'), 40)
 $$;
 GRANT EXECUTE ON FUNCTION registry.control_org() TO PUBLIC;
 
@@ -647,7 +644,6 @@ CREATE TRIGGER revoke_disabled_password_logins
     FOR EACH ROW WHEN (NEW.status = 'disabled')
     EXECUTE FUNCTION identity.revoke_disabled_password_logins();
 
--- Session signing authority (wamn-ctc8.15.1). This is key-generation state,
 -- never per-session state. A fresh UUID kid is generated for each publication;
 -- rotation never reuses the credential machinery's A/B slot names as kids.
 -- Only the identity authority receives table access. Hosts receive a public
@@ -970,27 +966,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
--- The password fingerprints of the credential generations (wamn-zua8.3,
--- docs/plan/platform-ui.md section 4.10). PostgreSQL shows a password only to a
--- superuser, and the provisioner is not one. A prepare records the SHA-256 of
--- the password that it sets, and a retirement removes the row. A generation is
--- active only with a row. The password itself is stored nowhere.
--- ---------------------------------------------------------------------------
-CREATE TABLE registry.generation_passwords (
-    role        text PRIMARY KEY,
-    sha256      text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-    recorded_at timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.generation_passwords
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- The issuer can lock a principal without gaining principal mutation rights.
+-- The issuer locks a principal without principal mutation privileges.
 CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
@@ -1102,7 +1078,6 @@ CREATE TABLE identity.oauth_token (                    -- host-only; every OAuth
 -- client credentials (secret or JWT): no row = no token yet; the first call fetches one
 -- every fetch and refresh: FOR NO KEY UPDATE on the registry.connection row (it always exists), re-read this row,
 -- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
--- with a new generation, in the same transaction:
 --   client credentials: delete this row when the credential or parameters.auth changes
 --   authorization code: delete this row when parameters.auth changes (authorize again);
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)

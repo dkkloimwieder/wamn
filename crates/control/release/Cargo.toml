@@ -9,6 +9,8 @@ license.workspace = true
 default = []
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
 wamn-digest.workspace = true
@@ -20,7 +22,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
 wamn-catalog = { workspace = true }
 wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
@@ -39,7 +40,6 @@ wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true, features = ["test-util"] }

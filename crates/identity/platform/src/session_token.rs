@@ -4,12 +4,13 @@
 //! signs with the issuer's active key in Postgres and reads whether a session's
 //! authority is still active. No token is persisted or logged.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::{
     fmt,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use tokio_postgres::{Client, GenericClient, Transaction};
 use wamn_identity_protocol::token::{
     MAXIMUM_LIFETIME, SessionAuthority, SessionClaims, session_header,
 };
@@ -71,9 +72,9 @@ pub async fn sign_session_token(
     claims: SessionClaims,
     validation_started_at: i64,
 ) -> Result<IssuedSessionToken, IdentityError> {
-    let transaction = client.transaction().await.map_err(key_database_error)?;
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
     let token =
-        sign_session_token_in_transaction(&transaction, claims, validation_started_at, None)
+        sign_session_token_in_transaction(&mut transaction, claims, validation_started_at, None)
             .await?;
     transaction.commit().await.map_err(key_database_error)?;
     if unix_seconds()? >= token.claims.exp {
@@ -87,7 +88,7 @@ pub async fn sign_session_token(
 /// The caller retains the signing lock through commit and must not deliver a
 /// token before that commit succeeds. Supplied JWT claim times are always replaced.
 pub async fn sign_session_token_in_transaction(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     mut claims: SessionClaims,
     validation_started_at: i64,
     absolute_expiry: Option<i64>,
@@ -132,31 +133,19 @@ fn refused() -> IdentityError {
 /// Signature and exact audience verification must precede this read. The caller
 /// supplies project and environment from the loaded release, never the request.
 pub async fn session_is_active(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     claims: &SessionClaims,
     project: &str,
     environment: &str,
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;
-    client
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM identity.principals p \
+    sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals p \
                   WHERE p.id=$1::text::uuid AND p.type='user' AND p.status='active' \
          AND identity.has_project_access(p.id,$2,$4,$3) \
          AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND \
          EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5::text::uuid \
          AND l.principal_id=p.id AND l.issuer=$6 AND l.audience=$7 AND l.revoked_at IS NULL \
-         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))",
-            &[
-                &claims.sub.to_string(),
-                &claims.org,
-                &project,
-                &environment,
-                &login.to_string(),
-                &claims.iss,
-                &claims.aud,
-            ],
-        )
+         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))").bind(claims.sub.to_string()).bind(&claims.org).bind(project).bind(environment).bind(login.to_string()).bind(&claims.iss).bind(&claims.aud).fetch_one(&mut *client)
         .await
         .map_err(key_database_error)?
         .try_get(0)

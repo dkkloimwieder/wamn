@@ -9,7 +9,6 @@ use wamn_kubernetes::kubernetes_api::KubernetesApi;
 
 use super::{ControlRoutes, Refusal};
 
-const NAMESPACE: &str = "platform";
 const TARGET: &str = "wamn.dev/operation-target";
 const OPERATION: &str = "wamn.dev/operation";
 
@@ -117,7 +116,7 @@ impl ControlRoutes<'_> {
         .map_err(|_| invalid("env"))?;
         // Repeat authority in the write transaction before contacting Kubernetes.
         let mut writer = self.writer.lock().await;
-        let transaction = self
+        let mut transaction = self
             .begin_in_environment(
                 &mut writer,
                 attachment,
@@ -126,13 +125,15 @@ impl ControlRoutes<'_> {
                 Some(&request.env),
             )
             .await?;
-        let exists = transaction
-            .query_opt(
-                wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB,
-                &[&self.org, &request.project, &request.env],
-            )
-            .await?
-            .is_some();
+        let exists = sqlx::query(
+            wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB,
+        )
+        .bind(self.org)
+        .bind(&request.project)
+        .bind(&request.env)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .is_some();
         if !exists {
             return Err(Refusal::Declared {
                 code: "environment_not_found",
@@ -149,6 +150,10 @@ impl ControlRoutes<'_> {
             api = KubernetesApi::in_cluster().map_err(anyhow::Error::from)?;
             &api
         };
+        let namespace = &api.namespace;
+        if namespace != self.org {
+            return Err(anyhow::anyhow!("operation worker must share the org namespace").into());
+        }
         if attachment.route.operation == "operation.status" {
             if request.application.is_some()
                 || request.release.is_some()
@@ -162,7 +167,9 @@ impl ControlRoutes<'_> {
             Operation::parse(attachment.route.operation).context("unknown operation Job route")?;
         validate(operation, &request)?;
         let environment = api
-            .get(format!("/api/v1/namespaces/hosts/configmaps/{coordinate}"))
+            .get(format!(
+                "/api/v1/namespaces/{namespace}/configmaps/{coordinate}"
+            ))
             .await
             .map_err(anyhow::Error::from)?;
         let environment: Value = serde_json::from_str(
@@ -185,7 +192,7 @@ impl ControlRoutes<'_> {
         // Both ConfigMaps are installed by trusted platform/environment provisioning.
         let configuration = api
             .get(format!(
-                "/api/v1/namespaces/{NAMESPACE}/configmaps/wamn-operation-{}",
+                "/api/v1/namespaces/{namespace}/configmaps/wamn-operation-{}",
                 self.org
             ))
             .await
@@ -199,13 +206,13 @@ impl ControlRoutes<'_> {
             .context("worker input selection is absent")?;
         let configuration = api
             .get(format!(
-                "/api/v1/namespaces/{NAMESPACE}/configmaps/{inputs}"
+                "/api/v1/namespaces/{namespace}/configmaps/{inputs}"
             ))
             .await
             .map_err(anyhow::Error::from)?;
         let target = api
             .get(format!(
-                "/api/v1/namespaces/{NAMESPACE}/configmaps/{coordinate}-operations"
+                "/api/v1/namespaces/{namespace}/configmaps/{coordinate}-operations"
             ))
             .await
             .map_err(anyhow::Error::from)?;
@@ -236,7 +243,7 @@ impl ControlRoutes<'_> {
             self.registry_token_metadata,
         );
         let created = api
-            .create_job(NAMESPACE, &job)
+            .create_job(&api.namespace, &job)
             .await
             .map_err(anyhow::Error::from)?;
         if created["metadata"]["name"] != name {
@@ -340,16 +347,22 @@ fn manifest(
         json!({"name":"work","mountPath":"/work"}),
     ];
     for (secret, volume, path) in operation.needs(org, cluster, metadata) {
-        volumes.push(json!({"name":volume,"secret":{"secretName":secret}}));
+        volumes.push(if volume == "apply" {
+            json!({"name":volume,"configMap":{"name":secret}})
+        } else {
+            json!({"name":volume,"secret":{"secretName":secret}})
+        });
         mounts.push(json!({"name":volume,"mountPath":path,"readOnly":true}));
     }
     json!({"apiVersion":"batch/v1", "kind":"Job",
-        "metadata":{"name":name, "namespace":NAMESPACE, "annotations":{TARGET:coordinate,OPERATION:operation.command()}},
+        "metadata":{"name":name, "namespace":org, "annotations":{TARGET:coordinate,OPERATION:operation.command()}},
         "spec":{"backoffLimit":0,"activeDeadlineSeconds":900,"ttlSecondsAfterFinished":3600,
             "template":{"spec":{"serviceAccountName":format!("{coordinate}-{}",if operation.privileged() {"sql"} else {"code"}),
                 "automountServiceAccountToken":true,"restartPolicy":"Never", "volumes":volumes,
                 "containers":[{"name":"operation","image":image,"command":["/usr/local/bin/wamn-ctl"],"args":arguments,
                     "env":[{"name":"WAMN_DEPLOY_ACTOR","value":actor},
+                        {"name":"WAMN_RELEASE_NAMESPACE","value":org},
+                        {"name":"WAMN_DATABASE_NAMESPACE","value":org},
                         {"name":"KUBECONFIG","value":"/work/kubeconfig"},
                         {"name":"WAMN_RELEASE_CHART","value":"/work/chart"},
                         if metadata {
@@ -361,7 +374,7 @@ fn manifest(
                         {"name":"WAMN_NATS_TLS_CA","value":"/credentials/nats/ca.crt"},
                         {"name":"WAMN_NATS_TLS_CERT","value":"/credentials/nats/tls.crt"},
                         {"name":"WAMN_NATS_TLS_KEY","value":"/credentials/nats/tls.key"},
-                        {"name":"WAMN_APPLY_DATABASE_URL","valueFrom":{"secretKeyRef":{"name":"wamn-apply","key":"url"}}},
+                        {"name":"WAMN_APPLY_DATABASE_URL","valueFrom":{"configMapKeyRef":{"name":"wamn-apply","key":"apply.json"}}},
                         {"name":"WAMN_RELEASE_ARTIFACT_BASE","valueFrom":{"configMapKeyRef":{"name":inputs,"key":"release-base"}}}],
                     "volumeMounts":mounts,"resources":{"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}}}]}}}})
 }
@@ -381,6 +394,7 @@ async fn status(
     request: &Request,
     coordinate: &str,
 ) -> Result<Value, Refusal> {
+    let namespace = &api.namespace;
     let name = request.job.as_deref().ok_or_else(|| invalid("job"))?;
     if !kubernetes_name(name)
         || name
@@ -390,7 +404,7 @@ async fn status(
         return Err(invalid("job"));
     }
     let job = api
-        .get_job(NAMESPACE, name)
+        .get_job(&api.namespace, name)
         .await
         .map_err(anyhow::Error::from)?
         .ok_or_else(|| Refusal::Declared {
@@ -412,7 +426,7 @@ async fn status(
         .as_str()
         .context("Job UID is absent")?;
     let uid = uuid::Uuid::parse_str(uid).context("Job UID is invalid")?;
-    let pods = api.get(format!("/api/v1/namespaces/{NAMESPACE}/pods?labelSelector=batch.kubernetes.io%2Fcontroller-uid%3D{uid}&limit=1")).await.map_err(anyhow::Error::from)?;
+    let pods = api.get(format!("/api/v1/namespaces/{namespace}/pods?labelSelector=batch.kubernetes.io%2Fcontroller-uid%3D{uid}&limit=1")).await.map_err(anyhow::Error::from)?;
     let mut log = String::new();
     if let Some(pod) = pods["items"].as_array().and_then(|items| items.first()) {
         let owned = pod["metadata"]["ownerReferences"]
@@ -436,7 +450,7 @@ async fn status(
                 .filter(|name| kubernetes_name(name))
                 .context("pod name is invalid")?;
             log = api
-                .pod_log(NAMESPACE, pod)
+                .pod_log(&api.namespace, pod)
                 .await
                 .map_err(anyhow::Error::from)?;
         }

@@ -1,4 +1,5 @@
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_environment_control::provision_project_env::pat_secrets::{
@@ -12,9 +13,13 @@ use wamn_registry::Triple;
 const PRINCIPAL: &str = "a792950e-150c-4c6e-8000-000000000004";
 
 async fn system_client(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
-    tokio::spawn(connection);
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    let mut client = wamn_postgres::connect(url).await.unwrap();
+
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
     client
 }
 
@@ -29,8 +34,8 @@ fn fixed_service_id(system: &wamn_test_postgres::Database) {
 #[tokio::test]
 async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    fixed_service_id(&system);
+    let mut system = wamn_control_provision::test_database::system();
+    fixed_service_id(&mut system);
     system
         .execute(&[&format!(
             "CREATE DATABASE wamn_system WITH TEMPLATE \"{}\" OWNER wamn_system",
@@ -55,11 +60,11 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     )
     .await
     .unwrap();
-    let tx = provisioning_transaction(&mut client).await.unwrap();
-    tx.batch_execute(wamn_registry::sql::CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP).await.unwrap();
+    let mut tx = provisioning_transaction(&mut client).await.unwrap();
+    sqlx::raw_sql(wamn_registry::sql::CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP).execute(&mut *tx).await.map(drop).unwrap();
     tx.commit().await.unwrap();
-    let tx = provisioning_transaction(&mut client).await.unwrap();
-    let drops = assign_pat_role(&tx, &principal, &triple, MANAGEMENT_AUTHOR)
+    let mut tx = provisioning_transaction(&mut client).await.unwrap();
+    let drops = assign_pat_role(&mut tx, &principal, &triple, MANAGEMENT_AUTHOR)
         .await
         .unwrap();
     let mut expected = AuthDrops::default();
@@ -68,21 +73,28 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     tx.rollback().await.unwrap();
     let root = std::env::temp_dir().join(format!("wamn-authdrops-pat-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
-    let bootstrap = crate::dev::pat_issuer::start(url.as_str(), &root)
+    let bootstrap = crate::dev::pat_issuer::start(url.as_str(), &root).unwrap();
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute("RESET ROLE").await.unwrap();
-    client
-        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::apply::ensure_apply_role_sql()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client
-        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+    sqlx::raw_sql("SET SESSION AUTHORIZATION wamn_apply")
+        .execute(&mut client)
         .await
-        .unwrap();
-    client
-        .batch_execute("SET SESSION AUTHORIZATION wamn_apply")
-        .await
+        .map(drop)
         .unwrap();
     let pat_client = PatClient::new(&bootstrap.args).unwrap();
     let (actual, issued) = mint_pat(
@@ -96,19 +108,19 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     .unwrap();
     assert_eq!(actual, principal);
     assert!(
-        authenticate_pat(&client, &issued.token)
+        authenticate_pat(&mut client, &issued.token)
             .await
             .unwrap()
             .is_some()
     );
     assert_eq!(
-        wamn_platform_identity::project_roles(&client, principal.id(), "org", "project")
+        wamn_platform_identity::project_roles(&mut client, principal.id(), "org", "project")
             .await
             .unwrap()
             .len(),
         1
     );
-    bootstrap.stop().await.unwrap();
+    bootstrap.stop().unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     drop(client);
     system

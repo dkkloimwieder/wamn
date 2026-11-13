@@ -1,12 +1,9 @@
 //! Provision a disposable development environment and write its configuration.
 use super::environment::{DevEnvironmentInputs, connect, provision, write_dev_config};
 use anyhow::Context as _;
-use std::fs::{OpenOptions, Permissions};
-use std::io::Write as _;
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
-use wamn_compiler::manifest::PackageManifest;
 
 /// Explicit inputs for a disposable development environment.
 #[derive(Debug)]
@@ -92,25 +89,22 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         cdc_reader: None,
     };
 
-    let (admin, admin_task) = connect(&args.system_database_url).await?;
+    let mut admin = connect(&args.system_database_url).await?;
     let environment = provision(
         &args.system_database_url,
-        admin.as_ref(),
+        &mut admin,
         &args.root,
         &inputs.platform_domain,
         &document,
     )
     .await?;
-    inputs.cdc_reader = Some(
-        enable_cdc(
-            &args,
-            &inputs,
-            admin.as_ref(),
-            &environment.route.database_url,
-            &environment.identity,
-        )
-        .await?,
-    );
+    inputs.cdc_reader = Some(enable_cdc(
+        &args,
+        &inputs,
+        &mut admin,
+        &environment.route.database_url,
+        &environment.identity,
+    )?);
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
@@ -121,30 +115,13 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         &environment.identity,
     )?;
 
-    let web = super::control::start(&args, &environment).await;
+    let web = super::control::start(&args, &environment);
     if let Err(error) = web {
-        environment.issuer.stop().await?;
+        environment.issuer.stop()?;
         return Err(error);
     }
     environment.issuer.retain(&args.root.canonicalize()?)?;
-    admin_task.abort();
     Ok(config)
-}
-
-/// Write private runtime credentials into the environment directory.
-pub(super) fn write_private(target: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(target)
-        .with_context(|| format!("create {}", target.display()))?;
-    // A file left by an earlier run keeps its old mode, so set it again.
-    file.set_permissions(Permissions::from_mode(0o600))?;
-    file.write_all(bytes)
-        .with_context(|| format!("write {}", target.display()))?;
-    Ok(())
 }
 
 /// Enable CDC for the environment with the cluster's verb and record what the
@@ -152,141 +129,13 @@ pub(super) fn write_private(target: &std::path::Path, bytes: &[u8]) -> anyhow::R
 /// materializer consumers of the packages, and records the registration. The
 /// role SQL applies here. The CDC SQL holds the slot, so the loop applies it to
 /// each target it creates.
-async fn enable_cdc(
+fn enable_cdc(
     args: &DevUpRequest,
-    inputs: &DevEnvironmentInputs,
-    admin: &tokio_postgres::Client,
-    target_url: &str,
-    identity: &super::activation::DevActivationIdentity,
+    _inputs: &DevEnvironmentInputs,
+    admin: &mut sqlx::PgConnection,
+    _target_url: &str,
+    _identity: &super::activation::DevActivationIdentity,
 ) -> anyhow::Result<super::config::CdcReader> {
-    let coordinate = wamn_registry::Triple::new(
-        &identity.org,
-        identity.environment.clone(),
-        &identity.project,
-    );
-    let manifests = inputs
-        .package_sources
-        .iter()
-        .map(|root| super::config::read_package_manifest(root))
-        .collect::<Result<Vec<_>, _>>()?;
-    let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
-    let consumers = wamn_broker::events::entity_consumers(&coordinate, entities);
-    let schemas = manifests
-        .iter()
-        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let consumer_config = consumers
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<_>, _>>()?;
-    let target = url::Url::parse(target_url).context("parse the target database URL")?;
-    let mut password = [0u8; 32];
-    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut password)
-        .map_err(|_| anyhow::anyhow!("generate the replication password"))?;
-    let cdc_sql_file = args.root.join("cdc.sql");
-    let outcome = wamn_environment_control::enable_cdc_project_env::enable_cdc_project_env(
-        &wamn_environment_control::enable_cdc_project_env::EnableCdcProjectEnvRequest {
-            org: identity.org.clone(),
-            project: identity.project.clone(),
-            env: identity.environment.clone(),
-            schemas: schemas.clone(),
-            system_database_url: Some(args.system_database_url.clone()),
-            cluster: None,
-            replication_password: hex::encode(password),
-            db_host: target.host_str().map(str::to_owned),
-            db_port: target.port_or_known_default().unwrap_or(5432),
-            namespace: "wamn-system".to_owned(),
-            cluster_namespace: "wamn-system".to_owned(),
-            secret_namespace: None,
-            stream: None,
-            nats: inputs.nats.clone(),
-            stream_replicas: inputs.stream_replicas,
-            dup_window_secs: inputs.dup_window_secs,
-            consumer_config,
-            // The role SQL carries the password, so it stays in memory.
-            emit_role_sql: None,
-            emit_cdc_sql: None,
-            emit_publication: None,
-            emit_secret: None,
-        },
-    )
-    .await?;
-    // No CNPG operator runs here, so the superuser that local dev holds creates
-    // the publication with the statement the fixtures use. It follows the
-    // schema guard of the bundle. The bundle creates the slot before any write.
-    let full = manifests
-        .iter()
-        .flat_map(|manifest| manifest.models.values())
-        .map(|model| {
-            format!(
-                "{};",
-                wamn_schema_control::alter_replica_identity_sql(
-                    &model.schema,
-                    &model.table,
-                    wamn_schema_control::ReplicaIdentity::Full
-                )
-            )
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(
-        &cdc_sql_file,
-        format!(
-            "{}{full}\n{}\n",
-            outcome.cdc_sql,
-            wamn_control_provision::sql::create_publication_schemas_sql(
-                &outcome.cdc_name,
-                &schemas
-            )
-        ),
-    )
-    .with_context(|| format!("write {}", cdc_sql_file.display()))?;
-    admin
-        .batch_execute(&outcome.role_sql)
-        .await
-        .context("apply the replication role SQL")?;
-    wamn_environment_control::enable_cdc_project_env::record_event_reader(
-        &args.system_database_url,
-        &outcome.triple,
-        &schemas,
-        &outcome.cdc_name,
-        None,
-    )
-    .await?;
-    let cdc_url = outcome.secret["stringData"]["url"]
-        .as_str()
-        .context("the CDC Secret carries its url")?
-        .to_owned();
-    let reader_secret = args.root.join("registry-reader.json");
-    wamn_environment_control::provision_project_env::run_workload_action(
-        &super::environment::generation_args(
-            &super::environment::JourneyTarget {
-                org: identity.org.clone(),
-                project: identity.project.clone(),
-                environment: identity.environment.clone(),
-            },
-            wamn_control_provision::WorkloadRoleFamily::RegistryReader,
-            &args.system_database_url,
-            None,
-            &reader_secret,
-        ),
-    )
-    .await
-    .context("prepare the registry-reader generation")?;
-    Ok(super::config::CdcReader {
-        binary: args
-            .cdc_reader_binary
-            .canonicalize()
-            .context("resolve the CDC reader binary")?,
-        system_database_url: wamn_environment_control::provision_project_env::secret_value(
-            &reader_secret,
-            "url",
-        )?,
-        cdc_url,
-        cdc_sql_file,
-    })
+    let _ = (args, admin);
+    anyhow::bail!("no credential store in local mode")
 }

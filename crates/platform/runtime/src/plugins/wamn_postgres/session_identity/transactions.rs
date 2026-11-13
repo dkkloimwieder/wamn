@@ -1,13 +1,12 @@
+use sqlx::{Row as _, Statement as _};
 use std::sync::Arc;
 
-use deadpool_postgres::Object;
-use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 
 use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
-use super::super::pool::{ProjectPool, SessionSettings};
+use super::super::pool::ProjectPool;
 use super::super::resources::{
     StatementConnectionGuard, run_execute, run_query, run_verified_query,
 };
@@ -18,41 +17,32 @@ use super::{
     OneShotResult, WamnPostgres, refuse_unattributed_statement, validate_session_identity,
 };
 
-/// The transactional `wamn.causation` logical-message emit appended to a
-/// run-owned transaction's BEGIN batch (l5i9.12.2). The [`Causation`] is
-/// serialized canonically (`{"run":..,"root":..,"depth":..}` — the reader
-/// deserializes with `deny_unknown_fields`) and SQL-escaped (single quotes
-/// doubled) for safe literal embedding in the simple-query batch, which takes
-/// no bind params. `transactional = true` so the message rides the txn's commit
-/// at its own LSN; the reader (l5i9.12.1) buffers the whole txn and stamps this
-/// onto every row event regardless of frame order.
-#[cfg(test)]
-pub(in super::super) fn causation_emit_sql(c: &Causation) -> String {
-    let json = serde_json::to_string(c).expect("Causation serializes to JSON");
-    let literal = postgres_protocol::escape::escape_literal(&json);
-    format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', {literal});")
-}
-
-pub(in super::super) async fn prepare_causation(
-    conn: &Object,
-    run: &Causation,
-) -> Result<(tokio_postgres::Statement, String), tokio_postgres::Error> {
-    let statement = conn
-        .prepare_cached("SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)")
-        .await?;
+pub(in super::super) fn prepare_causation(run: &Causation) -> (String, String) {
+    let statement = "SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)".to_owned();
     let json = serde_json::to_string(run).expect("Causation serializes to JSON");
-    Ok((statement, json))
+    (statement, json)
 }
 
 pub(in super::super) async fn finish_transaction(
-    conn: &Object,
+    conn: &mut sqlx::PgConnection,
     verb: &str,
-) -> Result<(), tokio_postgres::Error> {
+) -> Result<(), sqlx::Error> {
     if verb == "COMMIT" {
-        let statement = conn.prepare_cached(verb).await?;
-        conn.execute(&statement, &[]).await.map(drop)
+        let statement = sqlx::Executor::prepare(
+            &mut *conn,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe((verb).to_string())),
+        )
+        .await?;
+        sqlx::query(statement.sql().clone())
+            .execute(&mut *conn)
+            .await
+            .map(|result| result.rows_affected())
+            .map(drop)
     } else {
-        conn.batch_execute(verb).await
+        sqlx::raw_sql(sqlx::AssertSqlSafe((verb).to_string()))
+            .execute(&mut *conn)
+            .await
+            .map(|_| ())
     }
 }
 
@@ -124,86 +114,32 @@ pub(super) const IDENTITY_SQL: &str = "SELECT \
 /// and explicitly outside the work of `wamn-0h0g.22.6`. `app.operation` stays with
 /// them: the record-history log records it. `app.application` stays too,
 /// for logging only.
-/// The session-wide settings an autocommit read still needs.
-///
-/// `search_path` and `statement_timeout` are not identity -- they are how the
-/// connection resolves this package's unqualified relations and how long it may
-/// run. A read outside a transaction cannot take them transaction-locally, and
-/// without `search_path` every generated statement fails to resolve its own
-/// tables. The timeout is uniform within a pool. Each connection remembers
-/// its last schema and runner, and a change applies before the next read.
-/// An absent schema restores the server default; an absent runner clears it.
-///
-/// `app.role`, `app.user_id`, `app.operation`, and `app.application` are
-/// deliberately ABSENT.
-/// Those are per-caller identity, and a session-wide identity would outlive the
-/// request and reach the next borrower of the pooled connection -- the exact
-/// leak the identity model exists to prevent. A request carrying `app.role` takes
-/// the transactional path instead. A read needs no `app.user_id` and no
-/// `app.operation`: only the record-history triggers read them, and a read
-/// that writes nothing fires no trigger.
-const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
-     set_config('statement_timeout', $1, false), \
-     set_config('search_path', COALESCE($2, (SELECT reset_val FROM pg_settings WHERE name = 'search_path')), false), \
-     set_config('app.runner', COALESCE($3, ''), false)";
-
-/// Prepare changed connection configuration before the application Parse is polled.
+/// Apply connection configuration before an autocommit read.
 pub(in super::super) async fn prepare_session_settings(
-    connection: &Object,
-    policy: &ProjectPool,
-    schema: Option<&str>,
-    runner: Option<&str>,
-) -> Result<Option<tokio_postgres::Statement>, PgError> {
-    let identity = Arc::downgrade(&connection.statement_cache);
-    let unchanged = policy
-        .session_settings
-        .lock()
-        .expect("session settings lock poisoned")
-        .iter()
-        .any(|settings| {
-            settings.connection.ptr_eq(&identity)
-                && settings.schema.as_deref() == schema
-                && settings.runner.as_deref() == runner
-        });
-    if unchanged {
-        return Ok(None);
-    }
-    connection
-        .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
-        .await
-        .map(Some)
-        .map_err(|error| map_pg_error(&error))
+    connection: &mut sqlx::PgConnection,
+    _policy: &ProjectPool,
+    _schema: Option<&str>,
+    _runner: Option<&str>,
+) -> Result<Option<sqlx::postgres::PgStatement>, PgError> {
+    sqlx::Executor::prepare(&mut *connection, sqlx::SqlSafeStr::into_sql_str("SELECT set_config('search_path', COALESCE($1, (SELECT reset_val FROM pg_settings WHERE name='search_path')), false), set_config('app.runner', COALESCE($2, ''), false)"))
+        .await.map(Some).map_err(|error| map_pg_error(&error))
 }
 
-/// Install only connection configuration. Caller identity stay transaction-local.
 pub(in super::super) async fn bind_session_settings(
-    connection: &Object,
-    policy: &ProjectPool,
-    prepared: Option<&tokio_postgres::Statement>,
+    connection: &mut sqlx::PgConnection,
+    _policy: &ProjectPool,
+    prepared: Option<&sqlx::postgres::PgStatement>,
     schema: Option<String>,
     runner: Option<String>,
 ) -> Result<(), PgError> {
-    let Some(prepared) = prepared else {
-        return Ok(());
-    };
-    let timeout = policy.statement_timeout_ms.to_string();
-    let params: &[&(dyn ToSql + Sync)] = &[&timeout, &schema.as_deref(), &runner.as_deref()];
-    connection
-        .execute(prepared, params)
-        .await
-        .map_err(|error| map_pg_error(&error))?;
-    let identity = Arc::downgrade(&connection.statement_cache);
-    let mut settings = policy
-        .session_settings
-        .lock()
-        .expect("session settings lock poisoned");
-    settings
-        .retain(|entry| entry.connection.strong_count() > 0 && !entry.connection.ptr_eq(&identity));
-    settings.push(SessionSettings {
-        connection: identity,
-        schema,
-        runner,
-    });
+    if let Some(statement) = prepared {
+        sqlx::query(statement.sql().clone())
+            .bind(schema)
+            .bind(runner)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| map_pg_error(&error))?;
+    }
     Ok(())
 }
 
@@ -221,7 +157,7 @@ const GUEST_IDENTITY_SQL: &str = "SELECT \
 /// about which cache entry they mean (wamn-0h0g.17.33).
 const fn identity_sql(class: AuthorityClass) -> &'static str {
     match class {
-        AuthorityClass::GuestSql => GUEST_IDENTITY_SQL,
+        AuthorityClass::GuestSql | AuthorityClass::DynamicSql => GUEST_IDENTITY_SQL,
         _ => IDENTITY_SQL,
     }
 }
@@ -237,28 +173,38 @@ const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ON
 /// Prepared identity whose first poll sends BEGIN before the bound settings.
 #[derive(Debug)]
 pub(in super::super) struct BoundIdentity {
-    begin: tokio_postgres::Statement,
-    pub(in super::super) causation: Option<(tokio_postgres::Statement, String)>,
-    statement: tokio_postgres::Statement,
+    begin: &'static str,
+    pub(in super::super) causation: Option<(String, String)>,
+    statement: &'static str,
     params: Vec<Option<String>>,
     class: AuthorityClass,
 }
 
 impl BoundIdentity {
-    pub(in super::super) async fn bind(&self, conn: &Object) -> Result<(), PgError> {
+    pub(in super::super) async fn bind(
+        &self,
+        conn: &mut sqlx::PgConnection,
+    ) -> Result<(), PgError> {
         async {
-            let (begin, causation, identity) = tokio::join!(biased;
-                conn.execute(&self.begin, &[]),
-                async {
-                    if let Some((statement, json)) = &self.causation {
-                        conn.execute(statement, &[json]).await?;
-                    }
-                    Ok::<_, tokio_postgres::Error>(())
-                },
-                conn.execute_raw(&self.statement, self.params.iter()));
-            begin.map_err(|error| map_pg_error(&error))?;
-            causation.map_err(|error| map_pg_error(&error))?;
-            identity.map_err(|error| map_pg_error(&error))?;
+            sqlx::query(sqlx::AssertSqlSafe((self.begin).to_string()))
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| map_pg_error(&e))?;
+            if let Some((statement, json)) = &self.causation {
+                sqlx::query(sqlx::AssertSqlSafe((statement).clone()))
+                    .bind(json)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| map_pg_error(&e))?;
+            }
+            let mut query = sqlx::query(sqlx::AssertSqlSafe((self.statement).to_string()));
+            for value in &self.params {
+                query = query.bind(value);
+            }
+            query
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| map_pg_error(&e))?;
             Ok(())
         }
         .instrument(tracing::info_span!(
@@ -280,18 +226,14 @@ impl WamnPostgres {
     /// `application` also binds `''`. A run-owned transaction also
     /// appends the transactional `wamn.causation` emit (l5i9.12.2).
     ///
-    /// Cost: `BEGIN` and the bound identity statement are pipelined (issued without
-    /// an await between them; tokio-postgres preserves FIFO order so `BEGIN`
-    /// opens the txn before the transaction-LOCAL `set_config`s apply), and the
-    /// identity statement is `prepare_cached`, so the steady-state round-trip count
-    /// on a pooled connection matches the pre-R2 single batch.
+    /// The SQLx session begins the transaction before binding its local identity.
     #[expect(
         clippy::too_many_arguments,
         reason = "every identity this transaction binds is an independently trusted input"
     )]
     pub(in super::super) async fn begin_with_identity(
         &self,
-        conn: &Object,
+        conn: &mut sqlx::PgConnection,
         class: AuthorityClass,
         read: bool,
         project_env_key: &str,
@@ -304,8 +246,7 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
-        self.prepare_identity(
-            conn,
+        Self::prepare_identity(
             class,
             read,
             project_env_key,
@@ -317,8 +258,7 @@ impl WamnPostgres {
             application,
             run,
             statement_timeout_ms,
-        )
-        .await?
+        )?
         .bind(conn)
         .await
     }
@@ -327,9 +267,7 @@ impl WamnPostgres {
         clippy::too_many_arguments,
         reason = "every identity this transaction binds is an independently trusted input"
     )]
-    pub(in super::super) async fn prepare_identity(
-        &self,
-        conn: &Object,
+    pub(in super::super) fn prepare_identity(
         class: AuthorityClass,
         read: bool,
         project_env_key: &str,
@@ -354,13 +292,10 @@ impl WamnPostgres {
             operation,
             application,
         )?;
-        let guest = class == AuthorityClass::GuestSql;
+        let guest = matches!(class, AuthorityClass::GuestSql | AuthorityClass::DynamicSql);
         // Prepare every statement before a caller polls the pipeline. A cache
         // miss must not let the application statement run ahead of BEGIN.
-        let stmt = conn
-            .prepare_cached(identity_sql(class))
-            .await
-            .map_err(|e| map_pg_error(&e))?;
+        let stmt = identity_sql(class);
         let mut params = vec![
             Some(statement_timeout_ms.to_string()),
             schema.map(str::to_owned),
@@ -384,18 +319,7 @@ impl WamnPostgres {
         } else {
             BEGIN_READ_COMMITTED
         };
-        let begin = conn
-            .prepare_cached(begin)
-            .await
-            .map_err(|e| map_pg_error(&e))?;
-        let causation = match run {
-            Some(run) => Some(
-                prepare_causation(conn, run)
-                    .await
-                    .map_err(|e| map_pg_error(&e))?,
-            ),
-            None => None,
-        };
+        let causation = run.map(prepare_causation);
         Ok(BoundIdentity {
             begin,
             causation,
@@ -438,14 +362,12 @@ impl WamnPostgres {
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, pp, authority) = self
-            .checkout_workload(component_id, project, &project_env_key)
-            .await?;
+        let (mut conn, pp) = self.checkout_dynamic(project, &project_env_key).await?;
         if let Err(e) = self
             .begin_with_identity(
-                &conn,
-                authority,
-                false,
+                &mut conn,
+                AuthorityClass::DynamicSql,
+                true,
                 &project_env_key,
                 schema.as_deref(),
                 runner.as_deref(),
@@ -463,16 +385,16 @@ impl WamnPostgres {
             return Err(e);
         }
         let result = if want_rows {
-            run_query(&conn, sql, params, pp.row_limit)
+            run_query(&mut conn, sql, params, pp.row_limit)
                 .await
                 .map(OneShotResult::Rows)
         } else {
-            run_execute(&conn, sql, params)
+            run_execute(&mut conn, sql, params)
                 .await
                 .map(OneShotResult::Count)
         };
         match result {
-            Ok(v) => match finish_transaction(&conn, "COMMIT").await {
+            Ok(v) => match finish_transaction(&mut conn, "COMMIT").await {
                 Ok(()) => Ok(v),
                 Err(e) => {
                     self.destroy(conn);
@@ -482,7 +404,11 @@ impl WamnPostgres {
             Err(pg_err) => {
                 // Statement failed; roll the implicit transaction back and
                 // repool. If even ROLLBACK fails the connection is toast.
-                if let Err(e) = conn.batch_execute("ROLLBACK").await {
+                if let Err(e) = sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *conn)
+                    .await
+                    .map(|_| ())
+                {
                     tracing::warn!(error = %e, "rollback after failed statement also failed; destroying connection");
                     self.destroy(conn);
                 }
@@ -518,14 +444,15 @@ impl WamnPostgres {
             .checkout_workload(component_id, &project, &project_env_key)
             .await
             .map_err(StatementError::Postgres)?;
-        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         let wal_statement = if want_wal {
             Some(
-                connection
-                    .connection()
-                    .prepare_cached("SELECT pg_current_wal_lsn()::text")
-                    .await
-                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?,
+                sqlx::Executor::prepare(
+                    connection.connection(),
+                    sqlx::SqlSafeStr::into_sql_str("SELECT pg_current_wal_lsn()::text"),
+                )
+                .await
+                .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?,
             )
         } else {
             None
@@ -551,67 +478,58 @@ impl WamnPostgres {
             )
             .await
             .map_err(StatementError::Postgres)?;
-            let (settings, wal, rows) = tokio::join!(
-                biased;
-                bind_session_settings(
-                    connection.connection(), &policy, prepared.as_ref(), schema, runner,
-                ),
-                read_wal_position(connection.connection(), wal_statement.as_ref()),
-                run_verified_query(
-                    connection.connection(), digest, statement, binds, policy.row_limit,
-                ),
-            );
-            settings.map_err(StatementError::Postgres)?;
+            bind_session_settings(
+                connection.connection(),
+                &policy,
+                prepared.as_ref(),
+                schema,
+                runner,
+            )
+            .await
+            .map_err(StatementError::Postgres)?;
+            let wal = read_wal_position(connection.connection(), wal_statement.as_ref()).await;
+            let rows = run_verified_query(
+                connection.connection(),
+                digest,
+                statement,
+                binds,
+                policy.row_limit,
+            )
+            .await;
             let mut rows = rows?;
             rows.wal_position = wal?;
             connection.repool();
             return Ok(rows);
         }
 
-        // Prepare before polling the application query, including on a cold
-        // connection. The biased join sends BEGIN and identity first.
-        let identity = self
-            .prepare_identity(
-                connection.connection(),
-                authority,
-                false,
-                &project_env_key,
-                schema.as_deref(),
-                runner.as_deref(),
-                role.as_deref(),
-                user_id.as_deref(),
-                operation.as_deref(),
-                application.as_deref(),
-                run.as_ref(),
-                policy.statement_timeout_ms,
-            )
+        // Bind the transaction identity before running the application statement.
+        let identity = Self::prepare_identity(
+            authority,
+            false,
+            &project_env_key,
+            schema.as_deref(),
+            runner.as_deref(),
+            role.as_deref(),
+            user_id.as_deref(),
+            operation.as_deref(),
+            application.as_deref(),
+            run.as_ref(),
+            policy.statement_timeout_ms,
+        )
+        .map_err(StatementError::Postgres)?;
+        identity
+            .bind(connection.connection())
             .await
             .map_err(StatementError::Postgres)?;
-        let (identity, wal, result) = tokio::join!(
-            biased;
-            identity.bind(connection.connection()),
-            read_wal_position(connection.connection(), wal_statement.as_ref()),
-            run_verified_query(
-                connection.connection(),
-                digest,
-                statement,
-                binds,
-                policy.row_limit,
-            ),
-        );
-        if let Err(error) = identity {
-            // The statement rode the same flight into a transaction that never
-            // opened, so its own error is a consequence, not the cause.
-            if connection
-                .connection()
-                .batch_execute("ROLLBACK")
-                .await
-                .is_err()
-            {
-                tracing::warn!("rollback after failed identity binding also failed");
-            }
-            return Err(StatementError::Postgres(error));
-        }
+        let wal = read_wal_position(connection.connection(), wal_statement.as_ref()).await;
+        let result = run_verified_query(
+            connection.connection(),
+            digest,
+            statement,
+            binds,
+            policy.row_limit,
+        )
+        .await;
         let result = result.and_then(|mut rows| {
             rows.wal_position = wal?;
             Ok(rows)
@@ -631,7 +549,10 @@ impl WamnPostgres {
                 Err(error) => Err(StatementError::Postgres(map_pg_error(&error))),
             },
             Err(error) => {
-                if let Err(rollback_error) = connection.connection().batch_execute("ROLLBACK").await
+                if let Err(rollback_error) = sqlx::raw_sql("ROLLBACK")
+                    .execute(connection.connection())
+                    .await
+                    .map(|_| ())
                 {
                     tracing::warn!(
                         error = %rollback_error,
@@ -646,15 +567,16 @@ impl WamnPostgres {
     }
 }
 
-/// Read WAL metadata before the application statement in the same pipeline.
+/// Read WAL metadata before the application statement in its transaction.
 pub(in super::super) async fn read_wal_position(
-    conn: &Object,
-    statement: Option<&tokio_postgres::Statement>,
+    conn: &mut sqlx::PgConnection,
+    statement: Option<&sqlx::postgres::PgStatement>,
 ) -> Result<Option<String>, StatementError> {
     let Some(statement) = statement else {
         return Ok(None);
     };
-    conn.query_one(statement, &[])
+    sqlx::query(statement.sql().clone())
+        .fetch_one(&mut *conn)
         .await
         .and_then(|row| row.try_get(0))
         .map(Some)

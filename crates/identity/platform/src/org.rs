@@ -7,7 +7,7 @@
 //! These functions write system rows only. The application rows of the same
 //! grants are the functions of [`crate::application`].
 
-use tokio_postgres::GenericClient;
+use sqlx::Row as _;
 
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, control, database_error,
@@ -38,48 +38,54 @@ const PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
 /// Create the user's active membership of `org`, or make an inactive
 /// membership active. It restores no project, environment or role access.
 pub async fn activate_org_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
-    client
-        .execute(
-            ACTIVATE_MEMBERSHIP_SQL,
-            &[&principal_id.to_string().as_str(), &org],
-        )
+    sqlx::query(ACTIVATE_MEMBERSHIP_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
 /// Write the explicit org administration grant. Lower authority is derived.
 pub async fn grant_org_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
-    client
-        .execute(ORG_ROLE_SQL, &[&principal, &org, &ORG_ADMIN_ROLE])
+    sqlx::query(ORG_ROLE_SQL)
+        .bind(principal)
+        .bind(&org)
+        .bind(ORG_ADMIN_ROLE)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
 /// Write the explicit project administration grant of an active org member.
 pub async fn grant_project_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
     let project = require_target_segment("project", project)?;
-    let in_org: bool = client
-        .query_one(PROJECT_IN_ORG_SQL, &[&org, &project])
+    let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
+        .bind(&org)
+        .bind(&project)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .get(0);
@@ -93,12 +99,14 @@ pub async fn grant_project_admin(
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
     let one = Some(project.as_str());
-    client
-        .execute(
-            PROJECT_ADMIN_SQL,
-            &[&principal, &org, &control::PROJECT_ADMIN_ROLE, &one],
-        )
+    sqlx::query(PROJECT_ADMIN_SQL)
+        .bind(principal)
+        .bind(&org)
+        .bind(control::PROJECT_ADMIN_ROLE)
+        .bind(one)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -108,7 +116,7 @@ const ENV_IN_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_E
 /// Grant a membership of one environment of the org to an active org member.
 /// An environment outside the org is refused.
 pub async fn grant_member(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -117,8 +125,11 @@ pub async fn grant_member(
     let org = active_member(client, principal_id, org).await?;
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
-    let found: bool = client
-        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
+    let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
+        .bind(&org)
+        .bind(&project)
+        .bind(&env)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .get(0);
@@ -139,7 +150,7 @@ const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_rol
 /// other environments stay. While `org-admin` or `project-admin` covers the
 /// environment, the revoke is refused: the covering grant goes first.
 pub async fn revoke_member(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -172,7 +183,7 @@ const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_roles \
 /// Revoke `project-admin` in one project. Environment memberships stay.
 /// While the user holds `org-admin`, the revoke is refused.
 pub async fn revoke_project_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -183,32 +194,29 @@ pub async fn revoke_project_admin(
     let project = require_target_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
     drops.identity(principal_id.to_string().as_str());
-    client
-        .execute(
-            DROP_PROJECT_ADMIN_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &org,
-                &project,
-                &control::PROJECT_ADMIN_ROLE,
-            ],
-        )
+    sqlx::query(DROP_PROJECT_ADMIN_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .bind(control::PROJECT_ADMIN_ROLE)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
 /// Refuse a project-level revoke while `org-admin` covers it.
 async fn refuse_under_org_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<(), IdentityError> {
-    let covered: bool = client
-        .query_one(
-            HOLDS_ORG_ADMIN_SQL,
-            &[&principal_id.to_string().as_str(), &org, &ORG_ADMIN_ROLE],
-        )
+    let covered: bool = sqlx::query(HOLDS_ORG_ADMIN_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(org)
+        .bind(ORG_ADMIN_ROLE)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .get(0);
@@ -228,16 +236,19 @@ const CREATE_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_C
 
 /// Create an org-level project definition. An existing project is refused.
 pub async fn create_project(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
     lock_org_memberships(client, &org).await?;
     let project = require_target_segment("project", project)?;
-    let created = client
-        .execute(CREATE_PROJECT_SQL, &[&org, &project])
+    let created = sqlx::query(CREATE_PROJECT_SQL)
+        .bind(&org)
+        .bind(&project)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     if created == 0 {
         return Err(IdentityError::refused(
@@ -251,7 +262,7 @@ pub async fn create_project(
 
 /// The validated org, when the principal is an active member of it.
 pub(crate) async fn active_member(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<String, IdentityError> {
@@ -308,7 +319,7 @@ pub struct MemberGrants {
 /// Write the active org membership of an invited user, then each requested
 /// grant through its one write. `wamn-ctl invite` and `user.invite` call it.
 pub async fn invite_member(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     grants: &MemberGrants,
@@ -329,17 +340,17 @@ pub async fn invite_member(
 /// Make an existing org membership active. It restores no project,
 /// environment or role access. A principal that is not a member is refused.
 pub async fn reactivate_org_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
-    client
-        .execute(
-            REACTIVATE_MEMBERSHIP_SQL,
-            &[&principal_id.to_string().as_str(), &org],
-        )
+    sqlx::query(REACTIVATE_MEMBERSHIP_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -349,7 +360,7 @@ pub async fn reactivate_org_membership(
 /// inactive. The global principal stays as it is. A principal that is not a
 /// member is refused.
 pub async fn deactivate_org_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     drops: &mut AuthDrops,
@@ -359,35 +370,51 @@ pub async fn deactivate_org_membership(
     let principal = principal_text.as_str();
     drops.identity(principal);
     let every: Option<&str> = None;
-    client
-        .execute(DROP_ENV_MEMBERSHIPS_SQL, &[&principal, &org])
+    sqlx::query(DROP_ENV_MEMBERSHIPS_SQL)
+        .bind(principal)
+        .bind(&org)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    client
-        .execute(DROP_PROJECT_ROLES_SQL, &[&principal, &org, &every])
+    sqlx::query(DROP_PROJECT_ROLES_SQL)
+        .bind(principal)
+        .bind(&org)
+        .bind(every)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    client
-        .execute(
-            "DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2",
-            &[&principal, &org],
-        )
+    sqlx::query(
+        "DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2",
+    )
+    .bind(principal)
+    .bind(&org)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(|error| database_error(&error))?;
+    sqlx::query(DROP_ORG_ROLES_SQL)
+        .bind(principal)
+        .bind(&org)
+        .bind(every)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    client
-        .execute(DROP_ORG_ROLES_SQL, &[&principal, &org, &every])
+    sqlx::query(DEACTIVATE_MEMBERSHIP_SQL)
+        .bind(principal)
+        .bind(&org)
+        .execute(&mut *client)
         .await
-        .map_err(|error| database_error(&error))?;
-    client
-        .execute(DEACTIVATE_MEMBERSHIP_SQL, &[&principal, &org])
-        .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
 /// Revoke only the explicit org grant. Other explicit grants stay.
 pub async fn revoke_org_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     drops: &mut AuthDrops,
@@ -397,12 +424,13 @@ pub async fn revoke_org_admin(
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
     drops.identity(principal);
-    client
-        .execute(
-            DROP_ORG_ROLES_SQL,
-            &[&principal, &org, &Some(ORG_ADMIN_ROLE)],
-        )
+    sqlx::query(DROP_ORG_ROLES_SQL)
+        .bind(principal)
+        .bind(&org)
+        .bind(Some(ORG_ADMIN_ROLE))
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -424,7 +452,7 @@ pub struct OrgUser {
 
 /// The active and inactive members of `org`, by email.
 pub async fn org_users(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
 ) -> Result<Vec<OrgUser>, IdentityError> {
     org_users_page(client, org, None, None, None).await
@@ -432,18 +460,20 @@ pub async fn org_users(
 
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn org_users_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     after: Option<&str>,
     after_id: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<OrgUser>, IdentityError> {
     let org = require_target_segment("org", org)?;
-    client
-        .query(
-            ORG_USERS_SQL,
-            &[&org, &ORG_ADMIN_ROLE, &after, &after_id, &limit],
-        )
+    sqlx::query(ORG_USERS_SQL)
+        .bind(&org)
+        .bind(ORG_ADMIN_ROLE)
+        .bind(after)
+        .bind(after_id)
+        .bind(limit)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -464,7 +494,7 @@ const ORG_ENVIRONMENTS_SQL: &str =
 
 /// The environments of `org`, or of one project of it, as `(project, env)`.
 pub async fn org_environments(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: Option<&str>,
 ) -> Result<Vec<(String, String)>, IdentityError> {
@@ -472,8 +502,10 @@ pub async fn org_environments(
     let project = project
         .map(|project| require_target_segment("project", project))
         .transpose()?;
-    Ok(client
-        .query(ORG_ENVIRONMENTS_SQL, &[&org, &project])
+    Ok(sqlx::query(ORG_ENVIRONMENTS_SQL)
+        .bind(&org)
+        .bind(&project)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -516,7 +548,7 @@ pub struct EnvironmentSummary {
 /// A project or an environment outside the org is refused before anything
 /// is written.
 pub async fn status_environments(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
     env: Option<&str>,
@@ -524,8 +556,10 @@ pub async fn status_environments(
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
     let Some(env) = env else {
-        let in_org: bool = client
-            .query_one(PROJECT_IN_ORG_SQL, &[&org, &project])
+        let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
+            .bind(&org)
+            .bind(&project)
+            .fetch_one(&mut *client)
             .await
             .map_err(|error| database_error(&error))?
             .get(0);
@@ -543,8 +577,11 @@ pub async fn status_environments(
             .collect());
     };
     let env = require_target_segment("env", env)?;
-    let found: bool = client
-        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
+    let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
+        .bind(&org)
+        .bind(&project)
+        .bind(&env)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .get(0);
@@ -564,7 +601,7 @@ const ENVIRONMENT_STATUS_SQL: &str =
 /// Write the status of the named environments of one project of `org`.
 /// The control routes read them with [`status_environments`] first.
 pub async fn set_environment_status(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
     environments: &[String],
@@ -572,12 +609,14 @@ pub async fn set_environment_status(
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    client
-        .execute(
-            ENVIRONMENT_STATUS_SQL,
-            &[&org, &project, &environments, &status.as_str()],
-        )
+    sqlx::query(ENVIRONMENT_STATUS_SQL)
+        .bind(&org)
+        .bind(&project)
+        .bind(environments)
+        .bind(status.as_str())
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -588,11 +627,12 @@ const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.princip
 /// The email and display name of a user principal, which its application
 /// rows carry.
 pub async fn user_contact(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
 ) -> Result<(String, String), IdentityError> {
-    let row = client
-        .query_opt(USER_CONTACT_SQL, &[&principal_id.to_string().as_str()])
+    let row = sqlx::query(USER_CONTACT_SQL)
+        .bind(principal_id.to_string().as_str())
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
@@ -617,7 +657,7 @@ const PROJECT_ENVS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PRO
 
 /// The environments of one project of `org`.
 pub async fn project_envs(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
@@ -626,7 +666,7 @@ pub async fn project_envs(
 
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn project_envs_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
     after: Option<&str>,
@@ -634,8 +674,12 @@ pub async fn project_envs_page(
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    Ok(client
-        .query(PROJECT_ENVS_SQL, &[&org, &project, &after, &limit])
+    Ok(sqlx::query(PROJECT_ENVS_SQL)
+        .bind(&org)
+        .bind(&project)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -670,7 +714,7 @@ pub struct ProjectMember {
 
 /// The users of one project of `org`, by email.
 pub async fn project_members(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
@@ -680,7 +724,7 @@ pub async fn project_members(
 /// Read a keyset page, or all rows when the limit is absent. An environment
 /// keeps only its members.
 pub async fn project_members_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     project: &str,
     environment: Option<&str>,
@@ -693,20 +737,16 @@ pub async fn project_members_page(
     let environment = environment
         .map(|environment| require_target_segment("environment", environment))
         .transpose()?;
-    client
-        .query(
-            PROJECT_MEMBERS_SQL,
-            &[
-                &org,
-                &project,
-                &control::PROJECT_ADMIN_ROLE,
-                &ORG_ADMIN_ROLE,
-                &after,
-                &after_id,
-                &limit,
-                &environment,
-            ],
-        )
+    sqlx::query(PROJECT_MEMBERS_SQL)
+        .bind(&org)
+        .bind(&project)
+        .bind(control::PROJECT_ADMIN_ROLE)
+        .bind(ORG_ADMIN_ROLE)
+        .bind(after)
+        .bind(after_id)
+        .bind(limit)
+        .bind(&environment)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -725,7 +765,7 @@ pub async fn project_members_page(
 
 /// The validated org, when the principal is a member of it, active or not.
 async fn member(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<String, IdentityError> {
@@ -744,12 +784,14 @@ async fn member(
 /// Lock a user's org membership until the caller's system transaction ends.
 /// An absent row grants no authority. Services have no org membership.
 pub async fn lock_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &str,
 ) -> Result<Option<String>, IdentityError> {
-    client
-        .query_opt(ACTIVE_MEMBER_SQL, &[&principal.to_string().as_str(), &org])
+    sqlx::query(ACTIVE_MEMBER_SQL)
+        .bind(principal.to_string().as_str())
+        .bind(org)
+        .fetch_optional(&mut *client)
         .await
         .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| database_error(&error))
@@ -757,30 +799,29 @@ pub async fn lock_membership(
 
 /// Lock existing memberships in principal order before bulk authority writes.
 pub async fn lock_org_memberships(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
 ) -> Result<(), IdentityError> {
-    client.query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE", &[&org])
+    sqlx::query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org).fetch_all(&mut *client)
         .await.map_err(|error| database_error(&error))?;
     Ok(())
 }
 
 /// Grant explicit administration of one environment to an active org member.
 pub async fn grant_environment_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &str,
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal, org).await?;
     let env = require_target_segment("environment", env)?;
-    client.execute("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1::text::uuid,$2,$3,'environment-admin') ON CONFLICT DO NOTHING",
-        &[&principal.to_string(), &org, &env]).await.map_err(|error| database_error(&error))?;
+    sqlx::query("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1::text::uuid,$2,$3,'environment-admin') ON CONFLICT DO NOTHING").bind(principal.to_string()).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
     Ok(())
 }
 /// Revoke only the explicit environment grant.
 pub async fn revoke_environment_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &str,
     env: &str,
@@ -789,7 +830,7 @@ pub async fn revoke_environment_admin(
     let org = require_target_segment("org", org)?;
     let env = require_target_segment("environment", env)?;
     lock_membership(client, principal, &org).await?;
-    client.execute("DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2 AND env=$3", &[&principal.to_string(),&org,&env]).await.map_err(|error| database_error(&error))?;
+    sqlx::query("DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2 AND env=$3").bind(principal.to_string()).bind(&org).bind(&env).execute(&mut *client).await.map(|result| result.rows_affected()).map_err(|error| database_error(&error))?;
     drops.identity(principal.to_string().as_str());
     Ok(())
 }

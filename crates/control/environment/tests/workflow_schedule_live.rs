@@ -12,6 +12,7 @@
 //! it. The real queue service of the release drains it through the router,
 //! under the targeted executor and application logins.
 
+use sqlx::{Connection as _, Row as _};
 #[path = "support/schedule_fixture.rs"]
 pub mod support;
 use support::*;
@@ -21,7 +22,7 @@ use support::*;
 #[tokio::test(flavor = "multi_thread")]
 async fn an_invalid_cron_refuses_at_author() {
     let _lock = wamn_test_postgres::lock();
-    let fixture = fixture().await;
+    let mut fixture = fixture().await;
     for cron in ["* * * *", "* * * * * *", "61 * * * *", "every minute"] {
         let refusal = fixture
             .author(
@@ -40,9 +41,8 @@ async fn an_invalid_cron_refuses_at_author() {
             "{cron}"
         );
     }
-    let rows: i64 = fixture
-        .admin
-        .query_one("SELECT count(*) FROM catalog.workflows", &[])
+    let rows: i64 = sqlx::query("SELECT count(*) FROM catalog.workflows")
+        .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
         .get(0);
@@ -88,7 +88,7 @@ async fn an_invalid_cron_refuses_at_author() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_undeclared_application_refuses_at_author() {
     let _lock = wamn_test_postgres::lock();
-    let fixture = fixture().await;
+    let mut fixture = fixture().await;
     let other: wamn_catalog::EnvironmentApplications = [(
         "billing".to_owned(),
         wamn_catalog::ApplicationDefinition {
@@ -115,9 +115,8 @@ async fn an_undeclared_application_refuses_at_author() {
             AuthorWorkflowErrorType::Application,
         );
     }
-    let rows: i64 = fixture
-        .admin
-        .query_one("SELECT count(*) FROM catalog.workflows", &[])
+    let rows: i64 = sqlx::query("SELECT count(*) FROM catalog.workflows")
+        .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
         .get(0);
@@ -162,48 +161,47 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
     assert_eq!(fixture.runs().await, 1);
     let denied = fixture.queued("clerkly", "2026-10-20T10:15:00Z").await;
 
-    let row = fixture
-        .admin
-        .query_one(
-            "SELECT trigger_source, service_principal_id IS NULL, registration_id IS NULL, \
+    let row = sqlx::query(
+        "SELECT trigger_source, service_principal_id IS NULL, registration_id IS NULL, \
                     wiring_id, wiring_version, wiring_hash, manifest_digest, \
                     node_digests_json::text, execution_principal_id::text, execution_role, \
                     invoked_by, invoked_by_user_id IS NULL, idempotency_key, input_json::text, \
                     package_id \
                FROM wamn_run.runs WHERE run_id = $1",
-            &[&run],
-        )
-        .await
-        .unwrap();
-    assert_eq!(row.get::<_, String>(0), "schedule");
-    assert!(row.get::<_, bool>(1), "no service principal");
-    assert!(row.get::<_, bool>(2), "no registration");
+    )
+    .bind(&run)
+    .fetch_one(&mut fixture.admin)
+    .await
+    .unwrap();
+    assert_eq!(row.get::<String, _>(0), "schedule");
+    assert!(row.get::<bool, _>(1), "no service principal");
+    assert!(row.get::<bool, _>(2), "no registration");
     assert_eq!(
-        (row.get::<_, String>(3), row.get::<_, i32>(4)),
+        (row.get::<String, _>(3), row.get::<i32, _>(4)),
         ("nightly".to_owned(), 1)
     );
     assert_eq!(
-        row.get::<_, String>(5),
+        row.get::<String, _>(5),
         workflow("nightly").wiring_hash().as_str()
     );
-    assert_eq!(row.get::<_, String>(6), fixture.digest);
+    assert_eq!(row.get::<String, _>(6), fixture.digest);
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<_, String>(7)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(7)).unwrap(),
         json!({"read": fixture.read.component_digest})
     );
-    assert_eq!(row.get::<_, String>(8), workflow_user_id().to_string());
-    assert_eq!(row.get::<_, String>(9), "reader");
-    assert_eq!(row.get::<_, String>(10), "schedule");
-    assert!(row.get::<_, bool>(11), "no invoking user");
+    assert_eq!(row.get::<String, _>(8), workflow_user_id().to_string());
+    assert_eq!(row.get::<String, _>(9), "reader");
+    assert_eq!(row.get::<String, _>(10), "schedule");
+    assert!(row.get::<bool, _>(11), "no invoking user");
     assert_eq!(
-        row.get::<_, String>(12),
+        row.get::<String, _>(12),
         "schedule:erp/nightly:2026-10-20T10:15:00Z"
     );
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<_, String>(13)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(13)).unwrap(),
         json!({"due": "2026-10-20T10:15:00Z"})
     );
-    assert_eq!(row.get::<_, String>(14), APP);
+    assert_eq!(row.get::<String, _>(14), APP);
 
     fixture.drain().await;
     let (status, result) = fixture.outcome(&run).await;
@@ -257,20 +255,19 @@ async fn an_invoker_schedule_needs_admin_to_enable() {
         .expect("an admin enables while the workflow user holds admin");
 
     let run = fixture.queued("nightly", "2026-10-20T10:20:00Z").await;
-    let row = fixture
-        .admin
-        .query_one(
-            "SELECT execution_principal_id::text, execution_role, invoked_by \
+    let row = sqlx::query(
+        "SELECT execution_principal_id::text, execution_role, invoked_by \
                FROM wamn_run.runs WHERE run_id = $1",
-            &[&run],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&run)
+    .fetch_one(&mut fixture.admin)
+    .await
+    .unwrap();
     assert_eq!(
         (
-            row.get::<_, String>(0),
-            row.get::<_, String>(1),
-            row.get::<_, String>(2)
+            row.get::<String, _>(0),
+            row.get::<String, _>(1),
+            row.get::<String, _>(2)
         ),
         (
             workflow_user_id().to_string(),
@@ -397,7 +394,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         .expect("author the schedule workflow");
 
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-        connect(&fixture.executor_url).await,
+        wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
         Arc::clone(&fixture.postgres),
         PROJECT,
         Arc::clone(&fixture.release),
@@ -439,15 +436,13 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         .unwrap()
         .expect("the schedule task stops at shutdown");
     fixture.drain().await;
-    let run: String = fixture
-        .admin
-        .query_one(
-            "SELECT run_id FROM wamn_run.runs WHERE wiring_id = 'minutely' ORDER BY created_at LIMIT 1",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let run: String = sqlx::query(
+        "SELECT run_id FROM wamn_run.runs WHERE wiring_id = 'minutely' ORDER BY created_at LIMIT 1",
+    )
+    .fetch_one(&mut fixture.admin)
+    .await
+    .unwrap()
+    .get(0);
     assert_eq!(fixture.outcome(&run).await.0, "completed");
 }
 
@@ -462,15 +457,13 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
 async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
-    let stored: Vec<u8> = fixture
-        .admin
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1",
-            &[&fixture.digest],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let stored: Vec<u8> =
+        sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1")
+            .bind(&fixture.digest)
+            .fetch_one(&mut fixture.admin)
+            .await
+            .unwrap()
+            .get(0);
     let stored: Value = serde_json::from_slice(&stored).unwrap();
     assert!(
         stored.pointer("/workflow/schedules").is_none(),
@@ -492,13 +485,15 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
 
     // Hold the rows from before the first tick until after the second.
     let mut locker = connect(&fixture.url).await;
-    let hold = locker.transaction().await.unwrap();
-    hold.batch_execute("LOCK TABLE catalog.workflows IN ACCESS EXCLUSIVE MODE")
+    let mut hold = locker.begin().await.unwrap();
+    sqlx::raw_sql("LOCK TABLE catalog.workflows IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *hold)
         .await
+        .map(drop)
         .unwrap();
-    let connection = connect(&fixture.executor_url).await;
-    let reader_pid: i32 = connection
-        .query_one("SELECT pg_backend_pid()", &[])
+    let connection = wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap();
+    let reader_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&connection)
         .await
         .unwrap()
         .get(0);
@@ -525,10 +520,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     clock.now.send_replace(first);
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let blocked: bool = fixture.admin.query_one(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')",
-                &[&reader_pid],
-            ).await.unwrap().get(0);
+            let blocked: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')").bind(&reader_pid).fetch_one(&mut fixture.admin).await.unwrap().get(0);
             if blocked {
                 break;
             }
@@ -578,15 +570,12 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         .await
         .unwrap();
     fixture.enable("nightly", READER).await.unwrap();
-    fixture.admin.execute(
-        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
-         SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1",
-        &[&APP],
-    ).await.unwrap();
-    let upgraded = Arc::new(release_variant(&fixture, APP, b"1251").await);
-    let billing = Arc::new(release_variant(&fixture, "billing", b"1252").await);
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
+         SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
+    let upgraded = Arc::new(release_variant(&mut fixture, APP, b"1251").await);
+    let billing = Arc::new(release_variant(&mut fixture, "billing", b"1252").await);
     let b = PostgresSchedules::new(
-        connect(&fixture.executor_url).await,
+        wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
         Arc::clone(&fixture.postgres),
         PROJECT,
         Arc::clone(&billing),
@@ -600,7 +589,7 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         (25, &fixture.release),
     ] {
         let a = PostgresSchedules::new(
-            connect(&fixture.executor_url).await,
+            wamn_postgres::pool(&fixture.executor_url, 1).await.unwrap(),
             Arc::clone(&fixture.postgres),
             PROJECT,
             Arc::clone(release),
@@ -622,17 +611,16 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
                         run_id: run_id.clone()
                     }
                 );
-                let stored = fixture
-                    .admin
-                    .query_one(
-                        "SELECT package_id, manifest_digest FROM wamn_run.runs WHERE run_id=$1",
-                        &[&run_id],
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(stored.get::<_, String>(0), row.application);
+                let stored = sqlx::query(
+                    "SELECT package_id, manifest_digest FROM wamn_run.runs WHERE run_id=$1",
+                )
+                .bind(&run_id)
+                .fetch_one(&mut fixture.admin)
+                .await
+                .unwrap();
+                assert_eq!(stored.get::<String, _>(0), row.application);
                 assert_eq!(
-                    stored.get::<_, String>(1),
+                    stored.get::<String, _>(1),
                     loaded.release().manifest_digest.as_str()
                 );
             }

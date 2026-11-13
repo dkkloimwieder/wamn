@@ -1,9 +1,11 @@
 //! Shared fixtures for production queue tests.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use tokio_postgres::{Client, NoTls};
+
 use url::Url;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -34,14 +36,10 @@ const EXECUTOR_PASSWORD: &str = "lease-live-executor-password";
 pub const PRIOR_WINNER_HASH: &str = "sha256:prior-caller-winner";
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            eprintln!("production-lease live connection failed: {error}");
-        }
-    });
+    let mut client = wamn_postgres::connect(url).await?;
+
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning;
-    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:lease-fixture', false)", &[&actor.principal_id().to_string()]).await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:lease-fixture', false)").bind(&actor.principal_id().to_string()).execute(&mut client).await.map(|result| result.rows_affected())?;
     Ok(client)
 }
 
@@ -54,35 +52,46 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sq
 
 /// Apply the run plane of record on the project base grants, with the two releases
 /// the pods mount.
-pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
-    client.batch_execute(RUN_STATE_SQL).await?;
-    client.batch_execute(RUN_QUEUE_SQL).await?;
-    client
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await?;
-    client
-        .batch_execute(&format!(
+pub async fn install_schema(client: &mut Client) -> anyhow::Result<()> {
+    sqlx::raw_sql(RUN_STATE_SQL)
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(RUN_QUEUE_SQL)
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ('{PROJECT_ENV_KEY}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
                     ('{PROJECT_ENV_KEY}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)?;
     Ok(())
 }
 
 /// Mint the executor generation separately from the fixture's administrator.
-async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(String, String)> {
-    use wamn_control_provision::sql::prepare_workload_generation_sql;
-    use wamn_control_provision::{
-        WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-    };
+async fn install_executor(
+    client: &mut Client,
+    admin_url: &str,
+) -> anyhow::Result<(String, String)> {
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
-    let database: String = client
-        .query_one("SELECT current_database()::text", &[])
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut *client)
         .await?
         .get(0);
     let family = WorkloadRoleFamily::ExecutorPlatform;
-    let role = workload_generation_role(
+    let role = workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "lease-live-org",
@@ -90,19 +99,21 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
             environment: ENVIRONMENT,
             database: &database,
         },
-        wamn_control_provision::CredentialGeneration::A,
     )?;
     // The production builder: the stable executor surface, the `wamn_platform`
     // group edge, the generation login and its `CONNECT`.
-    client
-        .batch_execute(&prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             family,
             &database,
             &role,
             EXECUTOR_PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)?;
     let mut url = Url::parse(admin_url)?;
     url.set_username(&role)
         .map_err(|()| anyhow::anyhow!("set executor username"))?;
@@ -124,138 +135,158 @@ pub fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String
 }
 
 /// Seed an admitted, queued run.
-pub async fn seed_run(client: &Client, run_id: &str, package_id: &str) -> anyhow::Result<()> {
-    client
-        .execute(
-            &format!(
+pub async fn seed_run(client: &mut Client, run_id: &str, package_id: &str) -> anyhow::Result<()> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source) \
                  VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
                          '{{\"input\":true}}','http')"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id, &package_id, &WIRING_ID, &WIRING_VERSION],
-        )
-        .await?;
-    client
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.run_queue \
+            ))).bind(&PROJECT_ENV_KEY).bind(&run_id).bind(&package_id).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *client).await.map(|result| result.rows_affected())?;
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "INSERT INTO {SCHEMA}.run_queue \
                    (project_env_key,run_id,available_at) \
                  VALUES ($1,$2,'2000-01-01 00:00:00+00')"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
-pub async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<()> {
-    client
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
+pub async fn expire_effect_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
                   WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
-pub async fn seed_exhausted_run(client: &Client, run_id: &str) -> anyhow::Result<()> {
+pub async fn seed_exhausted_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
     seed_run(client, run_id, PACKAGE_ID).await?;
-    client
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.run_queue \
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=max_attempts \
                   WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
-pub async fn make_callerless(client: &Client, run_id: &str) -> anyhow::Result<()> {
-    client
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
+pub async fn make_callerless(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
                   WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
-pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyhow::Result<Value> {
-    client
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs \
+pub async fn install_prior_caller_winner(
+    client: &mut Client,
+    run_id: &str,
+) -> anyhow::Result<Value> {
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.runs \
                     SET trigger_source='http', caller_outcome_type='responded', \
                         caller_outcome_json='{{\"winner\":\"prior\"}}', \
                         caller_http_status=207, caller_release_node_id='prior-node', \
                         caller_outcome_hash=$3, \
                         caller_released_at='2025-01-02T03:04:05.123456Z' \
                   WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id, &PRIOR_WINNER_HASH],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .bind(&PRIOR_WINNER_HASH)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())?;
     caller_fields(client, run_id).await
 }
 
 /// The crash-evidence attempt count a run's queue row carries.
-pub async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32> {
-    Ok(client
-        .query_one(
-            &format!(
-                "SELECT attempts FROM {SCHEMA}.run_queue WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?
-        .get(0))
+pub async fn queue_attempts(client: &mut Client, run_id: &str) -> anyhow::Result<i32> {
+    Ok(sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT attempts FROM {SCHEMA}.run_queue WHERE project_env_key=$1 AND run_id=$2"
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .fetch_one(&mut *client)
+    .await?
+    .get(0))
 }
 
 /// The admission-pinned release digest a run carries.
-pub async fn release_record(client: &Client, run_id: &str) -> anyhow::Result<Option<String>> {
-    let row = client
-        .query_one(
-            &format!(
-                "SELECT manifest_digest \
+pub async fn release_record(client: &mut Client, run_id: &str) -> anyhow::Result<Option<String>> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT manifest_digest \
                    FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .fetch_one(&mut *client)
+    .await?;
     Ok(row.get(0))
 }
 
-pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Value> {
-    let encoded: String = client
-        .query_one(
-            &format!(
-                "SELECT jsonb_build_object( \
+pub async fn caller_fields(client: &mut Client, run_id: &str) -> anyhow::Result<Value> {
+    let encoded: String = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT jsonb_build_object( \
                     'type',caller_outcome_type, 'body',caller_outcome_json, \
                     'status',caller_http_status, 'node',caller_release_node_id, \
                     'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
                    FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?
-        .get(0);
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .fetch_one(&mut *client)
+    .await?
+    .get(0);
     Ok(serde_json::from_str(&encoded)?)
 }
 
 pub async fn assert_callerless_terminal(
-    client: &Client,
+    client: &mut Client,
     run_id: &str,
     status: &str,
 ) -> anyhow::Result<()> {
@@ -274,7 +305,7 @@ pub async fn assert_callerless_terminal(
 }
 
 pub async fn assert_prior_winner_terminal(
-    client: &Client,
+    client: &mut Client,
     run_id: &str,
     status: &str,
     winner: &Value,
@@ -290,23 +321,25 @@ pub async fn assert_prior_winner_terminal(
 }
 
 pub async fn assert_terminal_status_dequeued(
-    client: &Client,
+    client: &mut Client,
     run_id: &str,
     status: &str,
 ) -> anyhow::Result<()> {
-    let row = client
-        .query_one(
-            &format!(
-                "SELECT status, NOT EXISTS ( \
+    let row = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT status, NOT EXISTS ( \
                     SELECT 1 FROM {SCHEMA}.run_queue q \
                      WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
                    FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id=$2"
-            ),
-            &[&PROJECT_ENV_KEY, &run_id],
-        )
-        .await?;
-    assert_eq!(row.get::<_, String>(0), status);
-    assert!(row.get::<_, bool>(1));
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&run_id)
+    .fetch_one(&mut *client)
+    .await?;
+    assert_eq!(row.get::<String, _>(0), status);
+    assert!(row.get::<bool, _>(1));
     Ok(())
 }
 
@@ -332,9 +365,9 @@ pub struct LiveFixture {
 
 /// Install the schema, the executor credential, and pod identities.
 pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
-    let admin = connect(url).await?;
-    install_schema(&admin).await?;
-    let (runtime_url, executor_role) = install_executor(&admin, url).await?;
+    let mut admin = connect(url).await?;
+    install_schema(&mut admin).await?;
+    let (runtime_url, executor_role) = install_executor(&mut admin, url).await?;
 
     let plugin = Arc::new(WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(
@@ -376,35 +409,21 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
 /// Drop the fixture schemas and retire the executor generation role the suite minted.
 pub async fn teardown(fixture: LiveFixture) -> anyhow::Result<()> {
     let LiveFixture {
-        admin,
+        mut admin,
         plugin,
         executor_role,
     } = fixture;
     drop(plugin);
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
-        .await?
-        .get(0);
-    admin
-        .batch_execute(
-            &wamn_control_provision::sql::retire_workload_generation_sql(
-                wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
-                &database,
-                &executor_role,
-            ),
-        )
-        .await?;
-    admin
-        .batch_execute(
-            &wamn_control_provision::sql::terminate_workload_generation_sessions_sql(
-                &executor_role,
-            ),
-        )
-        .await?;
-    admin
-        .batch_execute(&format!(
-            "DROP SCHEMA {SCHEMA} CASCADE; DROP SCHEMA catalog CASCADE;"
-        ))
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP OWNED BY {executor_role}; DROP ROLE {executor_role};"
+    )))
+    .execute(&mut admin)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA {SCHEMA} CASCADE; DROP SCHEMA catalog CASCADE;"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     Ok(())
 }

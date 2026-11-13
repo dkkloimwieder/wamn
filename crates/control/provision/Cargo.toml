@@ -1,6 +1,6 @@
 [package]
 name = "wamn-control-provision"
-description = "wamn project provisioning (2.3): PURE Postgres SQL builders + identifier naming + per-project-env credential Secret rendering for standing up a per-project-env database (D6: CloudNativePG). No DB / K8s client / clock — the `provision-org` and `provision-project-env` subcommands (wamn-ctl) supply the effects. Cross-project isolation = per-project-env DATABASE + per-generation CONNECT (PUBLIC and the stable `wamn_app` role revoked), with RLS confining within (the 2.2 model)."
+description = "Database role declarations and provisioning SQL."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,6 +13,10 @@ ops = []
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+anyhow.workspace = true
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+
 wamn-compiler = { workspace = true }
 wamn-digest.workspace = true
 wamn-event-wire = { workspace = true }
@@ -45,14 +49,9 @@ sha2 = { workspace = true }
 url = { workspace = true }
 wamn-test-postgres = { workspace = true, optional = true }
 
-# No database or Kubernetes effects. The builders return text, JSON, and native
-# broker configuration values. The `provision-project-env` driver (wamn-ctl) holds
-# the tokio_postgres connection; the optional live-apply acceptance test (tests/provision.rs)
-# shells out to `psql` — so there is no database dependency even in dev, the same
-# pattern as wamn-run-state. PostgreSQL quoting comes from the guest-safe
-# postgres-protocol quoting functions.
-
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-test-postgres = { workspace = true }

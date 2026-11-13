@@ -255,14 +255,12 @@ fn package_owners_provision_and_replay_without_database_owner_membership() {
     run_ok(
         database.url(),
         &format!(
-            "CREATE ROLE wamn_system NOLOGIN; CREATE ROLE wamn_app NOLOGIN; {} {} {}; {} \
-         SET ROLE wamn_provisioner; SET createrole_self_grant = 'set, inherit'; \
+            "CREATE ROLE wamn_system NOLOGIN NOINHERIT; CREATE ROLE wamn_app NOLOGIN NOINHERIT; {} {}; {} \
          {} {} \
          CREATE SCHEMA package_probe AUTHORIZATION {role}; \
          SET ROLE {role}; CREATE TABLE package_probe.record (id bigint GENERATED ALWAYS AS IDENTITY); \
          RESET ROLE;",
             sql::ensure_db_owner_role_sql(),
-            wamn_control_provision::provisioner::ensure_provisioner_role_sql(),
             sql::set_database_owner_sql("package_owner_provision"),
             sql::ensure_package_owner_role_sql("owner_probe"),
             sql::ensure_package_owner_role_sql("owner_probe"),

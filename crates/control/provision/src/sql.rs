@@ -23,16 +23,9 @@ pub use database::{
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
-pub(crate) use credentials::{
-    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
-};
-#[doc(inline)]
+pub(crate) use credentials::ensure_acl_role_sql;
 pub use credentials::{
-    ensure_workload_acl_role_sql, forget_generation_password_sql, generation_password_recorded_sql,
-    normalize_workload_generation_membership_sql, prepare_workload_generation_sql,
-    record_generation_password_sql, retire_workload_generation_sql, system_generation_state_sql,
-    terminate_workload_generation_sessions_sql, workload_generation_state_sql,
-    workload_identity_lock_sql,
+    ensure_workload_acl_role_sql, grant_dynamic_sql_surface_sql, grant_workload_login_sql,
 };
 
 #[doc(inline)]
@@ -46,9 +39,8 @@ pub use database_grants::{
 pub use cdc::{
     CDC_PUBLISH, PUBLICATION_PROBE_SQL, create_failover_slot_sql, create_publication_schemas_sql,
     create_publication_sql, drop_publication_sql, drop_replication_slot_sql,
-    ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, ensure_replication_role_sql,
-    ensure_schema_sql, grant_replication_access_sql, upsert_cdc_exclusion_map_sql,
-    upsert_entity_map_sql,
+    ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, ensure_schema_sql,
+    grant_replication_access_sql, upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
 
 pub use package_owner::{ensure_package_owner_role_sql, package_owner_grants_sql};
@@ -73,52 +65,7 @@ use postgres_protocol::escape::escape_literal;
 /// [`drain_app_role_sessions_sql`]. That boundary prevents a new shared-role
 /// login from racing the drain while `NOLOGIN` is still uncommitted.
 pub fn ensure_app_acl_role_sql() -> String {
-    format!(
-        "DO $app_role$ BEGIN \
-           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_lit} \
-                         AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                              OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-             ALTER ROLE {role} NOLOGIN PASSWORD NULL NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             {nosuperuser} \
-           END IF; \
-         EXCEPTION WHEN duplicate_object THEN \
-           ALTER ROLE {role} NOLOGIN PASSWORD NULL NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           {nosuperuser} \
-         END $app_role$;",
-        role = escape_identifier(APP_ROLE),
-        role_lit = escape_literal(APP_ROLE),
-        nosuperuser = revoke_superuser_sql(&escape_literal(APP_ROLE)),
-    )
-}
-
-/// Drain sessions authenticated as the retired shared [`APP_ROLE`].
-///
-/// Apply only after [`ensure_app_acl_role_sql`] has committed. PostgreSQL's
-/// native timeout bounds each termination wait; the final session list turns a
-/// refused or timed-out termination into a hard failure instead of silently
-/// returning with an old credential session alive.
-pub fn drain_app_role_sessions_sql() -> String {
-    format!(
-        "DO $app_drain$ DECLARE stale_pid integer; BEGIN \
-           FOR stale_pid IN SELECT pid FROM pg_catalog.pg_stat_activity \
-             WHERE usename = {role_lit} AND pid <> pg_backend_pid() LOOP \
-             PERFORM pg_catalog.pg_terminate_backend(stale_pid, 5000); \
-           END LOOP; \
-           PERFORM pg_catalog.pg_stat_clear_snapshot(); \
-           IF EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
-                      WHERE usename = {role_lit} AND pid <> pg_backend_pid()) THEN \
-             RAISE EXCEPTION USING ERRCODE = '55000', \
-               MESSAGE = 'wamn-app-session-drain-incomplete'; \
-           END IF; \
-         END $app_drain$;",
-        role_lit = escape_literal(APP_ROLE),
-    )
+    ensure_acl_role_sql(APP_ROLE)
 }
 
 /// Catalog relations read by callable-HTTP connection authorization.
@@ -294,24 +241,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["project_env_key"
 /// NAMED by a policy's `TO` clause. What a platform family may actually reach
 /// stays its own table grants.
 pub fn ensure_platform_group_role_sql() -> String {
-    format!(
-        "DO $platform_group$ DECLARE role_name text := {role_lit}; BEGIN \
-           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-           ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = role_name \
-                         AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                              OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             {nosuperuser} \
-           END IF; \
-         EXCEPTION WHEN duplicate_object THEN NULL; \
-         END $platform_group$;",
-        role_lit = escape_literal(PLATFORM_GROUP_ROLE),
-        nosuperuser = revoke_superuser_sql("role_name"),
-    )
+    ensure_acl_role_sql(PLATFORM_GROUP_ROLE)
 }
 
 /// Converge one family's stable ACL role onto (or off) [`PLATFORM_GROUP_ROLE`].
@@ -1014,6 +944,7 @@ pub fn control_surface_grants_sql() -> String {
 /// a family stays per-family (`wamn-0h0g.22.16`).
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     match family {
+        WorkloadRoleFamily::Query => Some(grant_dynamic_sql_surface_sql()),
         WorkloadRoleFamily::ExecutorPlatform => {
             Some(grant_executor_platform_surface_sql("wamn_run"))
         }

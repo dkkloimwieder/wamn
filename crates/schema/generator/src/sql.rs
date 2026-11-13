@@ -714,7 +714,8 @@ mod tests {
     use super::{changes, delete, get, query, update};
     use crate::manifest::DeleteMode;
     use crate::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
-    use tokio_postgres::{NoTls, SimpleQueryMessage};
+    use sqlx::Row as _;
+
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
@@ -821,10 +822,8 @@ mod tests {
         use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
 
         let database = wamn_test_postgres::database();
-        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
-            .await
-            .unwrap();
-        let connection = tokio::spawn(connection);
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
         let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
             "schema": "public", "table": "key_row", "owner": "fixture", "operations": {}
         }))
@@ -845,9 +844,9 @@ mod tests {
                 ),
             ] {
                 for writable in [false, true] {
-                    client.batch_execute(&format!(
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                         "CREATE TABLE key_row (id {sql_type} {generation} PRIMARY KEY, label text DEFAULT 'default');"
-                    )).await.unwrap();
+                    ))).execute(&mut client).await.map(drop).unwrap();
                     let table = Table::new(
                         "public",
                         "key_row",
@@ -871,58 +870,59 @@ mod tests {
                         "permission": "create", "result": "one", "writable_fields": if writable { vec!["label"] } else { vec![] }
                     })).unwrap();
                     let sql = super::create(&table, &model, &operation);
-                    client
-                        .batch_execute(&format!("PREPARE create_row AS {sql}"))
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("PREPARE create_row AS {sql}")))
+                        .execute(&mut client)
                         .await
+                        .map(drop)
                         .unwrap();
-                    let rows = client
-                        .simple_query(if writable {
+                    let rows = sqlx::raw_sql(sqlx::AssertSqlSafe(
+                        if writable {
                             "EXECUTE create_row('supplied')"
                         } else {
                             "EXECUTE create_row"
-                        })
+                        }
+                        .to_owned(),
+                    ))
+                    .fetch_all(&mut client)
+                    .await
+                    .unwrap();
+                    let row = rows.first().unwrap();
+                    let actual = if ty == SqlValueType::Int32 {
+                        i64::from(row.get::<i32, _>("id"))
+                    } else {
+                        row.get::<i64, _>("id")
+                    };
+                    assert_eq!(actual, expected.parse::<i64>().unwrap());
+                    sqlx::raw_sql("DEALLOCATE create_row; DROP TABLE key_row;")
+                        .execute(&mut client)
                         .await
-                        .unwrap();
-                    let row = rows
-                        .iter()
-                        .find_map(|row| match row {
-                            SimpleQueryMessage::Row(row) => Some(row),
-                            _ => None,
-                        })
-                        .unwrap();
-                    assert_eq!(row.get("id"), Some(expected));
-                    assert_eq!(
-                        row.get("label"),
-                        Some(if writable { "supplied" } else { "default" })
-                    );
-                    client
-                        .batch_execute("DEALLOCATE create_row; DROP TABLE key_row;")
-                        .await
+                        .map(drop)
                         .unwrap();
                 }
             }
         }
         drop(client);
-        connection.await.unwrap().unwrap();
     }
 
     #[tokio::test]
     async fn query_seeks_and_pages_tied_values_in_both_directions() {
         let database = wamn_test_postgres::database();
-        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
+        let mut client = wamn_postgres::connect(database.url())
             .await
             .expect("connect to the query test database");
-        let connection = tokio::spawn(connection);
-        client
-            .batch_execute(
-                "CREATE TABLE page_row (id uuid PRIMARY KEY, rank bigint NOT NULL);
+
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("CREATE TABLE page_row (id uuid PRIMARY KEY, rank bigint NOT NULL);
                  CREATE INDEX page_row_rank_id ON page_row (rank, id);
                  INSERT INTO page_row SELECT lpad(n::text, 32, '0')::uuid, n / 100
                  FROM generate_series(1, 4000) AS n;
-                 ANALYZE page_row;",
-            )
-            .await
-            .expect("seed ordered rows with tied sort values");
+                 ANALYZE page_row;")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .expect("seed ordered rows with tied sort values");
         let table = Table::new(
             "public",
             "page_row",
@@ -939,26 +939,27 @@ mod tests {
         for direction in [CursorDirection::Ascending, CursorDirection::Descending] {
             let ascending = matches!(direction, CursorDirection::Ascending);
             let sql = query(&table, &operation, "rank", direction, false, false);
-            client
-                .batch_execute(&format!("PREPARE page AS {sql}"))
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("PREPARE page AS {sql}")))
+                .execute(&mut client)
                 .await
+                .map(drop)
                 .expect("prepare the generated query");
             let mut cursor = "NULL, NULL".to_owned();
             for offset in (0_u32..126).step_by(21) {
-                let messages = client
-                    .simple_query(&format!("EXECUTE page({cursor}, 21)"))
-                    .await
-                    .expect("read a generated page");
-                let rows = messages
-                    .iter()
-                    .filter_map(|message| match message {
-                        SimpleQueryMessage::Row(row) => Some(row),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
+                let rows =
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("EXECUTE page({cursor}, 21)")))
+                        .fetch_all(&mut client)
+                        .await
+                        .expect("read a generated page");
                 let ids = rows
                     .iter()
-                    .map(|row| row.get(0).unwrap().replace('-', "").parse::<u32>().unwrap())
+                    .map(|row| {
+                        row.get::<uuid::Uuid, _>(0)
+                            .simple()
+                            .to_string()
+                            .parse::<u32>()
+                            .unwrap()
+                    })
                     .collect::<Vec<_>>();
                 let expected = if ascending {
                     (offset + 1..=offset + 21).collect::<Vec<_>>()
@@ -970,21 +971,24 @@ mod tests {
                     "pages must neither skip nor repeat tied rows"
                 );
                 let last = rows.last().expect("a full page");
-                cursor = format!("{}, '{}'", last.get(1).unwrap(), last.get(0).unwrap());
+                cursor = format!(
+                    "{}, '{}'",
+                    last.get::<i32, _>(1),
+                    last.get::<uuid::Uuid, _>(0)
+                );
             }
-            let plan: serde_json::Value = client
-                .query_one(
-                    "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE page(20, '00000000-0000-0000-0000-000000002000', 21)",
-                    &[],
-                )
+            let plan: serde_json::Value = sqlx::query("EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE page(20, '00000000-0000-0000-0000-000000002000', 21)").fetch_one(&mut client)
                 .await
                 .expect("measure a page that starts inside the index")
                 .get(0);
             assert!(scanned_rows(&plan[0]["Plan"]) <= 21.0, "{plan}");
-            client.batch_execute("DEALLOCATE page").await.unwrap();
+            sqlx::raw_sql("DEALLOCATE page")
+                .execute(&mut client)
+                .await
+                .map(drop)
+                .unwrap();
         }
         drop(client);
-        connection.await.unwrap().unwrap();
     }
 
     fn scanned_rows(plan: &serde_json::Value) -> f64 {

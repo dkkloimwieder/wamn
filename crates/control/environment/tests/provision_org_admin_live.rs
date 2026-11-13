@@ -3,7 +3,9 @@
 //! wamn-a40n.3, wamn-sjdxt). The test holds the process lock of its server,
 //! because the installer creates cluster-wide roles.
 
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_control_provision::Template;
 use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_environment_control::provision_project_env::provisioning_transaction;
@@ -15,12 +17,10 @@ const FIRST_EMAIL: &str = "first@example.test";
 const SECOND_EMAIL: &str = "second@example.test";
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the disposable database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -37,9 +37,9 @@ fn request(org: &str, url: &str, admin: &str) -> ProvisionOrgRequest {
     }
 }
 
-async fn column(client: &Client, statement: &str) -> Vec<String> {
-    client
-        .query(statement, &[])
+async fn column(client: &mut Client, statement: &str) -> Vec<String> {
+    sqlx::query(sqlx::AssertSqlSafe((statement).to_string()))
+        .fetch_all(&mut *client)
         .await
         .expect(statement)
         .iter()
@@ -47,7 +47,7 @@ async fn column(client: &Client, statement: &str) -> Vec<String> {
         .collect()
 }
 
-async fn users(client: &Client) -> Vec<String> {
+async fn users(client: &mut Client) -> Vec<String> {
     column(
         client,
         "SELECT id::text || ' ' || email FROM identity.principals \
@@ -56,7 +56,7 @@ async fn users(client: &Client) -> Vec<String> {
     .await
 }
 
-async fn admin_rows(client: &Client, org: &str) -> (Vec<String>, Vec<String>) {
+async fn admin_rows(client: &mut Client, org: &str) -> (Vec<String>, Vec<String>) {
     (
         column(
             client,
@@ -89,22 +89,27 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     let database = locked_database::database(wamn_test_postgres::database);
     let url = database.to_string();
     let mut client = connect(&url).await;
-    client
-        .batch_execute(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
-               CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
+               CREATE ROLE wamn_system NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                  NOREPLICATION NOBYPASSRLS; \
-             END IF; END $$;",
-        )
-        .await
-        .expect("create the wamn_system role");
+             END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("create the wamn_system role");
     provision_system(&ProvisionSystemRequest {
         system_database_url: url.clone(),
         platform_domain: "wamn.example.test".to_owned(),
     })
     .await
     .expect("install the control store");
-    assert!(users(&client).await.is_empty(), "a fresh store has no user");
+    assert!(
+        users(&mut client).await.is_empty(),
+        "a fresh store has no user"
+    );
 
     // 1. A fresh store: the run creates the first user and makes it the admin.
     provision_org(request("acme", &url, FIRST_EMAIL))
@@ -115,7 +120,7 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
         ("registry.env_policies", "org = 'acme'"),
     ] {
         wamn_test_infrastructure::record_history::assert_stamp(
-            &client,
+            &mut client,
             relation,
             predicate,
             PROVISIONING,
@@ -123,45 +128,47 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
         )
         .await;
     }
-    let created = users(&client).await;
+    let created = users(&mut client).await;
     assert_eq!(created.len(), 1, "{created:?}");
     let first = created[0]
         .strip_suffix(&format!(" {FIRST_EMAIL}"))
         .expect("the first user has the admin email")
         .to_owned();
     assert_eq!(
-        column(&client, "SELECT id FROM registry.orgs").await,
+        column(&mut client, "SELECT id FROM registry.orgs").await,
         ["acme"]
     );
-    assert_eq!(admin_rows(&client, "acme").await, expected(&first));
+    assert_eq!(admin_rows(&mut client, "acme").await, expected(&first));
 
     // 2. Users exist: `--admin` names an existing user, and no user is created.
-    client
-        .batch_execute("SET ROLE wamn_system")
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .expect("assume the control owner");
     let second = {
-        let transaction = provisioning_transaction(&mut client)
+        let mut transaction = provisioning_transaction(&mut client)
             .await
             .expect("bind wamn:provisioning");
         let second =
-            wamn_platform_identity::create_user(&transaction, "second", SECOND_EMAIL, "Second")
+            wamn_platform_identity::create_user(&mut transaction, "second", SECOND_EMAIL, "Second")
                 .await
                 .expect("create the second user");
         transaction.commit().await.expect("commit the second user");
         second
     };
-    client
-        .batch_execute("RESET ROLE")
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut client)
         .await
+        .map(drop)
         .expect("reset role");
-    let before = users(&client).await;
+    let before = users(&mut client).await;
     provision_org(request("beta", &url, SECOND_EMAIL))
         .await
         .expect("provision an org with an existing admin");
-    assert_eq!(users(&client).await, before, "no user is created");
+    assert_eq!(users(&mut client).await, before, "no user is created");
     assert_eq!(
-        admin_rows(&client, "beta").await,
+        admin_rows(&mut client, "beta").await,
         expected(second.id().to_string().as_str())
     );
 
@@ -173,14 +180,18 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
         format!("{error:#}").contains("names no user principal"),
         "{error:#}"
     );
-    assert_eq!(users(&client).await, before, "a refusal creates no user");
     assert_eq!(
-        column(&client, "SELECT id FROM registry.orgs ORDER BY id").await,
+        users(&mut client).await,
+        before,
+        "a refusal creates no user"
+    );
+    assert_eq!(
+        column(&mut client, "SELECT id FROM registry.orgs ORDER BY id").await,
         ["acme", "beta"],
         "a refusal leaves no org row"
     );
     assert_eq!(
-        admin_rows(&client, "strangers").await,
+        admin_rows(&mut client, "strangers").await,
         (Vec::new(), Vec::new())
     );
 }

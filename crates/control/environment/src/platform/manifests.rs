@@ -29,9 +29,30 @@ pub fn objects(
     for object in &mut objects {
         // These are the two substitutions in the runbook's environment templates.
         if hosts || object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
-            object["metadata"]["namespace"] = "hosts".into();
+            object["metadata"]["namespace"] = document.org.clone().into();
         }
+        if matches!(
+            object["metadata"]["namespace"].as_str(),
+            Some("hosts" | "identity")
+        ) {
+            object["metadata"]["namespace"] = document.org.clone().into();
+        }
+        if let Some(subjects) = object["subjects"].as_array_mut() {
+            for subject in subjects {
+                if matches!(subject["namespace"].as_str(), Some("hosts" | "identity")) {
+                    subject["namespace"] = document.org.clone().into();
+                }
+            }
+        }
+        let source = serde_json::to_string(object)?.replace(
+            "identity.identity.svc",
+            &format!("identity.{}.svc", document.org),
+        );
+        *object = serde_json::from_str(&source)?;
         provider_edits(object, document).with_context(|| format!("render manifest {path}"))?;
+        if object["kind"] == "Cluster" && object["apiVersion"] == "postgresql.cnpg.io/v1" {
+            object["metadata"]["namespace"] = document.org.clone().into();
+        }
         *object = apply_namespace(object.take(), "platform");
     }
     Ok(objects)

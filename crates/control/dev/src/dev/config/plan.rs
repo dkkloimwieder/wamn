@@ -427,7 +427,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
 pub(super) fn validate_session_identity(config: &DevConfig) -> Result<(), DevConfigError> {
     if let Some(identity) = &config.session_identity {
         let valid =
-            wamn_control_provision::identity_issuer::validate_identity_issuer(&identity.issuer)
+            wamn_control_provision::identity_role::validate_identity_issuer(&identity.issuer)
                 .is_ok()
                 && wamn_control_provision::session_target::session_audience(
                     &wamn_registry::Triple::new(

@@ -13,6 +13,8 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wamn-platform-identity = { workspace = true }
@@ -31,13 +33,12 @@ wamn-registry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-schema-control = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 url = { workspace = true }
-tokio-postgres = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [lints]

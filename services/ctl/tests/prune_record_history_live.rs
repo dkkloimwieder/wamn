@@ -20,13 +20,13 @@
 //! 4. The role reads no history image column and holds no `wamn_platform` edge.
 //!    It holds pruning grants on finite history and successful write claims.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity,
-    compose_url, sql, workload_generation_role,
+    AUDIT_RETENTION_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_test_infrastructure::ctl_process;
@@ -48,50 +48,57 @@ const RELATIONS: [(&str, &str); 3] = [
 ];
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to disposable PostgreSQL");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
-async fn current_database(admin: &Client) -> String {
-    admin
-        .query_one("SELECT current_database()::text", &[])
+async fn current_database(admin: &mut Client) -> String {
+    sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut *admin)
         .await
         .expect("read the target database name")
         .get(0)
 }
 
 /// Install the catalog and the application minimum on a clean database.
-async fn provision(admin: &Client) {
-    admin
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the package-owner role");
-    admin
-        .batch_execute(
-            "DO $grant$ BEGIN \
+async fn provision(admin: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("ensure the package-owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $grant$ BEGIN \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); \
-             END $grant$;",
-        )
-        .await
-        .expect("grant the package-owner role its database authority");
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("grant the package-owner role its database authority");
 }
 
-async fn drop_fixture_schemas(admin: &Client) {
-    admin
-        .batch_execute(&format!(
+async fn drop_fixture_schemas(admin: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE;"
         ))
-        .await
-        .expect("drop the fixture schemas");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("drop the fixture schemas");
 }
 
 fn fixture_root(name: &str) -> PathBuf {
@@ -182,20 +189,19 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
 }
 
 fn generation(family: WorkloadRoleFamily, project_env_key: &str, database: &str) -> String {
-    workload_generation_role(
+    workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key,
             database,
         },
-        CredentialGeneration::A,
     )
     .unwrap_or_else(|error| panic!("derive the {} generation identity: {error}", family.label()))
 }
 
-async fn drop_generation_role(admin: &Client, role: &str) {
-    admin
-        .batch_execute(&format!(
+async fn drop_generation_role(admin: &mut Client, role: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DO $record_retention$ BEGIN \
                IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN \
                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
@@ -203,32 +209,39 @@ async fn drop_generation_role(admin: &Client, role: &str) {
                END IF; \
              END $record_retention$;"
         ))
-        .await
-        .expect("drop the generation role");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("drop the generation role");
 }
 
 /// Mint one generation through the production prepare builder.
-async fn mint(admin: &Client, family: WorkloadRoleFamily, database: &str, role: &str) {
+async fn mint(admin: &mut Client, family: WorkloadRoleFamily, database: &str, role: &str) {
     drop_generation_role(admin, role).await;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             family,
             database,
             role,
             GENERATION_PASSWORD,
-            "2100-01-01T00:00:00Z",
         ))
-        .await
-        .expect("prepare the generation");
-    let clean: bool = admin
-        .query_one(
-            "SELECT NOT (rolsuper OR rolbypassrls) AND rolcanlogin AND rolinherit \
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("prepare the generation");
+    let clean: bool = sqlx::query(
+        "SELECT NOT (rolsuper OR rolbypassrls) AND rolcanlogin AND rolinherit \
                FROM pg_catalog.pg_roles WHERE rolname = $1",
-            &[&role],
-        )
-        .await
-        .expect("read the generation attributes")
-        .get(0);
+    )
+    .bind(&role)
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the generation attributes")
+    .get(0);
     assert!(
         clean,
         "the {role} generation is superuser, BYPASSRLS, or cannot log in"
@@ -238,39 +251,44 @@ async fn mint(admin: &Client, family: WorkloadRoleFamily, database: &str, role: 
 /// One fixture write: a statement in its own transaction as the fixture
 /// principal, with every new entry of the history table moved `age_days` into
 /// the past. Returns the positions of the new entries.
-async fn seed(admin: &Client, table: &str, statement: &str, age_days: i32) -> Vec<i64> {
+async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -> Vec<i64> {
     let history = format!("{SCHEMA}.{table}_history");
-    let last: i64 = admin
-        .query_one(
-            &format!("SELECT coalesce(max(position), 0) FROM {history}"),
-            &[],
-        )
-        .await
-        .expect("read the last history position")
-        .get(0);
-    admin
-        .batch_execute(&format!(
+    let last: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT coalesce(max(position), 0) FROM {history}"
+    )))
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the last history position")
+    .get(0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-retention-fixture', true); \
              {statement}; \
              COMMIT;"
         ))
-        .await
-        .unwrap_or_else(|error| panic!("write {statement}: {error}"));
-    let mut positions = admin
-        .query(
-            &format!(
-                "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .unwrap_or_else(|error| panic!("write {statement}: {error}"));
+    let mut positions = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \
                   WHERE position > $2 RETURNING position"
-            ),
-            &[&age_days, &last],
-        )
-        .await
-        .expect("move the new entries into the past")
-        .iter()
-        .map(|row| row.get(0))
-        .collect::<Vec<i64>>();
+        ))
+            .to_string(),
+    ))
+    .bind(&age_days)
+    .bind(&last)
+    .fetch_all(&mut *admin)
+    .await
+    .expect("move the new entries into the past")
+    .iter()
+    .map(|row| row.get(0))
+    .collect::<Vec<i64>>();
     positions.sort_unstable();
     assert_eq!(
         positions.len(),
@@ -286,16 +304,16 @@ fn row_id(n: u8) -> String {
 }
 
 /// The positions of each history table, in position order.
-async fn positions(admin: &Client) -> BTreeMap<String, Vec<i64>> {
+async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
     let mut observed = BTreeMap::new();
     for (table, _) in RELATIONS {
-        let rows = admin
-            .query(
-                &format!("SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"),
-                &[],
-            )
-            .await
-            .expect("read a history table");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(
+            (&format!("SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"))
+                .to_string(),
+        ))
+        .fetch_all(&mut *admin)
+        .await
+        .expect("read a history table");
         observed.insert(
             table.to_owned(),
             rows.iter().map(|row| row.get(0)).collect::<Vec<i64>>(),
@@ -327,38 +345,32 @@ async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
 fn replace_role(url: &str, role: &str, password: &str) -> String {
-    let config: tokio_postgres::Config = url.parse().expect("parse the connection URL");
-    let host = match config.get_hosts() {
-        [tokio_postgres::config::Host::Tcp(host)] => host.clone(),
-        hosts => panic!("the record history retention test needs one TCP host, got {hosts:?}"),
-    };
-    let port = *config
-        .get_ports()
-        .first()
-        .expect("the connection URL names a port");
-    let database = config
-        .get_dbname()
-        .expect("the connection URL names a database");
-    compose_url(role, password, &host, port, database)
+    let mut input = url::Url::parse(url).expect("parse fixture input");
+    input.set_username(role).unwrap();
+    input.set_password(Some(password)).unwrap();
+    input.into()
 }
 
 /// The server's answer about the grants and the reach of the role (spec test 20).
-async fn assert_authority(admin: &Client, credential_url: &str) {
-    let grants = admin
-        .query(sql::role_database_grants_sql(), &[&AUDIT_RETENTION_ROLE])
-        .await
-        .expect("read the audit retention grants")
-        .iter()
-        .map(|row| {
-            format!(
-                "{} {}.{} {}",
-                row.get::<_, String>("object_type"),
-                row.get::<_, String>("schema_name"),
-                row.get::<_, String>("object_name"),
-                row.get::<_, String>("privilege_type"),
-            )
-        })
-        .collect::<Vec<_>>();
+async fn assert_authority(admin: &mut Client, credential_url: &str) {
+    let grants = sqlx::query(sqlx::AssertSqlSafe(
+        (sql::role_database_grants_sql()).to_string(),
+    ))
+    .bind(&AUDIT_RETENTION_ROLE)
+    .fetch_all(&mut *admin)
+    .await
+    .expect("read the audit retention grants")
+    .iter()
+    .map(|row| {
+        format!(
+            "{} {}.{} {}",
+            row.get::<String, _>("object_type"),
+            row.get::<String, _>("schema_name"),
+            row.get::<String, _>("object_name"),
+            row.get::<String, _>("privilege_type"),
+        )
+    })
+    .collect::<Vec<_>>();
     let mut expected = vec![
         "column platform.write_log.created_at SELECT".to_owned(),
         "column platform.write_log.result SELECT".to_owned(),
@@ -381,31 +393,36 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
     expected.push(format!("schema {SCHEMA}.{SCHEMA} USAGE"));
     expected.push("schema wamn_history.wamn_history USAGE".to_owned());
     assert_eq!(grants, expected, "the audit retention grants");
-    let edges: i64 = admin
-        .query_one(
-            "SELECT count(*) FROM pg_catalog.pg_auth_members AS edge \
+    let edges: i64 = sqlx::query(
+        "SELECT count(*) FROM pg_catalog.pg_auth_members AS edge \
                JOIN pg_catalog.pg_roles AS member ON member.oid = edge.member \
               WHERE member.rolname = $1",
-            &[&AUDIT_RETENTION_ROLE],
-        )
-        .await
-        .expect("read the audit retention memberships")
-        .get(0);
+    )
+    .bind(&AUDIT_RETENTION_ROLE)
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the audit retention memberships")
+    .get(0);
     assert_eq!(edges, 0, "the audit retention role holds a membership");
 
-    let credential = connect(credential_url).await;
+    let mut credential = connect(credential_url).await;
     for statement in [
         format!("SELECT before FROM {SCHEMA}.shipment_history LIMIT 1"),
         format!("SELECT count(*) FROM {SCHEMA}.ledger_history"),
         format!("DELETE FROM {SCHEMA}.ledger_history"),
         format!("SELECT count(*) FROM {SCHEMA}.shipment"),
     ] {
-        let refused = credential
-            .query(&statement, &[])
+        let refused = sqlx::query(sqlx::AssertSqlSafe((&statement).to_string()))
+            .fetch_all(&mut credential)
             .await
             .err()
-            .and_then(|error| error.code().cloned())
-            .is_some_and(|code| code == tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE);
+            .and_then(|error| {
+                error
+                    .as_database_error()
+                    .and_then(|error| error.code())
+                    .map(|code| code.into_owned())
+            })
+            .is_some_and(|code| code == "42501");
         assert!(refused, "the generation was not refused: {statement}");
     }
 }
@@ -413,9 +430,9 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
     let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
-    let admin = connect(&url).await;
-    let database = current_database(&admin).await;
-    provision(&admin).await;
+    let mut admin = connect(&url).await;
+    let mut database = current_database(&mut admin).await;
+    provision(&mut admin).await;
     let package = fixture_root("prune-record-history-live");
     write_package(&package);
     apply(&url, &package)
@@ -552,30 +569,34 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
         .map(|(table, _)| ((*table).to_owned(), Vec::new()))
         .collect();
     for (table, statement, age, keep) in &steps {
-        let written = seed(&admin, table, statement, *age).await;
+        let written = seed(&mut admin, table, statement, *age).await;
         if *keep {
             kept.entry((*table).to_owned()).or_default().extend(written);
         }
     }
-    let seeded = positions(&admin).await;
+    let seeded = positions(&mut admin).await;
 
     let credential_role = generation(
         WorkloadRoleFamily::AuditRetention,
         PROJECT_ENV_KEY,
-        &database,
+        &mut database,
     );
-    let run_retention_role = generation(WorkloadRoleFamily::Retention, PROJECT_ENV_KEY, &database);
+    let run_retention_role = generation(
+        WorkloadRoleFamily::Retention,
+        PROJECT_ENV_KEY,
+        &mut database,
+    );
     mint(
-        &admin,
+        &mut admin,
         WorkloadRoleFamily::AuditRetention,
-        &database,
+        &mut database,
         &credential_role,
     )
     .await;
     mint(
-        &admin,
+        &mut admin,
         WorkloadRoleFamily::Retention,
-        &database,
+        &mut database,
         &run_retention_role,
     )
     .await;
@@ -597,87 +618,86 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     .await;
     assert_refused(&url, PROJECT_ENV_KEY, "superuser login").await;
     assert_eq!(
-        positions(&admin).await,
+        positions(&mut admin).await,
         seeded,
         "the refusals left the history untouched"
     );
 
-    assert_authority(&admin, &credential_url).await;
+    assert_authority(&mut admin, &credential_url).await;
 
     ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
         .await
         .expect("prune record history through wamn-ctl-ops");
 
-    assert_eq!(positions(&admin).await, kept, "the retained positions");
+    assert_eq!(positions(&mut admin).await, kept, "the retained positions");
     // Spec tests 1 and 1a: the oldest retained entry of the live row is an
     // update, so its history is incomplete. The recent row keeps its insert.
-    let oldest = |id: String| {
-        let admin = &admin;
-        async move {
-            admin
-                .query_opt(
-                    &format!(
-                        "SELECT type FROM {SCHEMA}.shipment_history \
+    async fn oldest(admin: &mut Client, id: String) -> Option<String> {
+        sqlx::query(sqlx::AssertSqlSafe(
+            (&format!(
+                "SELECT type FROM {SCHEMA}.shipment_history \
                           WHERE row_key = jsonb_build_object('id', $1::text::uuid) \
                           ORDER BY position LIMIT 1"
-                    ),
-                    &[&id],
-                )
-                .await
-                .expect("read the oldest retained entry")
-                .map(|row| row.get::<_, String>(0))
-        }
-    };
+            ))
+                .to_string(),
+        ))
+        .bind(&id)
+        .fetch_optional(&mut *admin)
+        .await
+        .expect("read the oldest retained entry")
+        .map(|row| row.get::<String, _>(0))
+    }
     assert_eq!(
-        oldest(shipment(1)).await.as_deref(),
+        oldest(&mut admin, shipment(1)).await.as_deref(),
         Some("update"),
         "the live row keeps an incomplete history"
     );
     assert_eq!(
-        oldest(shipment(2)).await,
+        oldest(&mut admin, shipment(2)).await,
         None,
         "the deleted row keeps no entry"
     );
     assert_eq!(
-        oldest(shipment(3)).await.as_deref(),
+        oldest(&mut admin, shipment(3)).await.as_deref(),
         Some("insert"),
         "the recent row keeps its insert"
     );
-    let markers: i64 = admin
-        .query_one(
-            &format!(
-                "SELECT (SELECT count(*) FROM {SCHEMA}.shipment_history \
+    let markers: i64 = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT (SELECT count(*) FROM {SCHEMA}.shipment_history \
                           WHERE operation <> 'admin:seed-retention-fixture') \
                       + (SELECT count(*) FROM {SCHEMA}.parcel_history \
                           WHERE operation <> 'admin:seed-retention-fixture') \
                       + (SELECT count(*) FROM {SCHEMA}.ledger_history \
                           WHERE operation <> 'admin:seed-retention-fixture')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read entries that the verb wrote")
-        .get(0);
+        ))
+            .to_string(),
+    ))
+    .fetch_one(&mut admin)
+    .await
+    .expect("read entries that the verb wrote")
+    .get(0);
     assert_eq!(markers, 0, "the verb wrote no marker");
 
-    drop_generation_role(&admin, &credential_role).await;
-    drop_generation_role(&admin, &run_retention_role).await;
-    drop_fixture_schemas(&admin).await;
+    drop_generation_role(&mut admin, &credential_role).await;
+    drop_generation_role(&mut admin, &run_retention_role).await;
+    drop_fixture_schemas(&mut admin).await;
     std::fs::remove_dir_all(package).expect("remove the fixture package");
 }
 
-async fn wait_for_blocker(observer: &Client, application: &str, blocker: i32) {
+async fn wait_for_blocker(observer: &mut Client, application: &str, blocker: i32) {
     tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
-            let waiting: bool = observer
-                .query_one(
-                    "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
+            let waiting: bool = sqlx::query(
+                "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
                       WHERE application_name = $1 AND $2 = ANY(pg_blocking_pids(pid)))",
-                    &[&application, &blocker],
-                )
-                .await
-                .expect("read the blocking process")
-                .get(0);
+            )
+            .bind(&application)
+            .bind(&blocker)
+            .fetch_one(&mut *observer)
+            .await
+            .expect("read the blocking process")
+            .get(0);
             if waiting {
                 break;
             }
@@ -691,15 +711,15 @@ async fn wait_for_blocker(observer: &Client, application: &str, blocker: i32) {
 #[tokio::test]
 async fn history_table_creation_waits_for_a_running_prune() {
     let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
-    let admin = connect(&url).await;
-    provision(&admin).await;
+    let mut admin = connect(&url).await;
+    provision(&mut admin).await;
     let package = fixture_root("prune-record-history-lock");
     write_package(&package);
     apply(&url, &package)
         .await
         .expect("apply the fixture package");
     let expired = seed(
-        &admin,
+        &mut admin,
         "parcel",
         &format!(
             "INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'expired')",
@@ -708,35 +728,38 @@ async fn history_table_creation_waits_for_a_running_prune() {
         10,
     )
     .await;
-    assert_eq!(positions(&admin).await["parcel"], expired);
+    assert_eq!(positions(&mut admin).await["parcel"], expired);
 
     let mut holder = connect(&url).await;
-    let holder_pid: i32 = holder
-        .query_one("SELECT pg_backend_pid()", &[])
+    let holder_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut holder)
         .await
         .unwrap()
         .get(0);
-    let held = holder.transaction().await.expect("hold the history table");
-    held.batch_execute(&format!(
+    let mut held = holder.begin().await.expect("hold the history table");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "LOCK TABLE {SCHEMA}.parcel_history IN ACCESS EXCLUSIVE MODE"
-    ))
+    )))
+    .execute(&mut *held)
     .await
+    .map(drop)
     .expect("prevent pruning from completing");
 
     let mut pruning = connect(&url).await;
-    pruning
-        .batch_execute("SET application_name = 'history_lock_prune'")
+    sqlx::raw_sql("SET application_name = 'history_lock_prune'")
+        .execute(&mut pruning)
         .await
+        .map(drop)
         .unwrap();
-    let prune_pid: i32 = pruning
-        .query_one("SELECT pg_backend_pid()", &[])
+    let prune_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut pruning)
         .await
         .unwrap()
         .get(0);
     let prune = tokio::spawn(async move {
         wamn_environment_control::prune_record_history::prune(&mut pruning).await
     });
-    wait_for_blocker(&admin, "history_lock_prune", holder_pid).await;
+    wait_for_blocker(&mut admin, "history_lock_prune", holder_pid).await;
 
     let mut applying_url = url::Url::parse(&url).expect("parse the database URL");
     applying_url
@@ -745,16 +768,15 @@ async fn history_table_creation_waits_for_a_running_prune() {
     let applying_package = package.clone();
     let applying =
         tokio::spawn(async move { apply(applying_url.as_str(), &applying_package).await });
-    wait_for_blocker(&admin, "history_lock_apply", prune_pid).await;
-    let waiting_query: String = admin
-        .query_one(
-            "SELECT query FROM pg_catalog.pg_stat_activity \
+    wait_for_blocker(&mut admin, "history_lock_apply", prune_pid).await;
+    let waiting_query: String = sqlx::query(
+        "SELECT query FROM pg_catalog.pg_stat_activity \
               WHERE application_name = 'history_lock_apply' AND wait_event = 'advisory'",
-            &[],
-        )
-        .await
-        .expect("apply waits on the retention advisory lock")
-        .get(0);
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("apply waits on the retention advisory lock")
+    .get(0);
     assert_eq!(
         waiting_query,
         wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL
@@ -778,8 +800,8 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .expect("join apply")
         .expect("repeat the exact package application");
     assert_eq!(applied.migrations_applied, 0);
-    assert!(positions(&admin).await["parcel"].is_empty());
+    assert!(positions(&mut admin).await["parcel"].is_empty());
 
-    drop_fixture_schemas(&admin).await;
+    drop_fixture_schemas(&mut admin).await;
     std::fs::remove_dir_all(package).expect("remove the fixture package");
 }

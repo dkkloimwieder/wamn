@@ -9,11 +9,11 @@
 //! lifecycle lock of the coordinate, as `env apply` does. These three read the
 //! platform inputs of `env` ([`Platform::from_env`]).
 
+use sqlx::{Connection as _, Row as _};
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use tokio_postgres::NoTls;
 use wamn_environment_control::author_workflow::{
     AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
 };
@@ -213,10 +213,10 @@ pub struct ListArgs {
 }
 
 async fn workflows(target: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> {
-    let (client, connection) = tokio_postgres::connect(&target.target.admin_database_url, NoTls)
+    let client = wamn_postgres::connect(&target.target.admin_database_url)
         .await
         .context("connect to the project database")?;
-    tokio::spawn(connection);
+
     Ok(PostgresWorkflows::new(
         client,
         &target.target.schema,
@@ -226,11 +226,11 @@ async fn workflows(target: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows>
 }
 
 /// Connect to the project database with project-admin authority.
-async fn project(target: &WorkflowDatabase) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, connection) = tokio_postgres::connect(&target.admin_database_url, NoTls)
+async fn project(target: &WorkflowDatabase) -> anyhow::Result<sqlx::PgConnection> {
+    let client = wamn_postgres::connect(&target.admin_database_url)
         .await
         .context("connect to the project database")?;
-    tokio::spawn(connection);
+
     Ok(client)
 }
 
@@ -353,41 +353,38 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         WorkflowCommand::List(target) => {
             let mut client = project(&target.target).await?;
             let project_env_key = target.project_env_key();
-            let transaction = client.transaction().await?;
-            transaction
-                .query_one(
-                    "SELECT set_config('app.project_env_key', $1, true)",
-                    &[&project_env_key],
-                )
+            let mut transaction = client.begin().await?;
+            sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+                .bind(&project_env_key)
+                .fetch_one(&mut *transaction)
                 .await
                 .context("bind the workflow project identity")?;
-            for row in transaction
-                .query(
-                    LIST_WORKFLOWS_SQL,
-                    &[&project_env_key, &target.target.environment],
-                )
+            for row in sqlx::query(LIST_WORKFLOWS_SQL)
+                .bind(&project_env_key)
+                .bind(&target.target.environment)
+                .fetch_all(&mut *transaction)
                 .await
                 .context("read the workflow versions")?
             {
                 println!(
                     "{}",
                     serde_json::json!({
-                        "application": row.get::<_, String>(0),
-                        "workflow-id": row.get::<_, String>(1),
-                        "version": row.get::<_, i32>(2),
-                        "wiring-hash": row.get::<_, String>(3),
-                        "trigger": row.get::<_, String>(4),
-                        "schedule": row.get::<_, Option<String>>(10),
-                        "source-package": row.get::<_, Option<String>>(11),
-                        "entity": row.get::<_, Option<String>>(12),
-                        "ops": row.get::<_, Option<Vec<String>>>(13),
-                        "condition": row.get::<_, Option<String>>(14),
-                        "enable-sequence": row.get::<_, Option<i64>>(15),
-                        "execution-type": row.get::<_, String>(5),
-                        "execution-role": row.get::<_, Option<String>>(6),
-                        "enabled": row.get::<_, bool>(7),
-                        "created-by": row.get::<_, String>(8),
-                        "created-at": row.get::<_, String>(9),
+                        "application": row.get::<String, _>(0),
+                        "workflow-id": row.get::<String, _>(1),
+                        "version": row.get::<i32, _>(2),
+                        "wiring-hash": row.get::<String, _>(3),
+                        "trigger": row.get::<String, _>(4),
+                        "schedule": row.get::<Option<String>, _>(10),
+                        "source-package": row.get::<Option<String>, _>(11),
+                        "entity": row.get::<Option<String>, _>(12),
+                        "ops": row.get::<Option<Vec<String>>, _>(13),
+                        "condition": row.get::<Option<String>, _>(14),
+                        "enable-sequence": row.get::<Option<i64>, _>(15),
+                        "execution-type": row.get::<String, _>(5),
+                        "execution-role": row.get::<Option<String>, _>(6),
+                        "enabled": row.get::<bool, _>(7),
+                        "created-by": row.get::<String, _>(8),
+                        "created-at": row.get::<String, _>(9),
                     })
                 );
             }

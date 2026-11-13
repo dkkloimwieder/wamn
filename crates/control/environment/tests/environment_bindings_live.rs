@@ -1,16 +1,15 @@
 //! Apply refusals against project integrations and environment connections.
 
 use serde_json::json;
+use sqlx::{Connection as _, Row as _};
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_environment_control::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connections::administration;
 
-async fn connect(url: &str) -> tokio_postgres::Client {
-    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(driver);
+async fn connect(url: &str) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(url).await.unwrap();
+
     client
 }
 fn document() -> EnvironmentDocument {
@@ -30,26 +29,39 @@ fn package(integration_type: &str) -> PackageManifest {
         "models":{},"components":{},"connections":{"upstream":{"interface":interface,"mode":"write"}}
     })).unwrap()).unwrap()
 }
-async fn seed(client: &mut tokio_postgres::Client) {
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    client
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"),
-        )
+async fn seed(client: &mut sqlx::PgConnection) {
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"))
+            .to_string(),
     ))
+    .execute(&mut *client)
     .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut *client).await.map(drop).unwrap();
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
+        .await
+        .map(drop)
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
+    ))
+    .execute(&mut *tx)
+    .await
+    .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
 }
 
@@ -59,9 +71,10 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let mut doc = document();
     let packages = [package("http")];
@@ -76,11 +89,13 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
         .connections
         .insert("upstream".into(), "unavailable".into());
     doc.applications.insert("other".into(), unrelated);
-    let selected = bindings::analyse(&client, &doc, &packages).await.unwrap();
+    let selected = bindings::analyse(&mut client, &doc, &packages)
+        .await
+        .unwrap();
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].version, 1);
     assert_eq!(
-        bindings::analyse(&client, &doc, &[package("gcs")])
+        bindings::analyse(&mut client, &doc, &[package("gcs")])
             .await
             .unwrap_err()
             .code,
@@ -92,7 +107,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
         .connections
         .insert("other".into(), "erp".into());
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
@@ -100,7 +115,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     );
     doc.applications.get_mut("app").unwrap().connections.clear();
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
@@ -109,7 +124,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     doc = document();
     doc.integrations.clear();
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
@@ -118,7 +133,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     doc = document();
     doc.integrations.get_mut("erp").unwrap().version = 99;
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
@@ -127,7 +142,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     doc = document();
     doc.env = "other".into();
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
@@ -136,32 +151,35 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     doc = document();
     doc.target = "other".into();
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
         "connection_unavailable"
     );
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,parameter_schema,operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,parameter_schema,operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     doc = document();
     doc.integrations.get_mut("erp").unwrap().version = 2;
     assert_eq!(
-        bindings::analyse(&client, &doc, &packages)
+        bindings::analyse(&mut client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
         "integration_version_unserved"
     );
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
     administration::execute(
-        &tx,
+        &mut tx,
         "acme",
         "connection.disable",
         &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
@@ -172,7 +190,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
     .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(
-        bindings::analyse(&client, &document(), &packages)
+        bindings::analyse(&mut client, &document(), &packages)
             .await
             .unwrap_err()
             .code,
@@ -202,22 +220,27 @@ async fn two_packages_can_bind_distinct_names_to_one_connection_without_authorit
     second.package.id = "other".into();
     let declaration = second.connections.remove("upstream").unwrap();
     second.connections.insert("second".into(), declaration);
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    let selected = bindings::analyse(&client, &doc, &[first, second])
+    let selected = bindings::analyse(&mut client, &doc, &[first, second])
         .await
         .unwrap();
     assert_eq!(selected.len(), 2);
     assert_eq!(selected[0].connection_id, selected[1].connection_id);
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
     assert_eq!(
-        client
-            .query_one("SELECT count(*) FROM registry.connection_generation", &[])
+        sqlx::query("SELECT count(*) FROM registry.connection_generation")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
 }
@@ -228,19 +251,26 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").execute(&mut client).await.map(drop).unwrap();
     let mut doc = document();
     doc.integrations.clear();
     doc.integrations.insert(
@@ -253,7 +283,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
         .connections
         .insert("upstream".into(), "meter".into());
     assert_eq!(
-        bindings::analyse(&client, &doc, &[package("modbus")])
+        bindings::analyse(&mut client, &doc, &[package("modbus")])
             .await
             .unwrap_err()
             .code,
@@ -267,57 +297,74 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     let system_database = wamn_control_provision::test_database::system();
     let mut system = connect(system_database.url()).await;
     seed(&mut system).await;
-    system.batch_execute("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
+    sqlx::raw_sql("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").execute(&mut system).await.map(drop).unwrap();
     let environment_database = wamn_platform_identity::test_database::project_platform();
     let mut environment = connect(environment_database.url()).await;
-    environment
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
+    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS wamn_run")
+        .execute(&mut environment)
         .await
+        .map(drop)
         .unwrap();
-    environment
-        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run")).to_string(),
+    ))
+    .execute(&mut environment)
+    .await
+    .map(drop)
+    .unwrap();
     let document = document();
     let _ =
         bindings::project_authority(system_database.url(), environment_database.url(), &document)
             .await
             .unwrap();
-    environment
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; {}",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             )
         ))
-        .await
-        .unwrap();
-    let connection: String = environment
-        .query_one("SELECT id::text FROM platform.connection", &[])
+            .to_string(),
+    ))
+    .execute(&mut environment)
+    .await
+    .map(drop)
+    .unwrap();
+    let connection: String = sqlx::query("SELECT id::text FROM platform.connection")
+        .fetch_one(&mut environment)
         .await
         .unwrap()
         .get(0);
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    environment.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--dev--one',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
-    environment.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--dev--one',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
-    environment.batch_execute("COMMIT").await.unwrap();
-    let request = json!({"project":"one","env":"dev","name":"erp","parameters":{"primary-authority":"https://erp.example/","tls-verification":"disabled"}}).to_string();
-    let source = system.transaction().await.unwrap();
-    source
-        .batch_execute("SET LOCAL ROLE wamn_control")
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--dev--one',$1,$2)").bind(&digest).bind(&b"{}".as_slice()).execute(&mut environment).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--dev--one',$1,$2::text::uuid,2)").bind(&digest).bind(&connection).execute(&mut environment).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut environment)
         .await
+        .map(drop)
         .unwrap();
-    source
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    let request = json!({"project":"one","env":"dev","name":"erp","parameters":{"primary-authority":"https://erp.example/","tls-verification":"disabled"}}).to_string();
+    let mut source = system.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *source)
+        .await
+        .map(drop)
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
-    let target = environment.transaction().await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut *source)
+    .await
+    .map(drop)
+    .unwrap();
+    let mut target = environment.begin().await.unwrap();
     let error = administration::execute_in_environment(
-        &source,
-        &target,
+        &mut source,
+        &mut target,
         "acme",
         "connection.write",
         &request,
@@ -330,40 +377,47 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     source.rollback().await.unwrap();
     target.rollback().await.unwrap();
     assert_eq!(
-        system
-            .query_one(
-                "SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid",
-                &[&connection]
-            )
+        sqlx::query("SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid")
+            .bind(&connection)
+            .fetch_one(&mut system)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
-    environment
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; {} DELETE FROM catalog.release_connection; COMMIT",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             )
         ))
+            .to_string(),
+    ))
+    .execute(&mut environment)
+    .await
+    .map(drop)
+    .unwrap();
+    let mut source = system.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *source)
         .await
+        .map(drop)
         .unwrap();
-    let source = system.transaction().await.unwrap();
-    source
-        .batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    source
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
-    let target = environment.transaction().await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut *source)
+    .await
+    .map(drop)
+    .unwrap();
+    let mut target = environment.begin().await.unwrap();
     administration::execute_in_environment(
-        &source,
-        &target,
+        &mut source,
+        &mut target,
         "acme",
         "connection.write",
         &request,
@@ -375,14 +429,12 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     source.commit().await.unwrap();
     target.rollback().await.unwrap();
     assert_eq!(
-        system
-            .query_one(
-                "SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid",
-                &[&connection]
-            )
+        sqlx::query("SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid")
+            .bind(&connection)
+            .fetch_one(&mut system)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         2
     );
 }
@@ -393,15 +445,16 @@ async fn apply_refuses_a_connection_version_missing_one_required_interface() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let mut package = package("http");
     package.connections.get_mut("upstream").unwrap().interface =
         "wamn:connection/metadata@0.1.0".into();
     assert_eq!(
-        bindings::analyse(&client, &document(), &[package])
+        bindings::analyse(&mut client, &document(), &[package])
             .await
             .unwrap_err()
             .code,
@@ -415,18 +468,25 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
-        &tx,
+        &mut tx,
         "acme",
         &json!({"project":"one","env":"dev","name":"labels",
         "integration_type":"gcs","auth_type":"custom","parameters":{
@@ -436,9 +496,10 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let mut doc = document();
     doc.integrations = std::collections::BTreeMap::from([(
@@ -450,7 +511,7 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
         .unwrap()
         .connections
         .insert("upstream".into(), "labels".into());
-    let bindings = bindings::analyse(&client, &doc, &[package("s3")])
+    let bindings = bindings::analyse(&mut client, &doc, &[package("s3")])
         .await
         .unwrap();
     assert_eq!(bindings.len(), 1);
@@ -460,16 +521,12 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
 #[tokio::test]
 async fn publish_refuses_wasm_and_native_worlds_without_health() {
     let database = wamn_control_provision::test_database::system();
-    let client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").await.unwrap();
+    let mut client = connect(database.url()).await;
+    sqlx::raw_sql("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").execute(&mut client).await.map(drop).unwrap();
     for code in ["modbus", "native-health"] {
-        let error = client.query_one("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')", &[
-            &code, &format!("sha256:{}", "a".repeat(64)),
-            &json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]}),
-            &"wamn:modbus/client@1.0.0", &vec!["wamn:modbus/read@1.0.0".to_owned()],
-        ]).await.unwrap_err();
+        let error = sqlx::query("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')").bind(&code).bind(&format!("sha256:{}", "a".repeat(64))).bind(&json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]})).bind(&"wamn:modbus/client@1.0.0").bind(&vec!["wamn:modbus/read@1.0.0".to_owned()]).fetch_one(&mut client).await.unwrap_err();
         assert_eq!(
-            error.as_db_error().unwrap().message(),
+            error.as_database_error().unwrap().message(),
             "health_export_required"
         );
     }
@@ -481,21 +538,29 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
+    wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let mut doc = document();
     doc.integrations = std::collections::BTreeMap::from([(
@@ -512,7 +577,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     declaration.interface = "wamn:modbus/write@1.0.0".into();
     declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
     assert_eq!(
-        bindings::analyse(&client, &doc, &[manifest.clone()])
+        bindings::analyse(&mut client, &doc, &[manifest.clone()])
             .await
             .unwrap_err()
             .code,
@@ -521,7 +586,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     manifest.connections.get_mut("upstream").unwrap().mode =
         wamn_compiler::manifest::ConnectionMode::Write;
     assert_eq!(
-        bindings::analyse(&client, &doc, &[manifest.clone()])
+        bindings::analyse(&mut client, &doc, &[manifest.clone()])
             .await
             .unwrap()
             .len(),
@@ -531,7 +596,7 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
     declaration.mode = wamn_compiler::manifest::ConnectionMode::Read;
     declaration.interface = "wamn:modbus/read@1.0.0".into();
     assert_eq!(
-        bindings::analyse(&client, &doc, &[manifest])
+        bindings::analyse(&mut client, &doc, &[manifest])
             .await
             .unwrap()
             .len(),
@@ -545,18 +610,25 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
     seed(&mut client).await;
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(
-        &tx,
+        &mut tx,
         "acme",
         &json!({"project":"one","env":"dev","name":"meter",
             "integration_type":"modbus","auth_type":"none",
@@ -567,22 +639,28 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     .unwrap();
     tx.commit().await.unwrap();
     // A cloud target's name does not determine its type.
-    client
-        .batch_execute("UPDATE registry.target SET name='remote' WHERE name='cloud'")
+    sqlx::raw_sql("UPDATE registry.target SET name='remote' WHERE name='cloud'")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let mut doc = document();
     doc.target = "remote".into();
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    let shared = bindings::analyse(&mut client, &doc, &[package("http")])
         .await
         .unwrap();
-    let shared = bindings::analyse(&client, &doc, &[package("http")])
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
     assert!(
-        analyse::replica_refusals(&client, &doc, &shared, None)
+        analyse::replica_refusals(&mut client, &doc, &shared, None)
             .await
             .unwrap()
             .is_empty()
@@ -596,21 +674,26 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
         .unwrap()
         .connections
         .insert("upstream".into(), "meter".into());
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    let exclusive = bindings::analyse(&client, &doc, &[package("modbus")])
+    let exclusive = bindings::analyse(&mut client, &doc, &[package("modbus")])
         .await
         .unwrap();
     assert!(exclusive[0].exclusive);
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
     let directory = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let group = directory.path().join("host-group.yaml");
     for yaml in ["replicas: 2\n", "{}\n", "replicas: '1'\n"] {
         std::fs::write(&group, yaml).unwrap();
         assert_eq!(
-            analyse::replica_refusals(&client, &doc, &exclusive, Some(&group))
+            analyse::replica_refusals(&mut client, &doc, &exclusive, Some(&group))
                 .await
                 .unwrap(),
             [
@@ -620,7 +703,7 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
         );
     }
     assert_eq!(
-        analyse::replica_refusals(&client, &doc, &exclusive, None)
+        analyse::replica_refusals(&mut client, &doc, &exclusive, None)
             .await
             .unwrap()
             .len(),
@@ -628,28 +711,34 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
     );
     std::fs::write(&group, "replicas: 1\n").unwrap();
     assert!(
-        analyse::replica_refusals(&client, &doc, &exclusive, Some(&group))
+        analyse::replica_refusals(&mut client, &doc, &exclusive, Some(&group))
             .await
             .unwrap()
             .is_empty()
     );
-    client
-        .batch_execute("UPDATE registry.target SET name='cloud', type='local' WHERE name='remote'")
+    sqlx::raw_sql("UPDATE registry.target SET name='cloud', type='local' WHERE name='remote'")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     doc.target = "cloud".into();
-    client
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    let local = bindings::analyse(&mut client, &doc, &[package("modbus")])
         .await
         .unwrap();
-    let local = bindings::analyse(&client, &doc, &[package("modbus")])
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
     std::fs::write(&group, "replicas: 2\n").unwrap();
     for path in [Some(group.as_path()), None] {
         assert!(
-            analyse::replica_refusals(&client, &doc, &local, path)
+            analyse::replica_refusals(&mut client, &doc, &local, path)
                 .await
                 .unwrap()
                 .is_empty()
@@ -660,21 +749,23 @@ async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
 #[tokio::test]
 async fn publish_refuses_write_interfaces_outside_the_exports() {
     let database = wamn_control_provision::test_database::system();
-    let client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_control").await.unwrap();
-    let error = client
-        .query_one(
-            "SELECT registry.publish_integration('http',2,NULL,$1,'wamn:connection/http',$2,$3)",
-            &[
-                &json!({"type":"object","properties":{}}),
-                &vec!["wamn:connection/http@0.1.0"],
-                &vec!["wamn:modbus/write@1.0.0"],
-            ],
-        )
+    let mut client = connect(database.url()).await;
+    sqlx::raw_sql("SET ROLE wamn_control")
+        .execute(&mut client)
         .await
-        .unwrap_err();
+        .map(drop)
+        .unwrap();
+    let error = sqlx::query(
+        "SELECT registry.publish_integration('http',2,NULL,$1,'wamn:connection/http',$2,$3)",
+    )
+    .bind(&json!({"type":"object","properties":{}}))
+    .bind(&vec!["wamn:connection/http@0.1.0"])
+    .bind(&vec!["wamn:modbus/write@1.0.0"])
+    .fetch_one(&mut client)
+    .await
+    .unwrap_err();
     assert_eq!(
-        error.as_db_error().unwrap().message(),
+        error.as_database_error().unwrap().message(),
         "write_interface_not_exported"
     );
 }
@@ -683,24 +774,35 @@ async fn publish_refuses_write_interfaces_outside_the_exports() {
 async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_platform_identity::test_database::project_platform();
-    let client = connect(database.url()).await;
-    client
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await
-        .unwrap();
-    client.batch_execute(&format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.name()))).await.unwrap();
+    let mut client = connect(database.url()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.name())))).execute(&mut client).await.map(drop).unwrap();
     let fingerprint = format!("sha256:{}", "a".repeat(64));
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; {}",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             )
         ))
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--dev--one', 'fixture', '1.0.0', $1, $1)").bind(&fingerprint).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.execute("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--dev--one', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
-    client.batch_execute("COMMIT").await.unwrap();
     let observed = analyse::read_project(database.url(), "acme--dev--one")
         .await
         .unwrap()
@@ -710,9 +812,10 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         observed.installed["fixture"].physical_schema_fingerprint,
         fingerprint
     );
-    client
-        .batch_execute("REVOKE SELECT ON catalog.packages FROM wamn_db_owner")
+    sqlx::raw_sql("REVOKE SELECT ON catalog.packages FROM wamn_db_owner")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     assert!(
         analyse::read_project(database.url(), "acme--dev--one")

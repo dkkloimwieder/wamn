@@ -4,6 +4,7 @@
 //! have no workflow authoring operation (wamn-alrvy.19). Event disposal and isolation
 //! remain observable through the deployed broker.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -66,8 +67,8 @@ pub(super) async fn published(
     candidate: &str,
     rows: &mut BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
-    let database = observer(journey).await?;
-    let before = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let before = stored(journey, &mut database).await?;
     let selections = journey.status().await?;
     drop(database);
     attempt(
@@ -78,17 +79,15 @@ pub(super) async fn published(
         true,
     )
     .await?;
-    let database = observer(journey).await?;
-    let after = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let after = stored(journey, &mut database).await?;
     recreated(&before, &after)?;
     ensure!(
         after["fingerprint"] != before["fingerprint"],
         "published reset retained the old schema"
     );
-    removed(&database, rows).await?;
-    ensure!(database.query_one(
-        "SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)",
-        &[]).await?.get::<_, bool>(0), "reset omitted the selected published index");
+    removed(&mut database, rows).await?;
+    ensure!(sqlx::query("SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)").fetch_one(&mut database).await?.get::<bool, _>(0), "reset omitted the selected published index");
     let status = journey.status().await?;
     for (app, selection) in selections["applications"]
         .as_object()
@@ -149,18 +148,19 @@ async fn refill(
 }
 
 async fn removed(
-    database: &tokio_postgres::Client,
+    database: &mut sqlx::PgConnection,
     rows: &BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
     for (app, (_, widget)) in rows {
         let id = widget["id"].as_str().context("witness widget id")?;
-        let exists: bool = database
-            .query_one(
-                &format!("SELECT EXISTS(SELECT FROM {app}_data.widget WHERE id=$1::text::uuid)"),
-                &[&id],
-            )
-            .await?
-            .get(0);
+        let exists: bool = sqlx::query(sqlx::AssertSqlSafe(
+            (&format!("SELECT EXISTS(SELECT FROM {app}_data.widget WHERE id=$1::text::uuid)"))
+                .to_string(),
+        ))
+        .bind(&id)
+        .fetch_one(&mut *database)
+        .await?
+        .get(0);
         ensure!(!exists, "shared reset retained {app}'s old row");
     }
     Ok(())
@@ -169,31 +169,26 @@ async fn removed(
 // The baseline alone precedes application SQL. Every pinned package must commit
 // its recipe before the restored schema is an interruption point.
 async fn restored_schema(
-    database: &tokio_postgres::Client,
+    database: &mut sqlx::PgConnection,
     pending: &Value,
 ) -> anyhow::Result<Option<Value>> {
-    if !database
-        .query_one(
-            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL \
+    if !sqlx::query(
+        "SELECT to_regclass('platform.schema_baseline') IS NOT NULL \
              AND to_regclass('catalog.packages') IS NOT NULL \
              AND to_regclass('alpha_data.widget_note_idx') IS NOT NULL",
-            &[],
-        )
-        .await?
-        .get::<_, bool>(0)
+    )
+    .fetch_one(&mut *database)
+    .await?
+    .get::<bool, _>(0)
     {
         return Ok(None);
     }
-    let Some(row) = database
-        .query_opt(
-            "SELECT jsonb_build_object(\
+    let Some(row) = sqlx::query("SELECT jsonb_build_object(\
                 'initialization',installed_at::text,\
                 'index_oid',(SELECT indexrelid::bigint FROM pg_index \
                     WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid),\
                 'packages',(SELECT coalesce(jsonb_object_agg(package_id,physical_schema_fingerprint),'{}'::jsonb) FROM catalog.packages)\
-             ) FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
+             ) FROM platform.schema_baseline WHERE singleton").fetch_optional(&mut *database)
         .await?
     else {
         return Ok(None);
@@ -237,12 +232,11 @@ async fn attempt(
         .as_str()
         .context("database name")?;
     let resource = get(journey.run, "platform", "database", name).await?;
-    let system =
-        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
-            .await?;
-    system
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
+    let mut system = wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let started = Instant::now();
     command
         .process_group(0)
@@ -284,14 +278,14 @@ async fn attempt(
                 eprintln!("{label} CNPG present: {found}");
                 present = true;
             }
-            pending = system.query_one("SELECT pending_database FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3", &[&journey.run.document.org, &journey.project, &journey.environment]).await?.get::<_, Option<Value>>(0).unwrap_or(Value::Null);
+            pending = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3").bind(&journey.run.document.org).bind(&journey.project).bind(&journey.environment).fetch_one(&mut system).await?.get::<Option<Value>, _>(0).unwrap_or(Value::Null);
             if !pending.is_null() && stop == Stop::Pinned {
                 eprintln!("{label} pinned reset: {pending}");
                 break Ok(pending);
             }
             if !pending.is_null() && present && stop == Stop::Restored
-                && let Ok(database) = observer(journey).await
-                && let Some(schema) = restored_schema(&database, &pending).await?
+                && let Ok(mut database) = observer(journey).await
+                && let Some(schema) = restored_schema(&mut database, &pending).await?
             {
                 eprintln!("{label} restored schema: {schema}");
                 stopped(journey, &before).await?;
@@ -417,9 +411,9 @@ pub(super) async fn recovery(
         other.status().await?["schema"]["disposable"] == false,
         "isolation environment must remain non-disposable"
     );
-    let database = observer(journey).await?;
-    let before = stored(journey, &database).await?;
-    let other_database = observer(&other).await?;
+    let mut database = observer(journey).await?;
+    let before = stored(journey, &mut database).await?;
+    let mut other_database = observer(&other).await?;
     let other_runtime = runtime(&other, "beta").await?;
     let broker = broker(journey).await?;
     let isolated_event = event(&other, &broker, "counter", "isolated-before-reset").await?;
@@ -439,7 +433,7 @@ pub(super) async fn recovery(
         .apply("deploy-isolation-capture", &mut other.deploy(capture))
         .await?;
     event(&other, &broker, "capture_counter", "added-schema").await?;
-    let isolated = stored(&other, &other_database).await?;
+    let isolated = stored(&other, &mut other_database).await?;
     let other_runtime = runtime(&other, "beta").await?;
     let old_event = event(journey, &broker, "counter", "old-before-reset").await?;
     // The isolation target also observes item 4's refusal without another environment.
@@ -456,7 +450,7 @@ pub(super) async fn recovery(
         "reset accepted a target without disposable authorization"
     );
     ensure!(
-        stored(&other, &other_database).await? == isolated,
+        stored(&other, &mut other_database).await? == isolated,
         "refused reset changed the durable database"
     );
     ensure!(
@@ -473,23 +467,22 @@ pub(super) async fn recovery(
         true,
     )
     .await?;
-    let database = observer(journey).await?;
+    let mut database = observer(journey).await?;
     ensure!(
-        stored(journey, &database).await? == before,
+        stored(journey, &mut database).await? == before,
         "pre-CNPG interruption already destroyed the old database"
     );
     for (app, (_, widget)) in rows.iter() {
         let id = widget["id"].as_str().context("old widget")?;
         ensure!(
-            database
-                .query_one(
-                    &format!(
-                        "SELECT EXISTS(SELECT FROM {app}_data.widget WHERE id=$1::text::uuid)"
-                    ),
-                    &[&id]
-                )
-                .await?
-                .get::<_, bool>(0),
+            sqlx::query(sqlx::AssertSqlSafe(
+                (&format!("SELECT EXISTS(SELECT FROM {app}_data.widget WHERE id=$1::text::uuid)"))
+                    .to_string()
+            ))
+            .bind(&id)
+            .fetch_one(&mut database)
+            .await?
+            .get::<bool, _>(0),
             "pre-CNPG interruption lost {app}'s old row"
         );
     }
@@ -504,8 +497,8 @@ pub(super) async fn recovery(
         true,
     )
     .await?;
-    let database = observer(journey).await?;
-    let after = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let after = stored(journey, &mut database).await?;
     recreated(&before, &after)?;
     ensure!(
         after["initialization"] == pending["initialization_identity"],
@@ -524,7 +517,7 @@ pub(super) async fn recovery(
             "reset retry rotated {app}'s selections"
         );
     }
-    removed(&database, rows).await?;
+    removed(&mut database, rows).await?;
     let stream = broker.get_stream(&old_event.stream).await?;
     let missing = stream
         .get_raw_message(old_event.message.sequence)
@@ -545,12 +538,12 @@ pub(super) async fn recovery(
         true,
     )
     .await?;
-    let database = observer(journey).await?;
-    let restored = stored(journey, &database).await?;
-    let restored_sql = restored_schema(&database, &pending)
+    let mut database = observer(journey).await?;
+    let restored = stored(journey, &mut database).await?;
+    let restored_sql = restored_schema(&mut database, &pending)
         .await?
         .context("committed reset schema")?;
-    removed(&database, rows).await?;
+    removed(&mut database, rows).await?;
     ensure!(
         journey.status().await?["schema"]["pending_database"] == pending,
         "missed the interruption window: reset completed before the process stopped"
@@ -570,15 +563,15 @@ pub(super) async fn recovery(
         false,
     )
     .await?;
-    let database = observer(journey).await?;
-    let completed = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let completed = stored(journey, &mut database).await?;
     same_database(&restored, &completed)?;
     ensure!(
         completed["fingerprint"] == before["fingerprint"]
-            && restored_schema(&database, &pending).await? == Some(restored_sql),
+            && restored_schema(&mut database, &pending).await? == Some(restored_sql),
         "retry omitted installed SQL or replaced the committed schema"
     );
-    removed(&database, rows).await?;
+    removed(&mut database, rows).await?;
     let status = journey.status().await?;
     ensure!(
         status["schema"]["pending_database"].is_null(),
@@ -614,7 +607,7 @@ pub(super) async fn recovery(
         .await?;
     ensure!(
         row == isolated_event.row
-            && stored(&other, &other_database).await? == isolated
+            && stored(&other, &mut other_database).await? == isolated
             && runtime(&other, "beta").await? == other_runtime,
         "reset changed the other environment's data, database or workload"
     );

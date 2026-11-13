@@ -91,7 +91,7 @@ pub fn package_database_url(database_url: &str, manifest: &PackageManifest) -> R
     let schemas = data_access_schemas(&serde_json::to_vec(manifest)?)
         .context("resolve the package SQLx schemas")?;
     let connection = database_url
-        .parse::<tokio_postgres::Config>()
+        .parse::<sqlx::postgres::PgConnectOptions>()
         .context("parse SQLx connection options")?;
     let mut url = url::Url::parse(database_url).context("parse the SQLx database URL")?;
     let options = format!(

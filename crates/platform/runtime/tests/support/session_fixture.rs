@@ -194,7 +194,6 @@ impl Server {
 
     pub(super) async fn stop(&mut self) {
         if let Some(task) = self.task.take() {
-            task.abort();
             assert!(task.await.expect_err("stopped listener").is_cancelled());
         }
     }
@@ -202,21 +201,19 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        if let Some(task) = &self.task {
-            task.abort();
-        }
+        if let Some(_task) = &self.task {}
     }
 }
 
 /// Minimal identity rows for route tests; lifecycle tests use the full system schema.
 pub(super) async fn install_authority(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     project: &str,
     environment: &str,
     audience: &str,
     principals: &[&str],
 ) -> anyhow::Result<()> {
-    client.batch_execute("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
+    sqlx::raw_sql("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
         CREATE TABLE identity.principals (id uuid PRIMARY KEY, type text, status text);
         CREATE TABLE identity.project_env_memberships (principal_id uuid, org text, project text, env text);
         CREATE TABLE identity.password_logins (id uuid PRIMARY KEY, principal_id uuid, issuer text, audience text,
@@ -226,28 +223,30 @@ pub(super) async fn install_authority(
         CREATE TABLE identity.org_memberships (principal_id uuid, org text, status text);
         CREATE TABLE identity.org_roles (principal_id uuid, org text, role text);
         CREATE TABLE registry.projects (org text, id text);
-        CREATE TABLE registry.environment_projects (org text, project text, env text, status text);").await?;
+        CREATE TABLE registry.environment_projects (org text, project text, env text, status text);").execute(&mut *client).await.map(drop)?;
     for principal in principals {
-        client
-            .execute(
-                "INSERT INTO identity.org_memberships VALUES ($1::text::uuid,$2,'active')",
-                &[principal, &ORG],
-            )
-            .await?;
-        client
-            .execute(
-                "INSERT INTO identity.principals VALUES ($1::text::uuid,'user','active')",
-                &[principal],
-            )
-            .await?;
-        client
-            .execute(
-                "INSERT INTO identity.project_env_memberships VALUES ($1::text::uuid,$2,$3,$4)",
-                &[principal, &ORG, &project, &environment],
-            )
-            .await?;
-        client.execute("INSERT INTO identity.password_logins VALUES ($1::text::uuid,$1::text::uuid,$2,$3,NULL,clock_timestamp()+interval '8 hours',clock_timestamp()+interval '30 minutes')",
-            &[principal,&ISSUER,&audience]).await?;
+        sqlx::query("INSERT INTO identity.org_memberships VALUES ($1::text::uuid,$2,'active')")
+            .bind(principal)
+            .bind(&ORG)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO identity.principals VALUES ($1::text::uuid,'user','active')")
+            .bind(principal)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())?;
+        sqlx::query(
+            "INSERT INTO identity.project_env_memberships VALUES ($1::text::uuid,$2,$3,$4)",
+        )
+        .bind(principal)
+        .bind(&ORG)
+        .bind(&project)
+        .bind(&environment)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO identity.password_logins VALUES ($1::text::uuid,$1::text::uuid,$2,$3,NULL,clock_timestamp()+interval '8 hours',clock_timestamp()+interval '30 minutes')").bind(principal).bind(&ISSUER).bind(&audience).execute(&mut *client).await.map(|result| result.rows_affected())?;
     }
     Ok(())
 }

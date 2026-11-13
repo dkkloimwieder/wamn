@@ -25,11 +25,9 @@ use url::Url;
 
 use wamn_control_provision::sql::{
     grant_identity_reader_surface_sql, grant_registry_reader_surface_sql,
-    prepare_workload_generation_sql,
 };
 use wamn_control_provision::{
-    CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily,
-    system_reader_generation_role,
+    SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily, system_reader_login,
 };
 
 const ORG: &str = "acme";
@@ -86,12 +84,8 @@ fn role_url(admin_url: &str, role: &str, password: &str) -> String {
     url.into()
 }
 
-fn generation_role(
-    reader: SystemReader,
-    generation: CredentialGeneration,
-    database: &str,
-) -> String {
-    system_reader_generation_role(reader, ORG, PROJECT, ENV, database, generation)
+fn generation_role(reader: SystemReader, database: &str) -> String {
+    system_reader_login(reader, ORG, PROJECT, ENV, database)
 }
 
 /// Drop every role this acceptance test mints, so a leftover HEALTHY role cannot satisfy
@@ -103,8 +97,8 @@ fn generation_role(
 fn reset_roles(admin_url: &str, database: &str) {
     let mut roles = Vec::new();
     for reader in SystemReader::ALL {
-        roles.push(generation_role(reader, CredentialGeneration::A, database));
-        roles.push(generation_role(reader, CredentialGeneration::B, database));
+        roles.push(generation_role(reader, database));
+        roles.push(generation_role(reader, database));
         roles.push(reader.family().acl_role().to_owned());
     }
     let mut script = String::new();
@@ -242,7 +236,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     reset_roles(&admin_url, &database);
     apply_system_schema(&admin_url);
 
-    let role = generation_role(SystemReader::Registry, CredentialGeneration::A, &database);
+    let role = generation_role(SystemReader::Registry, &database);
     let stable = WorkloadRoleFamily::RegistryReader.acl_role();
     // The convergent grant batch, applied TWICE: a replay against an already
     // correct database must be a no-op, not a widening or an error.
@@ -252,12 +246,11 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     run_admin(
         &admin_url,
         "prepare the registry-reader generation",
-        &prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::RegistryReader,
             &database,
             &role,
             READER_PW,
-            "2099-01-01T00:00:00Z",
         ),
     );
 
@@ -433,19 +426,18 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             wamn_control_provision::sql::grant_connection_reader_surface_sql(),
         ),
     ] {
-        let role = generation_role(reader, CredentialGeneration::A, &database);
+        let role = generation_role(reader, &database);
         run_admin(&admin_url, "converge a system reader", &grant);
         // Replayed: the convergent batch must narrow-and-grant to the same state.
         run_admin(&admin_url, "replay a convergent grant", &grant);
         run_admin(
             &admin_url,
             "prepare a system-reader generation",
-            &prepare_workload_generation_sql(
+            &wamn_control_provision::test_database::login_sql(
                 reader.family(),
                 &database,
                 &role,
                 READER_PW,
-                "2099-01-01T00:00:00Z",
             ),
         );
         reader_url.push((reader, role_url(&admin_url, &role, READER_PW), role));
@@ -691,20 +683,15 @@ fn the_connection_reader_cannot_read_or_change_credential_metadata_directly() {
         "grant the connection reader surface",
         &wamn_control_provision::sql::grant_connection_reader_surface_sql(),
     );
-    let role = generation_role(
-        SystemReader::Connection,
-        CredentialGeneration::A,
-        test_database.name(),
-    );
+    let role = generation_role(SystemReader::Connection, test_database.name());
     run_admin(
         admin,
         "create an authenticated reader",
-        &prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::ConnectionReader,
             test_database.name(),
             &role,
             READER_PW,
-            "2099-01-01T00:00:00Z",
         ),
     );
     let reader = role_url(admin, &role, READER_PW);

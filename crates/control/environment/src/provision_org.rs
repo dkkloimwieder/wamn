@@ -44,12 +44,14 @@
 //! `provision-project-env` then reads that placement and derives the pool
 //! cluster via [`cluster_of`](wamn_control_provision::cluster_of).
 
+pub use crate::provision_project_env::workload::provision_control_role;
+
+use sqlx::Row as _;
 pub(super) mod plan;
 
 use wamn_identity_protocol::PrincipalId;
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 
 use crate::env_policies::read_env_policies;
 use wamn_control_provision::org::OrgClusters;
@@ -133,12 +135,12 @@ pub async fn provision_org_with_changes(
     // Connect to the system DB once (if given) — used to record the org + stamp
     // its policies, then read the org's (possibly customized) set back for
     // cluster sizing.
-    let client = match &request.record {
+    let mut client = match &request.record {
         Some(record) => {
-            let (client, conn) = tokio_postgres::connect(&record.system_database_url, NoTls)
+            let client = wamn_postgres::connect(&record.system_database_url)
                 .await
                 .context("system db connect")?;
-            Some((client, tokio::spawn(conn), record.admin.as_str()))
+            Some((client, record.admin.as_str()))
         }
         None => None,
     };
@@ -146,8 +148,8 @@ pub async fn provision_org_with_changes(
     // Record FIRST (one txn: org row + policy stamps), so the render below reads
     // the org's post-stamp truth — existing customizations kept (insert-if-
     // absent), missing template envs added.
-    let (policies, stamped_policies) = match &client {
-        Some((c, _, admin)) => {
+    let (policies, stamped_policies) = match &mut client {
+        Some((c, admin)) => {
             record_org(c, &org, &stamped, admin, changes).await?;
             (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
@@ -181,10 +183,7 @@ pub async fn provision_org_with_changes(
         ),
     };
 
-    if let Some((c, conn_task, _)) = client {
-        drop(c);
-        let _ = conn_task.await;
-    }
+    drop(client);
 
     Ok(ProvisionedOrg {
         org,
@@ -201,17 +200,22 @@ pub async fn provision_org_with_changes(
 /// guardrail: refresh placement, never clobber a customized policy). The
 /// admin's rows are written in the same transaction.
 async fn record_org(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &Org,
     stamped: &[OrgEnvPolicy],
     admin: &str,
     changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
-    client
-        .batch_execute("SET ROLE wamn_system")
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("SET ROLE wamn_system")?;
-    client.batch_execute("BEGIN").await.context("BEGIN")?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .context("BEGIN")?;
     let result = async {
         record_org_rows(client, org, stamped).await?;
         record_admin_rows(client, &org.id, admin).await
@@ -219,13 +223,20 @@ async fn record_org(
     .await;
     match result {
         Ok(admin) => {
-            client.batch_execute("COMMIT").await.context("COMMIT")?;
+            sqlx::raw_sql("COMMIT")
+                .execute(&mut *client)
+                .await
+                .map(drop)
+                .context("COMMIT")?;
             let mut drops = wamn_broker::auth_changes::AuthDrops::default();
             drops.identity(admin.to_string().as_str());
             changes.publish(drops).await;
         }
         Err(e) => {
-            let _ = client.batch_execute("ROLLBACK").await;
+            let _ = sqlx::raw_sql("ROLLBACK")
+                .execute(&mut *client)
+                .await
+                .map(drop);
             return Err(e);
         }
     }
@@ -233,50 +244,53 @@ async fn record_org(
 }
 
 async fn record_org_rows(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &Org,
     stamped: &[OrgEnvPolicy],
 ) -> anyhow::Result<()> {
-    client
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .context("bind wamn:provisioning as the actor")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .context("bind wamn:provisioning as the actor")?;
     let placement_type = org.placement.type_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
-    client
-        .execute(
-            wamn_registry::sql::upsert_org_sql(),
-            &[&org.id, &placement_type, &pool],
-        )
-        .await
-        .context("upsert registry.orgs row")?;
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::upsert_org_sql()).to_string(),
+    ))
+    .bind(&org.id)
+    .bind(placement_type)
+    .bind(pool)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .context("upsert registry.orgs row")?;
     for row in stamped {
         let p: &EnvPolicy = &row.policy;
         let name = p.name.as_str();
         let recovery = serde_json::to_string(&p.recovery_domain).context("recovery json")?;
-        client
-            .execute(
-                wamn_registry::sql::stamp_env_policy_sql(),
-                &[
-                    &row.org,
-                    &name,
-                    &recovery,
-                    &p.promotion_rank,
-                    &p.instances,
-                    &p.storage,
-                    &p.cpu,
-                    &p.memory,
-                    &p.image,
-                    &p.backup_cadence,
-                    &p.wal_retention,
-                    &p.hibernation,
-                ],
-            )
-            .await
-            .with_context(|| format!("stamp env policy {name:?}"))?;
+        sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_registry::sql::stamp_env_policy_sql()).to_string(),
+        ))
+        .bind(&row.org)
+        .bind(name)
+        .bind(&recovery)
+        .bind(p.promotion_rank)
+        .bind(p.instances)
+        .bind(&p.storage)
+        .bind(&p.cpu)
+        .bind(&p.memory)
+        .bind(&p.image)
+        .bind(&p.backup_cadence)
+        .bind(&p.wal_retention)
+        .bind(&p.hibernation)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .with_context(|| format!("stamp env policy {name:?}"))?;
     }
     Ok(())
 }
@@ -298,28 +312,30 @@ const ADMIN_PRINCIPAL_SQL: &str =
 /// (the email is also its display name); otherwise an email that names no
 /// user principal is refused. A re-run makes an inactive admin active.
 async fn record_admin_rows(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &str,
     email: &str,
 ) -> anyhow::Result<PrincipalId> {
     // Two runs on an empty store serialize here, so the second sees the
     // first's user and does not create another.
-    client
-        .batch_execute(LOCK_PRINCIPALS_SQL)
+    sqlx::raw_sql(LOCK_PRINCIPALS_SQL)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("lock the user principals")?;
-    let any_user: bool = client
-        .query_one(ANY_USER_SQL, &[])
+    let any_user: bool = sqlx::query(ANY_USER_SQL)
+        .fetch_one(&mut *client)
         .await
         .context("look for an existing user")?
         .get(0);
     let admin: PrincipalId = if any_user {
-        client
-            .query_opt(ADMIN_PRINCIPAL_SQL, &[&email])
+        sqlx::query(ADMIN_PRINCIPAL_SQL)
+            .bind(email)
+            .fetch_optional(&mut *client)
             .await
             .context("look up the admin email")?
             .with_context(|| format!("--admin {email:?} names no user principal"))?
-            .get::<_, String>(0)
+            .get::<String, _>(0)
             .parse()
             .context("the admin principal id")?
     } else {

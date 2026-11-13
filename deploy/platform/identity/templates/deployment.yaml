@@ -1,5 +1,5 @@
 {{- $issuer := required "Set issuer to the configured HTTPS identity authority URL." .Values.issuer -}}
-{{- $databaseSecret := required "Set databaseSecret to the prepared identity issuer Secret name." .Values.databaseSecret -}}
+{{- $databaseSecret := required "Set databaseSecret to the identity connection ConfigMap name." .Values.databaseSecret -}}
 {{- $tlsSecret := required "Set tlsSecret to the existing serving certificate Secret name." .Values.tlsSecret -}}
 {{- if not (hasPrefix "https://" $issuer) -}}
 {{- fail "issuer must use HTTPS." -}}
@@ -27,7 +27,8 @@ spec:
         app.kubernetes.io/name: wamn-identity
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: {{ .Release.Name }}
+      automountServiceAccountToken: true
       containers:
         - name: identity
           image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
@@ -49,9 +50,9 @@ spec:
               value: {{ $issuer | quote }}
             - name: WAMN_IDENTITY_DATABASE_URL
               valueFrom:
-                secretKeyRef:
-                  name: {{ $databaseSecret | quote }}
-                  key: url
+                configMapKeyRef:
+                  name: {{ printf "%s-configuration" $databaseSecret | quote }}
+                  key: connection.json
                   optional: false
             {{- if .Values.resendSecret }}
             - name: RESEND_API_KEY
@@ -159,11 +160,11 @@ spec:
         {{- end }}
         {{- range $index, $secret := .Values.sessionTargetSecrets }}
         - name: {{ printf "session-target-%d" $index }}
-          secret:
-            secretName: {{ required "Each sessionTargetSecrets entry must name a prepared Secret." $secret | quote }}
+          configMap:
+            name: {{ required "Each sessionTargetSecrets entry must name a connection ConfigMap." $secret | quote }}
             optional: false
             defaultMode: 0400
             items:
-              - key: target.json
+              - key: session-target.json
                 path: target.json
         {{- end }}

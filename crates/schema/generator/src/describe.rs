@@ -45,7 +45,7 @@ pub(crate) async fn describe_statements(
     database_url: &str,
     corpus: &BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<String, DescribedStatement>> {
-    let mut connection = sqlx::PgConnection::connect(database_url)
+    let mut connection = wamn_postgres::connect(database_url)
         .await
         .context("connect to the verification database to describe statements")?;
     let views: Vec<sqlx::postgres::types::Oid> = sqlx::query_scalar(

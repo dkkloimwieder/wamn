@@ -28,7 +28,7 @@ pub fn chart_input(chart: &Path, image: &str, document: &ClusterDocument) -> any
         "values":{
             "neg":document.provider == Provider::Gcp,
             "tlsSecret":"wamn-edge-tls", "identityCaConfigMap":"identity-ca",
-            "identity":super::identity::ISSUER,
+            "identity":&super::identity::issuer(&document.org),
             "web":{"image":image, "bucket":if bucket.is_empty() { String::new() } else { format!("gs://{bucket}") }},
         }
     }))

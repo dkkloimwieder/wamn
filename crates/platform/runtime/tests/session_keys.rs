@@ -206,7 +206,6 @@ impl Server {
 
     async fn stop(&mut self) {
         if let Some(task) = self.task.take() {
-            task.abort();
             assert!(task.await.expect_err("listener stopped").is_cancelled());
         }
     }
@@ -214,9 +213,7 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        if let Some(task) = &self.task {
-            task.abort();
-        }
+        if let Some(_task) = &self.task {}
     }
 }
 

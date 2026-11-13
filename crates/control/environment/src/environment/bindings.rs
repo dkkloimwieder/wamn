@@ -1,5 +1,6 @@
 //! Resolve project integrations and write release-targeted environment bindings.
 
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;
 pub use plan::key;
@@ -8,7 +9,6 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use tokio_postgres::GenericClient;
 use wamn_compiler::manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest};
 
 use super::document::EnvironmentDocument;
@@ -30,8 +30,8 @@ impl std::error::Error for BindingError {
         self.source.as_deref().map(|source| source as _)
     }
 }
-impl From<tokio_postgres::Error> for BindingError {
-    fn from(source: tokio_postgres::Error) -> Self {
+impl From<sqlx::Error> for BindingError {
+    fn from(source: sqlx::Error) -> Self {
         Self {
             code: "connection_database_error",
             context: "read connection authority".into(),
@@ -59,7 +59,7 @@ pub struct Binding {
 
 /// Read project authority without creating or changing a connection.
 pub async fn analyse(
-    system: &(impl GenericClient + Sync),
+    system: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
     packages: &[PackageManifest],
 ) -> Result<Vec<Binding>, BindingError> {
@@ -83,20 +83,17 @@ pub async fn analyse(
                 .any(|integration| integration == *name)
         })
     }) {
-        let row = system
-            .query_opt(
-                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE,
-                &[
-                    &document.org,
-                    &document.project,
-                    &document.env,
-                    &document.target,
-                    name,
-                    &version.version,
-                ],
-            )
-            .await?
-            .ok_or_else(|| refuse("connection_unavailable", name))?;
+        let row =
+            sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE)
+                .bind(&document.org)
+                .bind(&document.project)
+                .bind(&document.env)
+                .bind(&document.target)
+                .bind(name)
+                .bind(version.version)
+                .fetch_optional(&mut *system)
+                .await?
+                .ok_or_else(|| refuse("connection_unavailable", name))?;
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
         let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
@@ -198,7 +195,7 @@ pub async fn analyse(
 /// Write the release's versions and names after its requirements exist. A
 /// changed row records the memory key of the release in `drops`.
 pub async fn write(
-    tx: &tokio_postgres::Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     digest: &str,
     document: &EnvironmentDocument,
@@ -206,34 +203,36 @@ pub async fn write(
     drops: &mut wamn_broker::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
     let mut changed = 0;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
     ))
-    .await?;
+    .execute(&mut **tx)
+    .await
+    .map(drop)?;
     for binding in bindings {
-        let active = tx.query_opt(
-            "SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
-             WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'",
-            &[&binding.connection_id],
-        ).await?.is_some();
+        let active = sqlx::query("SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
+             WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'").bind(&binding.connection_id).fetch_optional(&mut **tx).await?.is_some();
         anyhow::ensure!(
             active,
             "connection projection {} is absent or inactive; run env connections",
             binding.connection_id
         );
-        changed += tx.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING", &[&project_env_key,&digest,&binding.connection_id,&binding.version]).await?;
+        changed += sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING").bind(project_env_key).bind(digest).bind(&binding.connection_id).bind(binding.version).execute(&mut **tx).await.map(|result| result.rows_affected())?;
     }
-    for row in tx
-        .query(
-            "SELECT q.component_digest,q.package_id,q.name,q.interface,q.mode \
+    for row in sqlx::query(
+        "SELECT q.component_digest,q.package_id,q.name,q.interface,q.mode \
          FROM catalog.connection_requirement q WHERE q.project_env_key=$1 AND EXISTS (\
          SELECT FROM catalog.releases r CROSS JOIN LATERAL \
          jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
          WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
          AND c->'descriptor'->>'component-digest'=q.component_digest)",
-            &[&project_env_key, &digest],
-        )
-        .await?
+    )
+    .bind(project_env_key)
+    .bind(digest)
+    .fetch_all(&mut **tx)
+    .await?
     {
         let package: String = row.get(1);
         let application = document.application_for_package(&package).ok_or_else(|| {
@@ -256,7 +255,7 @@ pub async fn write(
             "connection_read_imports_write_interface: {application}.{name}"
         );
         let component: String = row.get(0);
-        changed += tx.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (project_env_key,manifest_digest,component_digest,package_id,name) DO NOTHING", &[&project_env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
+        changed += sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (project_env_key,manifest_digest,component_digest,package_id,name) DO NOTHING").bind(project_env_key).bind(digest).bind(&component).bind(&package).bind(&name).bind(&binding.connection_id).execute(&mut **tx).await.map(|result| result.rows_affected())?;
     }
     if changed > 0 {
         drops.release(project_env_key, digest);
@@ -267,7 +266,7 @@ pub async fn write(
 /// Remove explicit retired releases after testing ownership, live hosts and pinned work.
 /// The caller holds the operation grant lock and supplies a fresh host observation.
 pub async fn contract(
-    tx: &tokio_postgres::Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     application: &str,
     declared: &wamn_catalog::EnvironmentApplications,
@@ -279,19 +278,20 @@ pub async fn contract(
         !live.contains(&"unlabelled"),
         "cannot retire bindings with unknown live releases"
     );
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
     ))
-    .await?;
+    .execute(&mut **tx)
+    .await
+    .map(drop)?;
     let mut removed = Vec::new();
     for digest in retired {
         if live.contains(digest) {
             continue;
         }
-        let row = tx.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
-            &[&project_env_key, digest],
-        ).await?;
+        let row = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(project_env_key).bind(digest).fetch_one(&mut **tx).await?;
         let (manifest, actual) = wamn_catalog::ServingManifest::from_canonical_bytes(row.get(0))?;
         anyhow::ensure!(
             actual.as_str() == *digest,
@@ -313,23 +313,22 @@ pub async fn contract(
             owners == [application],
             "retired release {digest} has no sole owner {application}"
         );
-        let needed: bool = tx
-            .query_one(
-                "SELECT EXISTS (SELECT FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest=$2 \
-             AND status NOT IN ('completed','failed','infrastructure-failure'))",
-                &[&project_env_key, digest],
-            )
+        let needed: bool = sqlx::query("SELECT EXISTS (SELECT FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest=$2 \
+             AND status NOT IN ('completed','failed','infrastructure-failure'))").bind(project_env_key).bind(digest).fetch_one(&mut **tx)
             .await?
             .get(0);
         if needed {
             continue;
         }
         for table in ["catalog.connection_binding", "catalog.release_connection"] {
-            tx.execute(
-                &format!("DELETE FROM {table} WHERE project_env_key=$1 AND manifest_digest=$2"),
-                &[&project_env_key, digest],
-            )
-            .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE project_env_key=$1 AND manifest_digest=$2"
+            )))
+            .bind(project_env_key)
+            .bind(digest)
+            .execute(&mut **tx)
+            .await
+            .map(|result| result.rows_affected())?;
         }
         drops.release(project_env_key, digest);
         removed.push((*digest).to_owned());
@@ -343,18 +342,21 @@ pub async fn project_authority(
     project_url: &str,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<wamn_broker::auth_changes::AuthDrops> {
-    let mut system = wamn_package_control::database::connect(system_url).await?;
-    let source = system.transaction().await?;
+    let mut system = wamn_postgres::connect(system_url).await?;
+    let mut source = system.begin().await?;
     let mut project = super::analyse::connect_project(project_url).await?;
-    let target = project.transaction().await?;
-    target
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    let mut target = project.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
-        ))
-        .await?;
+        ),
+    ))
+    .execute(&mut *target)
+    .await
+    .map(drop)?;
     let drops = wamn_platform_identity::connection_projection::project(
-        &source,
-        &target,
+        &mut source,
+        &mut target,
         &document.org,
         &document.project,
         &document.env,

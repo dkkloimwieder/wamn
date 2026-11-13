@@ -23,7 +23,7 @@ The host makes sure that the original caller holds the entry, once, before the e
 Component membership alone grants no permission to call an operation.
 
 An application host makes sure of the status of its environment for each request, before the auth policy of the route.
-It reads its row of `platform.environment` through the guest login of its project, as `wamn_app`, and no row means active.
+It reads its row of `platform.environment` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
 While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
@@ -430,14 +430,13 @@ Workflow runs have no event ordering guarantee.
 
 The host opens each identity transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
-For a new logged update, the host sends `BEGIN`, local identity, and the write-log claim together, then waits before it runs the guest.
+For a new logged update, the host runs `BEGIN`, local identity, and the write-log claim in that order before it runs the guest.
 A duplicate reads the stored claim and never runs the guest.
 The guest waits for its SQL result before it returns the value that the write log stores.
-The host then sends the write-log finish, the transactional causation message when present, and `COMMIT` together.
-A missing finish row causes a SQL error, so the queued commit cannot preserve an unfinished write.
-With one guest statement and warm prepared statements, the update transaction takes three round-trips and seven top-level SQL statements with causation.
-Without causation it takes six statements. Preparation on a cold connection and duplicate-claim reads add trips.
-The guest return value prevents the guest statement and finish from sharing one trip.
+The host then runs the write-log finish, the transactional causation message when present, and `COMMIT` in that order.
+A missing finish row causes a SQL error, and the host rolls back.
+SQLx runs each statement on the same connection and waits for its result before it sends the next statement.
+A cold connection also prepares its statements.
 No counter trigger, changed-relation read, or counter reset runs on the write path.
 
 The host binds the executing principal as `app.user_id` in each identity transaction that it opens.
@@ -469,9 +468,7 @@ The identity is for logs only. [Numbering](data-access.md#numbering) takes the a
 A platform identity transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
 
-For that path, each pooled connection remembers its last schema and runner.
-If these values match, the read executes only its application statement.
-If either value changes, the host pipelines the session configuration before the read.
+For that path, the host applies the schema and runner before it sends the read.
 An absent schema restores the server default, and an absent runner clears the prior runner.
 This reuse stores no principal, role, operation, or application identity. Those identity fields stay local to each transaction.
 

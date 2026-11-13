@@ -1,7 +1,9 @@
 //! Application principals through apply's release stage and authorization.
 
 use serde_json::json;
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_broker::Publisher;
 use wamn_catalog::ServingManifest;
 use wamn_engine::router_delivery::authorize_registered_operation;
@@ -15,8 +17,8 @@ const PROJECT_ENV_KEY: &str = "acme--dev--erp";
 const OPERATION: &str = "consumer:item/import@1.0.0";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(connection);
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -27,46 +29,51 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     let system = wamn_control_provision::test_database::system();
     system.execute(&["SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain = 'example.invalid'"])?;
     let project = wamn_test_postgres::database();
-    let admin = connect(project.url()).await?;
+    let mut admin = connect(project.url()).await?;
     let schema = BareSchemaName::new("wamn_run")?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
-    admin
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(&wamn_control_provision::platform_principals_sql(
-            "example.invalid",
-        )?)
-        .await?;
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::platform_principals_sql("example.invalid")?).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     // Simulate the old service CHECK constraint and exercise the actual schema transition.
-    admin
-        .batch_execute(
-            "ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_service_principal_check;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_service_principal_check;
         ALTER TABLE wamn_run.runs ADD CONSTRAINT runs_service_principal_check CHECK (
           (trigger_source IS NOT DISTINCT FROM 'automation') = (service_principal_id IS NOT NULL));
         ALTER TABLE wamn_run.runs DROP CONSTRAINT runs_execution_grain_check;
         ALTER TABLE wamn_run.runs ADD CONSTRAINT runs_execution_grain_check CHECK (
-          trigger_source IS DISTINCT FROM 'schedule' OR service_principal_id IS NULL)",
-        )
-        .await?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
+          trigger_source IS DISTINCT FROM 'schedule' OR service_principal_id IS NULL)")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
     assert!(
-        wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, false)
+        wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, false)
             .await?
             .actions
             .is_empty()
     );
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
-        .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, 'dev')", &[&PROJECT_ENV_KEY]).await?;
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, 'dev')").bind(&PROJECT_ENV_KEY).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for package in ["consumer", "integration"] {
-        admin.execute("INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)", &[&PROJECT_ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
+        sqlx::query("INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -177,43 +184,40 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     // The workflow user is the other service row
     // (docs/architecture/execution.md#environment-workflows).
     let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
-    let row = admin
-        .query_one(
-            "SELECT count(*), min(id::text) FROM platform.\"user\" \
+    let row = sqlx::query(
+        "SELECT count(*), min(id::text) FROM platform.\"user\" \
              WHERE type='service' AND id::text <> $1",
-            &[&workflow_user],
-        )
-        .await?;
-    assert_eq!(row.get::<_, i64>(0), 1);
+    )
+    .bind(&workflow_user)
+    .fetch_one(&mut admin)
+    .await?;
+    assert_eq!(row.get::<i64, _>(0), 1);
     let principal: String = row.get(1);
-    let identity = connect(system.url()).await?;
+    let mut identity = connect(system.url()).await?;
     assert_eq!(
-        identity
-            .query_one(
-                "SELECT count(*) FROM identity.principals WHERE type='service'",
-                &[]
-            )
+        sqlx::query("SELECT count(*) FROM identity.principals WHERE type='service'")
+            .fetch_one(&mut identity)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     assert_eq!(
-        identity
-            .query_one("SELECT count(*) FROM identity.project_roles", &[])
+        sqlx::query("SELECT count(*) FROM identity.project_roles")
+            .fetch_one(&mut identity)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     assert_eq!(
-        admin
-            .query_one("SELECT count(*) FROM platform.user_role", &[])
+        sqlx::query("SELECT count(*) FROM platform.user_role")
+            .fetch_one(&mut admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
-    let caller = queued_run_caller(&admin, &principal, None).await?;
+    let caller = queued_run_caller(&mut admin, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
-    let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let before: Vec<String> = sqlx::query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1").fetch_all(&mut admin).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
         system.url(),
         project.url(),
@@ -223,9 +227,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         &Publisher::default(),
     )
     .await?;
-    let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let after: Vec<String> = sqlx::query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1").fetch_all(&mut admin).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
-    let caller = queued_run_caller(&admin, &principal, None).await?;
+    let caller = queued_run_caller(&mut admin, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     assert!(
         authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()

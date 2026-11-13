@@ -2,9 +2,10 @@
 
 use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
+use sqlx::Row as _;
 
 use super::{
-    INSTANCE_SUFFIX_LEN, NoTls, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
+    INSTANCE_SUFFIX_LEN, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
     validate_instance_suffix,
 };
 
@@ -54,31 +55,33 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
 /// A pooled org uses its pool. A dedicated org uses the policy's recovery domain
 /// through [`cluster_of`]. The caller supplies a registry reader credential.
 pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
-    let result = resolve_cluster_on(&client, org, env).await;
+
+    let result = resolve_cluster_on(&mut client, org, env).await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
 /// Resolve placement through the supplied system database connection.
 pub(crate) async fn resolve_cluster_on(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &str,
     env: &str,
 ) -> anyhow::Result<String> {
-    let row = client
-        .query_opt(wamn_registry::sql::select_org_placement_sql(), &[&org])
-        .await
-        .context("read org placement")?
-        .with_context(|| {
-            format!(
-                "org {org:?} is not registered: run provision-org before provisioning a project-env"
-            )
-        })?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::select_org_placement_sql()).to_string(),
+    ))
+    .bind(org)
+    .fetch_optional(&mut *client)
+    .await
+    .context("read org placement")?
+    .with_context(|| {
+        format!(
+            "org {org:?} is not registered: run provision-org before provisioning a project-env"
+        )
+    })?;
     let placement_type: String = row.get("placement_type");
     let pool: Option<String> = row.get("pool_cluster");
     let placement = match placement_type.as_str() {
@@ -109,20 +112,22 @@ pub async fn read_project_env_instance(
     system_url: &str,
     triple: &Triple,
 ) -> anyhow::Result<String> {
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
+
     let result = async {
         let env = triple.env.as_str();
-        let row = client
-            .query_opt(
-                &wamn_registry::sql::select_project_env_sql(),
-                &[&triple.org, &triple.project, &env],
-            )
-            .await
-            .context("read registry.environment_projects row")?
-            .with_context(|| format!("project-env {triple} is not recorded"))?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(
+            wamn_registry::sql::select_project_env_sql(),
+        ))
+        .bind(&triple.org)
+        .bind(&triple.project)
+        .bind(env)
+        .fetch_optional(&mut client)
+        .await
+        .context("read registry.environment_projects row")?
+        .with_context(|| format!("project-env {triple} is not recorded"))?;
         let stored: String = row.get("instance_suffix");
         validate_instance_suffix(&stored)
             .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
@@ -130,32 +135,26 @@ pub async fn read_project_env_instance(
     }
     .await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
 /// Read the policy name of one project-env's registry row. The environment
 /// document owns it (docs/architecture/overview.md#environment-lifecycle).
 pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyhow::Result<String> {
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
+
     let result = async {
         let env = triple.env.as_str();
-        client
-            .query_opt(
-                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY,
-                &[&triple.org, &triple.project, &env],
-            )
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY).bind(&triple.org).bind(&triple.project).bind(env).fetch_optional(&mut client)
             .await
             .context("read the policy name of registry.environment_projects")?
-            .map(|row| row.get::<_, String>(0))
+            .map(|row| row.get::<String, _>(0))
             .with_context(|| format!("project-env {triple} is not recorded"))
     }
     .await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
@@ -176,10 +175,10 @@ pub(super) async fn record_project_env(
     minted: &str,
     disposable: Option<bool>,
 ) -> anyhow::Result<String> {
-    let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
+
     let result = do_record_project_env(
         &mut client,
         triple,
@@ -192,13 +191,12 @@ pub(super) async fn record_project_env(
     )
     .await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn do_record_project_env(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
     policy: Option<&str>,
     target: &str,
@@ -207,41 +205,37 @@ pub(super) async fn do_record_project_env(
     minted: &str,
     disposable: Option<bool>,
 ) -> anyhow::Result<String> {
-    let transaction = super::provisioning_transaction(client).await?;
-    transaction
-        .execute(
-            wamn_registry::sql::upsert_project_sql(),
-            &[&triple.org, &triple.project],
-        )
-        .await
-        .context("upsert registry.projects row")?;
+    let mut transaction = super::provisioning_transaction(client).await?;
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::upsert_project_sql()).to_string(),
+    ))
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .context("upsert registry.projects row")?;
     let env = triple.env.as_str();
-    let target_id: String = transaction
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV,
-            &[&target],
-        )
+    let target_id: String = sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV).bind(target).fetch_optional(&mut *transaction)
         .await
         .context("read the registry.target row")?
         .with_context(|| format!("target {target:?} is not in registry.target"))?
         .get(0);
-    let row = transaction
-        .query_one(
-            wamn_registry::sql::upsert_project_env_with_policy_sql(),
-            &[
-                &triple.org,
-                &triple.project,
-                &env,
-                &secret_name,
-                &secret_namespace,
-                &minted,
-                &disposable,
-                &policy.unwrap_or(env),
-                &target_id,
-            ],
-        )
-        .await
-        .context("upsert registry.environment_projects row")?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::upsert_project_env_with_policy_sql()).to_string(),
+    ))
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(env)
+    .bind(secret_name)
+    .bind(secret_namespace)
+    .bind(minted)
+    .bind(disposable)
+    .bind(policy.unwrap_or(env))
+    .bind(&target_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .context("upsert registry.environment_projects row")?;
     transaction
         .commit()
         .await
@@ -260,37 +254,44 @@ pub(super) async fn do_record_project_env(
 
 /// Read the pending database without allocating or changing its identity.
 pub(crate) async fn pending_database(
-    client: &impl tokio_postgres::GenericClient,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<Option<serde_json::Value>> {
-    let row = client.query_opt(
+    let row = sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_PENDING_DATABASE,
-        &[&triple.org, &triple.project, &triple.env.as_str()],
-    ).await?.with_context(|| format!("project-env {triple} is not recorded"))?;
+    )
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(triple.env.as_str())
+    .fetch_optional(&mut *client)
+    .await?
+    .with_context(|| format!("project-env {triple} is not recorded"))?;
     Ok(row.get(0))
 }
 
 /// Record immutable reset inputs outside the database that CNPG will recreate.
 pub(crate) async fn record_reset(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
     active: &str,
     inputs: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let tx = super::provisioning_transaction(client).await?;
-    let row = tx
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET_2,
-            &[&triple.org, &triple.project, &triple.env.as_str()],
-        )
-        .await?
-        .with_context(|| format!("project-env {triple} is not recorded"))?;
+    let mut tx = super::provisioning_transaction(client).await?;
+    let row = sqlx::query(
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET_2,
+    )
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(triple.env.as_str())
+    .fetch_optional(&mut *tx)
+    .await?
+    .with_context(|| format!("project-env {triple} is not recorded"))?;
     anyhow::ensure!(
-        row.get::<_, bool>(1),
+        row.get::<bool, _>(1),
         "project-env {triple} is not disposable"
     );
     anyhow::ensure!(
-        row.get::<_, String>(0) == active,
+        row.get::<String, _>(0) == active,
         "active database changed during preparation"
     );
     let pending: Option<serde_json::Value> = row.get(2);
@@ -300,16 +301,21 @@ pub(crate) async fn record_reset(
             "pending database has different immutable inputs"
         );
     } else {
-        let identity: String = tx
-            .query_one("SELECT clock_timestamp()::text", &[])
+        let identity: String = sqlx::query("SELECT clock_timestamp()::text")
+            .fetch_one(&mut *tx)
             .await?
             .get(0);
         let pending = serde_json::json!({"initialization_identity":identity, "inputs":inputs});
-        tx.execute(
+        sqlx::query(
             wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET,
-            &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
         )
-        .await?;
+        .bind(&triple.org)
+        .bind(&triple.project)
+        .bind(triple.env.as_str())
+        .bind(&pending)
+        .execute(&mut *tx)
+        .await
+        .map(|result| result.rows_affected())?;
     }
     tx.commit().await?;
     Ok(())
@@ -317,15 +323,21 @@ pub(crate) async fn record_reset(
 
 /// Complete the reset after SQL, CDC and event disposal, before writers resume.
 pub async fn finish_database(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
     pending: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let tx = super::provisioning_transaction(client).await?;
-    let changed = tx.execute(
+    let mut tx = super::provisioning_transaction(client).await?;
+    let changed = sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_FINISH_DATABASE,
-        &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
-    ).await?;
+    )
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(triple.env.as_str())
+    .bind(pending)
+    .execute(&mut *tx)
+    .await
+    .map(|result| result.rows_affected())?;
     anyhow::ensure!(
         changed == 1,
         "active or pending database changed during reconnect"
@@ -336,7 +348,7 @@ pub async fn finish_database(
 
 /// A partially reconnected environment admits no new deployment or SQL operation.
 pub async fn require_connected(
-    client: &impl tokio_postgres::GenericClient,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
     require_no_reset(client, triple).await
@@ -344,15 +356,19 @@ pub async fn require_connected(
 
 /// Once reset inputs are pinned, deployment waits for the reset to finish.
 pub(crate) async fn require_no_reset(
-    client: &impl tokio_postgres::GenericClient,
+    client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let row = client.query_opt(
+    let row = sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_REQUIRE_NO_RESET,
-        &[&triple.org, &triple.project, &triple.env.as_str()],
-    ).await?;
+    )
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(triple.env.as_str())
+    .fetch_optional(&mut *client)
+    .await?;
     anyhow::ensure!(
-        row.is_none_or(|row| row.get::<_, bool>(0)),
+        row.is_none_or(|row| row.get::<bool, _>(0)),
         "database reset is pending; retry wamn schema reset"
     );
     Ok(())

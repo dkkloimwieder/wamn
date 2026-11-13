@@ -2,52 +2,9 @@
 //!
 //! Contract source of truth: `wit/wamn-postgres-0.4/package.wit`.
 //! Guest bindgen paths reference that canonical package directly.
-//! Host-enforced invariants:
-//!
-//! - The guest never holds a socket. Connections live in a deadpool pool
-//!   owned by the plugin; guests get resource handles.
-//! - Identity is derived from the executing component's identity
-//!   (`Ctx::component_id` → project, registered at workload bind time from
-//!   `localResources.config["wamn.project_env_key"]` or via [`WamnPostgres::set_project_env_key`])
-//!   and injected by one fully-bound `set_config(…, is_local => true)` statement
-//!   — the `SET LOCAL` equivalent — inside the plugin-managed transaction; every
-//!   identity value travels as a bind parameter, so no interpolation path exists
-//!   (R2/R16). Guest SQL that tries to set or reset a session variable or
-//!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
-//!   `SET app.project_env_key = 'other'` that would override the BEGIN-time identity) is
-//!   rejected on the raw query/execute/cursor surface (see
-//!   `reject_identity_mutation`, wamn-cjv.2), closing the reachable
-//!   transaction-API override. A verified statement (`statements.run`,
-//!   `run-stream`, `transaction.run`) passes the same guard, and admission
-//!   also refuses these and the other unsafe constructs on its parse tree. The PROJECT axis no longer rests on that
-//!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest project authority
-//!   onto `current_user` plus per-project guest LOGIN generations — a
-//!   non-settable identity — so a session that rewrites `app.project_env_key` no longer
-//!   rewrites its project. The matcher is still only a blocklist: a `DO` block
-//!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
-//!   escape is dormant only while no reachable guest API bears an RLS policy
-//!   that reads `app.role` or `app.user_id`. Host-only authorization reads that
-//!   bind their predicates directly and install neither caller-derived identity do
-//!   not cross that guard (`wamn-10yt.3.2`); it must close before any such
-//!   RLS-bearing guest API becomes reachable.
-//! - The AR1 raw-SQL / custom-node trust assumptions are MOOT, not pending:
-//!   their preconditions closed by SUBJECT-DELETION — the node-type registry
-//!   retired and no raw-SQL node surface exists to enable — so no live security
-//!   transition occurred. They re-enter only with a future raw-SQL or
-//!   custom-node surface, which would arrive through publish-time admission.
-//! - `statement_timeout` and a row limit are applied host-side per call.
-//! - Abnormal instance death (store dropped mid-transaction, e.g. an epoch
-//!   kill) destroys the underlying connection via [`Drop`] on
-//!   [`PgTransaction`] — the connection is closed, which makes the server
-//!   abort the open transaction, and it is never returned to the pool.
-//! - No LISTEN/NOTIFY surface.
-//!
-//! All parameters travel through the extended-query protocol as bound values
-//! (`$1..$n`); there is no interpolation path. Params are sent in the *text*
-//! wire format so `numeric`/`timestamptz`/`json`/`uuid` strings are parsed
-//! exactly by the server; results arrive in the binary format and are decoded
-//! per-type (including a manual binary-NUMERIC → canonical-string decoder to
-//! honor the exact-decimal rule).
+//! SQLx owns connection pooling and the prepared statement cache. The host
+//! binds each caller's identity inside its transaction. The shared parsed SQL
+//! policy refuses session changes, hidden execution, and platform writes.
 
 use std::collections::HashSet;
 #[cfg(feature = "wasm_component_model_implements")]

@@ -76,12 +76,11 @@ fn surviving_authority_matrix_live() {
          REVOKE CONNECT ON DATABASE \"{database}\" FROM wamn_app;"
     );
     // The production role builders retain the platform RLS membership.
-    let executor_provision = sql::prepare_workload_generation_sql(
+    let executor_provision = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
         EXECUTOR_LOGIN,
         "executor-test-password",
-        "2099-01-01T00:00:00Z",
     );
     success(
         &url,

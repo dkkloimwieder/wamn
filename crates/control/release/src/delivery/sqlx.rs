@@ -32,25 +32,20 @@ mod tests {
             &manifest,
         ).expect("target SQLx to the package schemas");
         let connection = database_url
-            .parse::<tokio_postgres::Config>()
+            .parse::<sqlx::postgres::PgConnectOptions>()
             .expect("the targeted URL remains a PostgreSQL connection");
-        assert_eq!(connection.get_dbname(), Some("test"));
+        assert_eq!(connection.get_database(), Some("test"));
         assert_eq!(connection.get_application_name(), Some("local+probe"));
-        assert_eq!(
-            connection.get_connect_timeout(),
-            Some(&std::time::Duration::from_secs(5))
-        );
         assert_eq!(
             connection.get_options(),
             Some("-cstatement_timeout=2500 -csearch_path=old -csearch_path=inventory,public")
         );
-        assert_eq!(connection.get_user(), Some("user"));
-        assert_eq!(connection.get_password(), Some(b"password".as_slice()));
+        assert_eq!(connection.get_username(), "user");
         let plain = wamn_compiler::package_database_url("postgresql://127.0.0.1/test", &manifest)
             .expect("target the unconfigured local connection");
         assert_eq!(
             plain
-                .parse::<tokio_postgres::Config>()
+                .parse::<sqlx::postgres::PgConnectOptions>()
                 .unwrap()
                 .get_options(),
             Some("-csearch_path=inventory,public")

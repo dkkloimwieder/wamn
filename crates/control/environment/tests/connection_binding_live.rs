@@ -1,11 +1,13 @@
 //! Release bindings, target refusals, and native read authority on the environment catalog.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::json;
-use tokio_postgres::{Client, NoTls};
+
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::{
@@ -62,14 +64,12 @@ fn digest_of(bytes: &str) -> String {
     )
 }
 
-async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+async fn connect(url: &str) -> Client {
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to a disposable database");
-    let task = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    (client, task)
+
+    client
 }
 
 fn wiring() -> WiringDocument {
@@ -99,7 +99,7 @@ fn wiring() -> WiringDocument {
 /// admitted facts, which authorship reads from the verified package artifact
 /// in production (`wamn_package_artifact::load_component_facts`).
 async fn admit_component(
-    project: &Client,
+    project: &mut Client,
     package_id: &str,
     component: &str,
     digest: &str,
@@ -134,63 +134,64 @@ async fn admit_component(
         effects: Vec::new(),
     };
     let requirement = ComponentConnectionRequirement::new(digest, store_alias, descriptor);
-    project
-        .execute(
-            "INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
-            &[
-                &PROJECT_ENV_KEY,
-                &requirement.component_digest(),
-                &package_id,
-                &requirement.store_alias(),
-                &requirement.requirement().contract,
-                &if requirement.requirement().requirement_type=="http" {"read"} else {"write"},
-            ],
-        )
-        .await
+    sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&requirement.component_digest()).bind(&package_id).bind(&requirement.store_alias()).bind(&requirement.requirement().contract).bind(&if requirement.requirement().requirement_type=="http" {"read"} else {"write"}).execute(&mut *project).await.map(|result| result.rows_affected())
         .expect("record the fixture component's connection requirement");
     admitted
 }
 
 /// Provision the project and return the admitted components of the package.
-async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedComponent> {
-    project.batch_execute(&format!(
+async fn provision_project(project: &mut Client, project_url: &str) -> Vec<AdmittedComponent> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-connection-fixture', false)",
         wamn_control_provision::PlatformComponent::Provisioning.principal_id()
-    )).await.unwrap();
+    ))).execute(&mut *project).await.map(drop).unwrap();
     // apply-package narrows migration authority to wamn_db_owner, a
     // CLUSTER-wide role. On a fresh server it does not exist; the sibling
     // fixture that omits this passes only where an earlier run left the role
     // behind -- a leftover healthy object masking an incomplete fixture.
-    project
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the production package-owner role");
-    project
-        .batch_execute(
-            "DO $grant$ BEGIN \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *project)
+    .await
+    .map(drop)
+    .expect("ensure the production package-owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $grant$ BEGIN \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); \
-             END $grant$;",
-        )
-        .await
-        .expect("let the package owner create schemas in this database");
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut *project)
+    .await
+    .map(drop)
+    .expect("let the package owner create schemas in this database");
     // The plugin's platform checkout runs an R18 membership probe on every new
     // connection: the connecting role must be a member of the class's ACL role
     // (CallableHttp -> wamn_http_admitter). A superuser passes the probe once
     // the role EXISTS; on a fresh server it does not.
-    project
-        .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
         ))
+            .to_string(),
+    ))
+    .execute(&mut *project)
+    .await
+    .map(drop)
+    .expect("ensure the CallableHttp class ACL role the pool probes for");
+    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS wamn_run")
+        .execute(&mut *project)
         .await
-        .expect("ensure the CallableHttp class ACL role the pool probes for");
-    project
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
-        .await
+        .map(drop)
         .unwrap();
-    project
-        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run")).to_string(),
+    ))
+    .execute(&mut *project)
+    .await
+    .map(drop)
+    .unwrap();
     let source =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../package/tests/fixtures/connection_binding");
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -224,12 +225,11 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     })
     .await
     .expect("apply the connection-binding package fixture");
-    project
-        .execute(
-            "SELECT set_config('app.project_env_key', $1, false)",
-            &[&PROJECT_ENV_KEY],
-        )
+    sqlx::query("SELECT set_config('app.project_env_key', $1, false)")
+        .bind(&PROJECT_ENV_KEY)
+        .execute(&mut *project)
         .await
+        .map(|result| result.rows_affected())
         .expect("target the project seed session");
     let blob_put = admit_component(
         project,
@@ -252,18 +252,17 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ConnectionTypeDescriptor::http_v1(),
     )
     .await;
-    project
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[
-                &PROJECT_ENV_KEY,
-                &digest_of(RELEASE_BYTES),
-                &RELEASE_BYTES.as_bytes(),
-            ],
-        )
-        .await
-        .expect("publish the fixture release");
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&digest_of(RELEASE_BYTES))
+    .bind(&RELEASE_BYTES.as_bytes())
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("publish the fixture release");
     for (application, document) in [
         (PACKAGE, wiring()),
         (
@@ -288,12 +287,9 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
             .unwrap(),
         ),
     ] {
-        project.execute("INSERT INTO catalog.workflows
+        sqlx::query("INSERT INTO catalog.workflows
             (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
-            VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)",
-            &[&PROJECT_ENV_KEY, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
-              &document.wiring_hash().as_str(), &wamn_identity_protocol::workflow_user_id().to_string()]
-        ).await.expect("seed the workflow connection lookup");
+            VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&application).bind(&document.wiring_id).bind(&serde_json::to_string(&document).unwrap()).bind(&document.wiring_hash().as_str()).bind(&wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut *project).await.map(|result| result.rows_affected()).expect("seed the workflow connection lookup");
     }
     vec![blob_put, http_sidecar]
 }
@@ -306,25 +302,36 @@ struct Authority {
 impl Authority {
     async fn new(http_origin: &str) -> Self {
         let database = wamn_control_provision::test_database::system();
-        let (mut system, _) = connect(database.url()).await;
-        system.batch_execute("SET ROLE wamn_system").await.unwrap();
-        system
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "connection-binding-project",
-                    DEFAULT_PROJECT,
-                    "dev",
-                ),
-            )
+        let mut system = connect(database.url()).await;
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut system)
             .await
+            .map(drop)
             .unwrap();
-        system.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
-        let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
-        let tx = system.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                "connection-binding-project",
+                DEFAULT_PROJECT,
+                "dev",
+            ))
+                .to_string(),
         ))
+        .execute(&mut system)
         .await
+        .map(drop)
+        .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut system).await.map(drop).unwrap();
+        let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
+        let mut tx = system.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
+        ))
+        .execute(&mut *tx)
+        .await
+        .map(drop)
         .unwrap();
         for (name, integration_type, auth_type, parameters, credential) in [
             (
@@ -342,7 +349,7 @@ impl Authority {
                 json!({"username":"fixture","password":"private"}),
             ),
         ] {
-            wamn_test_infrastructure::credentials::define(&tx,"connection-binding-project",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&mut tx,"connection-binding-project",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
         }
         tx.commit().await.unwrap();
         Self {
@@ -362,11 +369,12 @@ impl Authority {
         document: &EnvironmentDocument,
         packages: &[wamn_compiler::manifest::PackageManifest],
     ) {
-        self.system
-            .batch_execute("SET ROLE wamn_db_owner")
+        sqlx::raw_sql("SET ROLE wamn_db_owner")
+            .execute(&mut self.system)
             .await
+            .map(drop)
             .unwrap();
-        let selected = bindings::analyse(&self.system, document, packages)
+        let selected = bindings::analyse(&mut self.system, document, packages)
             .await
             .unwrap();
         let _ = bindings::project_authority(self.database.url(), url, document)
@@ -384,9 +392,9 @@ impl Authority {
         // write that changes no row records nothing.
         for repeat in [false, true] {
             let mut drops = ConnectionDrops::default();
-            let tx = project.transaction().await.unwrap();
+            let mut tx = project.begin().await.unwrap();
             bindings::write(
-                &tx,
+                &mut tx,
                 PROJECT_ENV_KEY,
                 digest,
                 document,
@@ -403,43 +411,52 @@ impl Authority {
             assert_eq!(drops, expected, "repeated write: {repeat}");
         }
     }
-    async fn reader(&self) -> ConnectionCredentials {
+    async fn reader(&mut self) -> ConnectionCredentials {
         let role = format!("reader_{}", self.database.name());
-        self.system
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "RESET ROLE; BEGIN; {} {}",
                 wamn_control_provision::bind_platform_principal_sql(
                     wamn_control_provision::PlatformComponent::Provisioning
                 ),
-                wamn_control_provision::sql::prepare_workload_generation_sql(
+                wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
                     self.database.name(),
                     &role,
-                    "fixture-password",
-                    "2099-01-01T00:00:00Z"
+                    "fixture-password"
                 )
             ))
+                .to_string(),
+        ))
+        .execute(&mut self.system)
+        .await
+        .map(drop)
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql())
+                .to_string(),
+        ))
+        .bind(&role)
+        .bind(&PROJECT_ENV_KEY)
+        .bind(&"connection-binding-project")
+        .bind(&DEFAULT_PROJECT)
+        .bind(&ENVIRONMENT)
+        .execute(&mut self.system)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut self.system)
             .await
+            .map(drop)
             .unwrap();
-        self.system
-            .execute(
-                wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql(),
-                &[
-                    &role,
-                    &PROJECT_ENV_KEY,
-                    &"connection-binding-project",
-                    &DEFAULT_PROJECT,
-                    &ENVIRONMENT,
-                ],
-            )
-            .await
-            .unwrap();
-        self.system.batch_execute("COMMIT").await.unwrap();
         let mut url = url::Url::parse(self.database.url()).unwrap();
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
-        let (reader, _) = connect(url.as_str()).await;
-        ConnectionCredentials::from_database(Arc::new(reader), "connection-binding-project")
+        ConnectionCredentials::from_database(
+            wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
+            "connection-binding-project",
+        )
     }
 }
 fn declarations(integration_type: &str, mode: &str) -> wamn_compiler::manifest::PackageManifest {
@@ -452,7 +469,7 @@ fn declarations(integration_type: &str, mode: &str) -> wamn_compiler::manifest::
     serde_json::from_value(json!({"package":{"id":PACKAGE,"version":PACKAGE_VERSION},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},"models":{},"components":{},"connections":connections})).unwrap()
 }
 async fn assert_nested_effect_snapshot(
-    project: &Client,
+    project: &mut Client,
     postgres: &WamnPostgres,
     direct: ConnectionEffectLookup<'_>,
     facts: &ConnectionFacts,
@@ -462,14 +479,9 @@ async fn assert_nested_effect_snapshot(
     const ORIGIN_DIGEST: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
     for package_id in [WIRING_PACKAGE, ORIGIN_PACKAGE] {
-        project
-            .execute(
-                "INSERT INTO catalog.packages \
+        sqlx::query("INSERT INTO catalog.packages \
                    (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-                 VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
-                &[&PROJECT_ENV_KEY, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
-            )
-            .await
+                 VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)").bind(&PROJECT_ENV_KEY).bind(&package_id).bind(&PACKAGE_VERSION).bind(&FACT_FINGERPRINT).execute(&mut *project).await.map(|result| result.rows_affected())
             .expect("seed a separate package coordinate for the snapshot test");
     }
     admit_component(
@@ -609,8 +621,8 @@ async fn assert_nested_effect_snapshot(
     }
 }
 
-async fn rows(project: &Client) -> serde_json::Value {
-    project.query_one("SELECT jsonb_build_object('versions',(SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('xmin',r.xmin::text) ORDER BY r.connection_id) FROM catalog.release_connection r),'bindings',(SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('xmin',b.xmin::text) ORDER BY b.component_digest,b.name) FROM catalog.connection_binding b))",&[]).await.unwrap().get::<_,serde_json::Value>(0)
+async fn rows(project: &mut Client) -> serde_json::Value {
+    sqlx::query("SELECT jsonb_build_object('versions',(SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('xmin',r.xmin::text) ORDER BY r.connection_id) FROM catalog.release_connection r),'bindings',(SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('xmin',b.xmin::text) ORDER BY b.component_digest,b.name) FROM catalog.connection_binding b))").fetch_one(&mut *project).await.unwrap().get::<serde_json::Value, _>(0)
 }
 
 #[tokio::test]
@@ -618,8 +630,8 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
     let project_database = wamn_platform_identity::test_database::project_platform();
     let project_url = project_database.url().to_owned();
-    let (mut project, project_task) = connect(&project_url).await;
-    provision_project(&project, &project_url).await;
+    let mut project = connect(&project_url).await;
+    provision_project(&mut project, &project_url).await;
     let mut authority = Authority::new("http://127.0.0.1:9/").await;
     // The plugin, constructed the way the host constructs it, targeted to the
     // component the way the host targets it at bind time.
@@ -706,7 +718,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
             &[declarations("s3", "write")],
         )
         .await;
-    let before_reapply = rows(&project).await;
+    let before_reapply = rows(&mut project).await;
     authority
         .apply(
             &mut project,
@@ -715,7 +727,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
             &[declarations("s3", "write")],
         )
         .await;
-    assert_eq!(rows(&project).await, before_reapply);
+    assert_eq!(rows(&mut project).await, before_reapply);
     assert!(
         postgres
             .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, "other", &lookup, &facts)
@@ -728,7 +740,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     assert_eq!(resolved.prefix, "fixture/");
     for relation in ["catalog.release_connection", "catalog.connection_binding"] {
         assert_stamp(
-            &project,
+            &mut project,
             relation,
             &format!("project_env_key='{PROJECT_ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -809,16 +821,20 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         .unwrap()
         .connections
         .insert("erp".into(), "labels-store".into());
-    authority
-        .system
-        .batch_execute("SET ROLE wamn_db_owner")
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut authority.system)
         .await
+        .map(drop)
         .unwrap();
     assert_eq!(
-        bindings::analyse(&authority.system, &wrong, &[declarations("s3", "write")])
-            .await
-            .unwrap_err()
-            .code,
+        bindings::analyse(
+            &mut authority.system,
+            &wrong,
+            &[declarations("s3", "write")]
+        )
+        .await
+        .unwrap_err()
+        .code,
         "integration_import_unsatisfied"
     );
     // A ROUTE ENTRY: no wiring row participates. The same origin export
@@ -876,9 +892,8 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         foreign.is_none(),
         "a route in a package outside the release has no snapshot"
     );
-    assert_nested_effect_snapshot(&project, &postgres, lookup, &facts).await;
+    assert_nested_effect_snapshot(&mut project, &postgres, lookup, &facts).await;
     drop(project);
-    project_task.abort();
 }
 
 fn provision_project_components_for_http_manifest()
@@ -930,8 +945,8 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     };
     let _lock = wamn_test_postgres::lock();
     let database = wamn_platform_identity::test_database::project_platform();
-    let (mut project, task) = connect(database.url()).await;
-    provision_project(&project, database.url()).await;
+    let mut project = connect(database.url()).await;
+    provision_project(&mut project, database.url()).await;
     let document = WiringDocument::new(
         "http_read",
         1,
@@ -950,7 +965,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Vec::new(),
     )
     .unwrap();
-    project.execute("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&PROJECT_ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_identity_protocol::workflow_user_id().to_string()]).await.unwrap();
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&PACKAGE).bind(&serde_json::to_string(&document).unwrap()).bind(&document.wiring_hash().as_str()).bind(&wamn_identity_protocol::workflow_user_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
@@ -963,7 +978,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     )
     .unwrap();
     let manifest_digest = manifest.digest().as_str().to_owned();
-    project.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&PROJECT_ENV_KEY,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&manifest_digest).bind(&manifest.canonical_bytes()).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut authority = Authority::new(&format!("http://{}", listener.local_addr().unwrap())).await;
     let mut declaration = Authority::document(&manifest_digest);
@@ -1168,7 +1183,6 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
             .is_err()
     );
     drop(project);
-    task.abort();
 }
 
 fn blobstore(definition: &serde_json::Value) -> anyhow::Result<()> {

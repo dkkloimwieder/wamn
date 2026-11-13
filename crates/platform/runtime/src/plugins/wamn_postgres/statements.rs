@@ -1,5 +1,6 @@
 //! Host-owned resolution and contract tests for verified SQL statements.
 
+use sqlx::{Column as _, Statement as _, TypeInfo as _};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wamn_scalar::SqlValueType;
@@ -357,25 +358,27 @@ pub(super) fn validate_statement_result(
 pub(super) fn validate_prepared_statement(
     statement_path: &str,
     statement: &VerifiedStatement,
-    prepared: &tokio_postgres::Statement,
+    prepared: &sqlx::postgres::PgStatement,
 ) -> Result<(), StatementError> {
+    let parameters = match prepared.parameters() {
+        Some(sqlx::Either::Left(parameters)) => parameters,
+        _ => &[],
+    };
     if !postgres_types_match(
         &statement.binds,
-        prepared
-            .params()
-            .iter()
-            .map(tokio_postgres::types::Type::name),
+        parameters.iter().map(sqlx::TypeInfo::name),
     ) {
         return Err(contract_mismatch(
             statement_path,
             ContractPart::Binds,
             expected_shape(&statement.binds),
             ValueShape {
-                count: bounded_count(prepared.params().len()),
-                types: prepared
-                    .params()
+                count: bounded_count(parameters.len()),
+                types: parameters
                     .iter()
-                    .map(|value_type| normalized_postgres_name(value_type.name()))
+                    .map(|value_type| {
+                        normalized_postgres_name(&value_type.name().to_ascii_lowercase())
+                    })
                     .collect(),
             },
         ));
@@ -386,7 +389,7 @@ pub(super) fn validate_prepared_statement(
         prepared
             .columns()
             .iter()
-            .map(|column| column.type_().name()),
+            .map(|column| column.type_info().name()),
     ) {
         return Err(contract_mismatch(
             statement_path,
@@ -397,7 +400,7 @@ pub(super) fn validate_prepared_statement(
                 types: prepared
                     .columns()
                     .iter()
-                    .map(|column| normalized_postgres_name(column.type_().name()))
+                    .map(|column| normalized_postgres_name(column.type_info().name()))
                     .collect(),
             },
         ));
@@ -438,16 +441,17 @@ fn statement_type_for_value(value: &SqlValue) -> Option<SqlValueType> {
 
 fn statement_type_for_postgres(type_name: &str) -> Option<SqlValueType> {
     Some(match type_name {
-        "bool" => SqlValueType::Boolean,
-        "int2" | "int4" => SqlValueType::Int32,
-        "int8" => SqlValueType::Int64,
-        "float4" | "float8" => SqlValueType::Float64,
-        "text" | "varchar" | "bpchar" | "name" | "unknown" => SqlValueType::Text,
-        "bytea" => SqlValueType::Bytes,
-        "numeric" => SqlValueType::Numeric,
-        "timestamptz" => SqlValueType::Timestamptz,
-        "json" | "jsonb" => SqlValueType::Json,
-        "uuid" => SqlValueType::Uuid,
+        "bool" | "BOOL" => SqlValueType::Boolean,
+        "int2" | "INT2" | "int4" | "INT4" => SqlValueType::Int32,
+        "int8" | "INT8" => SqlValueType::Int64,
+        "float4" | "FLOAT4" | "float8" | "FLOAT8" => SqlValueType::Float64,
+        "text" | "TEXT" | "varchar" | "VARCHAR" | "bpchar" | "BPCHAR" | "CHAR" | "name"
+        | "NAME" | "unknown" | "UNKNOWN" => SqlValueType::Text,
+        "bytea" | "BYTEA" => SqlValueType::Bytes,
+        "numeric" | "NUMERIC" => SqlValueType::Numeric,
+        "timestamptz" | "TIMESTAMPTZ" => SqlValueType::Timestamptz,
+        "json" | "JSON" | "jsonb" | "JSONB" => SqlValueType::Json,
+        "uuid" | "UUID" => SqlValueType::Uuid,
         _ => return None,
     })
 }

@@ -1,5 +1,6 @@
 //! One deployed upgrade case. The existing journey prepares applications and owns cleanup.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -132,8 +133,8 @@ async fn snapshot(journey: &Journey<'_>, target: &UpgradeTarget) -> anyhow::Resu
             "app.kubernetes.io/name=wamn-identity".into(),
         ),
         UpgradeTarget::Control => (
-            wamn_registry::name::resource_suffix("hostgroup", name),
-            wamn_registry::name::host_selector(name),
+            wamn_registry::name::resource_suffix("hostgroup", &name),
+            wamn_registry::name::host_selector(&name),
         ),
         UpgradeTarget::Host { group, .. } => (
             wamn_registry::name::resource_suffix("hostgroup", group),
@@ -220,14 +221,13 @@ async fn image_ready(
 }
 
 async fn authority(journey: &Journey<'_>) -> anyhow::Result<Value> {
-    let system =
-        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
-            .await?;
-    system
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
+    let mut system = wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     query(
-        &system,
+        &mut system,
         "SELECT jsonb_build_array( \
         (SELECT jsonb_agg(xmin::text ORDER BY kid) FROM identity.session_keys), \
         (SELECT jsonb_agg(xmin::text ORDER BY issuer) FROM identity.session_signing_state), \
@@ -277,8 +277,8 @@ pub(super) async fn exercise(
             .await?;
     }
     let rows = data(journey).await?;
-    let database = observer(journey).await?;
-    let baseline = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let baseline = stored(journey, &mut database).await?;
     let alpha = application_target(journey, "alpha").await?;
     let beta = application_target(journey, "beta").await?;
     let beta_owner = snapshot(journey, &beta).await?;
@@ -373,7 +373,7 @@ pub(super) async fn exercise(
             "upgrade changed the platform default"
         );
         ensure!(
-            stored(journey, &database).await? == baseline,
+            stored(journey, &mut database).await? == baseline,
             "upgrade changed the database or schema identity"
         );
         for (app, (counter, widget)) in &rows {

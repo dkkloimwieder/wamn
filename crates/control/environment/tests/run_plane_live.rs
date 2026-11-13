@@ -1,6 +1,8 @@
 //! Live tests for current run-plane creation, security, and convergence.
 //! Tests share PostgreSQL roles and hold the database process lock.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 #[path = "run_plane_live/catalog.rs"]
 mod catalog;
 #[path = "run_plane_live/partition.rs"]
@@ -17,11 +19,9 @@ use wamn_broker::Publisher;
 use catalog::capture_mode_security_leg;
 use run_history::persisted_literal_leg;
 
-use tokio_postgres::{Client, NoTls};
-
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name,
-    sql as provision_sql, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, sql as provision_sql,
+    workload_login,
 };
 use wamn_environment_control::reconcile_run_plane::{
     self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneRequest, ReconcileTargetError,
@@ -48,11 +48,11 @@ const CLI_PROJECT: &str = "billing";
 const CLI_ENV: &str = "dev";
 const CLI_INSTANCE: &str = "k3m9x2p7";
 
-async fn seed_system_env_policy(su: &Client) {
-    su.batch_execute(
-        "DROP SCHEMA IF EXISTS registry CASCADE; \
+async fn seed_system_env_policy(su: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
+           THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$; \
          CREATE SCHEMA registry AUTHORIZATION wamn_system; \
          SET ROLE wamn_system; \
          CREATE TABLE registry.env_policies ( \
@@ -70,31 +70,42 @@ async fn seed_system_env_policy(su: &Client) {
            secret_name text NOT NULL, secret_namespace text, \
            instance_suffix text NOT NULL, pending_database jsonb, \
            PRIMARY KEY (org, env, project)); \
-         RESET ROLE",
-    )
+         RESET ROLE")
+            .to_string(),
+    ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("create system env-policy fixture");
-    su.execute(
+    sqlx::query(
         "INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) \
          VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off')",
-        &[],
     )
+    .execute(&mut *su)
     .await
+    .map(|result| result.rows_affected())
     .expect("seed system env policy");
-    su.execute(
+    sqlx::query(
         "WITH parent_environment AS ( \
            INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) \
          ) INSERT INTO registry.environment_projects \
            (org,env,project,secret_name,instance_suffix) \
          VALUES ($1,$3,$2,'wamn-db-acme--dev--billing',$4)",
-        &[&CLI_ORG, &CLI_PROJECT, &CLI_ENV, &CLI_INSTANCE],
     )
+    .bind(&CLI_ORG)
+    .bind(&CLI_PROJECT)
+    .bind(&CLI_ENV)
+    .bind(&CLI_INSTANCE)
+    .execute(&mut *su)
     .await
+    .map(|result| result.rows_affected())
     .expect("seed recorded project-env target");
-    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
+    sqlx::raw_sql(SYSTEM_IDENTITY_FIXTURE_SQL)
+        .execute(&mut *su)
         .await
+        .map(drop)
         .expect("create the system identity fixture");
 }
 
@@ -169,18 +180,17 @@ const FIXTURE_USER_ID: &str = "22222222-2222-4222-8222-222222222222";
 ///
 /// Called after each apply in this leg, so a second run writing a second time
 /// fails here.
-async fn project_env_key_identity_leg(su: &Client) {
-    let rows: Vec<(String, String, String, String)> = su
-        .query(
-            "SELECT id::text, type, email, created_by::text FROM platform.\"user\" \
+async fn project_env_key_identity_leg(su: &mut Client) {
+    let rows: Vec<(String, String, String, String)> = sqlx::query(
+        "SELECT id::text, type, email, created_by::text FROM platform.\"user\" \
               ORDER BY email",
-            &[],
-        )
-        .await
-        .expect("read the project identity rows")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
-        .collect();
+    )
+    .fetch_all(&mut *su)
+    .await
+    .expect("read the project identity rows")
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+    .collect();
     let provisioning = "770df186-ac15-579e-b46b-c297cae2011b";
     assert_eq!(
         rows,
@@ -238,14 +248,13 @@ async fn project_env_key_identity_leg(su: &Client) {
          user row, each stamped by wamn:provisioning, and no row for the member of another \
          environment",
     );
-    let user_display_name: String = su
-        .query_one(
-            "SELECT display_name FROM platform.\"user\" WHERE id = $1::text::uuid",
-            &[&FIXTURE_USER_ID],
-        )
-        .await
-        .expect("read the user row display name")
-        .get(0);
+    let user_display_name: String =
+        sqlx::query("SELECT display_name FROM platform.\"user\" WHERE id = $1::text::uuid")
+            .bind(&FIXTURE_USER_ID)
+            .fetch_one(&mut *su)
+            .await
+            .expect("read the user row display name")
+            .get(0);
     assert_eq!(
         user_display_name, "A user",
         "a user row carries the display name of its identity.principals row",
@@ -256,7 +265,12 @@ async fn project_env_key_identity_leg(su: &Client) {
 /// role assignments, and the service and platform rows stay
 /// (docs/architecture/overview.md#organization-membership-and-administration).
 /// The membership then comes back, and the row with it.
-async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
+async fn stale_user_leg(
+    su: &mut Client,
+    system_su: &mut Client,
+    system_url: &str,
+    target_url: &str,
+) {
     let reconcile = async || {
         reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
             changes: Publisher::default(),
@@ -271,80 +285,89 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("reconcile-run-plane applies")
     };
-    su.execute(
+    sqlx::query(
         "SELECT set_config('app.user_id', $1, false), \
                 set_config('app.operation', 'admin:seed-stale-user-fixture', false)",
-        &[&FIXTURE_USER_ID],
     )
+    .bind(&FIXTURE_USER_ID)
+    .execute(&mut *su)
     .await
+    .map(|result| result.rows_affected())
     .expect("bind the fixture actor");
-    su.batch_execute(&format!(
-        "INSERT INTO platform.role (name) VALUES ('stale-reader'); \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "INSERT INTO platform.role (name) VALUES ('stale-reader'); \
          INSERT INTO platform.user_role (user_id, role_name) \
            VALUES ('{FIXTURE_USER_ID}', 'stale-reader')"
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("give the fixture user a role");
-    system_su
-        .execute(
-            "DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
-            &[&FIXTURE_USER_ID],
-        )
+    sqlx::query("DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid")
+        .bind(&FIXTURE_USER_ID)
+        .execute(&mut *system_su)
         .await
+        .map(|result| result.rows_affected())
         .expect("revoke the fixture user's membership");
     let outcome = reconcile().await;
     assert_eq!(outcome.project_env_key_identity.user_rows_removed, 1);
-    let rows: Vec<(String, i64)> = su
-        .query(
-            "SELECT type, count(*) FROM platform.\"user\" \
+    let rows: Vec<(String, i64)> = sqlx::query(
+        "SELECT type, count(*) FROM platform.\"user\" \
              GROUP BY type ORDER BY type",
-            &[],
-        )
-        .await
-        .expect("count the project identity rows")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect();
+    )
+    .fetch_all(&mut *su)
+    .await
+    .expect("count the project identity rows")
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1)))
+    .collect();
     assert_eq!(
         rows,
         [("platform".to_owned(), 5), ("service".to_owned(), 2)],
         "the user row goes, and the platform and service rows stay"
     );
-    let roles: i64 = su
-        .query_one("SELECT count(*) FROM platform.user_role ", &[])
+    let roles: i64 = sqlx::query("SELECT count(*) FROM platform.user_role ")
+        .fetch_one(&mut *su)
         .await
         .expect("count the role assignments")
         .get(0);
     assert_eq!(roles, 0, "the role assignment goes with the user row");
 
-    system_su
-        .execute(
-            "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
+    sqlx::query(
+        "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
              VALUES ($1::text::uuid, 'acme', 'billing', 'dev')",
-            &[&FIXTURE_USER_ID],
-        )
-        .await
-        .expect("grant the membership again");
+    )
+    .bind(&FIXTURE_USER_ID)
+    .execute(&mut *system_su)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("grant the membership again");
     assert_eq!(
         reconcile().await.project_env_key_identity.user_rows_written,
         1
     );
-    su.batch_execute("DELETE FROM platform.role WHERE name = 'stale-reader'")
+    sqlx::raw_sql("DELETE FROM platform.role WHERE name = 'stale-reader'")
+        .execute(&mut *su)
         .await
+        .map(drop)
         .expect("remove the fixture role");
 
     // A project admin of the project gets its admin row from the reconcile,
     // which repairs an interrupted grant
     // (docs/architecture/overview.md#organization-membership-and-administration),
     // and a second reconcile writes none.
-    system_su
-        .execute(
-            "INSERT INTO identity.project_roles (principal_id, org, project, role) \
+    sqlx::query(
+        "INSERT INTO identity.project_roles (principal_id, org, project, role) \
              VALUES ($1::text::uuid, 'acme', 'billing', 'project-admin')",
-            &[&FIXTURE_USER_ID],
-        )
-        .await
-        .expect("make the fixture user a project admin");
+    )
+    .bind(&FIXTURE_USER_ID)
+    .execute(&mut *system_su)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("make the fixture user a project admin");
     assert_eq!(
         reconcile()
             .await
@@ -352,15 +375,15 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
             .admin_rows_written,
         1
     );
-    let admin: i64 = su
-        .query_one(
-            "SELECT count(*) FROM platform.user_role \
+    let admin: i64 = sqlx::query(
+        "SELECT count(*) FROM platform.user_role \
              WHERE user_id = $1::text::uuid AND role_name = 'admin'",
-            &[&FIXTURE_USER_ID],
-        )
-        .await
-        .expect("count the admin rows")
-        .get(0);
+    )
+    .bind(&FIXTURE_USER_ID)
+    .fetch_one(&mut *su)
+    .await
+    .expect("count the admin rows")
+    .get(0);
     assert_eq!(admin, 1);
     assert_eq!(
         reconcile()
@@ -369,27 +392,25 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
             .admin_rows_written,
         0
     );
-    system_su
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&FIXTURE_USER_ID],
-        )
+    sqlx::query("DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid")
+        .bind(&FIXTURE_USER_ID)
+        .execute(&mut *system_su)
         .await
+        .map(|result| result.rows_affected())
         .expect("remove the fixture project admin");
     reconcile().await;
-    let stale: i64 = su.query_one("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'", &[&FIXTURE_USER_ID]).await.expect("read projected admin").get(0);
+    let stale: i64 = sqlx::query("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'").bind(&FIXTURE_USER_ID).fetch_one(&mut *su).await.expect("read projected admin").get(0);
     assert_eq!(
         stale, 0,
         "recovery removes stale admin while ordinary membership remains"
     );
     assert!(
-        su.query_opt(
-            "SELECT id FROM platform.\"user\" WHERE id=$1::text::uuid",
-            &[&FIXTURE_USER_ID]
-        )
-        .await
-        .expect("read retained member")
-        .is_some()
+        sqlx::query("SELECT id FROM platform.\"user\" WHERE id=$1::text::uuid")
+            .bind(&FIXTURE_USER_ID)
+            .fetch_optional(&mut *su)
+            .await
+            .expect("read retained member")
+            .is_some()
     );
 }
 
@@ -398,11 +419,9 @@ fn schema() -> BareSchemaName {
 }
 
 async fn connect(url: &str) -> Client {
-    let (client, conn) = tokio_postgres::connect(url, NoTls).await.expect("connect");
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:run-plane-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await.unwrap();
+    let mut client = wamn_postgres::connect(url).await.expect("connect");
+
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:run-plane-fixture', false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
     client
 }
 
@@ -412,72 +431,97 @@ fn database_url(base_url: &str, database: &str) -> String {
     url.to_string()
 }
 
-async fn recreate_database(su: &Client, database: &str) {
-    su.batch_execute(&provision_sql::drop_database_named_sql(database))
-        .await
-        .expect("drop stale target database");
-    su.batch_execute(&provision_sql::create_database_named_sql(database))
-        .await
-        .expect("create target database");
-    su.batch_execute(provision_sql::ensure_db_owner_role_sql())
-        .await
-        .expect("create the project database owner role");
-    su.batch_execute(&provision_sql::set_database_owner_sql(database))
-        .await
-        .expect("set the project database owner");
+async fn recreate_database(su: &mut Client, database: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_sql::drop_database_named_sql(database)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("drop stale target database");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_sql::create_database_named_sql(database)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("create target database");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (provision_sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("create the project database owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_sql::set_database_owner_sql(database)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("set the project database owner");
 }
 
-async fn drop_database(su: &Client, database: &str) {
-    su.batch_execute(&provision_sql::drop_database_named_sql(database))
-        .await
-        .expect("drop target database");
+async fn drop_database(su: &mut Client, database: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_sql::drop_database_named_sql(database)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("drop target database");
 }
 
 async fn connect_as(url: &str, role: &str, password: &str) -> Client {
-    let mut config: tokio_postgres::Config = url.parse().expect("parse Postgres URL");
-    config.user(role).password(password);
-    let (client, conn) = config.connect(NoTls).await.expect("connect as role");
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+    let mut config: sqlx::postgres::PgConnectOptions = url.parse().expect("parse Postgres URL");
+    config = config.username(role).password(password);
+    let client = wamn_postgres::connect(config.clone())
+        .await
+        .expect("connect as role");
+
     client
 }
 
 async fn seed_run_admission_facts(
-    su: &Client,
+    su: &mut Client,
     project_env_key: &str,
     package_id: &str,
     environment: &str,
 ) {
-    su.execute(
-        &format!(
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
             "INSERT INTO {SCHEMA}.environment_policies \
                (project_env_key,expected_environment) \
              VALUES ($1,$2)"
-        ),
-        &[&project_env_key, &environment],
-    )
+        ))
+            .to_string(),
+    ))
+    .bind(&project_env_key)
+    .bind(&environment)
+    .execute(&mut *su)
     .await
+    .map(|result| result.rows_affected())
     .expect("seed the project-local environment policy");
-    su.execute(
-        "INSERT INTO catalog.packages \
+    sqlx::query("INSERT INTO catalog.packages \
            (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
-         VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)",
-        &[&project_env_key, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
-    )
-    .await
+         VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)").bind(&project_env_key).bind(&package_id).bind(&EMPTY_EXECUTION_BUNDLE_HASH).execute(&mut *su).await.map(|result| result.rows_affected())
     .expect("seed run-pin package");
 }
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
 /// ensure the `wamn_app` role, so every leg builds its own starting state.
 /// The runtime roles match the current run-plane grants.
-async fn reset(su: &Client) {
-    su.batch_execute(&provision_sql::ensure_app_acl_role_sql())
-        .await
-        .expect("harden stable app ACL role");
-    su.batch_execute(&format!(
-        "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
+async fn reset(su: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_sql::ensure_app_acl_role_sql()).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("harden stable app ACL role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
          DROP SCHEMA IF EXISTS platform CASCADE; \
@@ -489,92 +533,108 @@ async fn reset(su: &Client) {
              'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
            ); \
          END $$;"
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("hermetic reset");
 }
 
-async fn table_exists(su: &Client, schema: &str, table: &str) -> bool {
-    su.query_one(
+async fn table_exists(su: &mut Client, schema: &str, table: &str) -> bool {
+    sqlx::query(
         "SELECT EXISTS ( SELECT FROM information_schema.tables \
          WHERE table_schema = $1 AND table_name = $2 )",
-        &[&schema, &table],
     )
+    .bind(&schema)
+    .bind(&table)
+    .fetch_one(&mut *su)
     .await
     .expect("probe table")
     .get(0)
 }
 
 /// Probe a column in the run-plane schema.
-async fn column_exists(su: &Client, table: &str, column: &str) -> bool {
-    su.query_one(
+async fn column_exists(su: &mut Client, table: &str, column: &str) -> bool {
+    sqlx::query(
         "SELECT EXISTS ( SELECT FROM information_schema.columns \
          WHERE table_schema = $1 AND table_name = $2 AND column_name = $3 )",
-        &[&SCHEMA, &table, &column],
     )
+    .bind(&SCHEMA)
+    .bind(&table)
+    .bind(&column)
+    .fetch_one(&mut *su)
     .await
     .expect("probe column")
     .get(0)
 }
 
-async fn indexdef(su: &Client, name: &str) -> Option<String> {
-    su.query_opt(
-        "SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = $2",
-        &[&SCHEMA, &name],
-    )
-    .await
-    .expect("read indexdef")
-    .map(|r| r.get(0))
+async fn indexdef(su: &mut Client, name: &str) -> Option<String> {
+    sqlx::query("SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = $2")
+        .bind(&SCHEMA)
+        .bind(&name)
+        .fetch_optional(&mut *su)
+        .await
+        .expect("read indexdef")
+        .map(|r| r.get(0))
 }
 
-async fn install_current_run_plane(su: &Client) {
+async fn install_current_run_plane(su: &mut Client) {
     let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(CATALOG_SCHEMA_SQL)
+        .execute(&mut *su)
         .await
+        .map(drop)
         .expect("apply current catalog schema");
     for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
-        su.batch_execute(&rewrite_schema(ddl, &schema))
-            .await
-            .expect("apply current run-plane schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&rewrite_schema(ddl, &schema)).to_string(),
+        ))
+        .execute(&mut *su)
+        .await
+        .map(drop)
+        .expect("apply current run-plane schema");
     }
 }
 
-fn assert_db_code(error: &tokio_postgres::Error, expected: &str, context: &str) {
-    let actual = error
-        .as_db_error()
-        .map_or("non-database-error", |database| database.code().code());
+fn assert_db_code(error: &sqlx::Error, expected: &str, context: &str) {
+    let code = error
+        .as_database_error()
+        .and_then(|database| database.code());
+    let actual = code.as_deref().unwrap_or("non-database-error");
     assert_eq!(actual, expected, "{context}: {error}");
 }
 
 #[tokio::test]
 async fn run_plane_reconcile_live() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    from_zero_leg(&su, &url).await;
-    current_noop_leg(&su).await;
-    forced_rls_owner_refusal_leg(&su).await;
-    partition::global_fifo_queue_leg(&su).await;
-    capture_mode_security_leg(&su, &url).await;
-    environment_policy_row_security_leg(&su, &url).await;
-    persisted_literal_leg(&su).await;
+    let mut su = connect(&url).await;
+    from_zero_leg(&mut su, &url).await;
+    current_noop_leg(&mut su).await;
+    forced_rls_owner_refusal_leg(&mut su).await;
+    partition::global_fifo_queue_leg(&mut su).await;
+    capture_mode_security_leg(&mut su, &url).await;
+    environment_policy_row_security_leg(&mut su, &url).await;
+    persisted_literal_leg(&mut su).await;
     let cli_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
-    recreate_database(&su, &cli_database).await;
+    recreate_database(&mut su, &cli_database).await;
     let cli_url = database_url(&url, &cli_database);
-    let cli_su = connect(&cli_url).await;
-    environment_identity_leg(&cli_su, &su, &url, &cli_url).await;
+    let mut cli_su = connect(&cli_url).await;
+    environment_identity_leg(&mut cli_su, &mut su, &url, &cli_url).await;
     drop(cli_su);
-    drop_database(&su, &cli_database).await;
+    drop_database(&mut su, &cli_database).await;
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
 /// role reconciliation would hide project history, so refuse before even a
 /// dry-run observation can assert completeness.
-async fn forced_rls_owner_refusal_leg(su: &Client) {
+async fn forced_rls_owner_refusal_leg(su: &mut Client) {
     reset(su).await;
     let schema = schema();
     install_current_run_plane(su).await;
     seed_run_admission_facts(su, "hidden", "owner", "dev").await;
-    su.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rp_owner_no_bypass') THEN \
              CREATE ROLE rp_owner_no_bypass NOSUPERUSER NOBYPASSRLS; \
@@ -593,8 +653,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
              (rolname text, rolsuper boolean, rolbypassrls boolean); \
          INSERT INTO pg_temp.pg_roles \
              VALUES ('rp_owner_no_bypass',false,true);"
-    ))
-    .await
+    ))).execute(&mut *su).await.map(drop)
     .expect("seed a forced-RLS row owned by a non-bypass role");
 
     for apply in [false, true] {
@@ -606,20 +665,26 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
             "explicit forced-RLS refusal: {error:#}"
         );
     }
-    su.batch_execute(
-        "RESET ROLE; DROP TABLE pg_temp.pg_roles; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("RESET ROLE; DROP TABLE pg_temp.pg_roles; \
          DO $temporary$ BEGIN EXECUTE format( \
            'REVOKE TEMPORARY ON DATABASE %I FROM rp_owner_no_bypass', current_database()); \
-         END $temporary$;",
-    )
+         END $temporary$;")
+            .to_string(),
+    ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("restore superuser after owner refusal");
 
     assert_eq!(
-        su.query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
-            .await
-            .expect("hidden row remains")
-            .get::<_, i64>(0),
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {SCHEMA}.runs"
+        )))
+        .fetch_one(&mut *su)
+        .await
+        .expect("hidden row remains")
+        .get::<i64, _>(0),
         1
     );
 }
@@ -630,16 +695,21 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
 /// grants, which is where this leg's `CONNECT` lives), and it must run before
 /// `DROP ROLE` or the drop is refused. Guarded by an existence test so a leg
 /// can call it both before and after minting.
-async fn drop_generation_role(su: &Client, role: &str) {
-    su.batch_execute(&format!(
-        "DO $drop_generation$ BEGIN \
+async fn drop_generation_role(su: &mut Client, role: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "DO $drop_generation$ BEGIN \
            IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
              EXECUTE 'DROP OWNED BY {role}'; \
              EXECUTE 'DROP ROLE {role}'; \
            END IF; \
          END $drop_generation$;"
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("drop the disposable generation role");
 }
 
@@ -661,45 +731,52 @@ async fn drop_generation_role(su: &Client, role: &str) {
 /// production prepare builder also supplies the exact membership edge, direct
 /// database `CONNECT`, finite expiry and stable-role hardening. No test
 /// authenticates as the stable `wamn_app` ACL role.
-async fn mint_guest_generation(su: &Client, url: &str, project_env_key: &str) -> (String, Client) {
-    let database: String = su
-        .query_one("SELECT current_database()", &[])
+async fn mint_guest_generation(
+    su: &mut Client,
+    url: &str,
+    project_env_key: &str,
+) -> (String, Client) {
+    let mut database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut *su)
         .await
         .expect("read the reconciled database")
         .get(0);
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key,
-            database: &database,
+            database: &mut database,
         },
-        CredentialGeneration::A,
     )
     .expect("the guest family takes a project target");
     drop_generation_role(su, &generation).await;
-    su.batch_execute(&provision_sql::prepare_workload_generation_sql(
-        WorkloadRoleFamily::App,
-        &database,
-        &generation,
-        GUEST_GENERATION_PASSWORD,
-        "2100-01-01T00:00:00Z",
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
+            WorkloadRoleFamily::App,
+            &mut database,
+            &generation,
+            GUEST_GENERATION_PASSWORD,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("mint the guest generation login through the production builder");
     // A SUPERUSER (or BYPASSRLS) FIXTURE MASKS RLS ENTIRELY, so the probe role
     // is asserted unprivileged from `pg_roles` — across everything it inherits,
     // because the attribute is recovered through the whole membership chain.
-    let masking: Vec<String> = su
-        .query(
-            "SELECT rolname FROM pg_catalog.pg_roles \
+    let masking: Vec<String> = sqlx::query(
+        "SELECT rolname FROM pg_catalog.pg_roles \
               WHERE (rolsuper OR rolbypassrls) AND pg_has_role($1, oid, 'USAGE')",
-            &[&generation],
-        )
-        .await
-        .expect("probe the generation's superuser/bypassrls reach")
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
+    )
+    .bind(&generation)
+    .fetch_all(&mut *su)
+    .await
+    .expect("probe the generation's superuser/bypassrls reach")
+    .iter()
+    .map(|row| row.get(0))
+    .collect();
     assert!(
         masking.is_empty(),
         "the guest generation reaches an RLS-masking role: {masking:?}"
@@ -710,8 +787,8 @@ async fn mint_guest_generation(su: &Client, url: &str, project_env_key: &str) ->
 
 /// Project policy and identity rows converge without changing run history.
 async fn environment_identity_leg(
-    su: &Client,
-    system_su: &Client,
+    su: &mut Client,
+    system_su: &mut Client,
     system_url: &str,
     target_url: &str,
 ) {
@@ -719,9 +796,17 @@ async fn environment_identity_leg(
     seed_system_env_policy(system_su).await;
     let schema = schema();
 
-    su.batch_execute("SET ROLE wamn_db_owner").await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut *su)
+        .await
+        .map(drop)
+        .unwrap();
     install_current_run_plane(su).await;
-    su.batch_execute("RESET ROLE").await.unwrap();
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut *su)
+        .await
+        .map(drop)
+        .unwrap();
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
@@ -739,10 +824,15 @@ async fn environment_identity_leg(
 
     project_env_key_identity_leg(su).await;
 
-    su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--dev--billing'"
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "DELETE FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--dev--billing'"
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("remove the local policy before testing projection repair");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         changes: Publisher::default(),
@@ -756,17 +846,17 @@ async fn environment_identity_leg(
     })
     .await
     .expect("dry-run observes the missing local policy");
-    let after_dry_run: i64 = su
-        .query_one(
-            &format!(
-                "SELECT count(*) FROM {SCHEMA}.environment_policies \
+    let after_dry_run: i64 = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT count(*) FROM {SCHEMA}.environment_policies \
                  WHERE project_env_key='acme--dev--billing'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read policy after dry-run")
-        .get(0);
+        ))
+            .to_string(),
+    ))
+    .fetch_one(&mut *su)
+    .await
+    .expect("read policy after dry-run")
+    .get(0);
     assert_eq!(
         after_dry_run, 0,
         "dry-run projected the missing local policy"
@@ -799,46 +889,44 @@ async fn environment_identity_leg(
 /// by `wamn_app`. Dry-run first (strictly read-only), then apply provisions run
 /// plane + `catalog`, and a functional smoke as `wamn_app` shows grants + RLS
 /// isolation from the applied sections.
-async fn from_zero_leg(su: &Client, base_url: &str) {
+async fn from_zero_leg(su: &mut Client, base_url: &str) {
     reset(su).await;
     let schema = schema();
     let sentinel_database = "wamn_run_plane_from_zero_role_sentinel";
     recreate_database(su, sentinel_database).await;
     let sentinel_url = database_url(base_url, sentinel_database);
-    let sentinel = connect(&sentinel_url).await;
-    sentinel
-        .batch_execute(
-            "CREATE TABLE public.wamn_app_role_sentinel (id int PRIMARY KEY); \
+    let mut sentinel = connect(&sentinel_url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE public.wamn_app_role_sentinel (id int PRIMARY KEY); \
              ALTER TABLE public.wamn_app_role_sentinel OWNER TO wamn_app; \
-",
-        )
-        .await
-        .expect("create cross-database runtime-role ownership sentinel");
+")
+        .to_string(),
+    ))
+    .execute(&mut sentinel)
+    .await
+    .map(drop)
+    .expect("create cross-database runtime-role ownership sentinel");
     drop(sentinel);
 
-    let role_oids_before = su
-        .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
-            &[],
-        )
-        .await
-        .expect("snapshot shared runtime roles");
-    let role_oids_before = (role_oids_before.get::<_, i64>(0),);
+    let role_oids_before =
+        sqlx::query("SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')")
+            .fetch_one(&mut *su)
+            .await
+            .expect("snapshot shared runtime roles");
+    let role_oids_before = (role_oids_before.get::<i64, _>(0),);
 
     // --dry-run is STRICTLY read-only: it changes neither shared roles nor tables.
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("dry-run plans");
     assert!(!dry.is_noop());
-    let role_oids_after = su
-        .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
-            &[],
-        )
-        .await
-        .expect("re-read shared runtime roles");
+    let role_oids_after =
+        sqlx::query("SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')")
+            .fetch_one(&mut *su)
+            .await
+            .expect("re-read shared runtime roles");
     assert_eq!(
-        (role_oids_after.get::<_, i64>(0),),
+        (role_oids_after.get::<i64, _>(0),),
         role_oids_before,
         "dry-run preserves the shared cluster roles"
     );
@@ -917,27 +1005,29 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // `provision-project-env` would mint.
     seed_run_admission_facts(su, "acme--dev--billing", "cat", "dev").await;
     seed_run_admission_facts(su, "t2", "cat", "dev").await;
-    su.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {SCHEMA}.runs \
              (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
              VALUES ('acme--dev--billing','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
                     ('t2','r2','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--dev--billing', 'r1');"
-    ))
-    .await
+    ))).execute(&mut *su).await.map(drop)
     .expect("seed both projects' run-plane rows");
-    let seeded: i64 = su
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
-        .await
-        .expect("superuser sees the whole table")
-        .get(0);
+    let seeded: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {SCHEMA}.runs"
+    )))
+    .fetch_one(&mut *su)
+    .await
+    .expect("superuser sees the whole table")
+    .get(0);
     assert_eq!(
         seeded, 2,
         "both projects' rows exist before the guest reads"
     );
 
-    let (guest_generation, guest) = mint_guest_generation(su, base_url, "acme--dev--billing").await;
+    let (guest_generation, mut guest) =
+        mint_guest_generation(su, base_url, "acme--dev--billing").await;
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
@@ -948,9 +1038,10 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
             "INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--dev--billing','r3')"
         ),
     ] {
-        let denied = guest
-            .batch_execute(&refused)
+        let denied = sqlx::raw_sql(sqlx::AssertSqlSafe((&refused).to_string()))
+            .execute(&mut guest)
             .await
+            .map(drop)
             .expect_err("the runtime role writes no run-plane row");
         assert_db_code(&denied, "42501", "runtime-role write refusal");
     }
@@ -959,13 +1050,12 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // result. One query settles admission and isolation together, so a
     // regression to matched-nothing fails on the left half and a regression to
     // a `USING (true)` minimum fails on the right.
-    let visible = guest
-        .query(
-            &format!("SELECT project_env_key, run_id FROM {SCHEMA}.runs ORDER BY run_id"),
-            &[],
-        )
-        .await
-        .expect("project read");
+    let visible = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT project_env_key, run_id FROM {SCHEMA}.runs ORDER BY run_id"
+    )))
+    .fetch_all(&mut guest)
+    .await
+    .expect("project read");
     let visible: Vec<(String, String)> =
         visible.iter().map(|row| (row.get(0), row.get(1))).collect();
     assert_eq!(
@@ -975,25 +1065,26 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     );
     // `runs` is the only run-plane relation the guest role can still read;
     // wamn-0h0g.22.7 (b1d42599) left it nothing at all on `run_queue`.
-    let queue_denied = guest
-        .query_one(&format!("SELECT count(*) FROM {SCHEMA}.run_queue"), &[])
-        .await
-        .expect_err("the runtime role cannot read the queue at all");
+    let queue_denied = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {SCHEMA}.run_queue"
+    )))
+    .fetch_one(&mut guest)
+    .await
+    .expect_err("the runtime role cannot read the queue at all");
     assert_db_code(&queue_denied, "42501", "runtime-role queue read refusal");
     drop(guest);
     // Roles are CLUSTER-wide: leave none behind for the legs that follow.
     drop_generation_role(su, &guest_generation).await;
 
-    let sentinel = connect(&sentinel_url).await;
-    let sentinel_owners = sentinel
-        .query_one(
-            "SELECT pg_get_userbyid((SELECT relowner FROM pg_class \
+    let mut sentinel = connect(&sentinel_url).await;
+    let sentinel_owners = sqlx::query(
+        "SELECT pg_get_userbyid((SELECT relowner FROM pg_class \
                                       WHERE oid = \
                                         'public.wamn_app_role_sentinel'::regclass))",
-            &[],
-        )
-        .await
-        .expect("read cross-database runtime-role ownership sentinels");
+    )
+    .fetch_one(&mut sentinel)
+    .await
+    .expect("read cross-database runtime-role ownership sentinels");
     let app_owner: String = sentinel_owners.get(0);
     assert_eq!(
         app_owner, "wamn_app",
@@ -1003,17 +1094,16 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     drop_database(su, sentinel_database).await;
 }
 
-async fn visible_environment_policy_rows(app: &Client, project_env_key: &str) -> i64 {
-    app.query_one(
-        "SELECT set_config('app.project_env_key', $1, false)",
-        &[&project_env_key],
-    )
-    .await
-    .expect("set app project for environment-policy probe");
-    app.query_one(
-        &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
-        &[],
-    )
+async fn visible_environment_policy_rows(app: &mut Client, project_env_key: &str) -> i64 {
+    sqlx::query("SELECT set_config('app.project_env_key', $1, false)")
+        .bind(&project_env_key)
+        .fetch_one(&mut *app)
+        .await
+        .expect("set app project for environment-policy probe");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {SCHEMA}.environment_policies"
+    )))
+    .fetch_one(&mut *app)
     .await
     .expect("read visible environment policies")
     .get(0)
@@ -1022,18 +1112,23 @@ async fn visible_environment_policy_rows(app: &Client, project_env_key: &str) ->
 /// Named mutants for the four independent ways an existing env-policy table
 /// can lose project confinement. Each repair is followed by a fresh observation
 /// showing the catalog converged, not merely that the SQL happened to run.
-async fn environment_policy_row_security_leg(su: &Client, url: &str) {
+async fn environment_policy_row_security_leg(su: &mut Client, url: &str) {
     reset(su).await;
     install_current_run_plane(su).await;
     let schema = schema();
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.environment_policies \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "INSERT INTO {SCHEMA}.environment_policies \
            (project_env_key, expected_environment) \
          VALUES ('acme--dev--billing', 'dev')"
+        ))
+            .to_string(),
     ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("seed projected environment policy");
-    let (guest_generation, guest) = mint_guest_generation(su, url, "t2").await;
+    let (guest_generation, mut guest) = mint_guest_generation(su, url, "t2").await;
 
     let mutants = [
         (
@@ -1066,12 +1161,14 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     ];
 
     for (mutant, mutation) in mutants {
-        su.batch_execute(&mutation)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((&mutation).to_string()))
+            .execute(&mut *su)
             .await
+            .map(drop)
             .unwrap_or_else(|error| panic!("install {mutant} mutant: {error}"));
         if mutant == "disabled RLS" {
             assert_eq!(
-                visible_environment_policy_rows(&guest, "t2").await,
+                visible_environment_policy_rows(&mut guest, "t2").await,
                 1,
                 "the disabled-RLS mutant must expose the foreign project row"
             );
@@ -1090,7 +1187,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
         assert_eq!(applied.actions, dry.actions, "{mutant} plan changed");
         if mutant == "disabled RLS" {
             assert_eq!(
-                visible_environment_policy_rows(&guest, "t2").await,
+                visible_environment_policy_rows(&mut guest, "t2").await,
                 0,
                 "the repaired policy must hide the foreign project row"
             );
@@ -1111,18 +1208,28 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
 
 /// The idempotence contract: a schema AT the schema of record plans nothing —
 /// dry-run and apply mode alike.
-async fn current_noop_leg(su: &Client) {
+async fn current_noop_leg(su: &mut Client) {
     reset(su).await;
     let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(CATALOG_SCHEMA_SQL)
+        .execute(&mut *su)
         .await
+        .map(drop)
         .expect("apply catalog-schema");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
-        .await
-        .expect("apply run-queue");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&rewrite_schema(RUN_STATE_SQL, &schema)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("apply run-state");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&rewrite_schema(RUN_QUEUE_SQL, &schema)).to_string(),
+    ))
+    .execute(&mut *su)
+    .await
+    .map(drop)
+    .expect("apply run-queue");
 
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await

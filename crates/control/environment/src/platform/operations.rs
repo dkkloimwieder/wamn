@@ -36,7 +36,7 @@ pub(super) async fn prepare(
     let digest = wamn_digest::bytes_sha256(&wamn_digest::canonical_json_bytes(&data));
     let inputs = wamn_registry::name::operation_inputs(&document.org, &digest[7..23]);
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","immutable":true,
-        "metadata":{"name":inputs,"namespace":"platform"},"data":data});
+        "metadata":{"name":inputs,"namespace":document.org},"data":data});
     if document.provider == Provider::Kind {
         let secret: super::bootstrap::SecretData = wamn_kubernetes::kubectl::get(
             &target.kubeconfig,
@@ -49,13 +49,13 @@ pub(super) async fn prepare(
         .context("the platform registry credential is absent")?;
         let registry_json = super::bootstrap::secret_text(&secret, ".dockerconfigjson")?;
         resources::apply_object(target,&json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
-            "metadata":{"name":wamn_registry::name::operation_registry(&document.org),"namespace":"platform"},"stringData":{"config.json":registry_json}})).await?;
+            "metadata":{"name":wamn_registry::name::operation_registry(&document.org),"namespace":document.org},"stringData":{"config.json":registry_json}})).await?;
     }
     resources::apply_object(target, &object).await?;
     resources::apply_object(
         target,
         &json!({"apiVersion":"v1","kind":"ConfigMap",
-        "metadata":{"name":wamn_registry::name::operation(&document.org),"namespace":"platform"},
+        "metadata":{"name":wamn_registry::name::operation(&document.org),"namespace":document.org},
         "data":{"inputs":inputs}}),
     )
     .await
@@ -93,11 +93,11 @@ pub fn target_objects(
         &document.env,
     )?;
     let mut objects = vec![
-        json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":format!("{coordinate}-operations"),"namespace":"platform"},"data":{"cluster":cluster}}),
+        json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":format!("{coordinate}-operations"),"namespace":document.org},"data":{"cluster":cluster}}),
     ];
     for privileged in [false, true] {
         let name = format!("{coordinate}-{}", if privileged { "sql" } else { "code" });
-        objects.push(json!({"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":name,"namespace":"platform"}}));
+        objects.push(json!({"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":name,"namespace":document.org}}));
         let mut host_rules = vec![
             // Helm Secret storage reads revisions, writes status, and prunes history.
             json!({"apiGroups":[""],"resources":["secrets"],"verbs":["get","list","create","update","delete"]}),
@@ -127,15 +127,16 @@ pub fn target_objects(
             // Only deploy/rollback persist the selected release pair by replacement.
             host_rules.push(json!({"apiGroups":[""],"resources":["configmaps"],"resourceNames":[coordinate],"verbs":["update"]}));
         }
-        role(&mut objects, "hosts", &name, &host_rules);
+        role(&mut objects, &document.org, &name, &host_rules);
         if privileged {
             role(
                 &mut objects,
-                "platform",
+                &document.org,
                 &name,
                 &[
-                    json!({"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-apply",format!("{cluster}-superuser")],"verbs":["get"]}),
+                    json!({"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-apply",format!("{cluster}-superuser"),format!("{cluster}-ca"),"wamn-pg-ca"],"verbs":["get"]}),
                     json!({"apiGroups":["postgresql.cnpg.io"],"resources":["databases"],"resourceNames":[database],"verbs":["get","list","watch","patch"]}),
+                    json!({"apiGroups":["postgresql.cnpg.io"],"resources":["clusters"],"resourceNames":[cluster],"verbs":["get","patch"]}),
                 ],
             );
         }
@@ -147,7 +148,7 @@ fn role(objects: &mut Vec<Value>, namespace: &str, name: &str, rules: &[Value]) 
     objects.push(json!({"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":name,"namespace":namespace},"rules":rules}));
     objects.push(json!({"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":name,"namespace":namespace},
         "roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":name},
-        "subjects":[{"kind":"ServiceAccount","name":name,"namespace":"platform"}]}));
+        "subjects":[{"kind":"ServiceAccount","name":name,"namespace":namespace}]}));
 }
 
 pub(crate) async fn provision(
@@ -177,11 +178,16 @@ pub(crate) async fn provision(
 /// # Errors
 /// Returns an error when the mounted credential or target cluster is absent.
 pub(crate) fn administrator(cluster: &str) -> anyhow::Result<String> {
-    let password = std::fs::read_to_string(Path::new("/credentials/administrator/password"))?;
-    let mut url = url::Url::parse(&format!(
-        "postgresql://postgres@{cluster}-rw.platform.svc.cluster.local/wamn_system"
-    ))?;
-    url.set_password(Some(&password.replace('%', "%25")))
-        .map_err(|()| anyhow::anyhow!("encode the administrator credential"))?;
-    Ok(url.into())
+    let namespace =
+        std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")?;
+    crate::provision_project_env::workload::configuration(
+        namespace.trim(),
+        cluster,
+        crate::provision_project_env::database_host(None, cluster, namespace.trim()).into_owned(),
+        5432,
+        "wamn_system".into(),
+        "postgres".into(),
+        format!("{cluster}-superuser"),
+    )
+    .to_json()
 }

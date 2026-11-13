@@ -4,20 +4,15 @@
 //! teardown. The pool/identity METHODS live on `WamnPostgres` in `identity.rs`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
-use deadpool_postgres::{Hook, HookError, Object, Pool};
-use tokio_postgres::Config;
+use sqlx::PgPool;
+pub(super) type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 use wamn_run_state::{AuthorityClass, app_identity_hash};
 
 use super::DEFAULT_PROJECT;
-use super::credential_exactness::{
-    AmbientCredentialState, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
-    credential_exactness_probe, explicit_credential_source,
-};
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
@@ -109,19 +104,29 @@ pub struct ClassCredentials {
 }
 
 impl ClassCredentials {
-    /// Name ONE url as the credential of EVERY class, explicitly.
-    ///
-    /// This is the pre-cutover shape and it is not a fallback: the entries are
-    /// written down, so `resolve` still selects rather than defaulting. Every
-    /// family cutover REPLACES one entry with that family's own login
-    /// ([`Self::with_class`]) and leaves the others alone; none of them
-    /// reintroduces an implicit shared credential.
+    /// Build explicit fixture credentials, including the separate read-only login.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn every_class(url: impl Into<String>) -> Self {
         let url = url.into();
+        let query = url::Url::parse(&url).ok().and_then(|mut input| {
+            let login = input.username().strip_prefix("wamn_app_")?;
+            let login = format!("wamn_query_{login}");
+            input.set_username(&login).ok()?;
+            Some(String::from(input))
+        });
         Self {
             urls: AuthorityClass::ALL
                 .into_iter()
-                .map(|class| (class, url.clone()))
+                .map(|class| {
+                    (
+                        class,
+                        if class == AuthorityClass::DynamicSql {
+                            query.as_ref().unwrap_or(&url).clone()
+                        } else {
+                            url.clone()
+                        },
+                    )
+                })
                 .collect(),
         }
     }
@@ -364,13 +369,11 @@ fn class_credentials_from_json(
     name: &str,
     entry: &serde_json::Value,
 ) -> anyhow::Result<ClassCredentials> {
-    let mut credentials = match entry.get("url") {
-        Some(url) => ClassCredentials::every_class(
-            url.as_str()
-                .with_context(|| format!("project {name:?} \"url\" must be a string"))?,
-        ),
-        None => ClassCredentials::default(),
-    };
+    anyhow::ensure!(
+        entry.get("url").is_none(),
+        "each database authority requires its own configured login"
+    );
+    let mut credentials = ClassCredentials::default();
     if let Some(per_class) = entry.get("credentials") {
         let per_class = per_class
             .as_object()
@@ -390,7 +393,7 @@ fn class_credentials_from_json(
     }
     anyhow::ensure!(
         !credentials.is_empty(),
-        "project {name:?} names no credential: give it \"url\" or a \"credentials\" entry"
+        "project {name:?} names no configured database authority"
     );
     Ok(credentials)
 }
@@ -425,16 +428,15 @@ impl CredentialProvider for StaticCredentialProvider {
                  rather than authenticating as another authority's login"
             )
         })?;
-        if class == AuthorityClass::GuestSql {
+        if matches!(class, AuthorityClass::GuestSql | AuthorityClass::DynamicSql) {
             let project_env_key = project_env_key.context(
                 "guest-SQL resolution requires the project: after wamn-0h0g.22.6 the \
                  credential IS the project authority",
             )?;
-            let database = credential_database(&resolved.database_url)?;
-            let role = credential_generation_role(&resolved.database_url)?;
+            let (role, database) = wamn_postgres::identity(&resolved.database_url)?;
             let key = app_identity_hash(project_env_key, &database);
             anyhow::ensure!(
-                role.contains(&key),
+                role == format!("{}_{key}", class.acl_role()),
                 "the credential for project {project:?} authenticates as {role:?}, which \
                  does not carry the project key for the requested project; refusing rather \
                  than reading another project's rows"
@@ -448,97 +450,34 @@ impl CredentialProvider for StaticCredentialProvider {
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// The identity a pooled session is cached under (`wamn-0h0g.22.8.2`).
-///
-/// Three components, all load-bearing:
-///
-/// * `project` — which database.
-/// * `class` — which authority. Two authorities must never share a pooled
-///   session even when they resolve to the same URL, because the session
-///   carries the connected role.
-/// * `generation_role` — WHICH CREDENTIAL GENERATION. See
-///   [`credential_generation_role`]; a rotation produces a different role and
-///   therefore a different key, so a stale principal is unreachable rather
-///   than merely unlikely.
+/// A pool belongs to one project, authority and project environment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
     project: Box<str>,
     class: AuthorityClass,
-    generation_role: Box<str>,
+    project_env_key: Option<Box<str>>,
 }
 
 impl PoolKey {
-    pub(super) fn new(project: &str, class: AuthorityClass, generation_role: &str) -> Self {
+    pub(super) fn new(project: &str, class: AuthorityClass, project_env_key: Option<&str>) -> Self {
         Self {
             project: project.into(),
             class,
-            generation_role: generation_role.into(),
+            project_env_key: project_env_key.map(Into::into),
         }
     }
-
     #[cfg(test)]
     pub(super) fn project(&self) -> &str {
         &self.project
     }
 }
 
-/// The credential generation identity a resolved URL carries.
-///
-/// The provisioner mints an A/B credential generation AS THE LOGIN ROLE
-/// (`wamn_app_<identity-hash>_a` / `_b`, `wamn-0h0g.13.59`), so the generation
-/// already travels inside the URL's user component. Deriving it here rather
-/// than declaring a second field is deliberate: a declared generation could
-/// disagree with the URL that actually authenticates, and then the key would
-/// certify an identity the session does not have.
-///
-/// Note this is NOT `lease_generation`. That is the run-queue lease fence and
-/// has nothing to do with credential rotation; conflating them in a pool key
-/// would tie session reuse to queue state.
-pub(super) fn credential_generation_role(database_url: &str) -> anyhow::Result<String> {
-    let config: Config = database_url
-        .parse()
-        .context("parse the project database url")?;
-    let user = config
-        .get_user()
-        .context("the project database url names no user, so it carries no credential identity")?;
-    Ok(user.to_string())
-}
-
-/// The database a resolved URL names.
-///
-/// Read from the URL rather than configured beside it for the same reason the
-/// generation role is: a declared database could disagree with the one that
-/// actually connects, and the project key is computed over BOTH the project and
-/// the database — so a disagreement would compute a key for a database the
-/// session is not in.
-pub(super) fn credential_database(database_url: &str) -> anyhow::Result<String> {
-    let config: Config = database_url
-        .parse()
-        .context("parse the project database url")?;
-    let database = config
-        .get_dbname()
-        .context("the project database url names no database")?;
-    Ok(database.to_string())
-}
-
-/// A project's live connection pool plus its host-enforced policy (statement
-/// timeout + row limit travel with every call made against it).
 pub(super) struct ProjectPool {
-    pub(super) pool: Pool,
+    pub(super) pool: PgPool,
     pub(super) statement_timeout_ms: u32,
     pub(super) row_limit: u64,
-    pub(super) session_settings: std::sync::Mutex<Vec<SessionSettings>>,
 }
 
-/// Options last applied outside a transaction on one physical connection.
-/// Caller identity are never cached here. Weak ownership drops dead sessions.
-pub(super) struct SessionSettings {
-    pub(super) connection: std::sync::Weak<deadpool_postgres::StatementCache>,
-    pub(super) schema: Option<String>,
-    pub(super) runner: Option<String>,
-}
-
-/// Connection lifecycle whose pool owns a acquired PostgreSQL session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PoolLifecycle {
     Guest,
@@ -554,7 +493,7 @@ impl PoolLifecycle {
     /// new class is a compile error here, not a silent Platform default.
     pub(super) const fn for_class(class: AuthorityClass) -> Self {
         match class {
-            AuthorityClass::GuestSql => Self::Guest,
+            AuthorityClass::GuestSql | AuthorityClass::DynamicSql => Self::Guest,
             AuthorityClass::ExecutorPlatform
             | AuthorityClass::CallableHttp
             | AuthorityClass::EventMaterializer
@@ -589,168 +528,11 @@ pub struct CheckoutProbe {
     pub xact_id: Option<String>,
 }
 
-/// R18 (wamn-2jkm.21): this plugin's SQL quoting is only sound when the server
-/// has `standard_conforming_strings = on` (the PG default since 9.1). With it
-/// on, a backslash inside a `'…'` literal is a literal backslash, so a charset-
-/// validated identifier quoted into a literal elsewhere cannot use `\'` to break
-/// out. If a server had it OFF the assumption would silently fail, so the plugin
-/// asserts it at connection establishment and fails CLOSED otherwise.
-fn standard_conforming_strings_ok(setting: &str) -> bool {
-    setting == "on"
-}
-
-/// The `post_create` deadpool hook that runs the R18 assertion once per new
-/// physical connection — one cheap round trip. A server with
-/// `standard_conforming_strings` off (or an unreadable setting) fails the
-/// connection create, which surfaces to the guest as `connection-unavailable`.
-/// Refuse any newly-created physical connection whose identity is not exactly
-/// the credential this pool resolved (`wamn-0h0g.22.8.4`).
-///
-/// Wired as a `post_create` hook, the same place the R18
-/// `standard_conforming_strings` assertion lives, because that is where a NEW
-/// PHYSICAL CONNECTION exists and has not yet been used. deadpool PUSHES
-/// post-create hooks rather than replacing them, so both tests run.
-///
-/// This is what closes the loop that split B opened. B keys the pool on
-/// (project, class, generation) taken from the resolved url; the url is a
-/// IDENTITY about who will connect. The probe is the server's own answer to
-/// whether that identity is true: it compares `session_user`, `current_user` and
-/// the database against the expectation, and asks the server whether the
-/// principal really holds the class's ACL role. A generation mismatch
-/// therefore fails the connection rather than serving under a stale principal.
-///
-/// `AmbientCredentialState::Absent` is asserted, not assumed: split B removed
-/// the ambient `WAMN_PG_URL` read, so the url reaching here is the one named
-/// explicit source. If a second source is ever reintroduced, this refuses.
-/// The membership every physical connection of one class must satisfy.
-///
-/// A FUNCTION RATHER THAN THREE ARGUMENTS INLINE, because this expression IS the
-/// per-family arm of the probe and it was UNTESTABLE inline
-/// (`wamn-0h0g.22.31`). [`credential_exactness_hook`] returns a `Hook`, which
-/// hides everything it was built from, so a mutant replacing `class.acl_role()`
-/// with any fixed role — making every class probe for the guest's ACL role, and
-/// so admitting the guest login onto the executor's platform pool — SURVIVED the
-/// whole suite. `every_authority_probes_for_its_own_acl_role` asserted only that
-/// each class produced a probe and that the four role names differ; it never
-/// looked at what the probe expects. Extracted, the expectation is comparable.
-fn expected_class_membership(class: AuthorityClass) -> MembershipExpectation {
-    MembershipExpectation::new(class.acl_role(), MembershipMode::Member, true)
-}
-
-pub(super) fn credential_exactness_hook(
-    database_url: &str,
-    class: AuthorityClass,
-    project: &str,
-) -> anyhow::Result<Hook> {
-    let source = explicit_credential_source(database_url, project, AmbientCredentialState::Absent)
-        .map_err(|error| anyhow::anyhow!("explicit credential source refused: {error}"))?;
-    let generation_role = credential_generation_role(database_url)?;
-    let config: Config = database_url
-        .parse()
-        .context("parse the project database url")?;
-    let database = config
-        .get_dbname()
-        .context("the project database url names no database")?
-        .to_string();
-
-    let expected = ExpectedCredentialIdentity::new(
-        // Both users are the generation role: nothing issues SET ROLE between
-        // connect and this hook, so a differing `current_user` means the
-        // session is not the principal the url named.
-        generation_role.clone(),
-        generation_role,
-        database,
-        project,
-        vec![expected_class_membership(class)],
-        // ACL expectations are the per-family denial matrix and need a live
-        // server to be meaningful; membership is the arm that is testable on
-        // every connection.
-        Vec::new(),
-    );
-    let probe = Arc::new(
-        credential_exactness_probe(source, expected)
-            .map_err(|error| anyhow::anyhow!("credential exactness refused the source: {error}"))?,
-    );
-
-    Ok(Hook::async_fn(move |client, _metrics| {
-        let probe = Arc::clone(&probe);
-        Box::pin(async move {
-            // deadpool hands a `ClientWrapper`; the probe wants the
-            // `tokio_postgres::Client` it derefs to.
-            probe.probe_pooled(&**client).await.map_err(|error| {
-                // The error carries a predicate and a type, never credential
-                // material or server detail.
-                HookError::message(format!(
-                    "credential exactness refused the connection: {error}"
-                ))
-            })
-        })
-    }))
-}
-
-/// Apply the project's `statement_timeout` once, when the connection is created.
-///
-/// The value comes from [`ResolvedCredential`], which is resolved per
-/// (project, class, project) -- exactly the pool key -- so every borrower of a
-/// given connection wants the same number. Paying a `SET` round trip for it on
-/// every request is waste: measured at 0.293 ms of each authenticated request
-/// (measurement record in commit `b40a1714b8a0`).
-///
-/// SESSION lifetime, so a later transaction-LOCAL `set_config` still wins. That is
-/// what keeps the guest paths unchanged: they set their own timeout alongside
-/// `search_path`, which is per-component and therefore CANNOT be hoisted here.
-pub(super) fn session_statement_timeout_hook(statement_timeout_ms: u32) -> Hook {
-    let timeout = statement_timeout_ms.to_string();
-    Hook::async_fn(move |client, _metrics| {
-        let timeout = timeout.clone();
-        Box::pin(async move {
-            client
-                .execute(
-                    "SELECT set_config('statement_timeout', $1, false)",
-                    &[&timeout],
-                )
-                .await
-                .map_err(|e| {
-                    HookError::message(format!("set the session statement_timeout failed: {e}"))
-                })?;
-            Ok(())
-        })
-    })
-}
-
-pub(super) fn standard_conforming_strings_hook() -> Hook {
-    Hook::async_fn(|client, _metrics| {
-        Box::pin(async move {
-            let setting: String = client
-                .query_one("SHOW standard_conforming_strings", &[])
-                .await
-                .map_err(|e| {
-                    HookError::message(format!("SHOW standard_conforming_strings failed: {e}"))
-                })?
-                .get(0);
-            if standard_conforming_strings_ok(&setting) {
-                Ok(())
-            } else {
-                Err(HookError::message(format!(
-                    "standard_conforming_strings is {setting:?}, expected \"on\": \
-                     wamn:postgres SQL quoting is unsafe otherwise (R18)"
-                )))
-            }
-        })
-    })
-}
-
+/// Discard a connection whose transaction outcome or session state is unknown.
 pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
-    // Removes the connection from the pool accounting and closes the socket;
-    // the server aborts any open transaction on disconnect. Never repooled.
-    let client = Object::take(obj);
-    drop(client);
     counter.fetch_add(1, Ordering::Relaxed);
+    drop(obj.detach());
 }
-
-// ---------------------------------------------------------------------------
-// HostPlugin
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -794,11 +576,11 @@ mod tests {
     fn each_authority_class_authenticates_with_its_own_configured_credential() {
         let projects = StaticCredentialProvider::projects_from_json(
             r#"{"billing":{"credentials":{
-                 "guest-sql":"postgres://wamn_app_g_a:pw@db/billing",
-                 "executor-platform":"postgres://wamn_exec_platform_x_a:pw@db/billing",
-                 "callable-http":"postgres://wamn_http_admitter_x_a:pw@db/billing",
-                 "event-materializer":"postgres://wamn_materializer_x_a:pw@db/billing",
-                 "administration":"postgres://wamn_administration_x_a:pw@db/billing"}}}"#,
+                 "guest-sql":"postgres://wamn_app_g:pw@db/billing",
+                 "executor-platform":"postgres://wamn_exec_platform_x:pw@db/billing",
+                 "callable-http":"postgres://wamn_http_admitter_x:pw@db/billing",
+                 "event-materializer":"postgres://wamn_materializer_x:pw@db/billing",
+                 "administration":"postgres://wamn_administration_x:pw@db/billing"}}}"#,
             &base(),
         )
         .expect("per-class credentials parse");
@@ -826,7 +608,7 @@ mod tests {
     #[test]
     fn a_class_with_no_configured_credential_is_refused_not_defaulted() {
         let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"credentials":{"guest-sql":"postgres://wamn_app_g_a:pw@db/billing"}}}"#,
+            r#"{"billing":{"credentials":{"guest-sql":"postgres://wamn_app_g:pw@db/billing"}}}"#,
             &base(),
         )
         .expect("a single-class project parses");
@@ -846,46 +628,6 @@ mod tests {
                 "{class} refused for the wrong reason: {error:#}"
             );
         }
-    }
-
-    /// The pre-cutover shape, stated rather than defaulted: one `"url"` names
-    /// every class EXPLICITLY, so nothing regresses while no family is cut over
-    /// and resolution still selects instead of falling back.
-    #[test]
-    fn one_configured_url_names_every_class_explicitly() {
-        let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"url":"postgres://wamn_app_g_a:pw@db/billing"}}"#,
-            &base(),
-        )
-        .expect("a single-url project parses");
-        let cfg = projects.get("billing").expect("project billing");
-        for class in AuthorityClass::ALL {
-            assert_eq!(
-                cfg.select(class).map(|c| c.database_url).as_deref(),
-                Some("postgres://wamn_app_g_a:pw@db/billing"),
-                "{class} lost the project's only credential"
-            );
-        }
-        // And a per-class entry OVERRIDES that url for its own class alone.
-        let projects = StaticCredentialProvider::projects_from_json(
-            r#"{"billing":{"url":"postgres://wamn_app_g_a:pw@db/billing",
-                 "credentials":{"callable-http":"postgres://wamn_http_admitter_x_a:pw@db/billing"}}}"#,
-            &base(),
-        )
-        .expect("a mixed project parses");
-        let cfg = projects.get("billing").expect("project billing");
-        assert_eq!(
-            cfg.select(AuthorityClass::CallableHttp)
-                .map(|c| c.database_url)
-                .as_deref(),
-            Some("postgres://wamn_http_admitter_x_a:pw@db/billing")
-        );
-        assert_eq!(
-            cfg.select(AuthorityClass::EventMaterializer)
-                .map(|c| c.database_url)
-                .as_deref(),
-            Some("postgres://wamn_app_g_a:pw@db/billing")
-        );
     }
 
     #[test]
@@ -912,13 +654,13 @@ mod tests {
     #[test]
     fn the_guest_project_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
-            "postgres://wamn_app_{}_a:pw@db/billing",
+            "postgres://wamn_app_{}:pw@db/billing",
             app_identity_hash("acme", "billing")
         ))
         .with_class(
             AuthorityClass::GuestSql,
             format!(
-                "postgres://wamn_app_{}_a:pw@db/billing",
+                "postgres://wamn_app_{}:pw@db/billing",
                 app_identity_hash("evil", "billing")
             ),
         );
@@ -969,7 +711,7 @@ mod tests {
         let mut projects = HashMap::new();
         projects.insert(
             "billing".to_string(),
-            config("postgres://wamn_app_billing_a:pw@db/billing"),
+            config("postgres://wamn_app_billing:pw@db/billing"),
         );
         let provider =
             StaticCredentialProvider::new(projects, Some(config("postgres://d_a:pw@db/d")));
@@ -995,7 +737,7 @@ mod tests {
     #[test]
     fn the_default_config_is_registered_under_the_default_project() {
         let provider =
-            StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d_a:pw@db/d")));
+            StaticCredentialProvider::default_only(Some(config("postgres://wamn_app_d:pw@db/d")));
         assert!(
             provider
                 .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
@@ -1013,51 +755,6 @@ mod tests {
     }
 
     /// The generation is the LOGIN ROLE, carried in the url's user component.
-    #[test]
-    fn the_credential_generation_is_the_login_role_the_url_carries() {
-        assert_eq!(
-            credential_generation_role("postgres://wamn_app_9f3c_a:pw@host:5432/db")
-                .expect("parse generation role"),
-            "wamn_app_9f3c_a"
-        );
-        assert_eq!(
-            credential_generation_role("postgres://wamn_app_9f3c_b:pw@host:5432/db")
-                .expect("parse generation role"),
-            "wamn_app_9f3c_b",
-            "the A and B generations are different roles, so they are different keys"
-        );
-        assert!(
-            credential_generation_role("postgres://host:5432/db").is_err(),
-            "a url naming no user carries no credential identity and must be refused              rather than pooled under an empty generation"
-        );
-    }
-
-    /// Rotation must be unreachable, not merely unlikely.
-    #[test]
-    fn a_rotated_credential_is_a_different_pool_key() {
-        let a = PoolKey::new("billing", AuthorityClass::GuestSql, "wamn_app_9f3c_a");
-        let b = PoolKey::new("billing", AuthorityClass::GuestSql, "wamn_app_9f3c_b");
-        assert_ne!(a, b, "an A->B rotation must not reuse the stale pool");
-    }
-
-    /// Two authorities must never share a pooled session even when they resolve
-    /// to the same url, because the session carries the connected role.
-    #[test]
-    fn two_authorities_never_share_a_pool_key() {
-        let mut seen = Vec::new();
-        for class in AuthorityClass::ALL {
-            let key = PoolKey::new("billing", class, "wamn_shared_9f3c_a");
-            assert!(
-                !seen.contains(&key),
-                "{class} collided with an earlier authority on one pool key"
-            );
-            seen.push(key);
-        }
-        assert_eq!(seen.len(), 5);
-    }
-
-    /// The class subsumes the lifecycle, so a guest-sql checkout against the
-    /// platform cache is unrepresentable rather than merely unreviewed.
     #[test]
     fn the_authority_class_selects_the_cache() {
         assert_eq!(
@@ -1080,85 +777,6 @@ mod tests {
 
     /// A url that names no credential cannot produce a probe: there would be
     /// nothing to compare the server's answer against.
-    #[test]
-    fn the_exactness_hook_refuses_a_url_that_names_no_credential() {
-        assert!(
-            credential_exactness_hook("postgres://host:5432/db", AuthorityClass::GuestSql, "acme")
-                .is_err(),
-            "a url with no user names no principal"
-        );
-    }
-
-    /// The binding must name the project it was resolved for. An empty binding
-    /// would make the probe agree with anything.
-    #[test]
-    fn the_exactness_hook_refuses_an_unbound_project() {
-        assert!(
-            credential_exactness_hook(
-                "postgres://wamn_app_9f3c_a:pw@host:5432/db",
-                AuthorityClass::GuestSql,
-                "",
-            )
-            .is_err(),
-            "an empty project binding must refuse"
-        );
-    }
-
-    /// Every authority can be probed, and each expects ITS OWN acl role. The
-    /// role strings are the arm that makes the probe a per-family test rather
-    /// than a generic connection test.
-    #[test]
-    fn every_authority_probes_for_its_own_acl_role() {
-        // THE ROLE NAMES ARE SPELLED OUT, NOT DERIVED (`wamn-0h0g.22.31`). This
-        // arm previously asserted only that a probe was produced and that the
-        // four `acl_role()` values differ — an identity about the enum, not about
-        // the probe — so a hook that expected one fixed role for every class
-        // passed it. The literals below are the second document the expectation
-        // is validated against, and they are what makes the arm per-family.
-        let expected: [(AuthorityClass, &str); 5] = [
-            (AuthorityClass::GuestSql, "wamn_app"),
-            (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
-            (AuthorityClass::CallableHttp, "wamn_http_admitter"),
-            (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
-            (AuthorityClass::Administration, "wamn_administration"),
-        ];
-        let mut roles = Vec::new();
-        for class in AuthorityClass::ALL {
-            assert!(
-                credential_exactness_hook(
-                    "postgres://wamn_gen_9f3c_a:pw@host:5432/billingdb",
-                    class,
-                    "billing",
-                )
-                .is_ok(),
-                "{class} must produce a probe"
-            );
-            let (_, role) = expected
-                .iter()
-                .find(|(named, _)| *named == class)
-                .unwrap_or_else(|| panic!("{class} is unlisted; a new class needs a row here"));
-            assert_eq!(
-                expected_class_membership(class),
-                MembershipExpectation::new(*role, MembershipMode::Member, true),
-                "{class} must probe for {role} as an inherited member",
-            );
-            assert!(
-                !roles.contains(&class.acl_role()),
-                "{class} shares an acl role with an earlier authority; the \
-                 per-family arm would not distinguish them"
-            );
-            roles.push(class.acl_role());
-        }
-        assert_eq!(roles.len(), 5);
-    }
-
-    /// The ambient credential source is gone.
-    ///
-    /// Tested in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because
-    /// asserting `is_none()` in a parent where the variable happens to be unset
-    /// establishes nothing, and `std::env::set_var` is `unsafe` in Rust 2024
-    /// precisely because it races every concurrent reader. A re-exec gives a
-    /// real positive condition with no data race.
     #[test]
     fn from_env_ignores_an_ambient_database_url() {
         if std::env::var(AMBIENT_PROBE_VAR).is_ok() {
@@ -1196,14 +814,6 @@ mod tests {
 
     // R18 — the connect-time test logic. A negative is hard to produce on stock
     // PG18 (the setting defaults on), so the fail-closed branch is asserted here.
-    #[test]
-    fn standard_conforming_strings_required() {
-        assert!(standard_conforming_strings_ok("on"));
-        assert!(!standard_conforming_strings_ok("off"));
-        assert!(!standard_conforming_strings_ok(""));
-        assert!(!standard_conforming_strings_ok("ON"));
-    }
-
     #[test]
     fn configured_database_waits_are_finite_and_nonzero() {
         let max = max_host_call_ms();

@@ -3,7 +3,7 @@
 //! a reader row that a failed apply left behind does not make the next apply
 //! skip CDC, and recording the reader on every apply leaves one row.
 
-use tokio_postgres::NoTls;
+use sqlx::Row as _;
 
 use wamn_control_provision::{cdc_object_name, sql};
 use wamn_environment_control::enable_cdc_project_env::record_event_reader;
@@ -22,86 +22,106 @@ const INSTANCE: &str = "k3m9x2p7";
 async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_once() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (db, connection) = tokio_postgres::connect(database.url(), NoTls)
+    let mut db = wamn_postgres::connect(database.url())
         .await
         .expect("connect the test database");
-    tokio::spawn(connection);
-    db.batch_execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
-           CREATE ROLE wamn_system NOLOGIN; \
-         END IF; END $$;",
-    )
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
+           CREATE ROLE wamn_system NOLOGIN NOINHERIT; \
+         END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut db)
     .await
+    .map(drop)
     .expect("the registry owner role");
-    db.batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .execute(&mut db)
         .await
+        .map(drop)
         .expect("install the system schema");
-    db.batch_execute("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+    sqlx::raw_sql("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+        .execute(&mut db)
         .await
+        .map(drop)
         .unwrap();
-    db.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
+    sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
+        .bind(&ORG)
+        .bind(&"pooled")
+        .bind(&"wamn-pg")
+        .execute(&mut db)
         .await
+        .map(|result| result.rows_affected())
         .expect("org row");
-    db.execute(upsert_project_sql(), &[&ORG, &PROJECT])
+    sqlx::query(sqlx::AssertSqlSafe((upsert_project_sql()).to_string()))
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut db)
         .await
+        .map(|result| result.rows_affected())
         .expect("project row");
-    db.execute(
-        stamp_env_policy_sql(),
-        &[
-            &ORG,
-            &ENV,
-            &r#"{"type":"pool"}"#,
-            &0i32,
-            &1i32,
-            &"1Gi",
-            &"250m",
-            &"256Mi",
-            &"postgres:18",
-            &"",
-            &"",
-            &"off",
-            &"standard",
-        ],
-    )
+    sqlx::query(sqlx::AssertSqlSafe((stamp_env_policy_sql()).to_string()))
+        .bind(&ORG)
+        .bind(&ENV)
+        .bind(&r#"{"type":"pool"}"#)
+        .bind(&0i32)
+        .bind(&1i32)
+        .bind(&"1Gi")
+        .bind(&"250m")
+        .bind(&"256Mi")
+        .bind(&"postgres:18")
+        .bind(&"")
+        .bind(&"")
+        .bind(&"off")
+        .bind(&"standard")
+        .execute(&mut db)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("env-policy row");
+    sqlx::query(sqlx::AssertSqlSafe(
+        (upsert_project_env_with_policy_sql()).to_string(),
+    ))
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&ENV)
+    .bind(&"wamn-db-cp0--dev--app")
+    .bind(&None::<&str>)
+    .bind(&INSTANCE)
+    .bind(&false)
+    .bind(&ENV)
+    .bind(&Option::<String>::None)
+    .execute(&mut db)
     .await
-    .expect("env-policy row");
-    db.execute(
-        upsert_project_env_with_policy_sql(),
-        &[
-            &ORG,
-            &PROJECT,
-            &ENV,
-            &"wamn-db-cp0--dev--app",
-            &None::<&str>,
-            &INSTANCE,
-            &false,
-            &ENV,
-            &Option::<String>::None,
-        ],
-    )
-    .await
+    .map(|result| result.rows_affected())
     .expect("project-env row");
 
-    db.batch_execute(
-        "ALTER TABLE registry.environment_projects OWNER TO wamn_system; \
-         ALTER TABLE registry.event_readers OWNER TO wamn_system",
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE registry.environment_projects OWNER TO wamn_system; \
+         ALTER TABLE registry.event_readers OWNER TO wamn_system")
+            .to_string(),
+    ))
+    .execute(&mut db)
     .await
+    .map(drop)
     .expect("registry owner");
 
     let triple = Triple::new(ORG, ENV, PROJECT);
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let schemas = vec!["app".to_owned(), "other".to_owned()];
-    let in_place = || cdc_in_place(&db, &cdc_name, &schemas);
+    let observations = wamn_postgres::pool(database.url(), 4).await.unwrap();
+    let in_place = async || {
+        let mut observation = observations.acquire().await?;
+        cdc_in_place(&mut observation, &cdc_name, &schemas).await
+    };
     let record = || record_event_reader(database.url(), &triple, &schemas, &cdc_name, None);
     let readers = || async {
-        db.query_one(
-            "SELECT count(*) FROM registry.event_readers WHERE org = $1",
-            &[&ORG],
-        )
-        .await
-        .expect("count the reader rows")
-        .get::<_, i64>(0)
+        sqlx::query("SELECT count(*) FROM registry.event_readers WHERE org = $1")
+            .bind(&ORG)
+            .fetch_one(&observations)
+            .await
+            .expect("count the reader rows")
+            .get::<i64, _>(0)
     };
 
     // No publication: not in place, with or without a reader row.
@@ -113,31 +133,43 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     );
 
     // The publication is the observation.
-    db.batch_execute(&format!(
-        "{};\n{};\n{}",
-        sql::ensure_schema_sql("app"),
-        sql::ensure_schema_sql("other"),
-        sql::create_publication_schemas_sql(&cdc_name, &schemas)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "{};\n{};\n{}",
+            sql::ensure_schema_sql("app"),
+            sql::ensure_schema_sql("other"),
+            sql::create_publication_schemas_sql(&cdc_name, &schemas)
+        ))
+            .to_string(),
     ))
+    .execute(&mut db)
     .await
+    .map(drop)
     .expect("the publication");
     assert!(in_place().await.expect("probe"), "CDC is in place");
 
     assert!(
-        !cdc_in_place(&db, &cdc_name, &["another".to_owned()])
+        !cdc_in_place(&mut db, &cdc_name, &["another".to_owned()])
             .await
             .unwrap()
     );
-    db.batch_execute(&format!(
-        "CREATE SCHEMA another; ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA another"
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
+            "CREATE SCHEMA another; ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA another"
+        ))
+            .to_string(),
     ))
+    .execute(&mut db)
     .await
+    .map(drop)
     .unwrap();
     assert!(!in_place().await.unwrap());
-    db.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA app, other"
-    ))
+    )))
+    .execute(&mut db)
     .await
+    .map(drop)
     .unwrap();
     assert!(in_place().await.unwrap());
 
@@ -145,17 +177,16 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     record().await.expect("record the reader again");
     assert_eq!(readers().await, 1);
     assert!(
-        cdc_in_place(&db, &cdc_name, &["other".to_owned(), "app".to_owned()])
+        cdc_in_place(&mut db, &cdc_name, &["other".to_owned(), "app".to_owned()])
             .await
             .unwrap()
     );
-    let registered: Vec<String> = db
-        .query_one(
-            "SELECT schema FROM registry.event_readers WHERE org = $1",
-            &[&ORG],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let registered: Vec<String> =
+        sqlx::query("SELECT schema FROM registry.event_readers WHERE org = $1")
+            .bind(&ORG)
+            .fetch_one(&mut db)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(registered, schemas);
 }

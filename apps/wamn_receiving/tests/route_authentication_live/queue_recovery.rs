@@ -1,6 +1,7 @@
 //! An interrupted application command completes once after queue recovery.
 //! The CLI authors and enables the workflow. Its control route starts and replays it.
 
+use sqlx::Row as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -99,39 +100,24 @@ async fn recover(
 ) -> anyhow::Result<()> {
     let identity = super::identity();
     let project_env_key = identity.project_env_key();
-    let (client, task) = super::connect(project_url).await?;
-    let (lock, lock_task) = super::connect(project_url).await?;
+    let mut client = super::connect(project_url).await?;
+    let mut lock = super::connect(project_url).await?;
     let result = async {
         // Provisioning writes the environment's run policy; the local
         // application does not provision.
-        client
-            .execute(
-                "SELECT set_config('app.user_id', $1, false)",
-                &[&wamn_control_provision::PlatformComponent::Provisioning
+        sqlx::query("SELECT set_config('app.user_id', $1, false)").bind(&wamn_control_provision::PlatformComponent::Provisioning
                     .principal_id()
-                    .to_string()],
-            )
-            .await?;
-        client
-            .execute(
-                "INSERT INTO wamn_run.environment_policies \
-                   (project_env_key, expected_environment) VALUES ($1, $2)",
-                &[&project_env_key, &identity.environment.as_str()],
-            )
-            .await
+                    .to_string()).execute(&mut client).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO wamn_run.environment_policies \
+                   (project_env_key, expected_environment) VALUES ($1, $2)").bind(&project_env_key).bind(&identity.environment.as_str()).execute(&mut client).await.map(|result| result.rows_affected())
             .context("write the environment's run policy")?;
-        super::bind_fixture_principal(&client).await?;
-        client
-            .batch_execute(
-                "INSERT INTO receiving.item (id, item_number) VALUES \
+        super::bind_fixture_principal(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.item (id, item_number) VALUES \
                    ('00000000-0000-0000-0000-000000000101', 'ITEM-101'); \
                  INSERT INTO receiving.location (id, location_code) VALUES \
-                   ('00000000-0000-0000-0000-000000000201', 'DOCK-1');",
-            )
-            .await
+                   ('00000000-0000-0000-0000-000000000201', 'DOCK-1');").to_string())).execute(&mut client).await.map(drop)
             .context("seed the queued receipt request element and location")?;
-        client.batch_execute(
-            "INSERT INTO receiving.supplier (id, name) VALUES \
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.supplier (id, name) VALUES \
              ('00000000-0000-0000-0000-000000000404', 'SUPPLIER-404'); \
              INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, status, row_version) \
              VALUES ('00000000-0000-0000-0000-000000000304', 'PO-304', \
@@ -140,15 +126,10 @@ async fn recover(
                  (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
              VALUES ('00000000-0000-0000-0000-000000000504', \
                      '00000000-0000-0000-0000-000000000304', 1, \
-                     '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);",
-        ).await?;
+                     '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);").to_string())).execute(&mut client).await.map(drop)?;
         // The local application's operator service holds the admin role.
-        let principal: String = client
-            .query_one(
-                "SELECT id::text FROM platform.\"user\" WHERE type = 'service' \
-                   AND email = 'local@example.invalid'",
-                &[],
-            )
+        let principal: String = sqlx::query("SELECT id::text FROM platform.\"user\" WHERE type = 'service' \
+                   AND email = 'local@example.invalid'").fetch_one(&mut client)
             .await
             .context("read the local operator service")?
             .get(0);
@@ -178,13 +159,10 @@ async fn recover(
             let output = command.output().await?;
             ensure!(output.status.success(), "workflow {verb} failed: {}", String::from_utf8_lossy(&output.stderr));
         }
-        lock.batch_execute("BEGIN").await?;
-        lock.query_one(
-            "SELECT id FROM receiving.purchase_order WHERE id = $1::text::uuid FOR UPDATE",
-            &[&ORDER],
-        )
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string())).execute(&mut lock).await.map(drop)?;
+        sqlx::query("SELECT id FROM receiving.purchase_order WHERE id = $1::text::uuid FOR UPDATE").bind(&ORDER).fetch_one(&mut lock)
         .await?;
-        let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
+        let blocker: i32 = sqlx::query("SELECT pg_backend_pid()").fetch_one(&mut lock).await?.get(0);
         let input = json!([{"request_id":"queue-recovery","value":{
                 "idempotency_key":IDEMPOTENCY_KEY,"purchase_order_id":ORDER,
                 "receipt_reference":"QUEUE-RECOVERY","occurred_at":"2026-08-31T12:34:00.000000Z",
@@ -205,7 +183,7 @@ async fn recover(
         let run = start().await?;
 
         let (stop_first, first) = serve(queue, "queue-recovery-first").await?;
-        let (generation, backend) = blocked_attempt(&client, &run, blocker, 0).await?;
+        let (generation, backend) = blocked_attempt(&mut client, &run, blocker, 0).await?;
         // The host dies: its process stops at once and its connections close.
         first.abort();
         drop(stop_first);
@@ -213,40 +191,31 @@ async fn recover(
             first.await.is_err_and(|error| error.is_cancelled()),
             "the dead host's queue task must be cancelled"
         );
-        client
-            .query_one("SELECT pg_terminate_backend($1)", &[&backend])
+        sqlx::query("SELECT pg_terminate_backend($1)").bind(&backend).fetch_one(&mut client)
             .await?;
-        let dead = client
-            .query_one(
-                "SELECT r.status, q.lease_generation FROM wamn_run.runs r \
-                   JOIN wamn_run.run_queue q USING (project_env_key, run_id) WHERE run_id = $1",
-                &[&run],
-            )
+        let dead = sqlx::query("SELECT r.status, q.lease_generation FROM wamn_run.runs r \
+                   JOIN wamn_run.run_queue q USING (project_env_key, run_id) WHERE run_id = $1").bind(&run).fetch_one(&mut client)
             .await?;
         ensure!(
-            dead.get::<_, String>(0) == "running" && dead.get::<_, i64>(1) == generation,
+            dead.get::<String, _>(0) == "running" && dead.get::<i64, _>(1) == generation,
             "the dead host's run stays running under its lease"
         );
         ensure!(
-            receipts(&client).await? == 0,
+            receipts(&mut client).await? == 0,
             "the dead host committed no receipt"
         );
 
         let (stop_second, second) = serve(queue, "queue-recovery-restarted").await?;
         let (recovered, recovered_backend) =
-            blocked_attempt(&client, &run, blocker, generation).await?;
+            blocked_attempt(&mut client, &run, blocker, generation).await?;
         ensure!(
             recovered_backend != backend,
             "recovery runs on a new database connection"
         );
-        lock.batch_execute("ROLLBACK").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string())).execute(&mut lock).await.map(drop)?;
         let outcome = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let row = client
-                    .query_one(
-                        "SELECT status, result_json FROM wamn_run.runs WHERE run_id = $1",
-                        &[&run],
-                    )
+                let row = sqlx::query("SELECT status, result_json FROM wamn_run.runs WHERE run_id = $1").bind(&run).fetch_one(&mut client)
                     .await?;
                 let status: String = row.get(0);
                 if status != "running" && status != "dispatched" {
@@ -268,15 +237,11 @@ async fn recover(
             "the recovered command returns its committed receipt: {outcome}"
         );
         ensure!(
-            receipts(&client).await? == 1,
+            receipts(&mut client).await? == 1,
             "the interrupted command commits exactly one receipt"
         );
         ensure!(
-            client
-                .query_opt(
-                    "SELECT run_id FROM wamn_run.run_queue WHERE run_id = $1",
-                    &[&run]
-                )
+            sqlx::query("SELECT run_id FROM wamn_run.run_queue WHERE run_id = $1").bind(&run).fetch_optional(&mut client)
                 .await?
                 .is_none(),
             "the completed run leaves the durable queue"
@@ -292,9 +257,8 @@ async fn recover(
     }
     .await;
     drop(lock);
-    lock_task.abort();
+
     drop(client);
-    task.abort();
     result
 }
 
@@ -327,45 +291,45 @@ async fn serve(
 }
 
 /// The receipts the queued command committed.
-async fn receipts(client: &tokio_postgres::Client) -> anyhow::Result<i64> {
-    Ok(client
-        .query_one(
-            "SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = $1::text::uuid",
-            &[&ORDER],
-        )
-        .await?
-        .get(0))
+async fn receipts(client: &mut sqlx::PgConnection) -> anyhow::Result<i64> {
+    Ok(sqlx::query(
+        "SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = $1::text::uuid",
+    )
+    .bind(&ORDER)
+    .fetch_one(&mut *client)
+    .await?
+    .get(0))
 }
 
 /// Wait until an attempt of `run` with a lease generation above `after` runs
 /// application SQL that `blocker` blocks, and return its generation and
 /// backend.
 async fn blocked_attempt(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     run: &str,
     blocker: i32,
     after: i64,
 ) -> anyhow::Result<(i64, i32)> {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
-            if let Some(row) = client
-                .query_opt(
-                    "SELECT q.lease_generation, a.pid FROM wamn_run.run_queue q \
+            if let Some(row) = sqlx::query(
+                "SELECT q.lease_generation, a.pid FROM wamn_run.run_queue q \
                        JOIN wamn_run.runs r USING (project_env_key, run_id) \
                        CROSS JOIN pg_stat_activity a \
                      WHERE q.run_id = $1 AND r.status = 'running' AND q.lease_generation > $2 \
                        AND $3 = ANY(pg_blocking_pids(a.pid)) AND a.query LIKE '%purchase_order%'",
-                    &[&run, &after, &blocker],
-                )
-                .await?
+            )
+            .bind(&run)
+            .bind(&after)
+            .bind(&blocker)
+            .fetch_optional(&mut *client)
+            .await?
             {
                 return Ok::<_, anyhow::Error>((row.get(0), row.get(1)));
             }
-            let status: String = client
-                .query_one(
-                    "SELECT status FROM wamn_run.runs WHERE run_id = $1",
-                    &[&run],
-                )
+            let status: String = sqlx::query("SELECT status FROM wamn_run.runs WHERE run_id = $1")
+                .bind(&run)
+                .fetch_one(&mut *client)
                 .await?
                 .get(0);
             ensure!(

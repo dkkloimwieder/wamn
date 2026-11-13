@@ -163,7 +163,7 @@ Only its ensure phase opens `WAMN_SYSTEM_ADMIN_URL` for role creation and grant 
 `delete` and `status` are lifecycle verbs. They read the registry and run their provisioning writes over `WAMN_SYSTEM_ADMIN_URL`, as the install Jobs do.
 Registry and identity data reads and writes use the restricted apply connection, including those inside ensure.
 Project work uses the granted `wamn_db_owner` role.
-Provisioning writes the apply URL to the `platform/wamn-apply` Secret.
+Provisioning writes public apply connection data to the org namespace's `wamn-apply` ConfigMap. The native basic-auth Secret of the same name holds the login and password.
 
 `apply` runs these steps:
 
@@ -238,7 +238,7 @@ The platform UI reads status through a control operation with a read-only Servic
 ### Resources kept after deletion
 
 - The org, the project, `identity.project_roles` and every user principal.
-- The control-family generation roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+- The control-family login roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
 
 ## Registry hierarchy
 

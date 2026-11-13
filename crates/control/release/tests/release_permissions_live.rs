@@ -5,34 +5,32 @@
 //! it. The test holds the process lock of its server, because the schema
 //! installer creates cluster-wide roles.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use wamn_broker::auth_changes::AuthDrops;
 
-use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::application::{create_role, delete_role};
 use wamn_test_infrastructure::locked_database::{self, LockedDatabase};
 
-async fn rows(client: &Client) -> BTreeSet<String> {
-    client
-        .query(
-            "SELECT permission FROM platform.permission \
+async fn rows(client: &mut Client) -> BTreeSet<String> {
+    sqlx::query(
+        "SELECT permission FROM platform.permission \
              WHERE role_name = 'clerk'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .iter()
-        .map(|row| row.get(0))
-        .collect()
+    )
+    .fetch_all(&mut *client)
+    .await
+    .unwrap()
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
 /// Connect to a disposable database with the application schema installed.
 async fn install() -> (LockedDatabase, Client) {
     let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
-    let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+    let mut client = wamn_postgres::connect(&*url).await.unwrap();
+
     (url, client)
 }
 
@@ -43,11 +41,16 @@ fn set(items: &[&str]) -> BTreeSet<String> {
 /// Run one change in its own transaction and return its result.
 macro_rules! change {
     ($client:expr, |$tx:ident| $body:expr) => {{
-        let $tx = $client.transaction().await.unwrap();
-        $tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut $tx = $client.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *$tx)
         .await
+        .map(drop)
         .unwrap();
         let result = $body.await;
         if result.is_ok() {
@@ -62,19 +65,21 @@ async fn permission_grants_and_revokes_store_rows() {
     let (_database, mut client) = install().await;
     let mut drops = AuthDrops::default();
 
-    let refused = change!(client, |tx| create_role(&tx, "t1", "admin", &mut drops)).unwrap_err();
+    let refused =
+        change!(client, |tx| create_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
     assert!(format!("{refused:#}").contains("built-in"), "{refused:#}");
-    let refused = change!(client, |tx| create_role(&tx, "t1", "Clerk", &mut drops)).unwrap_err();
+    let refused =
+        change!(client, |tx| create_role(&mut tx, "t1", "Clerk", &mut drops)).unwrap_err();
     assert!(
         format!("{refused:#}").contains("not a role name"),
         "{refused:#}"
     );
-    assert!(change!(client, |tx| create_role(&tx, "t1", "clerk", &mut drops)).unwrap());
-    assert!(!change!(client, |tx| create_role(&tx, "t1", "clerk", &mut drops)).unwrap());
+    assert!(change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
+    assert!(!change!(client, |tx| create_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
 
     let refused = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -94,7 +99,7 @@ async fn permission_grants_and_revokes_store_rows() {
     // A reference the release does not serve is stored.
     let dormant = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -110,7 +115,7 @@ async fn permission_grants_and_revokes_store_rows() {
 
     let granted = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -125,7 +130,7 @@ async fn permission_grants_and_revokes_store_rows() {
     assert_eq!(granted.rows_added, 1, "the grant alone is stored");
     let again = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -140,7 +145,7 @@ async fn permission_grants_and_revokes_store_rows() {
     assert_eq!(again.rows_added, 0, "a second grant writes nothing");
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -153,14 +158,14 @@ async fn permission_grants_and_revokes_store_rows() {
     })
     .unwrap();
     assert_eq!(
-        rows(&client).await,
+        rows(&mut client).await,
         set(&["shop:order/delete", "shop:report/run", "shop:line/list"]),
         "each grant is one row"
     );
 
     change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -173,12 +178,12 @@ async fn permission_grants_and_revokes_store_rows() {
     })
     .unwrap();
     assert_eq!(
-        rows(&client).await,
+        rows(&mut client).await,
         set(&["shop:order/delete", "shop:report/run"])
     );
     let refused = change!(client, |tx| {
         wamn_platform_identity::application::mutate_grant(
-            &tx,
+            &mut tx,
             "t1",
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::Permission {
@@ -195,15 +200,16 @@ async fn permission_grants_and_revokes_store_rows() {
         "{refused:#}"
     );
 
-    let refused = change!(client, |tx| delete_role(&tx, "t1", "admin", &mut drops)).unwrap_err();
+    let refused =
+        change!(client, |tx| delete_role(&mut tx, "t1", "admin", &mut drops)).unwrap_err();
     assert!(
         format!("{refused:#}").contains("cannot be deleted"),
         "{refused:#}"
     );
-    assert!(change!(client, |tx| delete_role(&tx, "t1", "clerk", &mut drops)).unwrap());
+    assert!(change!(client, |tx| delete_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
     assert!(
-        rows(&client).await.is_empty(),
+        rows(&mut client).await.is_empty(),
         "the role took its rows with it"
     );
-    assert!(!change!(client, |tx| delete_role(&tx, "t1", "clerk", &mut drops)).unwrap());
+    assert!(!change!(client, |tx| delete_role(&mut tx, "t1", "clerk", &mut drops)).unwrap());
 }

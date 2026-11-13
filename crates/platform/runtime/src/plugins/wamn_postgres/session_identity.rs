@@ -4,13 +4,13 @@
 //! `set_config()`-bound identity injection (`begin_with_identity`). This is the exact
 //! surface the injection review (R2/R16/R16b/cjv.2/l5i9.12.2) reasons about.
 
+use sqlx::{Row as _, Statement as _};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
@@ -77,12 +77,12 @@ pub struct HeldOperationGrants {
 impl HeldOperationGrants {
     /// Fold rows of `(role_name, permission)`, where a null permission is a
     /// role without permissions. The held references are the rows.
-    pub fn from_rows(rows: &[tokio_postgres::Row]) -> Result<Self, tokio_postgres::Error> {
+    pub fn from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<Self, sqlx::Error> {
         let mut held = Self::default();
         for row in rows {
             let role: String = row.try_get(0)?;
             held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
-            if let Some(reference) = row.try_get::<_, Option<String>>(1)? {
+            if let Some(reference) = row.try_get::<Option<String>, _>(1)? {
                 held.references.insert(reference);
             }
             held.roles.insert(role);
@@ -116,8 +116,8 @@ impl HeldOperationGrants {
 }
 
 fn principal_grants_from_rows(
-    rows: &[tokio_postgres::Row],
-) -> Result<crate::auth_cache::PrincipalGrants, tokio_postgres::Error> {
+    rows: &[sqlx::postgres::PgRow],
+) -> Result<crate::auth_cache::PrincipalGrants, sqlx::Error> {
     let mut grants = crate::auth_cache::PrincipalGrants {
         present: !rows.is_empty(),
         ..Default::default()
@@ -125,9 +125,9 @@ fn principal_grants_from_rows(
     for row in rows {
         grants.active = row.try_get(0)?;
         grants.user = Some(row.try_get(3)?);
-        if let Some(role) = row.try_get::<_, Option<String>>(1)? {
+        if let Some(role) = row.try_get::<Option<String>, _>(1)? {
             let permissions = grants.roles.entry(role).or_default();
-            permissions.extend(row.try_get::<_, Option<String>>(2)?);
+            permissions.extend(row.try_get::<Option<String>, _>(2)?);
         }
     }
     Ok(grants)
@@ -172,12 +172,14 @@ impl std::error::Error for SessionIdentityError {
     }
 }
 
-fn principal_read_error(
-    context: &'static str,
-    source: tokio_postgres::Error,
-) -> SessionIdentityError {
+fn principal_read_error(context: &'static str, source: sqlx::Error) -> SessionIdentityError {
     SessionIdentityError {
-        type_: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
+        type_: if source
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref()
+            == Some("42501")
+        {
             SessionIdentityErrorType::Authorization
         } else {
             SessionIdentityErrorType::Infrastructure
@@ -349,7 +351,7 @@ pub struct WamnPostgres {
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
     auth: crate::auth_cache::AuthCache,
-    hierarchy_reader: std::sync::RwLock<Option<Arc<tokio_postgres::Client>>>,
+    hierarchy_reader: std::sync::RwLock<Option<sqlx::PgPool>>,
 }
 
 /// The release a pod carries — the manifest digest derived from the verified
@@ -804,182 +806,14 @@ pub(crate) struct EffectFixed {
 
 /// What the transaction of an HTTP effect authorization read.
 enum EffectRead {
-    /// The whole snapshot of a local application.
     Local(Box<Option<ConnectionEffectSnapshot>>),
-    /// The fixed part, or `None` when the release has no such member.
     Fixed(Option<EffectFixed>),
 }
 
-/// Reject guest SQL that would set or reset a session variable or role in-band.
-///
-/// A guest on the transaction / one-shot / cursor API must not be able to
-/// rewrite a host-injected identity (or switch roles) and defeat RLS isolation
-/// (wamn-cjv.2 / review C4-1). The extended-query protocol forbids statement
-/// chaining, so an identity override can only arrive as a *standalone* `SET` /
-/// `RESET` / `set_config(…)` statement — which this catches.
-///
-/// It runs on the raw `wamn:postgres/client` surface, which only platform
-/// components import, and on every verified statement. Admission also parses
-/// declared SQL and refuses these constructs on the parse tree; this guard
-/// still covers a release admitted before that test, or a forged descriptor.
-///
-/// # The project_env_key axis is structurally closed, and this is no longer what holds it
-///
-/// The `wamn-0h0g.22.6` lineage re-keyed guest project_env_key authority onto a
-/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated project_env_key minimum onto
-/// `current_user`, `.22.6.4` minted per-project_env_key guest LOGIN generations, and
-/// `.22.6.7` cut the guest SQL path onto per-project_env_key connections.
-/// `wamn_authority.current_project_key()` reads the CONNECTED ROLE, which no
-/// session can rewrite, so a guest that succeeds in setting `app.project_env_key`
-/// changes nothing. Measured on PostgreSQL 18 as a guest generation login
-/// asserted NOT (`rolsuper` OR `rolbypassrls`): plain `SET`, `set_config`, `SET
-/// LOCAL` and `DO` + `EXECUTE` all SUCCEEDED and all left the visible row set
-/// unchanged.
-///
-/// # What remains is a live MECHANISM, not a stale citation
-///
-/// This is still a defense-in-depth **blocklist**:
-/// [`statement_mutates_session`] matches only a leading `set`/`reset` keyword
-/// or the literal `set_config`, so a `DO` block whose `EXECUTE` string carries
-/// `SET app.role` passes it untouched. The guard therefore applies to reachable
-/// guest APIs bearing RLS policies that read `app.role` or `app.user_id`; none
-/// exists in the Receiving slice. Its host-only operation-permission read binds
-/// predicates directly and installs neither caller-derived identity
-/// (`wamn-10yt.3.2`), so it does not arm this escape. `wamn-0h0g.22.23` (OPEN)
-/// owns the matcher defect and carries the trigger for the first such reachable
-/// API — do not close this comment against it.
+/// Apply the shared parsed SQL policy before running guest SQL.
 pub(super) fn reject_identity_mutation(sql: &str) -> Result<(), PgError> {
-    if statement_mutates_session(sql) {
-        tracing::warn!(
-            target: "wamn::security",
-            "rejected an in-band identity/role mutation on the guest SQL surface"
-        );
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "in-band identity or role mutation is not permitted".to_string(),
-        )));
-    }
-    if statement_forges_causation(sql) {
-        tracing::warn!(
-            target: "wamn::security",
-            "rejected a guest wamn.* logical-message emit on the guest SQL surface"
-        );
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "emitting a wamn.* logical message is not permitted".to_string(),
-        )));
-    }
-    if statement_calls_counter_function(sql) {
-        tracing::warn!(
-            target: "wamn::security",
-            "rejected a guest call of a platform counter function on the guest SQL surface"
-        );
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "calling a platform counter function is not permitted".to_string(),
-        )));
-    }
-    if statement_writes_platform(sql) {
-        tracing::warn!(
-            target: "wamn::security",
-            "rejected a guest platform.* write on the guest SQL surface"
-        );
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "writing a platform.* relation is not permitted".to_string(),
-        )));
-    }
-    Ok(())
-}
-
-/// The platform functions that write `number_counter`. Only the numbering
-/// renderer of this plugin calls them, on its own connection access, which does
-/// not pass this raw surface (docs/architecture/data-access.md#actors).
-/// Admission also refuses declared statements that name them.
-const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
-
-/// True if `sql` names a platform counter function. Each function runs as
-/// its owner on a sequence id alone, so a guest that reached one could
-/// advance or set a counter of any application in the database. Matching is
-/// on the bare function name as a whole identifier, so a quoted or
-/// unqualified call is caught too, and `reset_counter` is not. Like
-/// [`statement_forges_causation`], this is a text-level blocklist: it
-/// over-rejects a statement that merely names one in a literal, which is
-/// fail-closed.
-fn statement_calls_counter_function(sql: &str) -> bool {
-    let identifier = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-    normalized_sql(sql).iter().any(|text| {
-        COUNTER_FUNCTIONS.iter().any(|function| {
-            text.match_indices(function).any(|(start, _)| {
-                let before = text[..start].chars().next_back();
-                let after = text[start + function.len()..].chars().next();
-                !before.is_some_and(identifier) && !after.is_some_and(identifier)
-            })
-        })
-    })
-}
-
-/// True if `sql` inserts, updates, deletes, merges, truncates or copies into
-/// a `platform.*` relation. The platform writes these rows; the guest only
-/// reads them. On SQLite, which has no roles, this is the only thing that
-/// keeps the guest out of them. A text-level blocklist like
-/// [`statement_forges_causation`].
-fn statement_writes_platform(sql: &str) -> bool {
-    const WRITES: [&str; 12] = [
-        "insert into platform.",
-        "update platform.",
-        "update only platform.",
-        "delete from platform.",
-        "delete from only platform.",
-        "merge into platform.",
-        "merge into only platform.",
-        "truncate platform.",
-        "truncate only platform.",
-        "truncate table platform.",
-        "truncate table only platform.",
-        "copy platform.",
-    ];
-    normalized_sql(sql)
-        .iter()
-        .any(|text| WRITES.iter().any(|write| text.contains(write)))
-}
-
-/// `sql` in two forms to match a blocklist against: lowercased, with
-/// double quotes removed, each run of whitespace made one space, and no space
-/// around a `.`. The first form also replaces each comment with a space, so
-/// `UPDATE /* x */ "platform" . "setting"` reads as `update platform.setting`.
-/// The second keeps the text of comments and blanks only their markers, so a
-/// write hidden between a `/*` and a `*/` inside string literals is still
-/// seen. A statement is refused when either form matches.
-fn normalized_sql(sql: &str) -> [String; 2] {
-    let lower = sql.to_ascii_lowercase();
-    let mut uncommented = String::with_capacity(lower.len());
-    let mut rest = lower.as_str();
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix("--") {
-            rest = after.find('\n').map_or("", |end| &after[end..]);
-            uncommented.push(' ');
-        } else if let Some(after) = rest.strip_prefix("/*") {
-            rest = after.find("*/").map_or("", |end| &after[end + 2..]);
-            uncommented.push(' ');
-        } else {
-            let next = rest.chars().next().expect("rest is not empty");
-            uncommented.push(next);
-            rest = &rest[next.len_utf8()..];
-        }
-    }
-    let marked = lower
-        .replace("--", " ")
-        .replace("/*", " ")
-        .replace("*/", " ");
-    [uncommented, marked].map(|text| {
-        text.replace('"', "")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .replace(" .", ".")
-            .replace(". ", ".")
-    })
+    wamn_component_policy::sql::require_declared_statement(sql)
+        .map_err(|error| PgError::QueryError(("WAMN0".into(), error.to_string())))
 }
 
 /// Refuse a transactional statement that has no executing principal.
@@ -1002,23 +836,6 @@ pub(super) fn refuse_unattributed_statement(
         )));
     }
     Ok(())
-}
-
-/// True if `sql` calls `pg_logical_emit_message` (either overload) AND names the
-/// reserved `wamn.` message-prefix namespace (l5i9.12.2). Only the plugin's own
-/// [`begin_with_identity`] emit — which runs through the plugin, NOT this
-/// guest surface — may write a `wamn.causation` frame; a guest forging one over
-/// the parameterized query/execute/cursor surface would ride its own txn's
-/// commit and the reader (l5i9.12.1) would stitch it, misattributing causation.
-/// This is a defense-in-depth **blocklist** (the AR1 theme, like
-/// [`reject_identity_mutation`]), not a structural close: matching is
-/// case-insensitive and comment-stripped, and over-rejects the rare statement
-/// that merely names both tokens in a literal — fail-closed, acceptable on this
-/// (flag-OFF) raw surface. A guest's own non-`wamn.` logical messages are left
-/// alone (the reader ignores them).
-fn statement_forges_causation(sql: &str) -> bool {
-    let lower = sql.to_ascii_lowercase();
-    lower.contains("pg_logical_emit_message") && lower.contains("wamn.")
 }
 
 /// Reject a malformed session identity before it is bound (R16). Since R2 these
@@ -1132,52 +949,6 @@ fn valid_user_id(user_id: &str) -> bool {
 /// (a *read* of a GUC) is deliberately allowed. Matching is case-insensitive;
 /// leading whitespace and SQL comments are stripped so a comment prefix cannot
 /// hide the keyword.
-fn statement_mutates_session(sql: &str) -> bool {
-    let lower = sql.to_ascii_lowercase();
-    let head = strip_leading_noise(&lower);
-    if starts_with_keyword(head, "set") || starts_with_keyword(head, "reset") {
-        return true;
-    }
-    // `set_config` is the only GUC-*write* function; `current_setting` reads and
-    // is not matched by this substring. Over-rejects the rare statement that
-    // merely names `set_config` in a literal/identifier — fail-closed, which is
-    // acceptable on this (flag-OFF) raw surface.
-    lower.contains("set_config")
-}
-
-/// Strip leading whitespace and SQL comments (`--` line, `/* … */` block) so
-/// the first real token can be inspected. Best-effort: an unterminated block
-/// comment stops stripping and the statement is inspected from there, which
-/// only makes the guard *more* likely to reject (fail-closed).
-fn strip_leading_noise(sql: &str) -> &str {
-    let mut s = sql.trim_start();
-    loop {
-        if let Some(rest) = s.strip_prefix("--") {
-            match rest.find('\n') {
-                Some(i) => s = rest[i + 1..].trim_start(),
-                None => return "",
-            }
-        } else if let Some(rest) = s.strip_prefix("/*") {
-            match rest.find("*/") {
-                Some(i) => s = rest[i + 2..].trim_start(),
-                None => return s,
-            }
-        } else {
-            return s;
-        }
-    }
-}
-
-/// True if `head` (already lowercased and comment-stripped) begins with `kw` as
-/// a whole keyword — followed by whitespace or end-of-input, so `set` matches
-/// `set …` but not `settings`.
-fn starts_with_keyword(head: &str, kw: &str) -> bool {
-    match head.strip_prefix(kw) {
-        Some(rest) => rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace()),
-        None => false,
-    }
-}
-
 impl WamnPostgres {
     /// Select an explicitly local definition closure without changing database authority.
     pub fn with_local_application(
@@ -1229,7 +1000,7 @@ impl WamnPostgres {
     }
 
     /// Bind the host's existing identity reader for inherited authorization.
-    pub fn set_hierarchy_reader(&self, reader: Arc<tokio_postgres::Client>) {
+    pub fn set_hierarchy_reader(&self, reader: sqlx::PgPool) {
         *self
             .hierarchy_reader
             .write()
@@ -1264,14 +1035,14 @@ impl WamnPostgres {
             .read()
             .expect("hierarchy reader lock poisoned")
             .as_ref()
-            .map(Arc::clone);
+            .cloned();
         let Some(reader) = reader else {
             return Ok(false);
         };
         let coordinate = wamn_registry::name::parse_project_env_key(key)
             .ok_or_else(|| anyhow::anyhow!("invalid project deployment coordinate"))?;
         Ok(wamn_platform_identity::control::is_project_admin(
-            reader.as_ref(),
+            &mut *reader.acquire().await?,
             principal,
             &coordinate.org,
             &coordinate.project,
@@ -1889,7 +1660,7 @@ impl WamnPostgres {
         let Err(ticket) = self.auth.provisioned(project_env_key, principal_id) else {
             return Ok(());
         };
-        let (connection, _policy) = self
+        let (mut connection, _policy) = self
             .checkout_guest(project, project_env_key)
             .await
             .map_err(|source| SessionIdentityError {
@@ -1897,7 +1668,12 @@ impl WamnPostgres {
                 context: "acquire the project_env_key connection that reads platform.\"user\"",
                 source: source.into(),
             })?;
-        let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
+        let statement = match sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(PROVISIONED_PRINCIPAL_SQL),
+        )
+        .await
+        {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
@@ -1906,8 +1682,9 @@ impl WamnPostgres {
                 );
             }
         };
-        let rows = connection
-            .query(&statement, &[&principal_id])
+        let rows = sqlx::query(statement.sql().clone())
+            .bind(principal_id)
+            .fetch_all(&mut *connection)
             .instrument(tracing::info_span!("wamn.identity.principal.query"))
             .await
             .map_err(|source| {
@@ -2285,7 +2062,7 @@ impl WamnPostgres {
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<EffectRead> {
         let schema = self.schema_for(component_id);
-        let (conn, policy) = self
+        let (mut conn, policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -2293,7 +2070,7 @@ impl WamnPostgres {
         // `app.operation`.
         if let Err(error) = self
             .begin_with_identity(
-                &conn,
+                &mut conn,
                 AuthorityClass::CallableHttp,
                 false,
                 project_env_key,
@@ -2315,37 +2092,38 @@ impl WamnPostgres {
             if let Some(local) = &self.local_application {
                 return Ok(EffectRead::Local(Box::new(
                     local
-                        .effect_snapshot(&conn, project_env_key, lookup)
+                        .effect_snapshot(&mut conn, project_env_key, lookup)
                         .await?,
                 )));
             }
             let wiring_id = lookup.entry.wiring.map(|wiring| wiring.wiring_id);
             let wiring_version = lookup.entry.wiring.map(|wiring| wiring.wiring_version);
             let node_id = lookup.entry.wiring.map(|wiring| wiring.node_id);
-            let params: [&(dyn ToSql + Sync); 16] = [
-                &project_env_key,
-                &lookup.package_id,
-                &lookup.manifest_digest,
-                &lookup.environment,
-                &wiring_id,
-                &wiring_version,
-                &node_id,
-                &lookup.component_digest,
-                &lookup.store_alias,
-                &lookup.entry.package_id,
-                &lookup.origin_package_id,
-                &lookup.origin_component_digest,
-                &lookup.origin_component,
-                &lookup.origin_interface_version,
-                &lookup.origin_operation,
-                &lookup.operation,
-            ];
-            let statement = conn
-                .prepare_cached(CONNECTION_EFFECT_SNAPSHOT_SQL)
-                .await
-                .context("prepare HTTP effect authorization snapshot")?;
-            let row = conn
-                .query_opt(&statement, &params)
+
+            let statement = sqlx::Executor::prepare(
+                &mut *conn,
+                sqlx::SqlSafeStr::into_sql_str(CONNECTION_EFFECT_SNAPSHOT_SQL),
+            )
+            .await
+            .context("prepare HTTP effect authorization snapshot")?;
+            let row = sqlx::query(statement.sql().clone())
+                .bind(project_env_key)
+                .bind(lookup.package_id)
+                .bind(lookup.manifest_digest)
+                .bind(lookup.environment)
+                .bind(wiring_id)
+                .bind(wiring_version)
+                .bind(node_id)
+                .bind(lookup.component_digest)
+                .bind(lookup.store_alias)
+                .bind(lookup.entry.package_id)
+                .bind(lookup.origin_package_id)
+                .bind(lookup.origin_component_digest)
+                .bind(lookup.origin_component)
+                .bind(lookup.origin_interface_version)
+                .bind(lookup.origin_operation)
+                .bind(lookup.operation)
+                .fetch_optional(&mut *conn)
                 .await
                 .context("query HTTP effect authorization snapshot")?;
             let Some(row) = row else {
@@ -2371,20 +2149,25 @@ impl WamnPostgres {
                 operation: row.try_get(3)?,
                 registered_operation: row.try_get(4)?,
                 mode: row.try_get(5)?,
-                node_permitted: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                node_permitted: row.try_get::<Option<bool>, _>(6)?.unwrap_or(false),
             })))
         }
         .await;
         match result {
             Ok(snapshot) => {
-                if let Err(error) = transactions::finish_transaction(&conn, "COMMIT").await {
+                if let Err(error) = transactions::finish_transaction(&mut conn, "COMMIT").await {
                     self.destroy(conn);
                     return Err(error).context("commit HTTP effect authorization snapshot");
                 }
                 Ok(snapshot)
             }
             Err(error) => {
-                if conn.batch_execute("ROLLBACK").await.is_err() {
+                if sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *conn)
+                    .await
+                    .map(|_| ())
+                    .is_err()
+                {
                     self.destroy(conn);
                 }
                 Err(error)
@@ -2413,16 +2196,18 @@ impl WamnPostgres {
     /// Unrelated writes can invalidate the tag too. Read it before the query snapshot.
     pub async fn model_version(&self, project: &str) -> anyhow::Result<String> {
         anyhow::ensure!(valid_project(project), "invalid model-version project");
-        let (connection, _policy) = self
+        let (mut connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = connection
-            .prepare_cached("SELECT pg_current_wal_lsn()::text")
-            .await
-            .context("prepare the WAL position for model versions")?;
-        let row = connection
-            .query_one(&statement, &[])
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str("SELECT pg_current_wal_lsn()::text"),
+        )
+        .await
+        .context("prepare the WAL position for model versions")?;
+        let row = sqlx::query(statement.sql().clone())
+            .fetch_one(&mut *connection)
             .await
             .context("read the WAL position for model versions")?;
         Ok(row.try_get(0)?)
@@ -2473,19 +2258,25 @@ impl WamnPostgres {
             }
             Err(ticket) => ticket,
         };
-        let (connection, _policy) = self
+        let (mut connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = match connection.prepare_cached(PRINCIPAL_GRANTS_SQL).await {
+        let statement = match sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(PRINCIPAL_GRANTS_SQL),
+        )
+        .await
+        {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
                 return Err(error).context("prepare the principal grants");
             }
         };
-        let rows = connection
-            .query(&statement, &[&principal.to_string().as_str()])
+        let rows = sqlx::query(statement.sql().clone())
+            .bind(principal.to_string().as_str())
+            .fetch_all(&mut *connection)
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read the principal grants")?;
@@ -2519,11 +2310,9 @@ impl WamnPostgres {
                 principal_id,
                 operation,
                 async |client| {
-                    client
-                        .query(
-                            USER_OPERATION_PERMISSIONS_SQL,
-                            &[&principal_id.to_string().as_str()],
-                        )
+                    sqlx::query(USER_OPERATION_PERMISSIONS_SQL)
+                        .bind(principal_id.to_string().as_str())
+                        .fetch_all(&mut *client)
                         .await
                         .context("read held operation grants")
                 },
@@ -2569,15 +2358,20 @@ impl WamnPostgres {
             Ok(inactive) => return Ok(inactive),
             Err(ticket) => ticket,
         };
-        let (connection, _pool) = self
+        let (mut connection, _pool) = self
             .checkout_guest(project, project_env_key)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = connection
-            .prepare_cached(ENVIRONMENT_INACTIVE_SQL)
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(ENVIRONMENT_INACTIVE_SQL),
+        )
+        .await
+        .context("prepare the environment status")?;
+        let row = match sqlx::query(statement.sql().clone())
+            .fetch_optional(&mut *connection)
             .await
-            .context("prepare the environment status")?;
-        let row = match connection.query_opt(&statement, &[]).await {
+        {
             Ok(row) => row,
             Err(error) => {
                 self.destroy(connection);
@@ -2597,20 +2391,20 @@ impl WamnPostgres {
         project_env_key: &str,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
-        work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
+        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
         anyhow::ensure!(
             valid_project_env_key(project_env_key),
             "invalid host-route project_env_key"
         );
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::Administration)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::Administration,
                 false,
                 project_env_key,
@@ -2628,9 +2422,9 @@ impl WamnPostgres {
             self.destroy(connection);
             return Err(anyhow::anyhow!(error.to_string()));
         }
-        let result = work(&connection).await;
+        let result = work(&mut connection).await;
         let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        if let Err(error) = transactions::finish_transaction(&connection, end).await {
+        if let Err(error) = transactions::finish_transaction(&mut connection, end).await {
             self.destroy(connection);
             return Err(error).context("end the host route transaction");
         }
@@ -2652,10 +2446,10 @@ impl WamnPostgres {
             valid_project_env_key(project_env_key),
             "invalid queued-run project_env_key"
         );
-        let (connection, _policy) = self
+        let (mut connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await?;
-        crate::plugins::route_authentication::queued_run_caller(&**connection, principal_id, role)
+        crate::plugins::route_authentication::queued_run_caller(&mut connection, principal_id, role)
             .await
     }
 

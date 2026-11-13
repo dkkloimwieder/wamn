@@ -166,7 +166,7 @@ pub struct DevDownArgs {
 pub async fn down(args: DevDownArgs) -> anyhow::Result<()> {
     let root = args.root.canonicalize()?;
     wamn_dev_control::dev::control::stop(&root).await?;
-    wamn_dev_control::dev::pat_issuer::stop_environment(&root).await?;
+    wamn_dev_control::dev::pat_issuer::stop_environment(&root)?;
     println!("development identity, control and web stopped");
     Ok(())
 }

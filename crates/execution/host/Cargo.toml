@@ -9,6 +9,8 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
 wamn-scalar.workspace = true
@@ -33,7 +35,6 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "net"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio-postgres = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 bytes = { workspace = true }
 http-body-util = { workspace = true }

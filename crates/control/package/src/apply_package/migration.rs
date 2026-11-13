@@ -1,17 +1,20 @@
 use anyhow::Context as _;
-use tokio_postgres::{Client, Transaction};
+use sqlx::Connection as _;
+use sqlx::PgConnection as Client;
 
 pub use crate::migrations::{MigrationResolution, Resolution, resolution_package};
 
 pub(super) async fn begin<'a>(
     client: &'a mut Client,
     project_env_key: &str,
-) -> anyhow::Result<Transaction<'a>> {
-    let tx = client.transaction().await.context("begin package SQL")?;
-    tx.query_one(super::ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
+) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
+    let mut tx = client.begin().await.context("begin package SQL")?;
+    sqlx::query(super::ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut *tx)
         .await
         .context("bind package identity")?;
-    super::bind_apply_package_principal(&tx).await?;
+    super::bind_apply_package_principal(&mut tx).await?;
     Ok(tx)
 }
 
@@ -29,11 +32,17 @@ pub(super) struct PackageMigrationHooks<'a> {
 }
 
 impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
-    async fn begin<'a>(&mut self, client: &'a mut Client) -> anyhow::Result<Transaction<'a>> {
+    async fn begin<'a>(
+        &mut self,
+        client: &'a mut Client,
+    ) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
         begin(client, self.project_env_key).await
     }
 
-    async fn initialize(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
+    async fn initialize(
+        &mut self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> anyhow::Result<()> {
         if self.initial {
             self.changed |= crate::connection_requirement::install(
                 tx,
@@ -45,15 +54,19 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
             .await?
                 != 0;
         }
-        tx.batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
-            .await
-            .context("install the platform extensions")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::install_platform_extensions_sql(),
+        ))
+        .execute(&mut **tx)
+        .await
+        .map(drop)
+        .context("install the platform extensions")?;
         super::ensure_model_schemas(tx, self.plan, &self.package.manifest).await
     }
 
     async fn before(
         &mut self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         file: &wamn_schema_control::PendingMigration,
         accept: bool,
     ) -> anyhow::Result<()> {
@@ -77,7 +90,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
 
     async fn transactional(
         &mut self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         sql: &wamn_schema_control::SqlStatement,
     ) -> anyhow::Result<()> {
         super::roles::execute_migration(tx, &self.package.manifest, sql, true).await
@@ -85,7 +98,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
 
     async fn nontransactional(
         &mut self,
-        client: &Client,
+        client: &mut Client,
         file: &wamn_schema_control::PendingMigration,
         sql: &wamn_schema_control::SqlStatement,
     ) -> anyhow::Result<()> {
@@ -95,7 +108,7 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
 
     async fn after(
         &mut self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         file: &wamn_schema_control::PendingMigration,
     ) -> anyhow::Result<()> {
         let mutations = self
@@ -117,7 +130,10 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
         Ok(())
     }
 
-    async fn finish(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
+    async fn finish(
+        &mut self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> anyhow::Result<()> {
         let manifest = &self.package.manifest;
         let directory = &self.package.directory;
         super::roles::assert_host_role(tx).await?;
@@ -125,6 +141,11 @@ impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
         super::entity_maps::reconcile_entity_maps(tx, self.plan, manifest).await?;
         self.changed |=
             super::record_history::reconcile_record_history_triggers(tx, manifest).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::grant_dynamic_sql_surface_sql(),
+        ))
+        .execute(&mut **tx)
+        .await?;
         let fingerprint = super::installed_physical_fingerprint(tx, directory, manifest).await?;
         self.changed |= super::package_version::record_package_schema(
             tx,

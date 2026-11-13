@@ -1,7 +1,7 @@
 //! Project-targeted integration administration and private credential writes.
 
 use serde_json::{Value, json};
-use tokio_postgres::Transaction;
+use sqlx::Row as _;
 use wamn_kubernetes::{Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
@@ -18,7 +18,7 @@ fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
 
 /// Execute a route with a store selected from the target environment.
 pub async fn execute(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     payload: &str,
@@ -39,7 +39,7 @@ pub async fn execute(
 
 /// The store injection point for administration tests.
 pub async fn execute_with_store(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     payload: &str,
@@ -61,8 +61,8 @@ pub async fn execute_with_store(
 
 /// Execute a connection write against every version retained by live releases.
 pub async fn execute_in_environment(
-    tx: &Transaction<'_>,
-    environment: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     payload: &str,
@@ -82,13 +82,13 @@ pub async fn execute_in_environment(
 }
 
 async fn execute_in(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     payload: &str,
     (drops, connections): (&mut AuthDrops, &mut ConnectionDrops),
     store: Option<&dyn Store>,
-    environment: Option<&Transaction<'_>>,
+    environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
 ) -> Result<Value, ConnectionError> {
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
@@ -255,7 +255,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
 
 /// Call only the security-definer family that owns the requested group.
 pub async fn configure(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     request: &Value,
@@ -278,8 +278,11 @@ pub async fn configure(
         }
         _ => return Err(refuse("invalid_input", "operation")),
     };
-    let text: String = tx
-        .query_one(sql, &[&org, &operation, &request.to_string()])
+    let text: String = sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
+        .bind(org)
+        .bind(operation)
+        .bind(request.to_string())
+        .fetch_one(&mut **tx)
         .await?
         .get(0);
     let result: Value = serde_json::from_str(&text).expect("PostgreSQL JSON");
@@ -311,13 +314,13 @@ pub async fn configure(
 }
 
 async fn generation(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     operation: &str,
     (mut request, credential): (Value, Option<Value>),
     drops: &mut AuthDrops,
     store: Option<&dyn Store>,
-    environment: Option<&Transaction<'_>>,
+    environment: Option<&mut sqlx::Transaction<'_, sqlx::Postgres>>,
 ) -> Result<Value, ConnectionError> {
     request["action"] = operation.into();
     let context = configure(tx, org, "connection.prepare", &request).await?;
@@ -453,15 +456,12 @@ async fn store_credential(
 
 /// Read versions retained until apply contracts releases outside the live set.
 pub async fn required_connection_versions(
-    environment: &Transaction<'_>,
+    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: &str,
     published: &Value,
 ) -> Result<Vec<Value>, ConnectionError> {
     let mut schemas = Vec::new();
-    for row in environment.query(
-        "SELECT DISTINCT version FROM catalog.release_connection WHERE connection_id=$1::text::uuid",
-        &[&connection],
-    ).await? {
+    for row in sqlx::query("SELECT DISTINCT version FROM catalog.release_connection WHERE connection_id=$1::text::uuid").bind(connection).fetch_all(&mut **environment).await? {
         let version: i32 = row.get(0);
         let schema = published.get(version.to_string()).ok_or_else(|| refuse("invalid_input", "version"))?;
         schemas.push(schema.clone());

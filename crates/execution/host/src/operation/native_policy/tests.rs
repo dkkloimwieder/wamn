@@ -1070,7 +1070,6 @@ async fn run_case(case: Case) {
         timeout(CLEANUP, fixture.entered.notified())
             .await
             .expect("actual node run starts before cancellation");
-        task.abort();
         assert!(
             timeout(CLEANUP, task)
                 .await
@@ -1490,7 +1489,6 @@ async fn assert_call_owner() {
         !policy.traces.is_empty(),
         "the active call retains its trace"
     );
-    task.abort();
     assert!(
         timeout(CLEANUP, task)
             .await

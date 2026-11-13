@@ -11,6 +11,7 @@
 //! with the caller that the control route authenticator admits; the
 //! admission itself is the test of `control.mine` in `host_route_live.rs`.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::HashSet;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -19,10 +20,10 @@ use wamn_broker::Publisher;
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::{Value, json};
+use sqlx::PgConnection as Client;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio_postgres::Client;
 use tokio_rustls::TlsAcceptor;
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::PlatformComponent;
@@ -115,7 +116,7 @@ async fn fake_identity(users: Vec<(&'static str, String, bool)>) -> FakeIdentity
             "https://{}/identity",
             listener.local_addr().unwrap()
         )),
-        client_cert: Some(write("operator.pem", &client.pem())),
+        client_cert: Some(write("operator.pem", &mut client.pem())),
         client_key: Some(write("operator.key", &client_key.serialize_pem())),
         server_ca: Some(write("ca.pem", &ca.pem())),
     };
@@ -250,10 +251,9 @@ fn refused(code: &str, detail: &Value) -> String {
 }
 
 /// The org roles, project roles and memberships of one principal.
-async fn grants(admin: &Client, principal: &str) -> Vec<String> {
-    admin
-        .query(
-            "SELECT 'org ' || role FROM identity.org_roles WHERE principal_id = $1::text::uuid \
+async fn grants(admin: &mut Client, principal: &str) -> Vec<String> {
+    sqlx::query(
+        "SELECT 'org ' || role FROM identity.org_roles WHERE principal_id = $1::text::uuid \
              UNION ALL SELECT 'project ' || project || ' ' || role \
                FROM identity.project_roles WHERE principal_id = $1::text::uuid \
              UNION ALL SELECT 'env ' || project || '/' || env \
@@ -261,13 +261,14 @@ async fn grants(admin: &Client, principal: &str) -> Vec<String> {
              UNION ALL SELECT 'member ' || status || ' ' || updated_by::text \
                FROM identity.org_memberships WHERE principal_id = $1::text::uuid \
              ORDER BY 1",
-            &[&principal],
-        )
-        .await
-        .expect("read the grants")
-        .iter()
-        .map(|row| row.get(0))
-        .collect()
+    )
+    .bind(&principal)
+    .fetch_all(&mut *admin)
+    .await
+    .expect("read the grants")
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -275,17 +276,16 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_org_routes")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, _billing, _shop) = environments(&admin, admin_url, "org").await?;
+    let mut admin = connect(admin_url).await?;
+    let control_url = install(&mut admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&mut admin, admin_url, "org").await?;
 
     // The org owner, an enrolled user and a new user, written as provisioning.
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name) in [
         ("boss@example.test", "Boss"),
@@ -293,14 +293,14 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         ("ann@example.test", "Ann"),
     ] {
         ids.push(
-            create_or_reuse_user(&admin, email, name)
+            create_or_reuse_user(&mut admin, email, name)
                 .await?
                 .principal_id,
         );
     }
     let [boss, cat, ann]: [PrincipalId; 3] = ids.try_into().expect("three users");
     invite_member(
-        &admin,
+        &mut admin,
         &boss,
         ORG,
         &MemberGrants {
@@ -322,7 +322,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: Some(identity.config.clone()),
             org: ORG.to_owned(),
@@ -377,7 +377,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         )
     );
     assert_eq!(
-        grants(&admin, ann.to_string().as_str()).await,
+        grants(&mut admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             format!("member active {boss}")
@@ -465,7 +465,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": true}))
     );
     assert_eq!(
-        grants(&admin, ann.to_string().as_str()).await,
+        grants(&mut admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             "env shop/dev".to_owned(),
@@ -480,7 +480,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": false}))
     );
     assert_eq!(
-        grants(&admin, ann.to_string().as_str()).await,
+        grants(&mut admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             "env shop/dev".to_owned(),
@@ -495,7 +495,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         Ok(json!({"principal_id": ann.to_string().as_str(), "status": "inactive"}))
     );
     assert_eq!(
-        grants(&admin, ann.to_string().as_str()).await,
+        grants(&mut admin, ann.to_string().as_str()).await,
         [format!("member inactive {boss}")]
     );
     assert_eq!(
@@ -510,19 +510,18 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         Ok(json!({"principal_id": ann.to_string().as_str(), "status": "active"}))
     );
     assert_eq!(
-        grants(&admin, ann.to_string().as_str()).await,
+        grants(&mut admin, ann.to_string().as_str()).await,
         [format!("member active {boss}")]
     );
 
     // A revoked org-admin is refused on the next request. Boss keeps the
     // project-admin rows that org-admin materialized, so an org route that
     // only org-admin holds is the one that refuses.
-    admin
-        .execute(
-            "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
-            &[&boss],
-        )
-        .await?;
+    sqlx::query("DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid")
+        .bind(&boss)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
         Err("permission denied wamn-control:project/list@0.9.0".to_owned())
@@ -536,18 +535,17 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_project_routes")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, _billing, _shop) = environments(&admin, admin_url, "project").await?;
+    let mut admin = connect(admin_url).await?;
+    let control_url = install(&mut admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&mut admin, admin_url, "project").await?;
 
     // An org admin, a project admin of billing and a plain member.
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning],
-        )
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&provisioning)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, grants) in [
         (
@@ -568,10 +566,10 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ),
         ("ann@example.test", "Ann", MemberGrants::default()),
     ] {
-        let user = create_or_reuse_user(&admin, email, name)
+        let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
-        invite_member(&admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, ORG, &grants).await?;
         ids.push(user);
     }
     let [boss, cat, ann]: [PrincipalId; 3] = ids.try_into().expect("three users");
@@ -582,7 +580,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
@@ -667,7 +665,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
     );
     assert_eq!(
-        grants(&admin, ann).await,
+        grants(&mut admin, ann).await,
         [
             "env billing/dev".to_owned(),
             format!("member active {provisioning}")
@@ -763,7 +761,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
     );
     assert_eq!(
-        grants(&admin, ann).await,
+        grants(&mut admin, ann).await,
         [
             "env billing/dev".to_owned(),
             format!("member active {provisioning}"),
@@ -779,17 +777,16 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
     );
     assert_eq!(
-        grants(&admin, ann).await,
+        grants(&mut admin, ann).await,
         [format!("member active {provisioning}")]
     );
 
     // A revoked project admin is refused on the next request.
-    admin
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&cat],
-        )
-        .await?;
+    sqlx::query("DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid")
+        .bind(&cat)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         call(
             &delivery,
@@ -805,20 +802,20 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 }
 
 /// The application rows of one principal in one project database.
-async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
-    target
-        .query(
-            "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
+async fn application_rows(target: &mut Client, principal: &str) -> Vec<String> {
+    sqlx::query(
+        "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
              UNION ALL SELECT 'role ' || role_name FROM platform.user_role \
                WHERE user_id = $1::text::uuid \
              ORDER BY 1",
-            &[&principal],
-        )
-        .await
-        .expect("read the application rows")
-        .iter()
-        .map(|row| row.get(0))
-        .collect()
+    )
+    .bind(&principal)
+    .fetch_all(&mut *target)
+    .await
+    .expect("read the application rows")
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -826,28 +823,28 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_application_rows")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, billing, shop) = environments(&admin, admin_url, "application").await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
+    let mut admin = connect(admin_url).await?;
+    let control_url = install(&mut admin, admin_url).await?;
+    let (logins, mut billing, mut shop) =
+        environments(&mut admin, admin_url, "application").await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, org_admin) in [
         ("boss@example.test", "Boss", true),
         ("ann@example.test", "Ann", false),
     ] {
-        let user = create_or_reuse_user(&admin, email, name)
+        let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
         let grants = MemberGrants {
             org_admin,
             ..MemberGrants::default()
         };
-        invite_member(&admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, ORG, &grants).await?;
         ids.push(user);
     }
     let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
@@ -857,7 +854,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             administration: Some(logins.clone()),
@@ -877,10 +874,13 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         Ok(json!({"principal_id": ann, "org_admin": true}))
     );
     assert_eq!(
-        application_rows(&billing, ann).await,
+        application_rows(&mut billing, ann).await,
         ["role admin", "user"]
     );
-    assert_eq!(application_rows(&shop, ann).await, ["role admin", "user"]);
+    assert_eq!(
+        application_rows(&mut shop, ann).await,
+        ["role admin", "user"]
+    );
     assert_eq!(
         call(
             &delivery,
@@ -892,7 +892,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         Err(refused("admin_covered", &json!({"field": "principal_id"})))
     );
     assert_eq!(
-        application_rows(&billing, ann).await,
+        application_rows(&mut billing, ann).await,
         ["role admin", "user"],
         "a refused revoke changes no application row"
     );
@@ -900,8 +900,8 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
         Ok(json!({"principal_id": ann, "org_admin": false}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user"]);
-    assert_eq!(application_rows(&shop, ann).await, ["user"]);
+    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
+    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
 
     // project-admin covers its project's environments only.
     assert_eq!(
@@ -915,27 +915,27 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
     );
     assert_eq!(
-        application_rows(&billing, ann).await,
+        application_rows(&mut billing, ann).await,
         ["role admin", "user"]
     );
-    assert_eq!(application_rows(&shop, ann).await, ["user"]);
+    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
     assert_eq!(
         call(&delivery, "project-admin/revoke", boss, billing_admin).await,
         Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user"]);
+    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
 
     // A membership revoke removes the user row, and a grant writes it again.
     assert_eq!(
         call(&delivery, "member/revoke", boss, billing_member.clone()).await,
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
     );
-    assert!(application_rows(&billing, ann).await.is_empty());
+    assert!(application_rows(&mut billing, ann).await.is_empty());
     assert_eq!(
         call(&delivery, "member/grant", boss, billing_member).await,
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user"]);
+    assert_eq!(application_rows(&mut billing, ann).await, ["user"]);
 
     // A failed projection names completed environments after system authority commits.
     let shop_key = logins.join("shop--dev");
@@ -948,10 +948,10 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             &json!({"environment": "shop/dev", "completed": ["billing/dev"]})
         ))
     );
-    assert!(application_rows(&billing, ann).await.is_empty());
-    assert_eq!(application_rows(&shop, ann).await, ["user"]);
+    assert!(application_rows(&mut billing, ann).await.is_empty());
+    assert_eq!(application_rows(&mut shop, ann).await, ["user"]);
     assert_eq!(
-        grants(&admin, ann).await,
+        grants(&mut admin, ann).await,
         [format!("member inactive {boss}")],
         "committed deactivation remains authoritative after a projection failure"
     );
@@ -962,9 +962,9 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         call(&delivery, "user/deactivate", boss, ann_payload).await,
         Ok(json!({"principal_id": ann, "status": "inactive"}))
     );
-    assert!(application_rows(&shop, ann).await.is_empty());
+    assert!(application_rows(&mut shop, ann).await.is_empty());
     assert_eq!(
-        grants(&admin, ann).await,
+        grants(&mut admin, ann).await,
         [format!("member inactive {boss}")]
     );
     let _ = std::fs::remove_dir_all(&logins);
@@ -973,21 +973,21 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
 
 /// The system status of each environment of the org, and the status row of
 /// each project database, or `none` without one.
-async fn statuses(admin: &Client, billing: &Client, shop: &Client) -> Vec<String> {
-    let mut statuses: Vec<String> = admin
-        .query(
-            "SELECT 'system ' || project || '/' || env || ' ' || status \
+async fn statuses(admin: &mut Client, billing: &mut Client, shop: &mut Client) -> Vec<String> {
+    let mut statuses: Vec<String> = sqlx::query(
+        "SELECT 'system ' || project || '/' || env || ' ' || status \
                FROM registry.environment_projects WHERE org = $1 ORDER BY project, env",
-            &[&ORG],
-        )
-        .await
-        .expect("read the system statuses")
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
+    )
+    .bind(&ORG)
+    .fetch_all(&mut *admin)
+    .await
+    .expect("read the system statuses")
+    .iter()
+    .map(|row| row.get(0))
+    .collect();
     for (name, target) in [("billing", billing), ("shop", shop)] {
-        let row = target
-            .query_opt("SELECT status FROM platform.environment", &[])
+        let row = sqlx::query("SELECT status FROM platform.environment")
+            .fetch_optional(&mut *target)
             .await
             .expect("read the status row");
         let status: String = row.map_or_else(|| "none".to_owned(), |row| row.get(0));
@@ -1002,21 +1002,20 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_status")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, billing, shop) = environments(&admin, admin_url, "status").await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
+    let mut admin = connect(admin_url).await?;
+    let control_url = install(&mut admin, admin_url).await?;
+    let (logins, mut billing, mut shop) = environments(&mut admin, admin_url, "status").await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, org_admin) in [
         ("boss@example.test", "Boss", true),
         ("ann@example.test", "Ann", false),
     ] {
-        let user = create_or_reuse_user(&admin, email, name)
+        let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
         let grants = MemberGrants {
@@ -1028,7 +1027,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             },
             ..MemberGrants::default()
         };
-        invite_member(&admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, ORG, &grants).await?;
         ids.push(user);
     }
     let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
@@ -1038,7 +1037,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             administration: Some(logins.clone()),
@@ -1050,7 +1049,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     let billing_dev = json!({"project": "billing", "env": "dev"});
     let shop_project = json!({"project": "shop"});
     assert_eq!(
-        statuses(&admin, &billing, &shop).await,
+        statuses(&mut admin, &mut billing, &mut shop).await,
         [
             "system billing/dev active",
             "system shop/dev active",
@@ -1108,7 +1107,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         Ok(json!({"project": "shop", "status": "inactive"}))
     );
     assert_eq!(
-        statuses(&admin, &billing, &shop).await,
+        statuses(&mut admin, &mut billing, &mut shop).await,
         [
             "system billing/dev inactive",
             "system shop/dev inactive",
@@ -1133,7 +1132,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         Ok(json!({"project": "billing", "env": "dev", "status": "active"}))
     );
     assert_eq!(
-        statuses(&admin, &billing, &shop).await,
+        statuses(&mut admin, &mut billing, &mut shop).await,
         [
             "system billing/dev active",
             "system shop/dev inactive",
@@ -1155,7 +1154,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         ))
     );
     assert_eq!(
-        statuses(&admin, &billing, &shop).await,
+        statuses(&mut admin, &mut billing, &mut shop).await,
         [
             "system billing/dev active",
             "system shop/dev active",
@@ -1182,7 +1181,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         ))
     );
     assert_eq!(
-        statuses(&admin, &billing, &shop).await,
+        statuses(&mut admin, &mut billing, &mut shop).await,
         [
             "system billing/dev active",
             "system shop/dev active",
@@ -1191,16 +1190,13 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         ],
         "an inactivation commits the system row after every environment"
     );
-    admin.execute(
-        "WITH parent_environment AS ( \
+    sqlx::query("WITH parent_environment AS ( \
              INSERT INTO registry.environments (org, env, policy_name, status) \
              SELECT org, 'other', policy_name, 'inactive' FROM registry.environments \
              WHERE org=$1 AND env='dev' \
          ) INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix) \
          SELECT org, 'other', project, secret_name, instance_suffix \
-         FROM registry.environment_projects WHERE org=$1 AND project='billing' AND env='dev'",
-        &[&ORG],
-    ).await?;
+         FROM registry.environment_projects WHERE org=$1 AND project='billing' AND env='dev'").bind(&ORG).execute(&mut admin).await.map(|result| result.rows_affected())?;
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
         Ok(
@@ -1229,18 +1225,17 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_project_create")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, _billing, _shop) = environments(&admin, admin_url, "ledger").await?;
+    let mut admin = connect(admin_url).await?;
+    let control_url = install(&mut admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&mut admin, admin_url, "ledger").await?;
 
     // Two org admins and a project admin of billing.
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning],
-        )
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&provisioning)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name, grants) in [
         (
@@ -1268,10 +1263,10 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             },
         ),
     ] {
-        let user = create_or_reuse_user(&admin, email, name)
+        let user = create_or_reuse_user(&mut admin, email, name)
             .await?
             .principal_id;
-        invite_member(&admin, &user, ORG, &grants).await?;
+        invite_member(&mut admin, &user, ORG, &grants).await?;
         ids.push(user);
     }
     let [boss, dee, cat]: [PrincipalId; 3] = ids.try_into().expect("three users");
@@ -1282,7 +1277,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
@@ -1368,16 +1363,16 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
         listed,
         json!({"next_cursor": null, "total": 0, "environments": []})
     );
-    let mut admins: Vec<String> = admin
-        .query(
-            "SELECT principal_id::text FROM identity.project_roles \
+    let mut admins: Vec<String> = sqlx::query(
+        "SELECT principal_id::text FROM identity.project_roles \
               WHERE org = $1 AND project = 'ledger' AND role = 'project-admin'",
-            &[&ORG],
-        )
-        .await?
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
+    )
+    .bind(&ORG)
+    .fetch_all(&mut admin)
+    .await?
+    .iter()
+    .map(|row| row.get(0))
+    .collect();
     admins.sort();
     let mut expected = vec![boss.to_owned(), dee.to_owned()];
     expected.sort();
@@ -1403,20 +1398,20 @@ impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
 async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_status_counts")?;
-    let admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
-    let (logins, billing, shop) = environments(&admin, database.url(), "counts").await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
-    let principal = create_or_reuse_user(&admin, "counts@example.test", "Counts")
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
+    let (logins, mut billing, mut shop) =
+        environments(&mut admin, database.url(), "counts").await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    let principal = create_or_reuse_user(&mut admin, "counts@example.test", "Counts")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &principal,
         ORG,
         &MemberGrants {
@@ -1425,9 +1420,8 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         },
     )
     .await?;
-    billing
-        .batch_execute(
-            "INSERT INTO platform.role (name) VALUES ('first'), ('second');
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO platform.role (name) VALUES ('first'), ('second');
          INSERT INTO platform.\"user\" (id, type, email) VALUES
            ('00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
            ('00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
@@ -1435,23 +1429,29 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
          INSERT INTO platform.user_role (user_id, role_name) VALUES
            ('00000000-0000-0000-0000-000000000001', 'first'),
            ('00000000-0000-0000-0000-000000000001', 'second'),
-           ('00000000-0000-0000-0000-000000000003', 'first');",
-        )
-        .await?;
-    shop.batch_execute(
-        "INSERT INTO platform.role (name) VALUES ('ignored');
+           ('00000000-0000-0000-0000-000000000003', 'first');")
+            .to_string(),
+    ))
+    .execute(&mut billing)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO platform.role (name) VALUES ('ignored');
         INSERT INTO platform.\"user\" (id, type, email) VALUES
         ('00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
         INSERT INTO platform.user_role (user_id, role_name) VALUES
-        ('00000000-0000-0000-0000-000000000004', 'ignored');",
-    )
-    .await?;
+        ('00000000-0000-0000-0000-000000000004', 'ignored');")
+            .to_string(),
+    ))
+    .execute(&mut shop)
+    .await
+    .map(drop)?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
             status: Arc::new(FixedStatus),
             administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
@@ -1484,7 +1484,10 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         .await,
         Ok(other)
     );
-    shop.batch_execute("DELETE FROM platform.role").await?;
+    sqlx::raw_sql("DELETE FROM platform.role")
+        .execute(&mut shop)
+        .await
+        .map(drop)?;
     let mut empty = expected.clone();
     empty["users_with_role"] = json!(0);
     empty["roles"] = json!(0);
@@ -1499,9 +1502,10 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
         Ok(empty)
     );
     // A failed application query cannot turn runtime status into a refusal.
-    billing
-        .batch_execute("ALTER TABLE platform.role RENAME TO unavailable_roles")
-        .await?;
+    sqlx::raw_sql("ALTER TABLE platform.role RENAME TO unavailable_roles")
+        .execute(&mut billing)
+        .await
+        .map(drop)?;
     let mut unavailable = expected;
     unavailable["users_with_role"] = Value::Null;
     unavailable["roles"] = Value::Null;
@@ -1534,7 +1538,7 @@ async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result
     Ok(())
 }
 
-async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
+async fn assert_definer_grantees(client: &mut Client) -> anyhow::Result<()> {
     const CONNECTION: &[&str] = &["wamn_control", "wamn_administration"];
     const ALLOWED: &[(&str, &[&str])] = &[
         ("identity.revoke_disabled_password_logins()", &[]),
@@ -1609,7 +1613,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_control"],
         ),
     ];
-    let functions = client.query("SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', p.proconfig, pg_get_userbyid(p.proowner), ARRAY(SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner ORDER BY 1) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef ORDER BY 1", &[]).await?;
+    let functions = sqlx::query("SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', p.proconfig, pg_get_userbyid(p.proowner), ARRAY(SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner ORDER BY 1) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef ORDER BY 1").fetch_all(&mut *client).await?;
     assert!(!functions.is_empty());
     for function in functions {
         let name: String = function.get(0);
@@ -1617,22 +1621,22 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             .iter()
             .find(|(signature, _)| *signature == name)
             .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
-        assert_eq!(function.get::<_, String>(2), "wamn_system", "{name} owner");
+        assert_eq!(function.get::<String, _>(2), "wamn_system", "{name} owner");
         let configuration: Vec<String> = function.get(1);
         let expected_path = "search_path=pg_catalog";
         assert_eq!(configuration, [expected_path], "{name}");
-        for grantee in function.get::<_, Vec<String>>(3) {
+        for grantee in function.get::<Vec<String>, _>(3) {
             assert!(
                 allowed.1.contains(&grantee.as_str()),
                 "unexpected EXECUTE grantee {grantee} on {name}"
             );
         }
-        let effective = client.query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))", &[&name, &allowed.1]).await?;
+        let effective = sqlx::query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))").bind(&name).bind(&allowed.1).fetch_all(&mut *client).await?;
         assert!(
             effective.is_empty(),
             "unexpected inherited EXECUTE privilege on {name}: {effective:?}"
         );
-        let grantable: bool = client.query_one("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)", &[&name]).await?.get(0);
+        let grantable: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)").bind(&name).fetch_one(&mut *client).await?.get(0);
         assert!(!grantable, "non-owner grant option on {name}");
     }
     Ok(())
@@ -1644,40 +1648,47 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("connection_routes")?;
-    let admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
-    let (logins, billing, shop) = environments(&admin, database.url(), "connections").await?;
-    let writer = connect(&control_url).await?;
-    writer
-        .batch_execute("SET TIME ZONE 'America/New_York'")
-        .await?;
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
+    let (logins, mut billing, mut shop) =
+        environments(&mut admin, database.url(), "connections").await?;
+    let mut writer = connect(&control_url).await?;
+    sqlx::raw_sql("SET TIME ZONE 'America/New_York'")
+        .execute(&mut writer)
+        .await
+        .map(drop)?;
     assert!(
-        writer.batch_execute("SET ROLE wamn_control").await.is_err(),
+        sqlx::raw_sql("SET ROLE wamn_control")
+            .execute(&mut writer)
+            .await
+            .map(drop)
+            .is_err(),
         "the control generation inherits its grants without permission to assume the ACL role"
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'",
             PlatformComponent::Provisioning.principal_id()
         ))
-        .await?;
-    assert_definer_grantees(&admin).await?;
-    assert_definer_grantees(&billing).await?;
-    assert_definer_grantees(&shop).await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    assert_definer_grantees(&mut admin).await?;
+    assert_definer_grantees(&mut billing).await?;
+    assert_definer_grantees(&mut shop).await?;
     assert!(
-        billing
-            .query_one(
-                "SELECT to_regprocedure('catalog.connection_is_referenced(text)') IS NULL",
-                &[]
-            )
+        sqlx::query("SELECT to_regprocedure('catalog.connection_is_referenced(text)') IS NULL")
+            .fetch_one(&mut billing)
             .await?
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
-    let boss = create_or_reuse_user(&admin, "connection-admin@example.test", "Admin")
+    let boss = create_or_reuse_user(&mut admin, "connection-admin@example.test", "Admin")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &boss,
         ORG,
         &MemberGrants {
@@ -1693,7 +1704,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: None,
             org: ORG.to_owned(),
@@ -1701,7 +1712,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         },
         None,
     );
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let external = json!({"project":"billing","name":"erp"});
     assert!(
         call(
@@ -1753,26 +1764,26 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     )
     .await
     .unwrap();
-    for (client, count) in [(&billing, 1_i64), (&shop, 0)] {
+    for (client, count) in [(&mut billing, 1_i64), (&mut shop, 0)] {
         assert_eq!(
-            client
-                .query_one("SELECT count(*) FROM platform.connection", &[])
+            sqlx::query("SELECT count(*) FROM platform.connection")
+                .fetch_one(&mut *client)
                 .await?
-                .get::<_, i64>(0),
+                .get::<i64, _>(0),
             count
         );
         for table in ["external_system", "integration", "connection"] {
-            assert!(!client.query_one("SELECT has_table_privilege('wamn_app',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_app',$1,'INSERT,UPDATE')",&[&format!("platform.{table}")]).await?.get::<_,bool>(0));
+            assert!(!sqlx::query("SELECT has_table_privilege('wamn_app',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_app',$1,'INSERT,UPDATE')").bind(&format!("platform.{table}")).fetch_one(&mut *client).await?.get::<bool, _>(0));
         }
         for table in ["catalog.release_connection", "catalog.connection_binding"] {
-            assert!(!client.query_one("SELECT has_table_privilege('wamn_administration',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_administration',$1,'INSERT,UPDATE')",&[&table]).await?.get::<_,bool>(0));
+            assert!(!sqlx::query("SELECT has_table_privilege('wamn_administration',$1,'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_administration',$1,'INSERT,UPDATE')").bind(&table).fetch_one(&mut *client).await?.get::<bool, _>(0));
         }
     }
-    let identity: String = billing
-        .query_one("SELECT id::text FROM platform.connection", &[])
+    let identity: String = sqlx::query("SELECT id::text FROM platform.connection")
+        .fetch_one(&mut billing)
         .await?
         .get(0);
-    admin.execute("UPDATE registry.integration SET auth_type='oauth2_client_credentials' WHERE name='erp' AND project='billing'", &[]).await?;
+    sqlx::query("UPDATE registry.integration SET auth_type='oauth2_client_credentials' WHERE name='erp' AND project='billing'").execute(&mut admin).await.map(|result| result.rows_affected())?;
     let selection = json!({"project":"billing","env":"dev","name":"erp"});
     let empty = call(
         &delivery,
@@ -1784,10 +1795,16 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .unwrap();
     assert_eq!(empty["refresh_status"], Value::Null);
     assert_eq!(empty["expires_at"], Value::Null);
-    admin.execute("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) VALUES($1::text::uuid,$2,$3,$4,'file:fixture','2099-01-01T00:00:00Z','failing',clock_timestamp())",
-        &[&identity, &b"private-token-bytes".as_slice(), &b"private-nonce".as_slice(), &b"private-wrapped-key".as_slice()]).await?;
+    sqlx::query("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) VALUES($1::text::uuid,$2,$3,$4,'file:fixture','2099-01-01T00:00:00Z','failing',clock_timestamp())").bind(&identity).bind(&b"private-token-bytes".as_slice()).bind(&b"private-nonce".as_slice()).bind(&b"private-wrapped-key".as_slice()).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for status in ["failing", "ok"] {
-        admin.execute("UPDATE identity.oauth_token SET refresh_status=$1 WHERE connection_id=$2::text::uuid", &[&status,&identity]).await?;
+        sqlx::query(
+            "UPDATE identity.oauth_token SET refresh_status=$1 WHERE connection_id=$2::text::uuid",
+        )
+        .bind(&status)
+        .bind(&identity)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
         let answer = call(
             &delivery,
             "connection/get",
@@ -1810,20 +1827,23 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             assert!(!answer.to_string().contains(private), "{answer}");
         }
     }
-    admin
-        .execute(
-            "DELETE FROM identity.oauth_token WHERE connection_id=$1::text::uuid",
-            &[&identity],
-        )
-        .await?;
-    admin.execute("UPDATE registry.integration SET auth_type='none' WHERE name='erp' AND project='billing'", &[]).await?;
-    billing.execute("CREATE TABLE public.connection_reference(connection_id uuid REFERENCES platform.connection(id))",&[]).await?;
-    billing
-        .execute(
-            "INSERT INTO public.connection_reference VALUES($1::text::uuid)",
-            &[&identity],
-        )
-        .await?;
+    sqlx::query("DELETE FROM identity.oauth_token WHERE connection_id=$1::text::uuid")
+        .bind(&identity)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "UPDATE registry.integration SET auth_type='none' WHERE name='erp' AND project='billing'",
+    )
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("CREATE TABLE public.connection_reference(connection_id uuid REFERENCES platform.connection(id))").execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO public.connection_reference VALUES($1::text::uuid)")
+        .bind(&identity)
+        .execute(&mut billing)
+        .await
+        .map(|result| result.rows_affected())?;
     let selection = json!({"project":"billing","env":"dev","name":"erp"});
     call(
         &delivery,
@@ -1834,23 +1854,30 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     .await
     .unwrap();
     assert_eq!(
-        billing
-            .query_one("SELECT status FROM platform.connection", &[])
+        sqlx::query("SELECT status FROM platform.connection")
+            .fetch_one(&mut billing)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "disabled"
     );
-    billing
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; {}",
             wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning)
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut billing)
+    .await
+    .map(drop)?;
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    billing.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
-    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;
-    billing.batch_execute("COMMIT").await?;
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&b"{}".as_slice()).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&identity).execute(&mut billing).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut billing)
+        .await
+        .map(drop)?;
     assert!(
         call(
             &delivery,
@@ -1883,9 +1910,10 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .unwrap_err()
         .starts_with("immutable_field ")
     );
-    billing
-        .batch_execute("ALTER TABLE platform.integration RENAME TO unavailable_integration")
-        .await?;
+    sqlx::raw_sql("ALTER TABLE platform.integration RENAME TO unavailable_integration")
+        .execute(&mut billing)
+        .await
+        .map(drop)?;
     let mut changed = connection;
     changed["parameters"]["tls-verification"] = "disabled".into();
     assert!(
@@ -1899,10 +1927,11 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .unwrap_err()
         .starts_with("application_write_incomplete ")
     );
-    assert_eq!(admin.query_one("SELECT g.parameters->>'tls-verification' FROM registry.connection c JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1::text::uuid",&[&identity]).await?.get::<_,String>(0),"disabled");
-    billing
-        .batch_execute("ALTER TABLE platform.unavailable_integration RENAME TO integration")
-        .await?;
+    assert_eq!(sqlx::query("SELECT g.parameters->>'tls-verification' FROM registry.connection c JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1::text::uuid").bind(&identity).fetch_one(&mut admin).await?.get::<String, _>(0),"disabled");
+    sqlx::raw_sql("ALTER TABLE platform.unavailable_integration RENAME TO integration")
+        .execute(&mut billing)
+        .await
+        .map(drop)?;
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(
             &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","policy":"dev","applications":{}}),
@@ -1925,8 +1954,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         &document,
     )
     .await?;
-    let before: String = billing
-        .query_one("SELECT xmin::text FROM platform.connection", &[])
+    let before: String = sqlx::query("SELECT xmin::text FROM platform.connection")
+        .fetch_one(&mut billing)
         .await?
         .get(0);
     let _ = wamn_environment_control::environment::bindings::project_authority(
@@ -1936,10 +1965,10 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     )
     .await?;
     assert_eq!(
-        billing
-            .query_one("SELECT xmin::text FROM platform.connection", &[])
+        sqlx::query("SELECT xmin::text FROM platform.connection")
+            .fetch_one(&mut billing)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         before
     );
     drop(bucket);
@@ -1960,20 +1989,20 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     use wamn_execution_host::ProjectionPause;
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("grant_projection_order")?;
-    let admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
+    let mut database = postgres.create_database("grant_projection_order")?;
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
     let (logins, billing, _shop) =
-        environments(&admin, database.url(), "grant_projection_order").await?;
-    admin.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','wamn:provisioning',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    let boss = create_or_reuse_user(&admin, "boss-order@example.test", "Boss")
+        environments(&mut admin, database.url(), "grant_projection_order").await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','wamn:provisioning',false)").bind(&PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    let boss = create_or_reuse_user(&mut admin, "boss-order@example.test", "Boss")
         .await?
         .principal_id;
-    let user = create_or_reuse_user(&admin, "member-order@example.test", "Member")
+    let user = create_or_reuse_user(&mut admin, "member-order@example.test", "Member")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &boss,
         ORG,
         &MemberGrants {
@@ -1982,7 +2011,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         },
     )
     .await?;
-    invite_member(&admin, &user, ORG, &MemberGrants::default()).await?;
+    invite_member(&mut admin, &user, ORG, &MemberGrants::default()).await?;
     let (_server, broker) = wamn_runtime::auth_cache::test_util::nats().await;
     let changes = Publisher::new(broker.clone());
     let bucket = wamn_broker::auth_changes::auth_bucket(&broker).await?;
@@ -1992,7 +2021,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             HostRouteHandlers::Control {
                 status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
                 administration: Some(logins.clone()),
-                control: Arc::new(connect(&control_url).await?),
+                control: wamn_postgres::pool(&control_url, 4).await?,
                 writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
                 identity: None,
                 org: ORG.to_owned(),
@@ -2030,9 +2059,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         if after_lock {
             let blocked = async {
                 loop {
-                    let waiting: bool = admin.query_one(
-                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND cardinality(pg_blocking_pids(pid))>0)", &[],
-                    ).await?.get(0);
+                    let waiting: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND cardinality(pg_blocking_pids(pid))>0)").fetch_one(&mut admin).await?.get(0);
                     if waiting {
                         return anyhow::Ok(());
                     }
@@ -2047,7 +2074,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             revoke.await.map_err(anyhow::Error::msg)?;
         } else {
             revoke.await.map_err(anyhow::Error::msg)?;
-            let count: i64 = billing.query_one("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'", &[&user.as_str()]).await?.get(0);
+            let count: i64 = sqlx::query("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'").bind(&user.as_str()).fetch_one(&mut billing).await?.get(0);
             assert_eq!(
                 count, 0,
                 "the second host completes revocation while the grant waits"
@@ -2057,7 +2084,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         grant.await?.map_err(anyhow::Error::msg)?;
         let rows = application_rows(&billing, user.as_str()).await;
         assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
-        let count: i64 = admin.query_one("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'", &[&user.as_str()]).await?.get(0);
+        let count: i64 = sqlx::query("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'").bind(&user.as_str()).fetch_one(&mut admin).await?.get(0);
         assert_eq!(count, 0);
         let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");
         assert!(

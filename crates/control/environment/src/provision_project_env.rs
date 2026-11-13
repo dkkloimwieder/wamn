@@ -1,65 +1,10 @@
-//! The `provision-project-env` subcommand (wamn-q3n.7): stand up one
-//! per-project-env Postgres **database** on an org's appropriate cluster (or the
-//! T3 trials pool) and record it in the T1 control-plane registry.
-//!
-//! Identity is the `(org, project, env)` [`Triple`], and the database lives on
-//! the cluster **derived** by
-//! [`cluster_of`](wamn_control_provision::cluster_of) (D18) from the org's placement + the
-//! env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` sharing prod
-//! lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool for a
-//! pooled org. One derivation path serves every placement.
-//!
-//! An imperative CLI (the `provision-org` precedent). It **renders + records**;
-//! the runbook/Job applies the emitted artifacts, in this order:
-//!
-//! 1. the `wamn_db_owner` title role must exist **before** the `Database` CR
-//!    (its `owner`) and the stable `wamn_app` ACL role with it: apply
-//!    the emitted
-//!    **role SQL** to the target cluster's superuser. Applying the CR first
-//!    fails reconciliation — CNPG maps `spec.owner` straight to `CREATE DATABASE
-//!    … OWNER` / `ALTER DATABASE … OWNER TO`;
-//! 2. `kubectl apply -f` the emitted **`Database` CR** and wait it applied — the
-//!    CNPG operator declaratively creates the database owned by `wamn_db_owner`,
-//!    and re-owns an already-existing one to it;
-//! 3. apply the emitted **privilege SQL** (`ALTER DATABASE … OWNER TO
-//!    wamn_db_owner`, then `REVOKE CONNECT, TEMPORARY FROM PUBLIC` / `REVOKE
-//!    CONNECT FROM wamn_app`) — the
-//!    thin imperative step the `Database` CRD does
-//!    not cover (topology fact 3), run **after** the database exists. The owner
-//!    statement is first and must stay first: `ALTER DATABASE … OWNER TO`
-//!    rewrites the outgoing owner's ACL entry, which is where a `CONNECT`
-//!    granted to a role that still owns the database merges.
-//!    **On an EXISTING environment this step is mandatory, not optional**: it
-//!    is what converges a pre-`wamn-0h0g.22.6` environment's `CONNECT` off the
-//!    stable `wamn_app` ACL role, and step 4's generation actions refuse to run
-//!    until it has (`wamn-0h0g.12.179`);
-//! 4. `kubectl apply -f` the emitted **credential Secret** and any independently
-//!    requested management-author / operator PAT Secrets, then run each
-//!    family's generation prepare — the LOGIN it mints is what actually reaches
-//!    the database. The stable ACL roles do not: they are NOLOGIN grant carriers
-//!    those generations inherit, and every one of them must stay connection-free
-//!    (see [`privilege_sql`]).
-//!
-//! What this tool does directly (given `--system-database-url`): read the org's
-//! placement to pick the target cluster, and record `registry.projects` +
-//! `registry.environment_projects` (as the `wamn_system` owner); when requested, resolve
-//! or create stable service principals and assign project roles. The CLI requests
-//! PATs from `wamn-identity` over HTTPS with an operator client certificate, then
-//! authenticates each PAT against the system database. Kubernetes artifacts are
-//! only emitted (no K8s client, no target-cluster connection).
-//!
-//! **RLS base grants** at provision time: there are no tables yet, so wamn-q3n.7
-//! establishes the RLS-**enforceable substrate** only — `wamn_app` is
-//! `NOSUPERUSER NOCREATEDB NOBYPASSRLS` (the role SQL) and `CONNECT` is confined
-//! (the privilege SQL). The per-table `FORCE ROW LEVEL SECURITY` minimum is applied
-//! at catalog-publish (2.4/2.5), where the tables are created.
+//! Render and record an environment. CNPG owns its database and role passwords.
 
+use sqlx::Connection as _;
+use sqlx::PgConnection as Client;
 pub(super) mod plan;
-pub use plan::{
-    privilege_sql, role_posture_sql, role_sql, workload_action_flag, workload_secret_flag,
-};
+pub use plan::{privilege_sql, role_posture_sql, role_sql};
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, Permissions};
 #[cfg(test)]
@@ -69,24 +14,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use chrono::{DateTime, SecondsFormat, Utc};
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
-use tokio_postgres::{Client, Config as PgConfig, GenericClient, NoTls, Transaction};
-use url::Url;
 
 use postgres_protocol::escape::escape_identifier;
-use wamn_control_provision::SystemReader;
-use wamn_control_provision::project_key::project_key;
-use wamn_control_provision::session_target::{SessionTarget, validate_session_project_env_key};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
-    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, WorkloadSecretBody,
-    WorkloadSecretBodyType, bind_platform_principal_sql, project_env_database_name,
-    project_env_namespace, project_env_secret_name, render_org_workload_secret_manifest,
-    render_project_env_database, render_project_env_secret_manifest,
-    render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
-    workload_generation_role,
+    APP_ROLE, INSTANCE_SUFFIX_LEN, PlatformComponent, bind_platform_principal_sql,
+    project_env_database_name, project_env_namespace, project_env_secret_name,
+    render_project_env_database, sql, validate_instance_suffix, validate_project_env,
 };
 use wamn_control_provision::{Org, Placement, cluster_of};
 use wamn_platform_identity::{
@@ -99,17 +34,13 @@ use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_release_control::env_policies::read_env_policy;
 
 mod database;
-mod grants;
 mod output;
 pub mod pat_secrets;
 pub(crate) mod registry;
 pub(crate) mod workload;
 
 pub(crate) use database::database_host;
-use database::{
-    connect_config, exact_project_database_config, named_database_config, workload_config,
-    workload_url,
-};
+
 use pat_secrets::issue_pat_secrets;
 use registry::{mint_instance_suffix, record_project_env};
 
@@ -126,7 +57,6 @@ pub use registry::{
     finish_database, read_project_env_instance, read_project_env_policy, require_connected,
     resolve_cluster,
 };
-pub use workload::{run_org_workload_action, run_workload_action};
 
 #[cfg(test)]
 use output::SECRET_TEMP_SEQUENCE;
@@ -234,153 +164,24 @@ pub struct ProvisionProjectEnvOutcome {
     pub pat_secrets: Vec<IssuedPatSecret>,
 }
 
-/// The three verbs of the `wamn-0h0g.13.59` unified generation lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadActionVerb {
-    Prepare,
-    Retire,
-    Abort,
-}
-
-impl WorkloadActionVerb {
-    pub const ALL: [Self; 3] = [Self::Prepare, Self::Retire, Self::Abort];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Prepare => "prepare",
-            Self::Retire => "retire",
-            Self::Abort => "abort",
-        }
-    }
-}
-
-/// One selected workload-generation action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WorkloadGenerationAction {
-    pub family: WorkloadRoleFamily,
-    pub verb: WorkloadActionVerb,
-    pub generation: CredentialGeneration,
-}
-
-/// Inputs of one workload-generation action.
-#[derive(Debug)]
-pub struct WorkloadActionRequest {
-    pub org: String,
-    pub project: String,
-    pub env: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`).
-    pub system_database_url: Option<String>,
-
-    /// Explicit target project-database admin URL for the families that address
-    /// the project-env database. Provisioning authority only: never persisted or
-    /// emitted.
-    pub target_admin_database_url: Option<String>,
-
-    /// Target CNPG `Cluster` name. When omitted, derive it from the org's
-    /// placement and the recorded project-env policy in the registry.
-    pub cluster: Option<String>,
-
-    /// Namespace of the target CNPG `Cluster`.
-    pub cluster_namespace: String,
-
-    /// Host every emitted credential URL names. Defaults to
-    /// `<cluster>-rw.<cluster_namespace>.svc.cluster.local`,
-    /// never the admin URL's host (finding wamn-lczu).
-    pub db_host: Option<String>,
-
-    /// Port every emitted credential URL names.
-    pub db_port: u16,
-
-    /// Namespace the credential `Secret` is applied to.
-    pub namespace: String,
-
-    pub action: WorkloadGenerationAction,
-
-    /// Write the prepared credential `Secret` here. A prepare requires it.
-    pub secret: Option<PathBuf>,
-
-    /// Write the shared App-login retirement role SQL here. Only App prepare may
-    /// name it.
-    pub emit_role_sql: Option<PathBuf>,
-
-    /// Write the patch that puts the prepared administration login into the
-    /// control host's Secret here. An administration prepare requires it, and
-    /// no other action may name it (docs/plan/platform-ui.md §4.4).
-    pub control_administration_patch: Option<PathBuf>,
-}
-
-/// Inputs of one org-targeted workload-generation action, run by
-/// `provision-org`.
-pub struct OrgWorkloadActionRequest {
-    /// The org the credential is bound to.
-    pub org: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`), the
-    /// database the credential reaches.
-    pub system_database_url: String,
-
-    /// Host the emitted credential URL names. A prepare requires it: the
-    /// admin URL's host is often a port-forward that no pod can reach
-    /// (finding wamn-lczu).
-    pub db_host: Option<String>,
-
-    /// Port the emitted credential URL names.
-    pub db_port: u16,
-
-    /// Namespace the credential `Secret` is applied to.
-    pub namespace: String,
-
-    pub action: WorkloadGenerationAction,
-
-    /// Write the prepared credential `Secret` here. A prepare requires it.
-    pub secret: Option<PathBuf>,
-}
-
-impl std::fmt::Debug for OrgWorkloadActionRequest {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("OrgWorkloadActionRequest")
-            .field("org", &self.org)
-            .field("system_database_url", &"[REDACTED]")
-            .field("db_host", &self.db_host)
-            .field("db_port", &self.db_port)
-            .field("namespace", &self.namespace)
-            .field("action", &self.action)
-            .field("secret", &self.secret)
-            .finish()
-    }
-}
-
-/// What one workload-generation action did.
-#[derive(Debug)]
-pub enum WorkloadActionOutcome {
-    /// The generation was prepared and authenticated, and its `Secret` written.
-    Prepared {
-        secret: PathBuf,
-        /// The shared App-login retirement role SQL, when the App prepare named
-        /// an output for it.
-        app_retirement_role_sql: Option<String>,
-    },
-    Retired,
-    Aborted,
-}
-
 /// Begin a system database transaction that writes as `wamn:provisioning`.
 ///
 /// The identity relations stamp the bound actor. The binding ends with the
 /// transaction.
-pub async fn provisioning_transaction(client: &mut Client) -> anyhow::Result<Transaction<'_>> {
-    let transaction = client
-        .transaction()
+pub async fn provisioning_transaction(
+    client: &mut Client,
+) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+    let mut transaction = client
+        .begin()
         .await
         .context("begin a system database write transaction")?;
-    transaction
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .context("bind wamn:provisioning as the actor")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .context("bind wamn:provisioning as the actor")?;
     Ok(transaction)
 }
 
@@ -490,11 +291,14 @@ pub async fn provision_project_env(
     );
     // Ordinary provisioning establishes cluster roles before it creates the
     // database. The shared-login drain is an operator finalizer and is emitted
-    // only by a successful App-generation prepare after every carrier has a
+    // only by a successful App login preparation after every carrier has a
     // replacement credential.
     let role_sql = role_posture_sql();
     let privilege_sql = privilege_sql(&db_name);
-    let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace);
+    let secret_doc = serde_json::to_value(wamn_kubernetes::secret::Secret::new(
+        &args.namespace,
+        &wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),
+    ))?;
 
     write_output(
         args.emit_database.as_deref(),

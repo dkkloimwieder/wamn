@@ -4,15 +4,12 @@ use crate::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_broker::auth_changes::AuthDrops;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 
-async fn connect(url: &str) -> tokio_postgres::Client {
-    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(driver);
+use sqlx::Connection as _;
+async fn connect(url: &str) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(url).await.unwrap();
+
     client
 }
 
@@ -27,23 +24,28 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             &["host-project"],
         )
         .await;
-    let principal: String = fixture.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
+    let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.admin).await.unwrap().get(0);
     let database = wamn_test_postgres::database();
-    let project = connect(database.url()).await;
-    project
-        .batch_execute(sql::ensure_db_owner_role_sql())
+    let mut project = connect(database.url()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$; DO $$ BEGIN  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN NOINHERIT; END IF; END $$; CREATE SCHEMA wamn_run;").execute(&mut project).await.map(drop).unwrap();
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut project)
         .await
+        .map(drop)
         .unwrap();
-    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$; DO $$ BEGIN  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN; END IF; END $$; CREATE SCHEMA wamn_run;").await.unwrap();
-    project
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut project)
         .await
+        .map(drop)
         .unwrap();
-    project
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await
-        .unwrap();
-    let role = workload_generation_role(
+    let role = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
@@ -51,21 +53,23 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             environment: "prod",
             database: database.name(),
         },
-        CredentialGeneration::A,
     )
     .unwrap();
-    project
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::HttpAdmitter,
             database.name(),
             &role,
             "fixture-password",
-            "2099-01-01T00:00:00Z",
         ))
-        .await
-        .unwrap();
-    project.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)",&[&principal]).await.unwrap();
-    project.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test')",&[&principal]).await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test')").bind(&principal).execute(&mut project).await.map(|result| result.rows_affected()).unwrap();
     let mut reader = url::Url::parse(database.url()).unwrap();
     reader.set_username(&role).unwrap();
     reader.set_password(Some("fixture-password")).unwrap();
@@ -90,19 +94,16 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         "host-project",
         "dev",
     ));
-    let authority = connect(fixture.database.url()).await;
-    let authority = Arc::new(authority);
-    let authentication = Arc::new(
-        RouteAuthentication::new(
-            authority,
-            Arc::clone(&postgres),
-            "acme",
-            "host-project",
-            "unused",
-        )
+    let authority = wamn_postgres::pool(fixture.database.url(), 4)
         .await
-        .unwrap(),
-    );
+        .unwrap();
+    let authentication = Arc::new(RouteAuthentication::new(
+        authority,
+        Arc::clone(&postgres),
+        "acme",
+        "host-project",
+        "unused",
+    ));
     let routing = routing_policy(
         json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook@2"}),
     )
@@ -123,8 +124,15 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(!caller.admin());
     assert!(caller.active_role().is_none());
     assert!(!caller.permits("fixture:item/read@1.0.0"));
-    project.batch_execute("INSERT INTO platform.role(name) VALUES ('source-reader'); INSERT INTO platform.permission(role_name,permission) VALUES ('source-reader','fixture:item/read')").await.unwrap();
-    project.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')",&[&principal]).await.unwrap();
+    sqlx::raw_sql("INSERT INTO platform.role(name) VALUES ('source-reader'); INSERT INTO platform.permission(role_name,permission) VALUES ('source-reader','fixture:item/read')").execute(&mut project).await.map(drop).unwrap();
+    sqlx::query(
+        "INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'source-reader')",
+    )
+    .bind(&principal)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     postgres.auth_cache().clear();
     let caller = routing
         .authenticate_request_for_test("orders", &headers, super::signature::BODY)
@@ -135,17 +143,24 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(!caller.permits("fixture:item/write@1.0.0"));
     assert!(caller.active_role().is_none());
     let mut authority = connect(fixture.database.url()).await;
-    let tx = authority.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_system")
+    let mut tx = authority.begin().await.unwrap();
+    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
     let service = wamn_platform_identity::create_service(
-        &tx,
+        &mut tx,
         "wrong-subject",
         "Wrong subject",
         &mut AuthDrops::default(),
@@ -153,7 +168,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     wamn_platform_identity::assign_project_role(
-        &tx,
+        &mut tx,
         service.id(),
         "acme",
         "host-project",
@@ -163,7 +178,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     let pat = wamn_platform_identity::issue_pat(
-        &tx,
+        &mut tx,
         service.id(),
         "wrong subject",
         std::time::Duration::from_secs(3600),
@@ -171,18 +186,16 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    let authenticated = authentication
-        .prepared
-        .authenticate_route_pat(
-            authentication.identity_reader.as_ref(),
-            pat.token(),
-            "acme",
-            "host-project",
-            &[ADMIN_ROLE],
-        )
-        .await
-        .unwrap()
-        .expect("the PAT is valid for this project");
+    let authenticated = wamn_platform_identity::authenticate_route_pat(
+        &mut *authentication.identity_reader.acquire().await.unwrap(),
+        pat.token(),
+        "acme",
+        "host-project",
+        &[ADMIN_ROLE],
+    )
+    .await
+    .unwrap()
+    .expect("the PAT is valid for this project");
     assert_eq!(authenticated.principal().id(), service.id());
     let bearer = format!("Bearer {}", pat.token());
     let pat_routing = super::routing(&json!(["pat"])).with_authenticator(Arc::new(
@@ -196,12 +209,11 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             .0,
         401
     );
-    project
-        .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&principal],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&principal)
+        .execute(&mut project)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     postgres.auth_cache().clear();
     assert_eq!(
@@ -212,19 +224,17 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             .0,
         401
     );
-    project
-        .execute(
-            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
-            &[&principal],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid")
+        .bind(&principal)
+        .execute(&mut project)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
-    project
-        .execute(
-            "UPDATE platform.\"user\" SET type='user' WHERE id=$1::text::uuid",
-            &[&principal],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET type='user' WHERE id=$1::text::uuid")
+        .bind(&principal)
+        .execute(&mut project)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     postgres.auth_cache().clear();
     assert!(
@@ -242,12 +252,12 @@ async fn queued_run_without_a_selected_role_uses_only_active_services_and_all_th
     const ABSENT: &str = "13e42097-1f19-4e5b-a79a-5c333c57f677";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_platform_identity::test_database::project_platform();
-    let client = connect(database.url()).await;
-    client.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:queued-caller-fixture',false)", &[&SERVICE]).await.unwrap();
-    client.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','queued-service@example.test'),($2::text::uuid,'user','queued-user@example.test')", &[&SERVICE, &USER]).await.unwrap();
-    client.batch_execute("INSERT INTO platform.role(name) VALUES ('reader'),('writer'); INSERT INTO platform.permission(role_name,permission) VALUES ('reader','fixture:item/read'),('writer','fixture:item/write')").await.unwrap();
-    client.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'reader'),($1::text::uuid,'writer')", &[&SERVICE]).await.unwrap();
-    let caller = queued_run_caller(&client, SERVICE, None).await.unwrap();
+    let mut client = connect(database.url()).await;
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:queued-caller-fixture',false)").bind(&SERVICE).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','queued-service@example.test'),($2::text::uuid,'user','queued-user@example.test')").bind(&SERVICE).bind(&USER).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("INSERT INTO platform.role(name) VALUES ('reader'),('writer'); INSERT INTO platform.permission(role_name,permission) VALUES ('reader','fixture:item/read'),('writer','fixture:item/write')").execute(&mut client).await.map(drop).unwrap();
+    sqlx::query("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'reader'),($1::text::uuid,'writer')").bind(&SERVICE).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    let caller = queued_run_caller(&mut client, SERVICE, None).await.unwrap();
     assert_eq!(caller.principal_id(), SERVICE);
     assert_eq!(caller.credential_type(), CredentialType::QueuedService);
     assert!(caller.permits("fixture:item/read@1.0.0"));
@@ -256,28 +266,27 @@ async fn queued_run_without_a_selected_role_uses_only_active_services_and_all_th
     assert!(!caller.admin());
     assert!(caller.active_role().is_none());
     assert_eq!(
-        queued_run_caller(&client, USER, None)
+        queued_run_caller(&mut client, USER, None)
             .await
             .unwrap_err()
             .to_string(),
         "queued service principal is absent or inactive"
     );
     assert_eq!(
-        queued_run_caller(&client, ABSENT, None)
+        queued_run_caller(&mut client, ABSENT, None)
             .await
             .unwrap_err()
             .to_string(),
         "queued principal is absent or inactive"
     );
-    client
-        .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&SERVICE],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&SERVICE)
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_eq!(
-        queued_run_caller(&client, SERVICE, None)
+        queued_run_caller(&mut client, SERVICE, None)
             .await
             .unwrap_err()
             .to_string(),

@@ -1,5 +1,6 @@
 //! Run the environment type HTTP release through its render on a native host.
 
+use sqlx::{Connection as _, Row as _};
 #[expect(dead_code, reason = "chart tests share these render helpers")]
 #[path = "render_fixture.rs"]
 pub mod render_fixture;
@@ -30,8 +31,8 @@ fn login(url: &str, role: &str) -> anyhow::Result<String> {
 }
 
 async fn credential_secrets(
-    project: &tokio_postgres::Client,
-    system: &mut tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
+    system: &mut sqlx::PgConnection,
     project_url: &str,
     system_url: &str,
     coordinate: &Triple,
@@ -40,16 +41,16 @@ async fn credential_secrets(
     let mut secrets = render_fixture::credential_secrets(coordinate, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
-            CredentialDatabase::Project => (project, project_url),
-            CredentialDatabase::Control => (&*system, system_url),
+            CredentialDatabase::Project => (&mut *project, project_url),
+            CredentialDatabase::Control => (&mut *system, system_url),
         };
-        let database = url
-            .parse::<tokio_postgres::Config>()?
-            .get_dbname()
+        let mut database = url
+            .parse::<sqlx::postgres::PgConnectOptions>()?
+            .get_database()
             .context("database")?
             .to_owned();
         let role = match credential.database {
-            CredentialDatabase::Control => wamn_control_provision::system_reader_generation_role(
+            CredentialDatabase::Control => wamn_control_provision::system_reader_login(
                 match credential.family {
                     WorkloadRoleFamily::IdentityReader => SystemReader::Identity,
                     WorkloadRoleFamily::ConnectionReader => SystemReader::Connection,
@@ -60,9 +61,8 @@ async fn credential_secrets(
                 PROJECT,
                 "http",
                 &database,
-                CredentialGeneration::A,
             ),
-            CredentialDatabase::Project => workload_generation_role(
+            CredentialDatabase::Project => workload_login(
                 credential.family,
                 if credential.family == WorkloadRoleFamily::App {
                     WorkloadRoleIdentity::ProjectEnvKey {
@@ -77,44 +77,60 @@ async fn credential_secrets(
                         database: &database,
                     }
                 },
-                CredentialGeneration::A,
             )?,
         };
-        client
-            .batch_execute(&sql::prepare_workload_generation_sql(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 credential.family,
                 &database,
                 &role,
                 PASSWORD,
-                "2099-01-01T00:00:00Z",
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
         if credential.database == CredentialDatabase::Control {
-            let tx =
+            let mut tx =
                 wamn_environment_control::provision_project_env::provisioning_transaction(system)
                     .await?;
-            tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
-            let mapped: String = tx
-                .query_one(
-                    sql::upsert_control_author_project_env_key_mapping_sql(),
-                    &[&role, &project_env_key, &ORG, &PROJECT, &"http"],
-                )
-                .await?
-                .get("project_env_key");
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *tx)
+                .await
+                .map(drop)?;
+            let mapped: String = sqlx::query(sqlx::AssertSqlSafe(
+                (sql::upsert_control_author_project_env_key_mapping_sql()).to_string(),
+            ))
+            .bind(&role)
+            .bind(&project_env_key)
+            .bind(&ORG)
+            .bind(&PROJECT)
+            .bind(&"http")
+            .fetch_one(&mut *tx)
+            .await?
+            .get("project_env_key");
             ensure!(
                 mapped == project_env_key,
                 "host reader maps to a different project"
             );
             tx.commit().await?;
         }
-        let name =
-            wamn_control_provision::workload_secret_name(credential.family, ORG, PROJECT, "http");
-        let secret = secrets
+        let config = secrets
             .iter_mut()
-            .find(|secret| secret["metadata"]["name"] == name)
-            .context("credential Secret")?;
-        secret["stringData"]["url"] = json!(login(url, &role)?);
+            .find(|item| item["kind"] == "ConfigMap")
+            .context("connection configuration")?;
+        config["data"][format!("{}.json", credential.family.component_stem())] =
+            json!(login(url, &role)?);
     }
+    let config = secrets
+        .iter_mut()
+        .find(|item| item["kind"] == "ConfigMap")
+        .unwrap();
+    config["data"]["app.json"] =
+        json!({"compiled":config["data"]["app.json"],"dynamic":config["data"]["query.json"]})
+            .to_string()
+            .into();
     Ok(secrets)
 }
 
@@ -250,6 +266,19 @@ fn host_command(
                 command.env(name, &path);
                 continue;
             }
+            if let Some(key) = value.strip_prefix("/etc/wamn/postgres/") {
+                let config = secrets
+                    .iter()
+                    .find(|item| item["kind"] == "ConfigMap")
+                    .context("component configuration")?;
+                let path = directory.join(key);
+                std::fs::write(
+                    &path,
+                    config["data"][key].as_str().context("component input")?,
+                )?;
+                command.env(name, &path);
+                continue;
+            }
             value.to_owned()
         } else if let Some(reference) = variable.pointer("/valueFrom/secretKeyRef") {
             let secret = secrets
@@ -331,14 +360,12 @@ fn host_command(
     Ok(command)
 }
 
-async fn outcome(project: &tokio_postgres::Client, run: &str) -> anyhow::Result<(String, Value)> {
+async fn outcome(project: &mut sqlx::PgConnection, run: &str) -> anyhow::Result<(String, Value)> {
     tokio::time::timeout(Duration::from_secs(90), async {
         loop {
-            let row = project
-                .query_one(
-                    "SELECT status, result_json FROM wamn_run.runs WHERE run_id=$1",
-                    &[&run],
-                )
+            let row = sqlx::query("SELECT status, result_json FROM wamn_run.runs WHERE run_id=$1")
+                .bind(&run)
+                .fetch_one(&mut *project)
                 .await?;
             let status: String = row.get(0);
             if matches!(
@@ -347,7 +374,7 @@ async fn outcome(project: &tokio_postgres::Client, run: &str) -> anyhow::Result<
             ) {
                 return Ok((
                     status,
-                    row.get::<_, Option<Value>>(1).unwrap_or(Value::Null),
+                    row.get::<Option<Value>, _>(1).unwrap_or(Value::Null),
                 ));
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -370,125 +397,146 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, "http");
     let coordinate = Triple::new(ORG, "http", PROJECT);
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
-    let (project, project_task) = connect(database.url()).await?;
-    let (mut system, system_connection) =
-        tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
-    let system_task = tokio::spawn(system_connection);
-    project
-        .batch_execute(&sql::set_database_owner_sql(database.name()))
-        .await?;
-    project
-        .batch_execute(&sql::ensure_app_acl_role_sql())
-        .await?;
+    let mut project = connect(database.url()).await?;
+    let mut system = wamn_postgres::connect(control.url()).await?;
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::set_database_owner_sql(database.name())).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_app_acl_role_sql()).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
     wamn_dev_control::dev::environment::install_journey_platform_base_grants(
-        &project,
+        &mut project,
         PLATFORM_DOMAIN,
     )
     .await?;
     wamn_environment_control::reconcile_run_plane::reconcile(
-        &project,
+        &mut project,
         &wamn_schema_control::BareSchemaName::new("wamn_run")?,
         true,
     )
     .await?;
-    project.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    project
-        .execute(
-            "SELECT set_config('app.project_env_key',$1,false)",
-            &[&project_env_key],
-        )
-        .await?;
-    project
-        .batch_execute("INSERT INTO platform.environment(status) VALUES ('active')")
-        .await?;
-    project.execute("INSERT INTO wamn_run.environment_policies(project_env_key,expected_environment) VALUES ($1,'http')", &[&project_env_key]).await?;
-    let instance: u32 = project
-        .query_one(
-            "SELECT oid FROM pg_database WHERE datname=current_database()",
-            &[],
-        )
-        .await?
-        .get(0);
-    let marker =
-        wamn_runtime::local_application::local_target_marker(&project_env_key, "http", instance);
-    project
-        .batch_execute(&format!(
-            "COMMENT ON DATABASE \"{}\" IS '{marker}'",
-            database.name()
-        ))
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
+    sqlx::query("SELECT set_config('app.project_env_key',$1,false)")
+        .bind(&project_env_key)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::raw_sql("INSERT INTO platform.environment(status) VALUES ('active')")
+        .execute(&mut project)
+        .await
+        .map(drop)?;
+    sqlx::query("INSERT INTO wamn_run.environment_policies(project_env_key,expected_environment) VALUES ($1,'http')").bind(&project_env_key).execute(&mut project).await.map(|result| result.rows_affected())?;
+    let instance: i64 =
+        sqlx::query("SELECT oid::bigint FROM pg_database WHERE datname=current_database()")
+            .fetch_one(&mut project)
+            .await?
+            .get(0);
+    let marker = wamn_runtime::local_application::local_target_marker(
+        &project_env_key,
+        "http",
+        instance.try_into().unwrap(),
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "COMMENT ON DATABASE \"{}\" IS '{marker}'",
+        database.name()
+    )))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
     let peer = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", peer.local_addr()?);
-    system.batch_execute("SET ROLE wamn_system").await?;
-    system.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    system.execute("INSERT INTO registry.orgs(id,placement_type,pool_cluster) VALUES ($1,'pooled','prekind')", &[&ORG]).await?;
-    system
-        .batch_execute("UPDATE registry.meta SET platform_domain='example.invalid'")
-        .await?;
-    system
-        .execute(
-            "INSERT INTO registry.projects(org,id) VALUES ($1,$2)",
-            &[&ORG, &PROJECT],
-        )
-        .await?;
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)").bind(&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut system).await.map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO registry.orgs(id,placement_type,pool_cluster) VALUES ($1,'pooled','prekind')",
+    )
+    .bind(&ORG)
+    .execute(&mut system)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::raw_sql("UPDATE registry.meta SET platform_domain='example.invalid'")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    sqlx::query("INSERT INTO registry.projects(org,id) VALUES ($1,$2)")
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut system)
+        .await
+        .map(|result| result.rows_affected())?;
     let policy = wamn_control_provision::EnvPolicy::dev();
-    system
-        .execute(
-            wamn_registry::sql::stamp_env_policy_sql(),
-            &[
-                &ORG,
-                &POLICY,
-                &serde_json::to_string(&policy.recovery_domain)?,
-                &policy.promotion_rank,
-                &policy.instances,
-                &policy.storage,
-                &policy.cpu,
-                &policy.memory,
-                &policy.image,
-                &policy.backup_cadence,
-                &policy.wal_retention,
-                &policy.hibernation,
-            ],
-        )
-        .await?;
-    let target: String = system
-        .query_one(
-            "SELECT id::text FROM registry.target WHERE name='cloud'",
-            &[],
-        )
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::stamp_env_policy_sql()).to_string(),
+    ))
+    .bind(&ORG)
+    .bind(&POLICY)
+    .bind(&serde_json::to_string(&policy.recovery_domain)?)
+    .bind(&policy.promotion_rank)
+    .bind(&policy.instances)
+    .bind(&policy.storage)
+    .bind(&policy.cpu)
+    .bind(&policy.memory)
+    .bind(&policy.image)
+    .bind(&policy.backup_cadence)
+    .bind(&policy.wal_retention)
+    .bind(&policy.hibernation)
+    .execute(&mut system)
+    .await
+    .map(|result| result.rows_affected())?;
+    let target: String = sqlx::query("SELECT id::text FROM registry.target WHERE name='cloud'")
+        .fetch_one(&mut system)
         .await?
         .get(0);
-    system
-        .query_one(
-            wamn_registry::sql::upsert_project_env_with_policy_sql(),
-            &[
-                &ORG,
-                &PROJECT,
-                &"http",
-                &"prekind-database",
-                &Some(NAMESPACE),
-                &"aaaaaaa1",
-                &Some(true),
-                &POLICY,
-                &target,
-            ],
-        )
-        .await?;
-    system.batch_execute("RESET ROLE").await?;
-    // C3.5: a credential imports only into a declared, project-enabled connection.
-    let (mut seed, seed_connection) =
-        tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
-    let seed_task = tokio::spawn(seed_connection);
-    seed.batch_execute("SET ROLE wamn_control").await?;
-    let tx = seed.transaction().await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::upsert_project_env_with_policy_sql()).to_string(),
     ))
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&"http")
+    .bind(&"prekind-database")
+    .bind(&Some(NAMESPACE))
+    .bind(&"aaaaaaa1")
+    .bind(&Some(true))
+    .bind(&POLICY)
+    .bind(&target)
+    .fetch_one(&mut system)
     .await?;
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    // C3.5: a credential imports only into a declared, project-enabled connection.
+    let mut seed = wamn_postgres::connect(control.url()).await?;
+
+    sqlx::raw_sql("SET ROLE wamn_control")
+        .execute(&mut seed)
+        .await
+        .map(drop)?;
+    let mut tx = seed.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
+    ))
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let credential_store = wamn_test_infrastructure::credentials::MemoryStore::default();
-    wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":PROJECT,"env":"http","name":"upstream","integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":origin,"tls-verification":"disabled"},"credential":json!({"username":"fixture","password":"fixture-password"}).to_string()}),&credential_store).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx,ORG,&json!({"project":PROJECT,"env":"http","name":"upstream","integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":origin,"tls-verification":"disabled"},"credential":json!({"username":"fixture","password":"fixture-password"}).to_string()}),&credential_store).await?;
     tx.commit().await?;
 
     let scheduler_address = address()?;
@@ -510,7 +558,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .stdout(Stdio::null())
         .stderr(std::fs::File::create(directory.join("nats.log"))?)
         .spawn()?;
-    let client = tokio::time::timeout(Duration::from_secs(10), async {
+    let mut client = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             ensure!(
                 nats.try_wait()?.is_none(),
@@ -609,9 +657,9 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         directory.join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
         &published.canonical_bytes,
     )?;
-    project.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&project_env_key,&digest,&published.canonical_bytes]).await?;
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&published.canonical_bytes).execute(&mut project).await.map(|result| result.rows_affected())?;
     for package in &published.manifest.release.packages {
-        project.execute("INSERT INTO catalog.packages(physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)", &[&project_env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
+        sqlx::query("INSERT INTO catalog.packages(physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)").bind(&project_env_key).bind(&package.package_id()).bind(&package.package_version()).bind(&format!("sha256:{}","a".repeat(64))).execute(&mut project).await.map(|result| result.rows_affected())?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document
@@ -646,14 +694,17 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         }),
     )?)?;
     // The system base grants seeds the active cloud target used by this document.
-    let tx = wamn_environment_control::provision_project_env::provisioning_transaction(&mut seed)
-        .await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
+    let mut tx =
+        wamn_environment_control::provision_project_env::provisioning_transaction(&mut seed)
+            .await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_db_owner")
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
     let reserved =
-        wamn_environment_control::environment::bindings::analyse(&tx, &document, &[package])
+        wamn_environment_control::environment::bindings::analyse(&mut tx, &document, &[package])
             .await?;
     tx.commit().await?;
-    seed_task.abort();
     let _ = wamn_environment_control::environment::bindings::project_authority(
         control.url(),
         database.url(),
@@ -670,7 +721,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &connection.store_alias,
                 ConnectionTypeDescriptor::http_v1(),
             );
-            project.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING",&[&project_env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
+            sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING").bind(&project_env_key).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&connection.store_alias).execute(&mut project).await.map(|result| result.rows_affected())?;
             let selection = wamn_runtime::local_application::selection(
                 &requirement,
                 &upstream.connection_id,
@@ -686,12 +737,11 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             });
         }
     }
-    let (mut target, driver) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(driver);
-    let tx = target.transaction().await?;
+    let mut target = wamn_postgres::connect(database.url()).await?;
+
+    let mut tx = target.begin().await?;
     wamn_environment_control::environment::bindings::write(
-        &tx,
+        &mut tx,
         &project_env_key,
         digest,
         &document,
@@ -724,7 +774,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let rendered = render_fixture::environment(&document, &published.manifest, &group_path, 70)?;
     let documents = render_fixture::template(&rendered, NAMESPACE)?;
     let mut secrets = credential_secrets(
-        &project,
+        &mut project,
         &mut system,
         database.url(),
         control.url(),
@@ -860,7 +910,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 workload_id: workload,
             };
             let response: v2::WorkloadStatusResponse = serde_json::from_slice(
-                &client
+                &mut client
                     .request(
                         rpc_subject(&heartbeat.id, "workload.status"),
                         serde_json::to_vec(&request)?.into(),
@@ -887,7 +937,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &wiring.wiring_id,
             )
             .await?;
-            let (status, body) = outcome(&project, &run).await?;
+            let (status, body) = outcome(&mut project, &run).await?;
             ensure!(status == expected, "{}: {status}: {body}", wiring.wiring_id);
             if expected == "completed" {
                 ensure!(
@@ -920,8 +970,6 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     if nats.try_wait()?.is_none() {
         nats.kill().await?;
     }
-    project_task.abort();
-    system_task.abort();
     if let Err(error) = &result {
         eprintln!(
             "{error:#}\nhost: {}\nstderr: {}",

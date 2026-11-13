@@ -10,6 +10,8 @@
 //! Postgres row: `apply` step 2 writes `catalog.releases` where it installs (R1
 //! (3), R2, §10.2).
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::verify_projected_environment_policy;
 pub use plan::{
@@ -24,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{Client, NoTls, Transaction};
+
 use wamn_catalog::{
     AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
     ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
@@ -324,10 +326,11 @@ pub async fn publish_local(
             .await?,
         "local candidates require a provisioned disposable environment"
     );
-    let (client, connection) = tokio_postgres::connect(target.database_url, NoTls).await?;
-    let driver = tokio::spawn(connection);
-    client
-        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&args.project_env_key()])
+    let mut client = wamn_postgres::connect(target.database_url).await?;
+
+    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(args.project_env_key())
+        .fetch_one(&mut client)
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
@@ -338,7 +341,8 @@ pub async fn publish_local(
     )
     .await?;
     let projected =
-        read_projected_environment_policy(&client, &run_schema, &args.project_env_key()).await?;
+        read_projected_environment_policy(&mut client, &run_schema, &args.project_env_key())
+            .await?;
     verify_projected_environment_policy(
         projected.as_ref(),
         &policy,
@@ -346,7 +350,6 @@ pub async fn publish_local(
         &run_schema,
     )?;
     drop(client);
-    driver.abort();
     Ok((assembled.published, assembled.facts))
 }
 
@@ -748,24 +751,24 @@ pub(crate) struct ProjectedEnvironmentPolicy {
 }
 
 pub(crate) async fn read_projected_environment_policy(
-    client: &Client,
+    client: &mut Client,
     run_schema: &BareSchemaName,
     project_env_key: &str,
 ) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
-    client
-        .query_opt(
-            &projected_environment_policy_sql(run_schema),
-            &[&project_env_key],
-        )
-        .await
-        .map(|row| {
-            row.map(|row| ProjectedEnvironmentPolicy {
-                expected_environment: row.get(0),
-                source_policy_org: row.get(1),
-                source_policy_hash: row.get(2),
-            })
+    sqlx::query(sqlx::AssertSqlSafe(projected_environment_policy_sql(
+        run_schema,
+    )))
+    .bind(project_env_key)
+    .fetch_optional(&mut *client)
+    .await
+    .map(|row| {
+        row.map(|row| ProjectedEnvironmentPolicy {
+            expected_environment: row.get(0),
+            source_policy_org: row.get(1),
+            source_policy_hash: row.get(2),
         })
-        .map_err(|error| storage("read the provisioned environment policy", error))
+    })
+    .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
 /// Read the environment's lifecycle setting from its registry row.
@@ -775,8 +778,10 @@ async fn read_environment_disposable(
     env: &str,
 ) -> anyhow::Result<bool> {
     on_control_plane(control_database_url, async |control| {
-        Ok(control
-            .query_one(wamn_registry::sql::ENVIRONMENT_DISPOSABLE, &[&org, &env])
+        Ok(sqlx::query(wamn_registry::sql::ENVIRONMENT_DISPOSABLE)
+            .bind(org)
+            .bind(env)
+            .fetch_one(&mut *control)
             .await?
             .get(0))
     })
@@ -790,24 +795,15 @@ pub(crate) async fn on_control_plane<F, T>(
 where
     F: AsyncFnOnce(&mut Client) -> anyhow::Result<T>,
 {
-    let (mut control, connection) = tokio_postgres::connect(control_database_url, NoTls)
+    let mut control = wamn_postgres::connect(control_database_url)
         .await
         .context("connect to the control database")?;
-    let connection_task = tokio::spawn(connection);
+
     let outcome = write(&mut control).await;
     drop(control);
     match outcome {
-        Ok(outcome) => {
-            connection_task
-                .await
-                .context("join the control-plane connection")?
-                .context("drive the control-plane connection")?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            connection_task.abort();
-            Err(error)
-        }
+        Ok(outcome) => Ok(outcome),
+        Err(error) => Err(error),
     }
 }
 
@@ -975,22 +971,25 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
 
 /// Read the canonical bytes of an installed release.
 pub async fn read_release(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     manifest_digest: &str,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
-    transaction
-        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
+    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut **transaction)
         .await
         .map_err(|error| storage("bind the release project identity", error))?;
-    transaction
-        .query_opt(READ_RELEASE_SQL, &[&project_env_key, &manifest_digest])
+    sqlx::query(READ_RELEASE_SQL)
+        .bind(project_env_key)
+        .bind(manifest_digest)
+        .fetch_optional(&mut **transaction)
         .await
         .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| storage("read the release", error))
 }
 
-fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManifestError {
+fn storage(context: &'static str, error: sqlx::Error) -> PublishManifestError {
     PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
 }
 

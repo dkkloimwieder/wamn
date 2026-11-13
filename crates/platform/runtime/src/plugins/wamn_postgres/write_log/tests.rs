@@ -375,7 +375,7 @@ async fn model_versions_follow_wal_without_a_counter() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let family = wamn_control_provision::WorkloadRoleFamily::HttpAdmitter;
-    let role = wamn_control_provision::workload_generation_role(
+    let role = wamn_control_provision::workload_login(
         family,
         wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
             org: "wal-test",
@@ -383,16 +383,13 @@ async fn model_versions_follow_wal_without_a_counter() {
             environment: "test",
             database: database.name(),
         },
-        wamn_control_provision::CredentialGeneration::A,
     )
     .unwrap();
     database
         .execute(&[&format!(
             "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
             postgres_protocol::escape::escape_identifier(&role),
-            wamn_control_provision::sql::normalize_workload_generation_membership_sql(
-                family, &role, true
-            ),
+            wamn_control_provision::test_database::membership_sql(family, &role, true),
         )])
         .unwrap();
     let mut reader_url = url::Url::parse(database.url()).unwrap();

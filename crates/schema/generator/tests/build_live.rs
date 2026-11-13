@@ -4,6 +4,7 @@
 //! into a directory of its own and builds it against the server of the test
 //! process. The build creates and drops its own verification database there.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,13 +24,17 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
     let mut server = wamn_test_postgres::start(&[])?;
     let first = server.create_database("first")?;
     let second = server.create_database("second")?;
-    let (admin, connection) = tokio_postgres::connect(first.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    admin.batch_execute("CREATE ROLE wamn_app NOLOGIN").await?;
+    let mut admin = wamn_postgres::connect(first.url()).await?;
+
+    sqlx::raw_sql("CREATE ROLE wamn_app NOLOGIN NOINHERIT")
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
     // Hold both creators after their absence tests, before either role insert.
-    admin
-        .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_authid IN SHARE MODE")
-        .await?;
+    sqlx::raw_sql("BEGIN; LOCK TABLE pg_catalog.pg_authid IN SHARE MODE")
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
     let first_workspace = Workspace::new("concurrent-first");
     let second_workspace = Workspace::new("concurrent-second");
     let first_package = first_workspace.package();
@@ -41,14 +46,13 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
     let unlock = async {
         let waiting = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let waiting: i64 = admin
-                    .query_one(
-                        "SELECT count(*) FROM pg_locks WHERE relation='pg_catalog.pg_authid'::regclass \
+                let waiting: i64 = sqlx::query(
+                    "SELECT count(*) FROM pg_locks WHERE relation='pg_catalog.pg_authid'::regclass \
                          AND mode='RowExclusiveLock' AND NOT granted",
-                        &[],
-                    )
-                    .await?
-                    .get(0);
+                )
+                .fetch_one(&mut admin)
+                .await?
+                .get(0);
                 if waiting == 2 {
                     return Ok::<_, anyhow::Error>(());
                 }
@@ -56,7 +60,10 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
             }
         })
         .await;
-        admin.batch_execute("COMMIT").await?;
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut admin)
+            .await
+            .map(drop)?;
         waiting??;
         Ok::<_, anyhow::Error>(())
     };
@@ -69,7 +76,6 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
     first_result?;
     second_result?;
     drop(admin);
-    connection.await??;
     Ok(())
 }
 
@@ -186,7 +192,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
         "operations: {\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
         "operations: {\n                get: {revision_field = \"edit_version\", result = \"one\"}\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
     );
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     assert!(!workspace.package().join("generated").exists());
 
     let first = workspace.root.join("target-first");
@@ -298,7 +304,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
 /// null is refused.
 #[tokio::test(flavor = "current_thread")]
 async fn statement_types_are_derived_and_nullability_only_widens() {
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
 
     let accepted = Workspace::new("accepted");
     accepted.edit_manifest(
@@ -385,7 +391,7 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
     JOIN inventory.widget_tag AS items ON items.id = line.tag_id";
 
 async fn authored_feed_build(workspace: &Workspace) -> anyhow::Result<Value> {
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::new(
         &workspace.package(),
@@ -574,7 +580,7 @@ async fn authored_feed_refuses_a_key_other_than_the_root_id() {
 #[tokio::test(flavor = "current_thread")]
 async fn projection_view_keeps_non_null_and_nullable_declarations() {
     for nullable in [false, true] {
-        let database = wamn_test_postgres::database();
+        let mut database = wamn_test_postgres::database();
         let workspace = projection_view_workspace(if nullable {
             "view-nullable"
         } else {
@@ -685,7 +691,7 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
         );
     }
     let workspace = projection_view_workspace("view-undeclared");
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::new(
         &workspace.package(),
@@ -712,7 +718,7 @@ async fn projection_view_refuses_a_wrong_declared_type_and_names_the_field() {
         "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
         "manifest.int32(\"code\"), manifest.int32(\"edit_version\")",
     );
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let error = generate_package(&BuildRequest::new(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
@@ -735,7 +741,7 @@ async fn projection_view_does_not_hide_nullable_table_columns() {
     );
     fs::write(workspace.package().join("query/widget_list.sql"),
         "SELECT screen.id, widget.note AS code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id ORDER BY screen.id;\n").unwrap();
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let error = generate_package(&BuildRequest::new(
         &workspace.package(),
         &workspace.root.join("target/wamn"),
@@ -755,7 +761,7 @@ async fn projection_view_does_not_hide_nullable_table_columns() {
 async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
     let workspace = Workspace::new("stale-base-pin");
     fs::write(workspace.root.join("Cargo.toml"), "[workspace]\n").unwrap();
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     let base_request = BuildRequest::new(&workspace.package(), &output_root, database.url());
     let base = generate_package(&base_request)
@@ -890,7 +896,7 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
 #[tokio::test(flavor = "current_thread")]
 async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
     let workspace = Workspace::new("nested-base");
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let output = workspace.root.join("target/wamn");
     let first = wamn_compiler::build::generate_package(&BuildRequest::new(
         &workspace.package(),
@@ -939,7 +945,7 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records()
         "ALTER TABLE inventory.widget ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN updated_by uuid NOT NULL;",
     )
     .unwrap();
-    let database = wamn_test_postgres::database();
+    let mut database = wamn_test_postgres::database();
     let output = workspace.root.join("selected-output");
     generate_package(&BuildRequest::new(
         &workspace.package(),

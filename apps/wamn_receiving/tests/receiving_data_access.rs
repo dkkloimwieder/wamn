@@ -2,13 +2,16 @@
 
 #[cfg(test)]
 mod tests {
+    use sqlx::PgConnection as Client;
+    use sqlx::postgres::PgRow as Row;
+    use sqlx::{Connection as _, Row as _, Statement as _};
     use std::collections::{BTreeMap, BTreeSet};
 
     use anyhow::{Context as _, Result, bail, ensure};
     use chrono::{DateTime, Utc};
     use serde::Deserialize;
     use serde_json::{Value, json};
-    use tokio_postgres::{Client, NoTls, Row, Transaction};
+
     use uuid::Uuid;
     use wamn_digest::canonical_json_bytes;
 
@@ -134,7 +137,7 @@ mod tests {
     #[derive(Debug)]
     enum CommandAttemptError {
         Domain(DomainRefusal),
-        Database(tokio_postgres::Error),
+        Database(sqlx::Error),
         Internal(String),
     }
 
@@ -188,22 +191,26 @@ mod tests {
             .create_database("receiving_feed_measurement")?
             .url()
             .to_owned();
-        let client = connect(&url).await?;
-        assert_postgres_18(&client).await?;
-        client
-            .batch_execute(
-                "CREATE SCHEMA receiving; \
+        let mut client = connect(&url).await?;
+        assert_postgres_18(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("CREATE SCHEMA receiving; \
                  CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS",
-            )
-            .await?;
-        client.batch_execute(MIGRATION).await?;
+                   NOINHERIT NOREPLICATION NOBYPASSRLS")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        install_record_history(&client, &generated(MANIFEST)).await?;
-        select_receiving_schema(&client).await?;
-        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
-        client.batch_execute(
-            "INSERT INTO supplier (id, name) VALUES (md5('feed-supplier')::uuid, 'Feed supplier');
+        install_record_history(&mut client, &generated(MANIFEST)).await?;
+        select_receiving_schema(&mut client).await?;
+        bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO supplier (id, name) VALUES (md5('feed-supplier')::uuid, 'Feed supplier');
              INSERT INTO item (id, item_number)
                 SELECT md5('feed-item-' || n)::uuid, 'FEED-ITEM-' || n FROM generate_series(1, 10000) AS n;
              INSERT INTO purchase_order (id, purchase_order_number, supplier_id, status)
@@ -214,15 +221,18 @@ mod tests {
                        md5('feed-item-' || n)::uuid, 10 FROM generate_series(1, 10000) AS n;
              ANALYZE receiving.item; ANALYZE receiving.purchase_order; ANALYZE receiving.purchase_order_line;
              ANALYZE receiving.item_history; ANALYZE receiving.purchase_order_history;
-             ANALYZE receiving.purchase_order_line_history;"
-        ).await?;
-        let count: i64 = client
-            .query_one("SELECT count(*) FROM receipt_screen_line", &[])
+             ANALYZE receiving.purchase_order_line_history;").to_string())).execute(&mut client).await.map(drop)?;
+        let count: i64 = sqlx::query("SELECT count(*) FROM receipt_screen_line")
+            .fetch_one(&mut client)
             .await?
             .get(0);
         ensure!(count == 10_000, "measurement needs 10,000 synthetic lines");
         let changes_sql = generated_sql(CHANGES);
-        let changes = client.prepare(&changes_sql).await?;
+        let changes = sqlx::Executor::prepare(
+            &mut client,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe((&changes_sql).to_string())),
+        )
+        .await?;
         // Keep the generated bounds and affected CTE verbatim for its separate plan.
         let (_, from) = changes_sql
             .split_once("\nFROM (")
@@ -233,13 +243,17 @@ mod tests {
         let affected = format!(
             "SELECT bound.feed_end, page.change_id, page.change_transaction\nFROM ({affected}) SELECT change_id, change_transaction FROM affected\n) AS page ON true ORDER BY page.change_transaction, page.change_id;"
         );
-        let affected = client
-            .prepare(&format!("EXPLAIN (ANALYZE, BUFFERS) {affected}"))
-            .await?;
-        let restricted = client.prepare(&format!(
+        let affected = sqlx::Executor::prepare(
+            &mut client,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(
+                (&format!("EXPLAIN (ANALYZE, BUFFERS) {affected}")).to_string(),
+            )),
+        )
+        .await?;
+        let restricted = sqlx::Executor::prepare(&mut client, sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe((&format!(
             "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM ({}) AS result WHERE result.line_id = ANY($1::uuid[])",
             OPEN_LINES.trim().trim_end_matches(';')
-        )).await?;
+        )).to_string()))).await?;
         for (table, prefix, change) in [
             (
                 "purchase_order_line",
@@ -253,17 +267,15 @@ mod tests {
                 let mut totals = Vec::with_capacity(RUNS);
                 let mut first_calls = Vec::with_capacity(RUNS);
                 for run in 0..RUNS {
-                    let transaction: i64 = client
-                        .query_one(
-                            "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8",
-                            &[],
-                        )
-                        .await?
-                        .get(0);
+                    let transaction: i64 =
+                        sqlx::query("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8")
+                            .fetch_one(&mut client)
+                            .await?
+                            .get(0);
                     if changed != 0 {
-                        let written = client.execute(&format!(
+                        let written = sqlx::query(sqlx::AssertSqlSafe((&format!(
                             "UPDATE {table} SET {change} WHERE id IN (SELECT md5('feed-{prefix}-' || n)::uuid FROM generate_series(1, $1::int4) AS n)"
-                        ), &[&changed]).await?;
+                        )).to_string())).bind(&changed).execute(&mut client).await.map(|result| result.rows_affected())?;
                         ensure!(written == u64::try_from(changed)?);
                     }
                     let start = Instant::now();
@@ -274,8 +286,11 @@ mod tests {
                     let mut first_keys = Vec::<Uuid>::new();
                     loop {
                         let call = Instant::now();
-                        let rows = client
-                            .query(&changes, &[&position, &after, &101_i64])
+                        let rows = sqlx::query(changes.sql().clone())
+                            .bind(&position)
+                            .bind(&after)
+                            .bind(&101_i64)
+                            .fetch_all(&mut client)
                             .await?;
                         if calls == 0 {
                             first_calls.push(call.elapsed());
@@ -283,7 +298,7 @@ mod tests {
                         calls += 1;
                         let rows = rows
                             .iter()
-                            .filter(|row| row.get::<_, Option<Uuid>>("change_id").is_some())
+                            .filter(|row| row.get::<Option<Uuid>, _>("change_id").is_some())
                             .collect::<Vec<_>>();
                         let page = &rows[..rows.len().min(PAGE)];
                         if calls == 1 {
@@ -291,7 +306,7 @@ mod tests {
                         }
                         ensure!(
                             page.iter()
-                                .all(|row| row.get::<_, Option<bool>>("present") == Some(true))
+                                .all(|row| row.get::<Option<bool>, _>("present") == Some(true))
                         );
                         seen += page.len();
                         if rows.len() <= PAGE {
@@ -308,18 +323,25 @@ mod tests {
                     );
                     if run + 1 == RUNS {
                         println!("EXPLAIN affected ids: {table}, {changed} changed rows");
-                        for row in client
-                            .query(&affected, &[&transaction, &None::<Uuid>, &101_i64])
+                        for row in sqlx::query(affected.sql().clone())
+                            .bind(&transaction)
+                            .bind(&None::<Uuid>)
+                            .bind(&101_i64)
+                            .fetch_all(&mut client)
                             .await?
                         {
-                            println!("{}", row.get::<_, String>(0));
+                            println!("{}", row.get::<String, _>(0));
                         }
                         println!(
                             "EXPLAIN restricted run: {table}, {changed} changed rows, {} page keys",
                             first_keys.len()
                         );
-                        for row in client.query(&restricted, &[&first_keys]).await? {
-                            println!("{}", row.get::<_, String>(0));
+                        for row in sqlx::query(restricted.sql().clone())
+                            .bind(&first_keys)
+                            .fetch_all(&mut client)
+                            .await?
+                        {
+                            println!("{}", row.get::<String, _>(0));
                         }
                     }
                 }
@@ -346,20 +368,24 @@ mod tests {
 
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server.create_database("receiving_views")?.url().to_owned();
-        let client = connect(&url).await?;
-        assert_postgres_18(&client).await?;
-        client
-            .batch_execute(
-                "BEGIN; CREATE SCHEMA receiving; \
+        let mut client = connect(&url).await?;
+        assert_postgres_18(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("BEGIN; CREATE SCHEMA receiving; \
                  CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS",
-            )
-            .await?;
-        client.batch_execute(MIGRATION).await?;
+                   NOINHERIT NOREPLICATION NOBYPASSRLS")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        client
-            .batch_execute(
-                "INSERT INTO receiving.supplier (id, name) VALUES
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("INSERT INTO receiving.supplier (id, name) VALUES
                 ('00000000-0000-0000-0000-000000000001', 'Supplier A'),
                 ('00000000-0000-0000-0000-000000000002', 'Supplier B');
              INSERT INTO receiving.item (id, item_number) VALUES
@@ -387,9 +413,12 @@ mod tests {
                  '00000000-0000-0000-0000-000000000011', 4, 2),
                 ('00000000-0000-0000-0000-000000000201',
                  '00000000-0000-0000-0000-000000000102', 1,
-                 '00000000-0000-0000-0000-000000000011', 10.2500, 1.2500);",
-            )
-            .await?;
+                 '00000000-0000-0000-0000-000000000011', 10.2500, 1.2500);")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
 
         let manifest: Value = serde_json::from_slice(&generated(MANIFEST))?;
         for (operation, statement) in [
@@ -424,7 +453,11 @@ mod tests {
         ensure!(overlay["relations"].as_array().unwrap().len() == 2);
         let overlay = DataAccessOverlay::from_slice(&serde_json::to_vec(&overlay)?)?;
         let mut fields = BTreeMap::<String, Vec<String>>::new();
-        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
+        for row in sqlx::query(RELATION_FIELDS_SQL)
+            .bind(&"receiving")
+            .fetch_all(&mut client)
+            .await?
+        {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
         let fields = fields
@@ -432,36 +465,56 @@ mod tests {
             .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
             .collect::<Vec<_>>();
         let authority = derive_effective_data_access(&fields, &[overlay])?;
-        client
-            .batch_execute(&render_effective_data_access_sql(&authority)?)
-            .await?;
-        select_receiving_schema(&client).await?;
-        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&render_effective_data_access_sql(&authority)?).to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        select_receiving_schema(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("SET LOCAL ROLE wamn_app").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         for table in ["purchase_order", "purchase_order_line", "supplier", "item"] {
             let relation = format!("receiving.{table}");
-            let access: bool = client
-                .query_one(
-                    "SELECT has_any_column_privilege(current_user, $1, 'SELECT')",
-                    &[&relation],
-                )
-                .await?
-                .get(0);
+            let access: bool =
+                sqlx::query("SELECT has_any_column_privilege(current_user, $1, 'SELECT')")
+                    .bind(&relation)
+                    .fetch_one(&mut client)
+                    .await?
+                    .get(0);
             ensure!(!access, "view reader can read base table {relation}");
         }
 
         let empty = Uuid::from_u128(0x101);
-        ensure!(client.query(SCREEN_SQL, &[&empty]).await?.is_empty());
+        ensure!(
+            sqlx::query(SCREEN_SQL)
+                .bind(&empty)
+                .fetch_all(&mut client)
+                .await?
+                .is_empty()
+        );
         let missing = Uuid::from_u128(0x999);
-        ensure!(client.query(SCREEN_SQL, &[&missing]).await?.is_empty());
+        ensure!(
+            sqlx::query(SCREEN_SQL)
+                .bind(&missing)
+                .fetch_all(&mut client)
+                .await?
+                .is_empty()
+        );
         let order = Uuid::from_u128(0x102);
         let screen = format!(
             "SELECT to_jsonb(row) FROM ({}) AS row",
             SCREEN_SQL.trim().trim_end_matches(';')
         );
-        let rows = client.query(&screen, &[&order]).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe((&screen).to_string()))
+            .bind(&order)
+            .fetch_all(&mut client)
+            .await?;
         let rows = rows
             .iter()
-            .map(|row| row.get::<_, Value>(0))
+            .map(|row| row.get::<Value, _>(0))
             .collect::<Vec<_>>();
         ensure!(rows.len() == 2);
         ensure!(rows[0]["line_number"] == 1 && rows[1]["line_number"] == 2);
@@ -474,7 +527,10 @@ mod tests {
         ensure!(rows[0]["remaining_quantity"].as_f64() == Some(9.0));
         ensure!(rows[1]["remaining_quantity"].as_f64() == Some(2.0));
 
-        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("SET LOCAL ROLE wamn_app").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         let summary = format!(
             "SELECT to_jsonb(row) FROM ({}) AS row",
             SUMMARY_SQL.trim().trim_end_matches(';')
@@ -485,10 +541,14 @@ mod tests {
             (Uuid::from_u128(2), "open", vec!["PO-OTHER"]),
             (Uuid::from_u128(2), "cancelled", vec![]),
         ] {
-            let rows = client.query(&summary, &[&supplier, &status]).await?;
+            let rows = sqlx::query(sqlx::AssertSqlSafe((&summary).to_string()))
+                .bind(&supplier)
+                .bind(&status)
+                .fetch_all(&mut client)
+                .await?;
             let rows = rows
                 .iter()
-                .map(|row| row.get::<_, Value>(0))
+                .map(|row| row.get::<Value, _>(0))
                 .collect::<Vec<_>>();
             ensure!(
                 rows.iter()
@@ -522,7 +582,10 @@ mod tests {
                 );
             }
         }
-        client.batch_execute("ROLLBACK").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         Ok(())
     }
 
@@ -536,43 +599,58 @@ mod tests {
         // The fixture creates the shared role wamn_app, so the test starts its own server.
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server.create_database("receiving")?.url().to_owned();
-        let client = connect(&url).await?;
-        assert_postgres_18(&client).await?;
-        assert_fresh_receiving_schema(&client).await?;
+        let mut client = connect(&url).await?;
+        assert_postgres_18(&mut client).await?;
+        assert_fresh_receiving_schema(&mut client).await?;
         // All fixture DDL, grants, role creation, and row changes roll back.
         // record-history-app-grants.sql grants the log function's image
         // rendering to wamn_app, so the role comes first.
-        client
-            .batch_execute(
-                "BEGIN; CREATE SCHEMA receiving; \
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("BEGIN; CREATE SCHEMA receiving; \
              CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS",
-            )
-            .await?;
-        client.batch_execute(MIGRATION).await?;
+               NOINHERIT NOREPLICATION NOBYPASSRLS")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        install_record_history(&client, &generated(MANIFEST)).await?;
-        client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
+        install_record_history(&mut client, &generated(MANIFEST)).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((OVERLAY_FIELDS_MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        client
-            .batch_execute(
-                "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text",
-            )
-            .await?;
-        select_receiving_schema(&client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        select_receiving_schema(&mut client).await?;
         let id = Uuid::new_v4();
         let initial_supplier = Uuid::new_v4();
         let changed_supplier = Uuid::new_v4();
-        insert_purchase_order(&client, id, "PO-additive", initial_supplier, "open").await?;
-        client
-            .execute(
-                "UPDATE purchase_order SET overlay_compatibility_note = 'untouched' WHERE id = $1",
-                &[&id],
-            )
-            .await?;
+        insert_purchase_order(&mut client, id, "PO-additive", initial_supplier, "open").await?;
+        sqlx::query(
+            "UPDATE purchase_order SET overlay_compatibility_note = 'untouched' WHERE id = $1",
+        )
+        .bind(&id)
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())?;
 
         let mut fields = BTreeMap::<String, Vec<String>>::new();
-        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
+        for row in sqlx::query(RELATION_FIELDS_SQL)
+            .bind(&"receiving")
+            .fetch_all(&mut client)
+            .await?
+        {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
         let relation_fields = fields
@@ -588,20 +666,23 @@ mod tests {
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;
-        client
-            .batch_execute(&render_effective_data_access_sql(&authority)?)
-            .await?;
-        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
-        let grants = client.query_one(
-            "SELECT current_user::text, \
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&render_effective_data_access_sql(&authority)?).to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("SET LOCAL ROLE wamn_app").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
+        let grants = sqlx::query("SELECT current_user::text, \
              has_table_privilege(current_user, 'receiving.purchase_order', 'SELECT'), \
-             has_column_privilege(current_user, 'receiving.purchase_order', 'overlay_compatibility_note', 'SELECT')",
-            &[],
-        ).await?;
+             has_column_privilege(current_user, 'receiving.purchase_order', 'overlay_compatibility_note', 'SELECT')").fetch_one(&mut client).await?;
         ensure!(
-            grants.get::<_, String>(0) == "wamn_app"
-                && !grants.get::<_, bool>(1)
-                && !grants.get::<_, bool>(2),
+            grants.get::<String, _>(0) == "wamn_app"
+                && !grants.get::<bool, _>(1)
+                && !grants.get::<bool, _>(2),
             "fixture must use exact column grants without SELECT on the additive field"
         );
 
@@ -615,25 +696,38 @@ mod tests {
             .split_once("\n)\nSELECT")
             .context("generated update must retain its outer result projection")?;
         let wildcard = format!("{before}    RETURNING model.*\n)\nSELECT{after}");
-        client
-            .batch_execute("SAVEPOINT wildcard_projection")
-            .await?;
-        let refusal = client
-            .query_one(&wildcard, &[&id, &1_i32, &true, &Some(changed_supplier)])
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("SAVEPOINT wildcard_projection").to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        let refusal = sqlx::query(sqlx::AssertSqlSafe((&wildcard).to_string()))
+            .bind(&id)
+            .bind(&1_i32)
+            .bind(&true)
+            .bind(&Some(changed_supplier))
+            .fetch_one(&mut client)
             .await
             .expect_err("wildcard RETURNING must require SELECT on the added field");
-        client
-            .batch_execute(
-                "ROLLBACK TO SAVEPOINT wildcard_projection; RELEASE SAVEPOINT wildcard_projection",
-            )
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("ROLLBACK TO SAVEPOINT wildcard_projection; RELEASE SAVEPOINT wildcard_projection")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
         ensure!(
-            refusal.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            refusal
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref()
+                == Some("42501"),
             "wildcard control refused for a different reason: {refusal}"
         );
         eprintln!("wildcard RETURNING control: SQLSTATE 42501");
 
-        let updated = execute_update(&client, id, 1, changed_supplier)
+        let updated = execute_update(&mut client, id, 1, changed_supplier)
             .await
             .context("execute exact base UPDATE with an ungranted additive field")?;
         ensure!(
@@ -647,49 +741,58 @@ mod tests {
                 && updated.updated_at.is_some(),
             "base update changed its declared row payload"
         );
-        let overlay = client
-            .query_one(
-                &generated_sql(OVERLAY_UPDATE_SQL),
-                &[&id, &2_i32, &true, &Some(true), &false, &None::<String>],
-            )
-            .await
-            .context("execute exact overlay UPDATE with an ungranted additive field")?;
+        let overlay = sqlx::query(sqlx::AssertSqlSafe(
+            (&generated_sql(OVERLAY_UPDATE_SQL)).to_string(),
+        ))
+        .bind(&id)
+        .bind(&2_i32)
+        .bind(&true)
+        .bind(&Some(true))
+        .bind(&false)
+        .bind(&None::<String>)
+        .fetch_one(&mut client)
+        .await
+        .context("execute exact overlay UPDATE with an ungranted additive field")?;
         ensure!(
-            overlay.get::<_, String>("outcome") == "updated"
-                && overlay.get::<_, Option<Uuid>>("id") == Some(id)
-                && overlay.get::<_, Option<i32>>("row_version") == Some(3)
-                && overlay.get::<_, Option<bool>>("acme_inspection_required") == Some(true)
+            overlay.get::<String, _>("outcome") == "updated"
+                && overlay.get::<Option<Uuid>, _>("id") == Some(id)
+                && overlay.get::<Option<i32>, _>("row_version") == Some(3)
+                && overlay.get::<Option<bool>, _>("acme_inspection_required") == Some(true)
                 && overlay
-                    .get::<_, Option<String>>("acme_quality_status")
+                    .get::<Option<String>, _>("acme_quality_status")
                     .as_deref()
                     == Some("not_required"),
             "overlay update changed its declared row payload"
         );
-        let stale = execute_update(&client, id, 1, initial_supplier).await?;
+        let stale = execute_update(&mut client, id, 1, initial_supplier).await?;
         ensure!(
             stale.outcome == "concurrency_conflict",
             "stale update lost its conflict outcome"
         );
         assert_null_payload(&stale)?;
-        let missing = execute_update(&client, Uuid::new_v4(), 1, initial_supplier).await?;
+        let missing = execute_update(&mut client, Uuid::new_v4(), 1, initial_supplier).await?;
         ensure!(
             missing.outcome == "not_found",
             "missing update lost its not_found outcome"
         );
         assert_null_payload(&missing)?;
 
-        client.batch_execute("RESET ROLE").await?;
-        let stored = client.query_one(
-            "SELECT supplier_id, row_version, overlay_compatibility_note FROM purchase_order WHERE id = $1", &[&id],
-        ).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("RESET ROLE").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
+        let stored = sqlx::query("SELECT supplier_id, row_version, overlay_compatibility_note FROM purchase_order WHERE id = $1").bind(&id).fetch_one(&mut client).await?;
         ensure!(
-            stored.get::<_, Uuid>(0) == changed_supplier
-                && stored.get::<_, i32>(1) == 3
-                && stored.get::<_, String>(2) == "untouched",
+            stored.get::<Uuid, _>(0) == changed_supplier
+                && stored.get::<i32, _>(1) == 3
+                && stored.get::<String, _>(2) == "untouched",
             "updates changed unrelated stored state"
         );
-        client.batch_execute("ROLLBACK").await?;
-        assert_fresh_receiving_schema(&client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
+        assert_fresh_receiving_schema(&mut client).await?;
         Ok(())
     }
 
@@ -708,27 +811,35 @@ mod tests {
         // The fixture creates the shared role wamn_app, so the test starts its own server.
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server.create_database("receiving")?.url().to_owned();
-        let client = connect(&url).await?;
-        assert_postgres_18(&client).await?;
-        assert_fresh_receiving_schema(&client).await?;
+        let mut client = connect(&url).await?;
+        assert_postgres_18(&mut client).await?;
+        assert_fresh_receiving_schema(&mut client).await?;
         // All fixture DDL, grants, role creation, and row changes roll back.
-        client
-            .batch_execute(
-                "BEGIN; CREATE SCHEMA receiving; \
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("BEGIN; CREATE SCHEMA receiving; \
              CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS",
-            )
-            .await?;
-        client.batch_execute(MIGRATION).await?;
+               NOINHERIT NOREPLICATION NOBYPASSRLS")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        install_record_history(&client, &generated(MANIFEST)).await?;
-        client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
+        install_record_history(&mut client, &generated(MANIFEST)).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((OVERLAY_FIELDS_MIGRATION).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        install_record_history(&client, &generated(OVERLAY_MANIFEST)).await?;
-        select_receiving_schema(&client).await?;
+        install_record_history(&mut client, &generated(OVERLAY_MANIFEST)).await?;
+        select_receiving_schema(&mut client).await?;
         let id = Uuid::from_u128(0x800);
         insert_purchase_order(
-            &client,
+            &mut client,
             id,
             "PO-overlay-history",
             Uuid::from_u128(0x801),
@@ -737,7 +848,11 @@ mod tests {
         .await?;
 
         let mut fields = BTreeMap::<String, Vec<String>>::new();
-        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
+        for row in sqlx::query(RELATION_FIELDS_SQL)
+            .bind(&"receiving")
+            .fetch_all(&mut client)
+            .await?
+        {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
         let relation_fields = fields
@@ -753,44 +868,61 @@ mod tests {
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;
-        client
-            .batch_execute(&render_effective_data_access_sql(&authority)?)
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&render_effective_data_access_sql(&authority)?).to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
 
-        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
-        bind_actor(&client, COMMAND_PRINCIPAL).await?;
-        let updated = client
-            .query_one(
-                &generated_sql(OVERLAY_UPDATE_SQL),
-                &[&id, &1_i32, &true, &Some(true), &false, &None::<String>],
-            )
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("SET LOCAL ROLE wamn_app").to_string()))
+            .execute(&mut client)
             .await
-            .context("execute exact Acme purchase_order.update SQL as wamn_app")?;
-        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
+            .map(drop)?;
+        bind_actor(&mut client, COMMAND_PRINCIPAL).await?;
+        let updated = sqlx::query(sqlx::AssertSqlSafe(
+            (&generated_sql(OVERLAY_UPDATE_SQL)).to_string(),
+        ))
+        .bind(&id)
+        .bind(&1_i32)
+        .bind(&true)
+        .bind(&Some(true))
+        .bind(&false)
+        .bind(&None::<String>)
+        .fetch_one(&mut client)
+        .await
+        .context("execute exact Acme purchase_order.update SQL as wamn_app")?;
+        bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
         ensure!(
-            updated.get::<_, String>("outcome") == "updated"
-                && updated.get::<_, Option<i32>>("row_version") == Some(2)
-                && updated.get::<_, Option<bool>>("acme_inspection_required") == Some(true),
+            updated.get::<String, _>("outcome") == "updated"
+                && updated.get::<Option<i32>, _>("row_version") == Some(2)
+                && updated.get::<Option<bool>, _>("acme_inspection_required") == Some(true),
             "Acme purchase_order.update returned the wrong row"
         );
-        let read = client
-            .query(HISTORY_SQL, &[&id, &0_i64, &100_i32])
+        let read = sqlx::query(HISTORY_SQL)
+            .bind(&id)
+            .bind(&0_i64)
+            .bind(&100_i32)
+            .fetch_all(&mut client)
             .await
             .context("execute the Receiving history read as wamn_app")?;
-        client.batch_execute("RESET ROLE").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("RESET ROLE").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
 
-        let entries = client
-            .query(
-                "SELECT position, type, before::text, after::text, \
+        let entries = sqlx::query(
+            "SELECT position, type, before::text, after::text, \
                         wamn_history.row_image(purchase_order)::text AS current \
                    FROM purchase_order_history \
                    JOIN purchase_order ON purchase_order.id = $1::uuid \
                   WHERE row_key = jsonb_build_object('id', $1::uuid) \
                   ORDER BY position",
-                &[&id],
-            )
-            .await
-            .context("read the logged entries and the effective row")?;
+        )
+        .bind(&id)
+        .fetch_all(&mut client)
+        .await
+        .context("read the logged entries and the effective row")?;
         let [insert, update] = entries.as_slice() else {
             bail!(
                 "the insert and the overlay update logged {} entries",
@@ -811,21 +943,21 @@ mod tests {
             .collect::<BTreeSet<_>>();
         let (before, after) = (keys(update.get("before"))?, keys(update.get("after"))?);
         ensure!(
-            insert.get::<_, String>("type") == "insert"
-                && update.get::<_, String>("type") == "update"
+            insert.get::<String, _>("type") == "insert"
+                && update.get::<String, _>("type") == "update"
                 && before == changed
                 && after == changed,
             "the overlay update did not log a changed-column diff: {before:?} {after:?}"
         );
 
-        let current = update.get::<_, String>("current");
+        let current = update.get::<String, _>("current");
         let history = entries
             .iter()
             .map(|row| {
                 (
-                    row.get::<_, i64>("position"),
-                    row.get::<_, String>("type"),
-                    row.get::<_, String>("before"),
+                    row.get::<i64, _>("position"),
+                    row.get::<String, _>("type"),
+                    row.get::<String, _>("before"),
                 )
             })
             .collect::<Vec<_>>();
@@ -862,7 +994,7 @@ mod tests {
                 .collect::<std::result::Result<_, _>>()?)
         };
         ensure!(
-            state(insert.get("position"))? == image(&insert.get::<_, String>("after"))?
+            state(insert.get("position"))? == image(&insert.get::<String, _>("after"))?
                 && state(head)? == image(&current)?,
             "the fold did not reconstruct the effective row at each position"
         );
@@ -887,15 +1019,15 @@ mod tests {
             .iter()
             .map(|row| {
                 let declared_image = |column: &str| {
-                    row.get::<_, Option<String>>(column)
+                    row.get::<Option<String>, _>(column)
                         .and_then(|text| {
                             retain_columns(&text, &declared, &["created_at", "updated_at"])
                         })
                         .context("the history read returned an image")
                 };
                 Ok((
-                    row.get::<_, i64>("position"),
-                    row.get::<_, String>("type"),
+                    row.get::<i64, _>("position"),
+                    row.get::<String, _>("type"),
                     declared_image("before")?,
                     declared_image("current")?,
                 ))
@@ -925,8 +1057,11 @@ mod tests {
             "the base history read returned columns it does not declare: {base_columns:?}"
         );
 
-        client.batch_execute("ROLLBACK").await?;
-        assert_fresh_receiving_schema(&client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
+        assert_fresh_receiving_schema(&mut client).await?;
         Ok(())
     }
 
@@ -936,40 +1071,43 @@ mod tests {
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server.create_database("receiving")?.url().to_owned();
         let mut client = connect(&url).await?;
-        assert_postgres_18(&client).await?;
-        assert_fresh_receiving_schema(&client).await?;
+        assert_postgres_18(&mut client).await?;
+        assert_fresh_receiving_schema(&mut client).await?;
         // record-history-app-grants.sql grants to wamn_app, so the role comes first.
-        client
-            .batch_execute(
-                "CREATE SCHEMA receiving; \
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("CREATE SCHEMA receiving; \
                  CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                 ",
-            )
+                 ")
+            .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .context("create the Receiving schema and the application role")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
+            .execute(&mut client)
             .await
-            .context("create the Receiving schema and the application role")?;
-        client
-            .batch_execute(MIGRATION)
-            .await
+            .map(drop)
             .context("apply the exact Receiving migration")?;
 
-        install_record_history(&client, &generated(MANIFEST)).await?;
-        install_write_log(&client).await?;
-        select_receiving_schema(&client).await?;
+        install_record_history(&mut client, &generated(MANIFEST)).await?;
+        install_write_log(&mut client).await?;
+        select_receiving_schema(&mut client).await?;
 
-        assert_status_vocabulary(&client).await?;
+        assert_status_vocabulary(&mut client).await?;
 
         let subject_id = Uuid::from_u128(0x200);
         let initial_supplier = Uuid::from_u128(0x201);
         insert_purchase_order(
-            &client,
+            &mut client,
             subject_id,
             "PO-concurrency",
             initial_supplier,
             "open",
         )
         .await?;
-        let inserted = stamps(&client, subject_id).await?;
+        let inserted = stamps(&mut client, subject_id).await?;
         ensure!(
             inserted.created_by == FIXTURE_PRINCIPAL
                 && inserted.updated_by == FIXTURE_PRINCIPAL
@@ -979,14 +1117,14 @@ mod tests {
 
         let first_supplier = Uuid::from_u128(0x202);
         let second_supplier = Uuid::from_u128(0x203);
-        let first_client = connect(&url).await?;
-        let second_client = connect(&url).await?;
-        select_receiving_schema(&first_client).await?;
-        select_receiving_schema(&second_client).await?;
+        let mut first_client = connect(&url).await?;
+        let mut second_client = connect(&url).await?;
+        select_receiving_schema(&mut first_client).await?;
+        select_receiving_schema(&mut second_client).await?;
 
         let (first, second) = tokio::join!(
-            execute_update(&first_client, subject_id, 1, first_supplier),
-            execute_update(&second_client, subject_id, 1, second_supplier),
+            execute_update(&mut first_client, subject_id, 1, first_supplier),
+            execute_update(&mut second_client, subject_id, 1, second_supplier),
         );
         let attempts = [
             (first.context("first competing update")?, first_supplier),
@@ -1037,42 +1175,47 @@ mod tests {
         );
         assert_null_payload(&conflict.0)?;
 
-        let persisted = persisted_revision(&client, subject_id).await?;
+        let persisted = persisted_revision(&mut client, subject_id).await?;
         ensure!(
             persisted == (updated.1, 2),
             "competing updates did not persist one winner"
         );
 
-        assert_no_op_keeps_revision_and_stamps(&client, subject_id, persisted).await?;
+        assert_no_op_keeps_revision_and_stamps(&mut client, subject_id, persisted).await?;
 
         assert_record_receipt(&url, &mut client).await?;
-        client
-            .batch_execute(OVERLAY_FIELDS_MIGRATION)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((OVERLAY_FIELDS_MIGRATION).to_string()))
+            .execute(&mut client)
             .await
+            .map(drop)
             .context("apply the exact Acme field migration")?;
 
-        install_record_history(&client, &generated(OVERLAY_MANIFEST)).await?;
+        install_record_history(&mut client, &generated(OVERLAY_MANIFEST)).await?;
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
     }
 
     /// Install `deploy/sql/app-schema.sql`, whose write log the command claims in.
-    async fn install_write_log(client: &Client) -> Result<()> {
-        client
-            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+    async fn install_write_log(client: &mut Client) -> Result<()> {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (wamn_catalog::CATALOG_SCHEMA_SQL).to_string(),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .context("apply the catalog and connection projections")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((APP_SCHEMA_SQL).to_string()))
+            .execute(&mut *client)
             .await
-            .context("apply the catalog and connection projections")?;
-        client
-            .batch_execute(APP_SCHEMA_SQL)
-            .await
+            .map(drop)
             .context("apply the app schema and its write log")
     }
 
     /// Install the platform record-history functions, and the history tables and
     /// triggers that apply-package derives from the `audit_log` declarations of
     /// one package manifest.
-    async fn install_record_history(client: &Client, manifest: &[u8]) -> Result<()> {
+    async fn install_record_history(client: &mut Client, manifest: &[u8]) -> Result<()> {
         let manifest: wamn_compiler::manifest::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
         let logs = manifest.models.values().filter_map(|model| {
@@ -1111,33 +1254,36 @@ mod tests {
             .chain(logs)
             .collect::<Vec<_>>()
             .join("\n");
-        client
-            .batch_execute(&sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((&sql).to_string()))
+            .execute(&mut *client)
             .await
+            .map(drop)
             .context("install the package record-history triggers")
     }
 
-    async fn bind_actor(client: &Client, actor: Uuid) -> Result<()> {
-        client
-            .execute(
-                "SELECT set_config('app.user_id', $1, false), \
+    async fn bind_actor(client: &mut Client, actor: Uuid) -> Result<()> {
+        sqlx::query(
+            "SELECT set_config('app.user_id', $1, false), \
                         set_config('app.operation', $2, false)",
-                &[&actor.hyphenated().to_string(), &FIXTURE_OPERATION],
-            )
-            .await
-            .context("bind the fixture actor")?;
+        )
+        .bind(&actor.hyphenated().to_string())
+        .bind(&FIXTURE_OPERATION)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .context("bind the fixture actor")?;
         Ok(())
     }
 
-    async fn stamps(client: &Client, id: Uuid) -> Result<Stamps> {
-        let row = client
-            .query_one(
-                "SELECT created_at, created_by, updated_at, updated_by \
+    async fn stamps(client: &mut Client, id: Uuid) -> Result<Stamps> {
+        let row = sqlx::query(
+            "SELECT created_at, created_by, updated_at, updated_by \
                  FROM purchase_order WHERE id = $1",
-                &[&id],
-            )
-            .await
-            .context("read purchase_order stamps")?;
+        )
+        .bind(&id)
+        .fetch_one(&mut *client)
+        .await
+        .context("read purchase_order stamps")?;
         Ok(Stamps {
             created_at: row.get("created_at"),
             created_by: row.get("created_by"),
@@ -1149,7 +1295,7 @@ mod tests {
     /// A true no-op keeps the revision and every stamp, and returns the
     /// current row. A stale no-op still refuses.
     async fn assert_no_op_keeps_revision_and_stamps(
-        client: &Client,
+        client: &mut Client,
         id: Uuid,
         (supplier_id, row_version): (Uuid, i32),
     ) -> Result<()> {
@@ -1205,28 +1351,26 @@ mod tests {
         let enabled = Some(true);
         let before = stamps(client, purchase_order_id).await?;
         bind_actor(client, COMMAND_PRINCIPAL).await?;
-        let updated = client
-            .query_one(
-                &generated_sql(OVERLAY_UPDATE_SQL),
-                &[
-                    &purchase_order_id,
-                    &1_i32,
-                    &true,
-                    &enabled,
-                    &false,
-                    &no_quality_status,
-                ],
-            )
-            .await
-            .context("execute exact Acme purchase_order.update SQL")?;
+        let updated = sqlx::query(sqlx::AssertSqlSafe(
+            (&generated_sql(OVERLAY_UPDATE_SQL)).to_string(),
+        ))
+        .bind(&purchase_order_id)
+        .bind(&1_i32)
+        .bind(&true)
+        .bind(&enabled)
+        .bind(&false)
+        .bind(&no_quality_status)
+        .fetch_one(&mut *client)
+        .await
+        .context("execute exact Acme purchase_order.update SQL")?;
         ensure!(
-            updated.get::<_, String>("outcome") == "updated"
-                && updated.get::<_, Option<bool>>("acme_inspection_required") == Some(true)
+            updated.get::<String, _>("outcome") == "updated"
+                && updated.get::<Option<bool>, _>("acme_inspection_required") == Some(true)
                 && updated
-                    .get::<_, Option<String>>("acme_quality_status")
+                    .get::<Option<String>, _>("acme_quality_status")
                     .as_deref()
                     == Some("not_required")
-                && updated.get::<_, Option<i32>>("row_version") == Some(2),
+                && updated.get::<Option<i32>, _>("row_version") == Some(2),
             "Acme purchase_order.update returned the wrong state"
         );
         // The overlay declares no record history, and its update stamps the base columns.
@@ -1237,7 +1381,7 @@ mod tests {
                 && after.created_by == FIXTURE_PRINCIPAL
                 && after.updated_by == COMMAND_PRINCIPAL
                 && after.updated_at > before.updated_at
-                && updated.get::<_, Option<Uuid>>("updated_by") == Some(COMMAND_PRINCIPAL),
+                && updated.get::<Option<Uuid>, _>("updated_by") == Some(COMMAND_PRINCIPAL),
             "Acme purchase_order.update did not stamp the base columns: {after:?}"
         );
 
@@ -1280,97 +1424,102 @@ mod tests {
             !execute_create_inspection(client, replayed.receipt_id).await?,
             "replayed receipt inserted another inspection"
         );
-        let pending = client
-            .query_one(
-                "SELECT count(*)::int8 AS inspection_count, min(status) AS status, \
+        let pending = sqlx::query(
+            "SELECT count(*)::int8 AS inspection_count, min(status) AS status, \
                         min(row_version) AS row_version \
                    FROM quality_inspection WHERE receipt_id = $1",
-                &[&recorded.receipt_id],
-            )
-            .await
-            .context("read the idempotent inspection state")?;
+        )
+        .bind(&recorded.receipt_id)
+        .fetch_one(&mut *client)
+        .await
+        .context("read the idempotent inspection state")?;
         ensure!(
-            pending.get::<_, i64>("inspection_count") == 1
-                && pending.get::<_, Option<String>>("status").as_deref() == Some("pending")
-                && pending.get::<_, Option<i32>>("row_version") == Some(1),
+            pending.get::<i64, _>("inspection_count") == 1
+                && pending.get::<Option<String>, _>("status").as_deref() == Some("pending")
+                && pending.get::<Option<i32>, _>("row_version") == Some(1),
             "receipt redelivery did not preserve one pending inspection"
         );
 
-        let detail = client
-            .query_one(OVERLAY_LOAD_DETAIL_SQL, &[&purchase_order_id])
+        let detail = sqlx::query(OVERLAY_LOAD_DETAIL_SQL)
+            .bind(&purchase_order_id)
+            .fetch_one(&mut *client)
             .await
             .context("execute exact Acme load_purchase_order_detail SQL")?;
         ensure!(
-            detail.get::<_, bool>("acme_inspection_required")
-                && detail.get::<_, String>("acme_quality_status") == "not_required"
-                && detail.get::<_, i32>("row_version") == 3,
+            detail.get::<bool, _>("acme_inspection_required")
+                && detail.get::<String, _>("acme_quality_status") == "not_required"
+                && detail.get::<i32, _>("row_version") == 3,
             "Acme detail projection returned the wrong pre-approval state"
         );
 
-        let approved = client
-            .query_one(
-                OVERLAY_APPROVE_INSPECTION_SQL,
-                &[&recorded.receipt_id, &1_i32],
-            )
+        let approved = sqlx::query(OVERLAY_APPROVE_INSPECTION_SQL)
+            .bind(&recorded.receipt_id)
+            .bind(&1_i32)
+            .fetch_one(&mut *client)
             .await
             .context("execute exact Acme approve_inspection SQL")?;
         ensure!(
-            approved.get::<_, String>("outcome") == "approved"
-                && approved.get::<_, Option<String>>("status").as_deref() == Some("approved")
-                && approved.get::<_, Option<i32>>("row_version") == Some(2)
-                && approved.get::<_, Option<i32>>("purchase_order_row_version") == Some(4),
+            approved.get::<String, _>("outcome") == "approved"
+                && approved.get::<Option<String>, _>("status").as_deref() == Some("approved")
+                && approved.get::<Option<i32>, _>("row_version") == Some(2)
+                && approved.get::<Option<i32>, _>("purchase_order_row_version") == Some(4),
             "Acme approve_inspection returned the wrong committed state"
         );
 
-        let fetched = client
-            .query_one(&generated_sql(OVERLAY_GET_SQL), &[&purchase_order_id])
-            .await
-            .context("execute exact Acme purchase_order.get SQL")?;
+        let fetched = sqlx::query(sqlx::AssertSqlSafe(
+            (&generated_sql(OVERLAY_GET_SQL)).to_string(),
+        ))
+        .bind(&purchase_order_id)
+        .fetch_one(&mut *client)
+        .await
+        .context("execute exact Acme purchase_order.get SQL")?;
         ensure!(
-            fetched.get::<_, bool>("acme_inspection_required")
-                && fetched.get::<_, String>("acme_quality_status") == "approved"
-                && fetched.get::<_, i32>("row_version") == 4,
+            fetched.get::<bool, _>("acme_inspection_required")
+                && fetched.get::<String, _>("acme_quality_status") == "approved"
+                && fetched.get::<i32, _>("row_version") == 4,
             "Acme purchase_order.get returned the wrong approved state"
         );
         Ok(())
     }
 
     async fn connect(url: &str) -> Result<Client> {
-        let (client, connection) = tokio_postgres::connect(url, NoTls)
+        let mut client = wamn_postgres::connect(url)
             .await
             .context("connect to disposable PostgreSQL")?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        client
-            .batch_execute(
-                "SET statement_timeout = '10s'; \
+
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("SET statement_timeout = '10s'; \
                  SET lock_timeout = '5s'; \
-                 SET transaction_timeout = '30s'",
-            )
-            .await
-            .context("bound Receiving condition timeouts")?;
-        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
+                 SET transaction_timeout = '30s'")
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .context("bound Receiving condition timeouts")?;
+        bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
         Ok(client)
     }
 
     async fn execute_create_inspection(client: &mut Client, receipt_id: Uuid) -> Result<bool> {
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .context("begin exact create_inspection transaction")?;
-        let inserted = transaction
-            .query_opt(OVERLAY_INSERT_INSPECTION_SQL, &[&receipt_id])
+        let inserted = sqlx::query(OVERLAY_INSERT_INSPECTION_SQL)
+            .bind(&receipt_id)
+            .fetch_optional(&mut *transaction)
             .await
             .context("execute exact create_inspection insert SQL")?
             .is_some();
-        let loaded = transaction
-            .query_opt(OVERLAY_LOAD_INSPECTION_SQL, &[&receipt_id])
+        let loaded = sqlx::query(OVERLAY_LOAD_INSPECTION_SQL)
+            .bind(&receipt_id)
+            .fetch_optional(&mut *transaction)
             .await
             .context("execute exact create_inspection load SQL")?
             .context("create_inspection could not load its converged row")?;
         ensure!(
-            loaded.get::<_, Uuid>("receipt_id") == receipt_id,
+            loaded.get::<Uuid, _>("receipt_id") == receipt_id,
             "create_inspection loaded the wrong receipt"
         );
         transaction
@@ -1548,17 +1697,15 @@ mod tests {
         let committed_snapshot =
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?;
         // One command transaction stamps the order and its receipt with one instant.
-        let receipt = client
-            .query_one(
-                "SELECT created_at, created_by FROM receipt WHERE id = $1",
-                &[&committed.receipt_id],
-            )
+        let receipt = sqlx::query("SELECT created_at, created_by FROM receipt WHERE id = $1")
+            .bind(&committed.receipt_id)
+            .fetch_one(&mut *client)
             .await
             .context("read the recorded receipt stamps")?;
         let ordered = &committed_snapshot.purchase_order_stamps;
         ensure!(
-            receipt.get::<_, DateTime<Utc>>("created_at") == ordered.updated_at
-                && receipt.get::<_, Uuid>("created_by") == COMMAND_PRINCIPAL
+            receipt.get::<DateTime<Utc>, _>("created_at") == ordered.updated_at
+                && receipt.get::<Uuid, _>("created_by") == COMMAND_PRINCIPAL
                 && ordered.updated_by == COMMAND_PRINCIPAL
                 && ordered.created_at == inserted.created_at
                 && ordered.created_by == inserted.created_by
@@ -1685,8 +1832,8 @@ mod tests {
         purchase_order_line_id: Uuid,
         location_id: Uuid,
     ) -> Result<()> {
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .context("begin location-lock test transaction")?;
         let line = json!([{
@@ -1694,30 +1841,37 @@ mod tests {
             "quantity": "1.0",
             "location_id": location_id.hyphenated().to_string(),
         }]);
-        transaction
-            .query_one(LOCK_PURCHASE_ORDER_SQL, &[&purchase_order_id])
+        sqlx::query(LOCK_PURCHASE_ORDER_SQL)
+            .bind(&purchase_order_id)
+            .fetch_one(&mut *transaction)
             .await?;
-        let validation = transaction
-            .query_one(
-                RECORD_RECEIPT_SQL,
-                &[&purchase_order_id, &line, &"location-lock", &Utc::now()],
-            )
+        let validation = sqlx::query(RECORD_RECEIPT_SQL)
+            .bind(&purchase_order_id)
+            .bind(&line)
+            .bind(&"location-lock")
+            .bind(&Utc::now())
+            .fetch_one(&mut *transaction)
             .await
             .context("validate lines while holding referenced location locks")?;
         ensure!(
-            validation.get::<_, Option<String>>("outcome").as_deref() == Some("ready"),
+            validation.get::<Option<String>, _>("outcome").as_deref() == Some("ready"),
             "location-lock test fixture did not validate"
         );
 
-        let contender = connect(url).await?;
-        select_receiving_schema(&contender).await?;
-        contender
-            .batch_execute("SET lock_timeout = '250ms'")
+        let mut contender = connect(url).await?;
+        select_receiving_schema(&mut contender).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("SET lock_timeout = '250ms'").to_string(),
+        ))
+        .execute(&mut contender)
+        .await
+        .map(drop)
+        .context("bound competing location delete")?;
+        let delete = sqlx::query("DELETE FROM location WHERE id = $1")
+            .bind(&location_id)
+            .execute(&mut contender)
             .await
-            .context("bound competing location delete")?;
-        let delete = contender
-            .execute("DELETE FROM location WHERE id = $1", &[&location_id])
-            .await;
+            .map(|result| result.rows_affected());
         transaction
             .rollback()
             .await
@@ -1727,21 +1881,19 @@ mod tests {
             .err()
             .context("referenced location delete was not blocked by validation")?;
         let database = source
-            .as_db_error()
+            .as_database_error()
             .context("blocked location delete returned no PostgreSQL error")?;
         ensure!(
-            database.code().code() == "55P03",
+            database.code().as_deref().unwrap_or("") == "55P03",
             "blocked location delete returned SQLSTATE {}, expected 55P03",
-            database.code().code()
+            database.code().as_deref().unwrap_or("")
         );
-        let location_remains = contender
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM location WHERE id = $1)",
-                &[&location_id],
-            )
+        let location_remains = sqlx::query("SELECT EXISTS (SELECT 1 FROM location WHERE id = $1)")
+            .bind(&location_id)
+            .fetch_one(&mut contender)
             .await
             .context("verify locked location remains")?
-            .get::<_, bool>(0);
+            .get::<bool, _>(0);
         ensure!(location_remains, "location-lock test deleted its fixture");
         Ok(())
     }
@@ -1762,7 +1914,7 @@ mod tests {
         location_id: Uuid,
     }
 
-    async fn insert_receipt_fixtures(client: &Client, ids: &ReceiptFixtureIds) -> Result<()> {
+    async fn insert_receipt_fixtures(client: &mut Client, ids: &ReceiptFixtureIds) -> Result<()> {
         let ReceiptFixtureIds {
             item_id,
             purchase_order_id,
@@ -1773,19 +1925,19 @@ mod tests {
             location_id,
         } = *ids;
         let item_number = format!("item-record-receipt-{item_id}");
-        client
-            .execute(
-                "INSERT INTO item (id, item_number) VALUES ($1, $2)",
-                &[&item_id, &item_number],
-            )
+        sqlx::query("INSERT INTO item (id, item_number) VALUES ($1, $2)")
+            .bind(&item_id)
+            .bind(&item_number)
+            .execute(&mut *client)
             .await
+            .map(|result| result.rows_affected())
             .context("insert record_receipt item fixture")?;
-        client
-            .execute(
-                "INSERT INTO location (id, location_code) VALUES ($1, $2)",
-                &[&location_id, &format!("dock-{location_id}")],
-            )
+        sqlx::query("INSERT INTO location (id, location_code) VALUES ($1, $2)")
+            .bind(&location_id)
+            .bind(&format!("dock-{location_id}"))
+            .execute(&mut *client)
             .await
+            .map(|result| result.rows_affected())
             .context("insert record_receipt location fixture")?;
         insert_purchase_order(
             client,
@@ -1808,15 +1960,20 @@ mod tests {
             (second_line_id, purchase_order_id, 2_i32, "10.0000"),
             (other_line_id, other_purchase_order_id, 1_i32, "10.0"),
         ] {
-            client
-                .execute(
-                    "INSERT INTO purchase_order_line \
+            sqlx::query(
+                "INSERT INTO purchase_order_line \
                      (id, purchase_order_id, line_number, item_id, ordered_quantity) \
                      VALUES ($1, $2, $3, $4, $5::text::numeric)",
-                    &[&id, &owner, &line_number, &item_id, &quantity],
-                )
-                .await
-                .context("insert record_receipt line fixture")?;
+            )
+            .bind(&id)
+            .bind(&owner)
+            .bind(&line_number)
+            .bind(&item_id)
+            .bind(&quantity)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .context("insert record_receipt line fixture")?;
         }
         Ok(())
     }
@@ -1825,11 +1982,11 @@ mod tests {
         client: &mut Client,
         command: &ReceiptCommand,
     ) -> Result<std::result::Result<ReceiptCommandResult, DomainRefusal>> {
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .context("begin exact record_receipt transaction")?;
-        match execute_record_receipt_in(&transaction, command).await {
+        match execute_record_receipt_in(&mut transaction, command).await {
             Ok(result) => {
                 transaction
                     .commit()
@@ -1866,27 +2023,22 @@ mod tests {
     /// that a committed claim holds answers its stored result, or
     /// `idempotency_conflict` for another request.
     async fn execute_record_receipt_in(
-        transaction: &Transaction<'_>,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         command: &ReceiptCommand,
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
         let (request, line_json) = canonical_receipt_command(command);
-        let claimed = transaction
-            .query_opt(
-                wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL,
-                &[
-                    &RECORD_RECEIPT_OPERATION,
-                    &command.idempotency_key,
-                    &request,
-                ],
-            )
+        let claimed = sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL)
+            .bind(&RECORD_RECEIPT_OPERATION)
+            .bind(&command.idempotency_key)
+            .bind(&request)
+            .fetch_optional(&mut **transaction)
             .await
             .map_err(CommandAttemptError::Database)?;
         if claimed.is_none() {
-            let stored = transaction
-                .query_one(
-                    wamn_runtime::plugins::wamn_postgres::write_log::READ_SQL,
-                    &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key],
-                )
+            let stored = sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::READ_SQL)
+                .bind(&RECORD_RECEIPT_OPERATION)
+                .bind(&command.idempotency_key)
+                .fetch_one(&mut **transaction)
                 .await
                 .map_err(CommandAttemptError::Database)?;
             return replay_result(&stored, &request);
@@ -1899,11 +2051,11 @@ mod tests {
             "row_version": result.row_version,
         })
         .to_string();
-        transaction
-            .query_one(
-                wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL,
-                &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key, &stored],
-            )
+        sqlx::query(wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL)
+            .bind(&RECORD_RECEIPT_OPERATION)
+            .bind(&command.idempotency_key)
+            .bind(&stored)
+            .fetch_one(&mut **transaction)
             .await
             .map_err(CommandAttemptError::Database)?;
         Ok(result)
@@ -1911,18 +2063,19 @@ mod tests {
 
     /// The command's work statements, in the order its data access runs them.
     async fn record_receipt_work(
-        transaction: &Transaction<'_>,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         command: &ReceiptCommand,
         line_json: &Value,
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        let purchase_order = transaction
-            .query_opt(LOCK_PURCHASE_ORDER_SQL, &[&command.purchase_order_id])
+        let purchase_order = sqlx::query(LOCK_PURCHASE_ORDER_SQL)
+            .bind(&command.purchase_order_id)
+            .fetch_optional(&mut **transaction)
             .await
             .map_err(CommandAttemptError::Database)?
             .ok_or_else(|| {
                 CommandAttemptError::Domain(DomainRefusal::new("purchase_order_not_found"))
             })?;
-        if purchase_order.get::<_, String>("status") != "open" {
+        if purchase_order.get::<String, _>("status") != "open" {
             return Err(CommandAttemptError::Domain(DomainRefusal::new(
                 "purchase_order_not_open",
             )));
@@ -1930,23 +2083,19 @@ mod tests {
         let occurred_at = DateTime::parse_from_rfc3339(&command.occurred_at)
             .map_err(|error| CommandAttemptError::Internal(error.to_string()))?
             .to_utc();
-        let recorded = match transaction
-            .query_one(
-                RECORD_RECEIPT_SQL,
-                &[
-                    &command.purchase_order_id,
-                    &line_json,
-                    &command.receipt_reference,
-                    &occurred_at,
-                ],
-            )
+        let recorded = match sqlx::query(RECORD_RECEIPT_SQL)
+            .bind(&command.purchase_order_id)
+            .bind(&line_json)
+            .bind(&command.receipt_reference)
+            .bind(&occurred_at)
+            .fetch_one(&mut **transaction)
             .await
         {
             Ok(row) => row,
             Err(source) => {
-                let database = source.as_db_error();
+                let database = source.as_database_error();
                 if database.is_some_and(|database| {
-                    database.code().code() == "23505"
+                    database.code().as_deref().unwrap_or("") == "23505"
                         && database.constraint()
                             == Some("receipt_purchase_order_id_receipt_reference_key")
                 }) {
@@ -1957,7 +2106,7 @@ mod tests {
                 return Err(CommandAttemptError::Database(source));
             }
         };
-        let outcome = recorded.get::<_, String>("outcome");
+        let outcome = recorded.get::<String, _>("outcome");
         if outcome != "ready" {
             let code = match outcome.as_str() {
                 "purchase_order_line_not_found" => "purchase_order_line_not_found",
@@ -1976,8 +2125,8 @@ mod tests {
                 recorded.get("id"),
             )));
         }
-        let inserted = recorded.get::<_, i64>("inserted_line_count");
-        let updated = recorded.get::<_, i64>("updated_line_count");
+        let inserted = recorded.get::<i64, _>("inserted_line_count");
+        let updated = recorded.get::<i64, _>("updated_line_count");
         let expected = command.line.len();
         if usize::try_from(inserted).ok() != Some(expected)
             || usize::try_from(updated).ok() != Some(expected)
@@ -1998,12 +2147,12 @@ mod tests {
         row: &Row,
         request: &[u8],
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        if row.get::<_, Vec<u8>>("request") != request {
+        if row.get::<Vec<u8>, _>("request") != request {
             return Err(CommandAttemptError::Domain(DomainRefusal::new(
                 "idempotency_conflict",
             )));
         }
-        let stored = row.get::<_, Option<String>>("result").ok_or_else(|| {
+        let stored = row.get::<Option<String>, _>("result").ok_or_else(|| {
             CommandAttemptError::Internal("a committed claim has no result".to_owned())
         })?;
         let stored: Value = serde_json::from_str(&stored)
@@ -2102,14 +2251,12 @@ mod tests {
     }
 
     async fn command_snapshot(
-        client: &Client,
+        client: &mut Client,
         first_line_id: Uuid,
         second_line_id: Uuid,
         purchase_order_id: Uuid,
     ) -> Result<CommandSnapshot> {
-        let row = client
-            .query_one(
-                "SELECT \
+        let row = sqlx::query("SELECT \
                  (SELECT count(*) FROM platform.write_log \
                    WHERE operation = 'wamn-receiving:receiving/record-receipt')::int8 AS command_count, \
                  (SELECT count(*) FROM receipt)::int8 AS receipt_count, \
@@ -2121,9 +2268,7 @@ mod tests {
                  (SELECT COALESCE(jsonb_agg(jsonb_build_array(id, created_at, created_by) ORDER BY id), '[]') \
                   FROM receipt) AS receipt_stamps, \
                  ((SELECT count(*) FROM purchase_order_history) \
-                  + (SELECT count(*) FROM purchase_order_line_history))::int8 AS history_entries",
-                &[&first_line_id, &second_line_id, &purchase_order_id],
-            )
+                  + (SELECT count(*) FROM purchase_order_line_history))::int8 AS history_entries").bind(&first_line_id).bind(&second_line_id).bind(&purchase_order_id).fetch_one(&mut *client)
             .await
             .context("snapshot record_receipt effects")?;
         Ok(CommandSnapshot {
@@ -2140,12 +2285,12 @@ mod tests {
         })
     }
 
-    async fn assert_postgres_18(client: &Client) -> Result<()> {
-        let version = client
-            .query_one("SELECT current_setting('server_version_num')", &[])
+    async fn assert_postgres_18(client: &mut Client) -> Result<()> {
+        let version = sqlx::query("SELECT current_setting('server_version_num')")
+            .fetch_one(&mut *client)
             .await
             .context("read PostgreSQL server version")?
-            .get::<_, String>(0)
+            .get::<String, _>(0)
             .parse::<u32>()
             .context("server_version_num is not numeric")?;
         ensure!(
@@ -2155,12 +2300,12 @@ mod tests {
         Ok(())
     }
 
-    async fn assert_fresh_receiving_schema(client: &Client) -> Result<()> {
-        let exists = client
-            .query_one("SELECT to_regnamespace('receiving') IS NOT NULL", &[])
+    async fn assert_fresh_receiving_schema(client: &mut Client) -> Result<()> {
+        let exists = sqlx::query("SELECT to_regnamespace('receiving') IS NOT NULL")
+            .fetch_one(&mut *client)
             .await
             .context("inspect Receiving schema freshness")?
-            .get::<_, bool>(0);
+            .get::<bool, _>(0);
         ensure!(
             !exists,
             "disposable database already contains schema receiving"
@@ -2168,14 +2313,17 @@ mod tests {
         Ok(())
     }
 
-    async fn select_receiving_schema(client: &Client) -> Result<()> {
-        client
-            .batch_execute("SET search_path = receiving, public")
-            .await
-            .context("select Receiving through trusted connection context")
+    async fn select_receiving_schema(client: &mut Client) -> Result<()> {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("SET search_path = receiving, public").to_string(),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .context("select Receiving through trusted connection context")
     }
 
-    async fn assert_status_vocabulary(client: &Client) -> Result<()> {
+    async fn assert_status_vocabulary(client: &mut Client) -> Result<()> {
         let contract: ResultContract = serde_json::from_slice(&generated(PURCHASE_ORDER_RESULT))
             .context("parse the purchase order result contract")?;
         let statuses = &contract
@@ -2208,11 +2356,11 @@ mod tests {
         .await
         .expect_err("PostgreSQL accepted a status outside the manifest vocabulary");
         let database = invalid
-            .downcast_ref::<tokio_postgres::Error>()
-            .and_then(tokio_postgres::Error::as_db_error)
+            .downcast_ref::<sqlx::Error>()
+            .and_then(sqlx::Error::as_database_error)
             .context("invalid status did not return a PostgreSQL database error")?;
         ensure!(
-            database.code().code() == "23514",
+            database.code().as_deref().unwrap_or("") == "23514",
             "invalid status did not return 23514"
         );
         ensure!(
@@ -2228,61 +2376,76 @@ mod tests {
     /// Insert a fixture supplier under a chosen id. The table owner writes it:
     /// the application role holds no INSERT on the id that a supplier's default
     /// mints. The caller's role is restored afterwards.
-    async fn insert_supplier(client: &Client, id: Uuid) -> Result<()> {
-        let role: String = client
-            .query_one("SELECT current_user::text", &[])
+    async fn insert_supplier(client: &mut Client, id: Uuid) -> Result<()> {
+        let role: String = sqlx::query("SELECT current_user::text")
+            .fetch_one(&mut *client)
             .await?
             .get(0);
-        client.batch_execute("RESET ROLE").await?;
-        client
-            .execute(
-                "INSERT INTO supplier (id, name) VALUES ($1, $2) \
-                 ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
-                &[&id, &format!("supplier {id}")],
-            )
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("RESET ROLE").to_string()))
+            .execute(&mut *client)
             .await
-            .context("insert supplier fixture")?;
-        client
-            .batch_execute(&format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\"")))
-            .await?;
+            .map(drop)?;
+        sqlx::query(
+            "INSERT INTO supplier (id, name) VALUES ($1, $2) \
+                 ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
+        )
+        .bind(&id)
+        .bind(&format!("supplier {id}"))
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .context("insert supplier fixture")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\""))).to_string(),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
         Ok(())
     }
 
     async fn insert_purchase_order(
-        client: &Client,
+        client: &mut Client,
         id: Uuid,
         number: &str,
         supplier_id: Uuid,
         status: &str,
     ) -> Result<()> {
         insert_supplier(client, supplier_id).await?;
-        client
-            .execute(
-                "INSERT INTO purchase_order \
+        sqlx::query(
+            "INSERT INTO purchase_order \
                  (id, purchase_order_number, supplier_id, status) \
                  VALUES ($1, $2, $3, $4)",
-                &[&id, &number, &supplier_id, &status],
-            )
-            .await
-            .context("insert purchase_order fixture")?;
+        )
+        .bind(&id)
+        .bind(&number)
+        .bind(&supplier_id)
+        .bind(&status)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .context("insert purchase_order fixture")?;
         Ok(())
     }
 
     async fn execute_update(
-        client: &Client,
+        client: &mut Client,
         id: Uuid,
         expected_row_version: i32,
         supplier_id: Uuid,
     ) -> Result<UpdateResult> {
         insert_supplier(client, supplier_id).await?;
         let supplier_id = Some(supplier_id);
-        let row = client
-            .query_one(
-                &generated_sql(UPDATE_SQL),
-                &[&id, &expected_row_version, &true, &supplier_id],
-            )
-            .await
-            .context("execute exact generated purchase_order.update SQL")?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(
+            (&generated_sql(UPDATE_SQL)).to_string(),
+        ))
+        .bind(&id)
+        .bind(&expected_row_version)
+        .bind(&true)
+        .bind(&supplier_id)
+        .fetch_one(&mut *client)
+        .await
+        .context("execute exact generated purchase_order.update SQL")?;
         Ok(update_result(&row))
     }
 
@@ -2318,12 +2481,10 @@ mod tests {
         }
     }
 
-    async fn persisted_revision(client: &Client, id: Uuid) -> Result<(Uuid, i32)> {
-        let row = client
-            .query_one(
-                "SELECT supplier_id, row_version FROM purchase_order WHERE id = $1",
-                &[&id],
-            )
+    async fn persisted_revision(client: &mut Client, id: Uuid) -> Result<(Uuid, i32)> {
+        let row = sqlx::query("SELECT supplier_id, row_version FROM purchase_order WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&mut *client)
             .await
             .context("read persisted purchase_order revision")?;
         Ok((row.get("supplier_id"), row.get("row_version")))

@@ -1,5 +1,6 @@
 //! Filesystem and PostgreSQL-backed package materialization.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -8,7 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, ensure};
-use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::{DATA_ACCESS_ROLE, read_catalog_excluding_relations};
 
@@ -58,10 +58,10 @@ pub(crate) async fn introspect_with_manifest(
 ) -> Result<CatalogIr> {
     let schemas = application_schemas(manifest).context("resolve application schemas")?;
 
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to the already-migrated PostgreSQL database")?;
-    let connection_task = tokio::spawn(connection);
+
     let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
     let excluded_relations = schema_names
         .iter()
@@ -72,16 +72,13 @@ pub(crate) async fn introspect_with_manifest(
         })
         .collect::<Vec<_>>();
     let catalog_result = async {
-        read_catalog_excluding_relations(&client, &schema_names, &excluded_relations)
+        read_catalog_excluding_relations(&mut client, &schema_names, &excluded_relations)
             .await
             .context("introspect package schemas")
     }
     .await;
     drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
+
     let catalog = catalog_result.context("introspect package schemas")?;
     for view in catalog.views() {
         for table in view.base_tables() {
@@ -119,18 +116,19 @@ pub(crate) async fn introspect_with_manifest(
 /// and so does every whole-row reference that the grants do not cover. The
 /// error lists each refused statement with its path, SQLSTATE, and message.
 pub(crate) async fn classify_statements(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     corpus: &std::collections::BTreeMap<String, Vec<u8>>,
     schemas: &[String],
     grants: &str,
 ) -> Result<StatementTransactionality> {
-    let transaction = client
-        .transaction()
+    let mut transaction = client
+        .begin()
         .await
         .context("begin the statement admission test transaction")?;
-    transaction
-        .batch_execute(&application_role_sql(schemas, grants))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(application_role_sql(schemas, grants)))
+        .execute(&mut *transaction)
         .await
+        .map(drop)
         .context("apply the derived grants to the application role before planning")?;
     classify_statements_in_transaction(
         transaction,
@@ -145,39 +143,38 @@ pub(crate) async fn classify_statements(
 /// A savepoint contains the role and search-path changes and is rolled back after
 /// planning, so the caller keeps its locks and its original session authority.
 pub async fn classify_statements_with_existing_grants_in_transaction(
-    transaction: &mut tokio_postgres::Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     corpus: &BTreeMap<String, Vec<u8>>,
     schema: &str,
 ) -> Result<StatementTransactionality> {
     let savepoint = transaction
-        .savepoint("upgrade_statement_admission")
+        .begin()
         .await
         .context("begin the statement admission test savepoint")?;
     classify_with_existing_grants(savepoint, corpus, schema).await
 }
 
 async fn classify_with_existing_grants(
-    transaction: tokio_postgres::Transaction<'_>,
+    mut transaction: sqlx::Transaction<'_, sqlx::Postgres>,
     corpus: &BTreeMap<String, Vec<u8>>,
     schema: &str,
 ) -> Result<StatementTransactionality> {
     let search_path = postgres_protocol::escape::escape_identifier(schema);
-    transaction
-        .query_one(
-            "SELECT set_config('search_path', $1, true)",
-            &[&search_path],
-        )
+    sqlx::query("SELECT set_config('search_path', $1, true)")
+        .bind(&search_path)
+        .fetch_one(&mut *transaction)
         .await
         .context("select the runtime application schema before planning")?;
-    transaction
-        .batch_execute("SET LOCAL ROLE wamn_app")
+    sqlx::raw_sql("SET LOCAL ROLE wamn_app")
+        .execute(&mut *transaction)
         .await
+        .map(drop)
         .context("select the application role without changing its grants")?;
     classify_statements_in_transaction(transaction, corpus, "the existing grants").await
 }
 
 async fn classify_statements_in_transaction(
-    mut transaction: tokio_postgres::Transaction<'_>,
+    mut transaction: sqlx::Transaction<'_, sqlx::Postgres>,
     corpus: &BTreeMap<String, Vec<u8>>,
     grant_context: &str,
 ) -> Result<StatementTransactionality> {
@@ -186,17 +183,19 @@ async fn classify_statements_in_transaction(
     for (path, bytes) in corpus {
         let sql =
             std::str::from_utf8(bytes).with_context(|| format!("statement {path} is not UTF-8"))?;
-        let statement = transaction
-            .savepoint("statement_admission")
+        let mut statement = transaction
+            .begin()
             .await
             .with_context(|| format!("open a savepoint for statement {path}"))?;
         // simple_query, NOT query_one: the statement carries $1..$n, and the
         // extended protocol would treat those as parameters OF THE EXPLAIN and
         // refuse with "expected N parameters but got 0". GENERIC_PLAN exists
         // precisely so the planner supplies its own placeholders.
-        let planned = statement
-            .simple_query(&format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"))
-            .await;
+        let planned = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"
+        )))
+        .fetch_all(&mut *statement)
+        .await;
         let messages = match planned {
             Ok(messages) => {
                 statement
@@ -206,12 +205,12 @@ async fn classify_statements_in_transaction(
                 messages
             }
             Err(error) => {
-                let refusal = error.as_db_error().with_context(|| {
+                let refusal = error.as_database_error().with_context(|| {
                     format!("plan statement {path} against the migrated database")
                 })?;
                 refusals.push(format!(
                     "{path}: {} {}",
-                    refusal.code().code(),
+                    refusal.code().unwrap_or_default(),
                     refusal.message()
                 ));
                 statement
@@ -221,15 +220,10 @@ async fn classify_statements_in_transaction(
                 continue;
             }
         };
-        let rendered = messages
-            .iter()
-            .find_map(|message| match message {
-                tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0),
-                _ => None,
-            })
-            .with_context(|| format!("planning {path} returned no plan"))?;
-        let plan: serde_json::Value = serde_json::from_str(rendered)
-            .with_context(|| format!("parse the plan PostgreSQL returned for {path}"))?;
+        let plan: serde_json::Value = messages
+            .first()
+            .with_context(|| format!("planning {path} returned no plan"))?
+            .try_get(0)?;
         verdicts.insert(path.clone(), plan_needs_transaction(&plan));
     }
     transaction
@@ -355,7 +349,7 @@ pub fn materialize_package_classified(
     let package = generate_package(catalog, package_root, transactional)?;
     let output_root = crate::output_root(package_root);
     let (_, manifest) = load_manifest(package_root)?;
-    let client = client_bindings(package_root, &manifest, &package)?;
+    let mut client = client_bindings(package_root, &manifest, &package)?;
     let mut expected = expected_files(&package)?;
     // The compiled manifest is one more file of the owned set.
     let compiled_manifest = if is_authored(package_root) {
@@ -370,7 +364,7 @@ pub fn materialize_package_classified(
             .context("the compiled manifest lies under generated/")?;
         expected.insert(relative.to_owned(), bytes.as_slice());
     }
-    for file in &client {
+    for file in &mut client {
         let relative = Path::new(file.path())
             .strip_prefix("generated")
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
@@ -546,18 +540,15 @@ pub async fn materialize_package_verified_with_catalog(
 ) -> Result<()> {
     let (corpus, grants) = statement_corpus(package_root, catalog)?;
 
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to plan the package statements")?;
-    let connection_task = tokio::spawn(connection);
+
     let (_, manifest) = load_manifest(package_root)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
     let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
     drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
+
     let verdicts = verdicts?;
 
     materialize_package_classified(catalog, package_root, &verdicts)

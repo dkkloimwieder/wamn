@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use serde_json::Value;
 use wamn_environment_control::environment::{self, Platform, document::EnvironmentDocument};
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 pub async fn bind(
     platform: &Platform,
     document: &mut EnvironmentDocument,
@@ -12,17 +13,21 @@ pub async fn bind(
     integration: &str,
     mut parameters: Value,
 ) -> anyhow::Result<()> {
-    let (mut system, driver) =
-        tokio_postgres::connect(&platform.system_database_url, tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(driver);
-    system.batch_execute("SET ROLE wamn_system").await?;
-    if system
-        .query_opt(
-            "SELECT env FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
-            &[&document.org, &document.project, &document.env],
-        )
-        .await?
-        .is_none()
+    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
+
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    if sqlx::query(
+        "SELECT env FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
+    )
+    .bind(&document.org)
+    .bind(&document.project)
+    .bind(&document.env)
+    .fetch_optional(&mut system)
+    .await?
+    .is_none()
     {
         environment::ensure::provision_resources(
             platform,
@@ -32,12 +37,20 @@ pub async fn bind(
         )
         .await?;
     }
-    let tx = system.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    let mut tx = system.begin().await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let (auth_type, credential) = if integration == "http" {
         if let Some(origin) = parameters["primary-authority"].as_str() {
             parameters["primary-authority"] = origin.trim_end_matches('/').into();
@@ -81,7 +94,7 @@ pub async fn bind(
     )
     .await?;
     let store = wamn_test_infrastructure::credentials::ReferencedCredentials(&referenced);
-    wamn_test_infrastructure::credentials::define(&tx,&document.org,&serde_json::json!({"project":document.project,"env":document.env,"name":name,"integration_type":integration,"auth_type":auth_type,"external_system":if integration=="http" {Some(name)} else {None},"parameters":parameters,"credential":credential.to_string()}),&store).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx,&document.org,&serde_json::json!({"project":document.project,"env":document.env,"name":name,"integration_type":integration,"auth_type":auth_type,"external_system":if integration=="http" {Some(name)} else {None},"parameters":parameters,"credential":credential.to_string()}),&store).await?;
     tx.commit().await?;
     document
         .applications
@@ -93,7 +106,6 @@ pub async fn bind(
         name.into(),
         environment::document::Integration { version: 1 },
     );
-    driver.abort();
     Ok(())
 }
 

@@ -1,59 +1,47 @@
+use sqlx::Row as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use deadpool_postgres::{Manager, ManagerConfig, Object, Pool, RecyclingMethod, Runtime, Timeouts};
-use tokio_postgres::NoTls;
+use super::super::pool::Object;
+use sqlx::postgres::PgPoolOptions;
 use tracing::Instrument as _;
 
 use wamn_run_state::AuthorityClass;
 
 use super::super::pool::{
-    CheckoutProbe, PoolKey, PoolLifecycle, ProjectPool, ResolvedCredential,
-    credential_exactness_hook, credential_generation_role, destroy_connection,
-    session_statement_timeout_hook, standard_conforming_strings_hook,
+    CheckoutProbe, PoolKey, PoolLifecycle, ProjectPool, ResolvedCredential, destroy_connection,
 };
 use super::super::{DEFAULT_PROJECT, PgError};
 use super::WamnPostgres;
 
 impl WamnPostgres {
-    /// Build a deadpool pool for one resolved credential.
-    pub(super) fn build_pool(
+    /// Build one SQLx pool for the selected login and database.
+    pub(super) async fn build_pool(
         cfg: &ResolvedCredential,
         class: AuthorityClass,
-        project: &str,
-    ) -> anyhow::Result<Pool> {
-        let lifecycle = PoolLifecycle::for_class(class);
-        let pg_config: tokio_postgres::Config = cfg
-            .database_url
-            .parse()
-            .map_err(|e| anyhow::anyhow!("invalid database url: {e}"))?;
-        let manager_config = ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        };
-        let mgr = Manager::from_config(pg_config, NoTls, manager_config);
-        let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
-        Ok(Pool::builder(mgr)
-            .max_size(lifecycle.max_size(cfg))
-            .timeouts(Timeouts {
-                wait: Some(timeout),
-                create: Some(timeout),
-                recycle: Some(timeout),
-            })
-            // R18: assert standard_conforming_strings=on once per new connection.
-            .post_create(standard_conforming_strings_hook())
-            // wamn-0h0g.17.18: the project's statement_timeout is pool-uniform,
-            // so it is applied here once instead of on every request.
-            .post_create(session_statement_timeout_hook(cfg.statement_timeout_ms))
-            // wamn-0h0g.22.8.4: and assert the connection IS the credential
-            // this pool resolved. deadpool pushes hooks, so both run.
-            .post_create(credential_exactness_hook(
-                &cfg.database_url,
-                class,
-                project,
-            )?)
-            .runtime(Runtime::Tokio1)
-            .build()?)
+        _project: &str,
+    ) -> anyhow::Result<sqlx::PgPool> {
+        let options = wamn_postgres::connect_options(&cfg.database_url).await?;
+        let username = options.get_username().to_owned();
+        let timeout = cfg.statement_timeout_ms.to_string();
+        let size = u32::try_from(PoolLifecycle::for_class(class).max_size(cfg))?;
+        Ok(PgPoolOptions::new().max_connections(size)
+            .acquire_timeout(std::time::Duration::from_millis(cfg.wait_timeout_ms))
+            .after_connect(move |connection, _| {
+                let username = username.clone();
+                let timeout = timeout.clone();
+                Box::pin(async move {
+                    let row = sqlx::query("SELECT current_user::text, pg_has_role(current_user, $1, 'MEMBER'), current_setting('standard_conforming_strings'), NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname=current_user")
+                        .bind(class.acl_role()).fetch_one(&mut *connection).await?;
+                    if row.get::<String, _>(0) != username || !row.get::<bool, _>(1) || row.get::<String, _>(2) != "on" || !row.get::<bool, _>(3) {
+                        return Err(sqlx::Error::Protocol("database login does not hold its configured authority".into()));
+                    }
+                    sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+                        .bind(timeout).execute(connection).await?;
+                    Ok(())
+                })
+            }).connect_lazy_with(options))
     }
 
     /// Resolve + lazily build (memoized) the pool for a project. Unknown project
@@ -68,16 +56,7 @@ impl WamnPostgres {
         }
     }
 
-    /// Resolve FIRST, then look up.
-    ///
-    /// The key carries the credential generation, and the generation is only
-    /// knowable from the resolved URL, so the lookup cannot precede resolution.
-    /// That ordering is what makes rotation correct BY CONSTRUCTION: a rotated
-    /// credential computes a different key, so the stale pool is never hit
-    /// again instead of being hit until something notices. Resolution is a map
-    /// lookup and a clone, which is nothing beside the awaited checkout it
-    /// guards.
-    pub(super) fn ensure_pool(
+    pub(super) async fn ensure_pool(
         &self,
         class: AuthorityClass,
         project: &str,
@@ -85,6 +64,10 @@ impl WamnPostgres {
     ) -> Result<Arc<ProjectPool>, PgError> {
         let lifecycle = PoolLifecycle::for_class(class);
         let pools = self.pools(lifecycle);
+        let key = PoolKey::new(project, class, project_env_key);
+        if let Some(pool) = pools.read().expect("pools lock poisoned").get(&key) {
+            return Ok(Arc::clone(pool));
+        }
         let cfg = match self.provider.resolve(project, class, project_env_key) {
             Ok(Some(c)) => c,
             Ok(None) => {
@@ -107,30 +90,11 @@ impl WamnPostgres {
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let generation_role = match credential_generation_role(&cfg.database_url) {
-            Ok(role) => role,
-            Err(e) => {
-                // Deliberately logs the ERROR and not the url: the url carries
-                // the password.
-                tracing::warn!(
-                    project,
-                    class = class.as_str(),
-                    error = %e,
-                    "wamn:postgres: resolved credential carries no generation identity"
-                );
-                return Err(PgError::ConnectionUnavailable);
-            }
-        };
-        let key = PoolKey::new(project, class, &generation_role);
-        if let Some(pp) = pools.read().expect("pools lock poisoned").get(&key) {
-            return Ok(Arc::clone(pp));
-        }
-        let pp = match Self::build_pool(&cfg, class, project) {
+        let pp = match Self::build_pool(&cfg, class, project).await {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
                 row_limit: cfg.row_limit,
-                session_settings: std::sync::Mutex::new(Vec::new()),
             }),
             Err(e) => {
                 tracing::warn!(
@@ -167,11 +131,10 @@ impl WamnPostgres {
                     .expect("pools lock poisoned")
                     .iter()
                     .map(|(key, pp)| {
-                        let status = pp.pool.status();
                         (
                             lifecycle,
                             key.project().to_string(),
-                            (status.size, status.available, status.waiting),
+                            (pp.pool.size() as usize, pp.pool.num_idle(), 0),
                         )
                     }),
             );
@@ -197,15 +160,11 @@ impl WamnPostgres {
     ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
             .ensure_pool(AuthorityClass::GuestSql, project, Some(project_env_key))
+            .await
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
-        let conn = pp.pool.get().await?;
-        let row = conn
-            .query_one(
-                "SELECT pg_backend_pid(), current_setting('app.project_env_key', true), \
-                 pg_current_xact_id_if_assigned()::text",
-                &[],
-            )
-            .await?;
+        let mut conn = pp.pool.acquire().await?;
+        let row = sqlx::query("SELECT pg_backend_pid(), current_setting('app.project_env_key', true), pg_current_xact_id_if_assigned()::text")
+            .fetch_one(&mut *conn).await?;
         Ok(CheckoutProbe {
             backend_pid: row.try_get(0)?,
             project_env_key_identity: row.try_get(1)?,
@@ -224,8 +183,8 @@ impl WamnPostgres {
         project_env_key: Option<&str>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         async {
-            let pp = self.ensure_pool(class, project, project_env_key)?;
-            let obj = pp.pool.get().await.map_err(|e| {
+            let pp = self.ensure_pool(class, project, project_env_key).await?;
+            let obj = pp.pool.acquire().await.map_err(|e| {
                 tracing::warn!(
                     project,
                     class = class.as_str(),
@@ -254,6 +213,15 @@ impl WamnPostgres {
     /// after the `wamn-0h0g.22.6` sweep the guest's project comes from
     /// `current_user`, so the credential IS the project authority and the
     /// connection cannot be selected without knowing which project it is for.
+    pub(in super::super) async fn checkout_dynamic(
+        &self,
+        project: &str,
+        project_env_key: &str,
+    ) -> Result<(Object, Arc<ProjectPool>), PgError> {
+        self.checkout_class(AuthorityClass::DynamicSql, project, Some(project_env_key))
+            .await
+    }
+
     pub(in super::super) async fn checkout_guest(
         &self,
         project: &str,
@@ -276,7 +244,8 @@ impl WamnPostgres {
         let (connection, pool) = match class {
             AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
             AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
-            AuthorityClass::ExecutorPlatform
+            AuthorityClass::DynamicSql
+            | AuthorityClass::ExecutorPlatform
             | AuthorityClass::CallableHttp
             | AuthorityClass::Administration => {
                 unreachable!("the closed workload binding admits only EventMaterializer")
@@ -305,7 +274,7 @@ impl WamnPostgres {
         // without the test. Guest-sql is not a platform authority, and a
         // caller asking for platform work under it is a bug that must fail
         // closed rather than quietly draw a guest credential for host work.
-        if matches!(class, AuthorityClass::GuestSql) {
+        if matches!(class, AuthorityClass::GuestSql | AuthorityClass::DynamicSql) {
             tracing::error!(
                 project,
                 "wamn:postgres: guest-sql is not a platform authority; refusing the checkout"

@@ -1,62 +1,19 @@
-//! wamn project provisioning (2.3) — the **pure** core.
+//! Database declarations, restricted login identities and privilege SQL.
 //!
-//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
-//!
-//! Standing up a project environment turns the SQL-emitting E3 crates into a
-//! live system: provision a per-project-env Postgres **database** (D6:
-//! CloudNativePG), owned by the NOLOGIN title role, with `CONNECT` revoked from
-//! `PUBLIC` and from the stable [`APP_ROLE`]. The output 2.4 (system schema)
-//! consumes is *a provisioned, empty project-env database*.
-//!
-//! This crate is the pure core (SR3 / house rule 1): identifier naming, the
-//! `CREATE DATABASE` / role-bootstrap / credential-generation text builders, the
-//! per-project-env credential Secret renderers, the connection-URL composer, and — for
-//! the four-tier topology — the org [`Cluster` SET](crate::org) renderer (one
-//! cluster per recovery-domain owner, each sized by its env policy — D18, cjv.21)
-//! and the per-project-env CNPG [`Database` CR](crate::database) renderer
-//! (wamn-q3n.7) — no DB, no K8s client, no clock. The effects live in the
-//! `provision-org` / `provision-project-env` subcommands (`wamn-ctl`).
-//!
-//! # Isolation model
-//!
-//! Postgres roles are **cluster-global**, so one shared cluster has one shared
-//! `wamn_app` role (the grantee every generated minimum and hand-written schema
-//! already targets). Cross-project isolation is therefore **not** at the role
-//! level — it is:
-//!
-//! 1. **per-project DATABASE** — a component resolved to project *a* holds a
-//!    connection pool to *a*'s database only and physically cannot address
-//!    another project's database (Postgres has no cross-database queries);
-//! 2. **per-generation CONNECT** — `PUBLIC` and the stable `wamn_app` role hold
-//!    no `CONNECT`; each generation login is granted `CONNECT` on its own
-//!    database only, so a generation cannot open a session on another database;
-//! 3. **RLS within** — the 3.2 project base grants confines rows by `app.project_env_key`.
-//!
-//! Per-project **distinct** roles/passwords (stronger credential isolation) are
-//! a hardening follow-up (8.2), not this MVP.
-//!
-//! ## SR12 — what the pure tests cover, and what they cannot
-//!
-//! This crate's tests exercise the **decision** (which statement, what shape,
-//! which binds); they cannot exercise the **statement** — the pure model has no
-//! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: a prior run-queue batch lease
-//! passed every pure test while the real statement over-leased on a
-//! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
-//! property of the emitted SQL no pure test can observe. Convention (SR12a):
-//! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
-//! real prepared-statement path (SR12b).
+//! CloudNativePG owns login roles and their basic-auth Secrets. SQL declarations
+//! own passwordless privilege roles and grants. Each login has CONNECT only on
+//! its declared database. Project identities remain distinct inside that database.
 
 pub mod apply;
 pub mod audit_retention;
 #[cfg(feature = "ops")]
 pub mod backup;
+pub mod connection;
 pub mod database;
 pub mod environment_names;
 mod error;
 pub mod host_credentials;
-pub mod identity_issuer;
+pub mod identity_role;
 pub mod materializer_workload;
 mod name;
 pub mod operation_grants;
@@ -64,17 +21,14 @@ pub mod org;
 pub mod platform_principals;
 /// The pure derivation guest RLS uses to reach a project from `current_user`.
 pub mod project_key;
-pub mod provisioner;
+/// The two T1 control-database read consumers' targeted credential contract.
+pub mod readers;
 #[cfg(feature = "ops")]
 pub mod recovery;
 pub mod schema_baseline;
 pub mod schema_migrations;
-pub mod secret;
-pub mod session_role_reader;
 pub mod session_target;
 pub mod sql;
-/// The two T1 control-database read consumers' targeted credential contract.
-pub mod system_reader;
 /// Test databases with the system control store minimum.
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_database;
@@ -90,7 +44,7 @@ pub use error::ProvisionError;
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
-    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_administration_key,
+    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
     control_administration_secret_name, org_workload_secret_name, package_owner_role,
     project_env_cdc_secret_name, project_env_database_name, project_env_guest_secret_name,
     project_env_key, project_env_namespace, project_env_secret_name, validate_instance_suffix,
@@ -101,29 +55,18 @@ pub use platform_principals::{
     PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
     validate_platform_domain,
 };
+pub use readers::{SystemReader, system_reader_identity_hash, system_reader_login};
 #[cfg(feature = "ops")]
 pub use recovery::{
     RecoveredCluster, recovery_bootstrap, recovery_external_cluster, render_recovery_cluster,
 };
-pub use system_reader::{
-    SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorType,
-    parse_system_reader_url, system_reader_generation_role, system_reader_identity_hash,
-};
 
-pub use secret::{
-    WorkloadSecretBody, render_control_administration_patch,
-    render_control_administration_secret_manifest, render_guest_secret_manifest,
-    render_org_workload_secret_manifest, render_project_env_cdc_secret_manifest,
-    render_project_env_secret_manifest, render_workload_secret_manifest,
-};
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
-pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
     SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError,
-    WorkloadRoleIdentityType, WorkloadSecretBodyType, workload_generation_role,
-    workload_role_identity_hash,
+    WorkloadRoleIdentityType, workload_login, workload_role_identity_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.

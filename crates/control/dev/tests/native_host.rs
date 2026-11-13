@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt as _;
 use tokio::process::Command;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_dev_control::dev::environment::connect;
 use wamn_registry::Triple;
 use wamn_release_control::publish_release::{PublishedRelease, record_composed_entry};

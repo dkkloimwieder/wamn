@@ -14,6 +14,8 @@
 //! skips them. The read uses the observer credential, because reading a stream
 //! is the observer's job.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 pub(super) mod plan;
 use plan::pg_lsn;
 
@@ -21,7 +23,6 @@ use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
-use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
@@ -101,13 +102,15 @@ pub async fn recover_capture_gap(
 
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
-    let registration = system
-        .query_opt(
-            select_event_reader_origin_sql(),
-            &[&triple.org, &triple.project, &env],
-        )
-        .await
-        .context("read the registry.event_readers row")?;
+    let registration = sqlx::query(sqlx::AssertSqlSafe(
+        (select_event_reader_origin_sql()).to_string(),
+    ))
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(env)
+    .fetch_optional(&mut system)
+    .await
+    .context("read the registry.event_readers row")?;
     let Some(registration) = registration else {
         bail!("{triple} has no CDC reader registration");
     };
@@ -119,9 +122,9 @@ pub async fn recover_capture_gap(
         "the registration of {triple} names slot {registered_slot}, not {slot}"
     );
 
-    let admin = connect(&args.admin_database_url).await?;
-    let current: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(&args.admin_database_url).await?;
+    let current: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await
         .context("read the database of --admin-database-url")?
         .get(0);
@@ -129,15 +132,15 @@ pub async fn recover_capture_gap(
         current == database,
         "--admin-database-url reaches database {current}, not the project-env database {database}"
     );
-    let state = admin
-        .query_opt(
-            "SELECT active, confirmed_flush_lsn::text, wal_status::text, \
+    let state = sqlx::query(
+        "SELECT active, confirmed_flush_lsn::text, wal_status::text, \
                     invalidation_reason::text \
              FROM pg_replication_slots WHERE slot_name = $1",
-            &[&slot],
-        )
-        .await
-        .context("read the slot")?;
+    )
+    .bind(&slot)
+    .fetch_optional(&mut admin)
+    .await
+    .context("read the slot")?;
     let (reason, confirmed) = match state {
         None => (MISSING_SLOT_REASON.to_owned(), None),
         Some(row) => {
@@ -172,41 +175,41 @@ pub async fn recover_capture_gap(
     };
     let start_at = last.map_or(registered_at, |(_, at)| at);
 
-    admin
-        .batch_execute(&sql::drop_replication_slot_sql(&slot))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::drop_replication_slot_sql(&slot)))
+        .execute(&mut admin)
         .await
+        .map(drop)
         .context("drop the lost slot")?;
-    admin
-        .batch_execute(&sql::create_failover_slot_sql(&slot))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::create_failover_slot_sql(&slot)))
+        .execute(&mut admin)
         .await
+        .map(drop)
         .context("create the slot again")?;
-    let end_lsn: String = admin
-        .query_one(
-            "SELECT confirmed_flush_lsn::text FROM pg_replication_slots WHERE slot_name = $1",
-            &[&slot],
-        )
-        .await
-        .context("read the new slot's first position")?
-        .get(0);
+    let end_lsn: String = sqlx::query(
+        "SELECT confirmed_flush_lsn::text FROM pg_replication_slots WHERE slot_name = $1",
+    )
+    .bind(&slot)
+    .fetch_one(&mut admin)
+    .await
+    .context("read the new slot's first position")?
+    .get(0);
 
-    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    let created_at: DateTime<Utc> = transaction
-        .query_one(
-            insert_capture_gap_sql(),
-            &[
-                &triple.org,
-                &triple.project,
-                &env,
-                &slot,
-                &start_lsn,
-                &start_at,
-                &reason,
-                &end_lsn,
-            ],
-        )
-        .await
-        .context("write the registry.capture_gap row")?
-        .get(0);
+    let mut transaction =
+        crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    let created_at: DateTime<Utc> =
+        sqlx::query(sqlx::AssertSqlSafe((insert_capture_gap_sql()).to_string()))
+            .bind(&triple.org)
+            .bind(&triple.project)
+            .bind(env)
+            .bind(&slot)
+            .bind(&start_lsn)
+            .bind(start_at)
+            .bind(&reason)
+            .bind(&end_lsn)
+            .fetch_one(&mut *transaction)
+            .await
+            .context("write the registry.capture_gap row")?
+            .get(0);
 
     transaction.commit().await?;
 
@@ -241,14 +244,17 @@ async fn close_gap(
     let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
-    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    let newest = transaction
-        .query_opt(
-            lock_newest_capture_gap_sql(),
-            &[&triple.org, &triple.project, &env],
-        )
-        .await
-        .context("read the newest registry.capture_gap row")?;
+    let mut transaction =
+        crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    let newest = sqlx::query(sqlx::AssertSqlSafe(
+        (lock_newest_capture_gap_sql()).to_string(),
+    ))
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(env)
+    .fetch_optional(&mut *transaction)
+    .await
+    .context("read the newest registry.capture_gap row")?;
     let Some(newest) = newest else {
         if optional {
             return Ok(None);
@@ -264,14 +270,16 @@ async fn close_gap(
         }
         bail!("the newest capture gap row of {triple} already has resync_at");
     }
-    let resync_at: DateTime<Utc> = transaction
-        .query_one(
-            close_capture_gap_sql(),
-            &[&triple.org, &triple.project, &env, &created_at],
-        )
-        .await
-        .context("set resync_at")?
-        .get(0);
+    let resync_at: DateTime<Utc> =
+        sqlx::query(sqlx::AssertSqlSafe((close_capture_gap_sql()).to_string()))
+            .bind(&triple.org)
+            .bind(&triple.project)
+            .bind(env)
+            .bind(created_at)
+            .fetch_one(&mut *transaction)
+            .await
+            .context("set resync_at")?
+            .get(0);
     transaction
         .commit()
         .await
@@ -328,19 +336,20 @@ async fn last_cdc_event(
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .context("database connect")?;
-    tokio::spawn(connection);
+
     Ok(client)
 }
 
 /// Connect as the superuser and `SET ROLE wamn_system`, the registry owner.
 async fn connect_system(url: &str) -> anyhow::Result<Client> {
-    let client = connect(url).await.context("system db connect")?;
-    client
-        .batch_execute("SET ROLE wamn_system")
+    let mut client = connect(url).await.context("system db connect")?;
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .context("SET ROLE wamn_system")?;
     Ok(client)
 }

@@ -10,11 +10,11 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::{PlatformComponent, WorkloadRoleFamily};
 use wamn_dev_control::dev::environment::{
-    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, generation_args,
+    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT,
     install_journey_platform_base_grants, reconcile_journey_run_plane,
 };
 use wamn_environment_control::provision_project_env::{
-    ProvisionProjectEnvRequest, provision_project_env, run_workload_action,
+    ProvisionProjectEnvRequest, provision_project_env,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::{create_or_reuse_user, grant_project_env_membership};
@@ -34,7 +34,7 @@ async fn run(command: &mut Command) -> anyhow::Result<()> {
 }
 
 async fn provision_browser_environment(
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     system_url: &str,
     root: &Path,
 ) -> anyhow::Result<()> {
@@ -63,50 +63,57 @@ async fn provision_browser_environment(
         emit_operator_pat_secret: None,
     })
     .await?;
-    admin.batch_execute(&provisioned.role_sql).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&provisioned.role_sql).to_string()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     // Stand in for the emitted Database CR on the disposable local server.
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "{} OWNER wamn_db_owner",
             wamn_control_provision::sql::create_database_named_sql(&provisioned.database)
         ))
-        .await?;
-    admin.batch_execute(&provisioned.privilege_sql).await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provisioned.privilege_sql).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let mut target_url = url::Url::parse(system_url)?;
     target_url.set_path(&provisioned.database);
-    let (target, driver) =
-        tokio_postgres::connect(target_url.as_str(), tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(driver);
+    let mut target = wamn_postgres::connect(target_url.as_str()).await?;
+
     let coordinate = JourneyTarget {
         org: ORG.to_owned(),
         project: BROWSER_PROJECT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
     };
-    install_journey_platform_base_grants(&target, "example.invalid").await?;
+    install_journey_platform_base_grants(&mut target, "example.invalid").await?;
     reconcile_journey_run_plane(&coordinate, system_url, target_url.as_str()).await?;
-    let secret = output.join("administration.json");
-    run_workload_action(&generation_args(
-        &coordinate,
-        WorkloadRoleFamily::Administration,
+    let administration = wamn_test_infrastructure::credentials::database_login(
         system_url,
         Some(target_url.as_str()),
-        &secret,
-    ))
+        ORG,
+        BROWSER_PROJECT,
+        ENVIRONMENT,
+        WorkloadRoleFamily::Administration,
+    )
     .await?;
-    let patch: Value = serde_json::from_slice(&std::fs::read(
-        secret.with_extension("control-administration-patch.json"),
-    )?)?;
-    for (name, value) in patch["stringData"]
-        .as_object()
-        .context("administration patch")?
-    {
-        std::fs::write(
-            root.join("control-administration").join(name),
-            value.as_str().context("administration login")?,
-        )?;
-    }
+    std::fs::write(
+        root.join("control-administration")
+            .join(wamn_registry::project_env_key(
+                ORG,
+                BROWSER_PROJECT,
+                ENVIRONMENT,
+            )),
+        administration,
+    )?;
     drop(target);
-    driver.await??;
     Ok(())
 }
 
@@ -175,18 +182,15 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             if line == "run holding" { break; }
         }
         let endpoint: Value = serde_json::from_slice(&std::fs::read(root.join("application-endpoint.json"))?)?;
-        let (mut admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
-        let driver = tokio::spawn(driver);
+        let mut admin = wamn_postgres::connect(system.url()).await?;
+
         let actor: wamn_identity_protocol::PrincipalId =
             PlatformComponent::Provisioning.principal_id().to_string().parse()?;
         // Bind the caller for the existing platform verbs. No identity table SQL belongs here.
-        admin.execute(
-            "SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:platform-ui-test', false)",
-            &[&actor.to_string().as_str()],
-        ).await?;
+        sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:platform-ui-test', false)").bind(&actor.to_string().as_str()).execute(&mut admin).await.map(|result| result.rows_affected())?;
         // dev up calls provision-org --admin through its shared implementation.
-        let user = create_or_reuse_user(&admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
-        grant_project_env_membership(&admin, &user, ORG, PROJECT, ENVIRONMENT).await?;
+        let user = create_or_reuse_user(&mut admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
+        grant_project_env_membership(&mut admin, &user, ORG, PROJECT, ENVIRONMENT).await?;
         let invitation = wamn_platform_identity::password::issue_invitation(&mut admin, &actor, &user).await?;
         let web: Value = serde_json::from_slice(&std::fs::read(root.join("web.json"))?)?;
         let url = web["url"].as_str().context("local platform URL")?;
@@ -219,7 +223,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         line.clear();
         output.read_line(&mut line).await?;
         ensure!(line.trim() == "project-created", "browser did not create the project: {line}");
-        provision_browser_environment(&admin, system.url(), &root).await?;
+        provision_browser_environment(&mut admin, system.url(), &root).await?;
         input.write_all(b"environment-ready\n").await?;
         drop(input);
         browser.stdout = Some(output.into_inner());
@@ -245,7 +249,6 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             "browser did not complete the splash tile assertions"
         );
         drop(admin);
-        driver.await??;
         Ok::<_, anyhow::Error>(())
     }.await;
     let application_cleanup = async {

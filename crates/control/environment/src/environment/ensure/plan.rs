@@ -1,41 +1,4 @@
-use super::{
-    CredentialDatabase, CredentialGeneration, EnvironmentDocument, HostCredential, Platform,
-    PrivateDirectory, Triple, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadRoleFamily,
-};
-
-/// Prepare the Secret and database selection of one environment credential.
-pub(super) fn credential_request(
-    credential: HostCredential,
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    private: &PrivateDirectory,
-    cluster: &str,
-    project_url: &str,
-) -> WorkloadActionRequest {
-    WorkloadActionRequest {
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        system_database_url: Some(platform.system_database_url.clone()),
-        target_admin_database_url: (credential.database == CredentialDatabase::Project)
-            .then(|| project_url.to_owned()),
-        cluster: Some(cluster.to_owned()),
-        cluster_namespace: platform.database_namespace.clone(),
-        db_host: platform.database_host.clone(),
-        db_port: platform.database_port,
-        namespace: platform.target.namespace.clone(),
-        action: WorkloadGenerationAction {
-            family: credential.family,
-            verb: WorkloadActionVerb::Prepare,
-            generation: CredentialGeneration::A,
-        },
-        secret: Some(private.path(credential.file_name)),
-        emit_role_sql: None,
-        control_administration_patch: (credential.family == WorkloadRoleFamily::Administration)
-            .then(|| private.path("control-administration-patch.json")),
-    }
-}
+use super::Triple;
 
 /// `wamn-pat-management-author-<org>--<project>--<env>`.
 pub(in super::super) fn management_author_pat_name(triple: &Triple) -> String {

@@ -1,7 +1,7 @@
 //! Shared WMS rows for local business and deployed delivery tests.
 
 use anyhow::Context as _;
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 
 const PRODUCT_ID: &str = "00000000-0000-0000-0000-000000000101";
 pub(crate) const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
@@ -9,9 +9,12 @@ const LOCATION_B_ID: &str = "00000000-0000-0000-0000-000000000202";
 pub(crate) const PACKAGING_ID: &str = "00000000-0000-0000-0000-000000000301";
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
-pub(crate) async fn seed_fixture(project: &Client, initial_revision: i64) -> anyhow::Result<()> {
+pub(crate) async fn seed_fixture(
+    project: &mut Client,
+    initial_revision: i64,
+) -> anyhow::Result<()> {
     // The fixture writes as its test principal, whose row stamps itself.
-    project.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&format!(
         "BEGIN;\n\
          SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                 set_config('app.operation', 'admin:seed-wms-fixture', true);\n\
@@ -22,7 +25,7 @@ pub(crate) async fn seed_fixture(project: &Client, initial_revision: i64) -> any
          INSERT INTO wms.packaging_quantity (packaging_id, product_id, quantity, status) VALUES ('{PACKAGING_ID}', '{PRODUCT_ID}', 10, 'available');\n\
          INSERT INTO wms.inventory_transaction (product_id, quantity, to_packaging_id, to_status, occurred_at) VALUES ('{PRODUCT_ID}', 10, '{PACKAGING_ID}', 'available', now());\n\
          COMMIT;"
-    )).await.context("seed the existing WMS application fixture")
+    )).to_string())).execute(&mut *project).await.map(drop).context("seed the existing WMS application fixture")
 }
 
 #[derive(Debug, Clone)]

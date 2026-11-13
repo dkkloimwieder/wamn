@@ -1,5 +1,6 @@
 //! Generate real exclusion diagnostics and run the Receiving error-mapping test.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -89,20 +90,29 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn diagnostic(client: &tokio_postgres::Client, update: &str) -> anyhow::Result<Value> {
-    client.batch_execute("SET ROLE wamn_app").await?;
-    let result = client.batch_execute(update).await;
-    client.batch_execute("RESET ROLE").await?;
+async fn diagnostic(client: &mut sqlx::PgConnection, update: &str) -> anyhow::Result<Value> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("SET ROLE wamn_app").to_string()))
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    let result = sqlx::raw_sql(sqlx::AssertSqlSafe((update).to_string()))
+        .execute(&mut *client)
+        .await
+        .map(drop);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("RESET ROLE").to_string()))
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
     let error = result.expect_err("the fixture update must violate its exclusion");
     let error = error
-        .as_db_error()
+        .as_database_error()
         .context("expected PostgreSQL diagnostics")?;
     ensure!(
-        error.code().code() == "23P01",
+        error.code().as_deref().unwrap_or("") == "23P01",
         "expected exclusion violation"
     );
     Ok(
-        json!({"sqlstate": error.code().code(), "constraint": error.constraint().context("server constraint name")?}),
+        json!({"sqlstate": error.code().as_deref().unwrap_or(""), "constraint": error.constraint().context("server constraint name")?}),
     )
 }
 
@@ -144,22 +154,24 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let mut server = postgres::start(&[])?;
     let database = server.create_database("exclusion_diagnostics")?;
-    let (client, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    let task = tokio::spawn(connection);
-    client.batch_execute("CREATE SCHEMA receiving; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA receiving TO wamn_app;").await?;
-    client
-        .batch_execute(include_str!("../../migrations/0001_initial.sql"))
-        .await?;
-    client.batch_execute("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("CREATE SCHEMA receiving; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA receiving TO wamn_app;").to_string())).execute(&mut client).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (include_str!("../../migrations/0001_initial.sql")).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
         INSERT INTO receiving.supplier (id, name)
         VALUES ('00000000-0000-4000-8000-000000000f01', 'first supplier'),
                ('00000000-0000-4000-8000-000000000f02', 'second supplier');
         INSERT INTO receiving.purchase_order (purchase_order_number, supplier_id, created_at, created_by, updated_at, updated_by)
         VALUES ('first', '00000000-0000-4000-8000-000000000f01', now(), gen_random_uuid(), now(), gen_random_uuid()),
                ('second', '00000000-0000-4000-8000-000000000f02', now(), gen_random_uuid(), now(), gen_random_uuid());
-        ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_supplier_id_excl EXCLUDE USING gist (supplier_id WITH =);").await?;
-    let receiving = diagnostic(&client, "UPDATE receiving.purchase_order SET supplier_id = (SELECT supplier_id FROM receiving.purchase_order WHERE purchase_order_number = 'first') WHERE purchase_order_number = 'second'").await?;
+        ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_supplier_id_excl EXCLUDE USING gist (supplier_id WITH =);").to_string())).execute(&mut client).await.map(drop)?;
+    let receiving = diagnostic(&mut client, "UPDATE receiving.purchase_order SET supplier_id = (SELECT supplier_id FROM receiving.purchase_order WHERE purchase_order_number = 'first') WHERE purchase_order_number = 'second'").await?;
     generate_fixture(database.url(), &scratch.path().join("apps/wamn_receiving")).await?;
     let diagnostics = scratch.path().join("exclusion-diagnostics.json");
     std::fs::write(
@@ -167,7 +179,6 @@ async fn main() -> anyhow::Result<()> {
         serde_json::to_vec(&json!({"receiving": receiving}))?,
     )?;
     drop(client);
-    task.await??;
     server.stop()?;
     let task_target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);

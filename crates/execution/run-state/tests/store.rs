@@ -6,8 +6,7 @@ use std::process::{Command as Proc, Stdio};
 
 use serde_json::json;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
-    workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql, workload_login,
 };
 use wamn_run_state::{FailType, RunStatus};
 
@@ -124,28 +123,21 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     ))
     .expect("read deploy/sql/run-state.sql");
     let database = live_database(&url);
-    let app_role = workload_generation_role(
+    let app_role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t1",
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("derive the live run-state App generation");
-    let prepare_app = provision_sql::prepare_workload_generation_sql(
+    let prepare_app = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &app_role,
         "run-state-store-test-password",
-        "2099-01-01T00:00:00Z",
     );
-    let retire_app = provision_sql::retire_workload_generation_sql(
-        WorkloadRoleFamily::App,
-        &database,
-        &app_role,
-    );
-    let drain_app = provision_sql::terminate_workload_generation_sessions_sql(&app_role);
+    let remove_login = format!("DROP OWNED BY {app_role};");
 
     let mut script = String::new();
     // Prepare the production-shaped App identity and a fresh schema.
@@ -348,8 +340,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     writeln!(
         script,
         "DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n\
-         {retire_app}\n\
-         {drain_app}\n\
+         {remove_login}\n\
          DROP ROLE \"{app_role}\";"
     )
     .expect("writing to a String cannot fail");

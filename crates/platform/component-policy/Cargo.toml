@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pg_query = "=6.2.1"
+serde_json.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true

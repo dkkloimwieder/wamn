@@ -1,3 +1,4 @@
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 
 use serde_json::json;
@@ -13,18 +14,25 @@ use crate::plugins::wamn_postgres::WamnPostgresConfig;
 const PROJECT_ENV_KEY: &str = "acme--dev--project-a";
 
 async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
-    let tx = fixture.admin.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    let mut tx = fixture.admin.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
     let mut drops = ConnectionDrops::default();
     administration::execute_with_store(
-        &tx,
+        &mut tx,
         "acme",
         "connection.write",
         &json!({
@@ -56,12 +64,8 @@ async fn setup(
             ("http_basic", json!({})),
         )
         .await;
-    let id = fixture
-        .admin
-        .query_one(
-            "SELECT id FROM registry.connection WHERE project='project-a'",
-            &[],
-        )
+    let id = sqlx::query("SELECT id FROM registry.connection WHERE project='project-a'")
+        .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
         .get(0);
@@ -87,21 +91,19 @@ async fn setup(
     (fixture, facts, id)
 }
 
-async fn assert_postgres_read(fixture: &Fixture, facts: &ConnectionFacts, id: &uuid::Uuid) {
-    fixture.admin.batch_execute(
-        "REVOKE EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) FROM wamn_conn_reader",
-    ).await.unwrap();
+async fn assert_postgres_read(fixture: &mut Fixture, facts: &ConnectionFacts, id: &uuid::Uuid) {
+    sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.admin).await.map(drop).unwrap();
     let error = facts.connection(id).await.unwrap_err();
     assert_eq!(
         error
-            .downcast_ref::<tokio_postgres::Error>()
+            .downcast_ref::<sqlx::Error>()
             .unwrap()
-            .code(),
-        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("42501"),
     );
-    fixture.admin.batch_execute(
-        "GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader",
-    ).await.unwrap();
+    sqlx::raw_sql("GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid) TO wamn_conn_reader").execute(&mut fixture.admin).await.map(drop).unwrap();
 }
 
 #[tokio::test]
@@ -111,9 +113,9 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete() {
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let _lock = wamn_test_postgres::lock();
-    let (_server, client) = nats().await;
+    let (_server, mut client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes.clone()).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -151,10 +153,10 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let _lock = wamn_test_postgres::lock();
-    let (_server, client) = nats().await;
+    let (_server, mut client) = nats().await;
     let ttl = Duration::from_secs(1);
     let memory = Arc::new(ConnectionMemory::with_ttl(ttl));
-    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -179,9 +181,9 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let _lock = wamn_test_postgres::lock();
-    let (server, client) = nats().await;
+    let (server, mut client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&mut client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -197,7 +199,7 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
     for _ in 0..2 {
         assert_eq!(facts.connection(&id).await.unwrap(), Some(old.clone()));
         assert!(memory.connection(PROJECT_ENV_KEY, &id).is_err());
-        assert_postgres_read(&fixture, &facts, &id).await;
+        assert_postgres_read(&mut fixture, &facts, &id).await;
     }
     let drops = write(&mut fixture, "new").await;
     drop(drops);
@@ -206,6 +208,6 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
         assert_eq!(new.active_generation, old.active_generation + 1);
         assert_ne!(new.credential_id, old.credential_id);
         assert!(memory.connection(PROJECT_ENV_KEY, &id).is_err());
-        assert_postgres_read(&fixture, &facts, &id).await;
+        assert_postgres_read(&mut fixture, &facts, &id).await;
     }
 }

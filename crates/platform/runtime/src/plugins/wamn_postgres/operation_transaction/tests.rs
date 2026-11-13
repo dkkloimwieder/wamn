@@ -1,3 +1,4 @@
+use sqlx::Row as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 use wamn_scalar::SqlValueType;
@@ -329,23 +330,21 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     postgres
         .activate_statement_operation(OPERATION_OWNER, OWNER_OPERATION)
         .expect("owner statement activates");
-    let (admin, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    admin
-        .batch_execute(
-            "CREATE TABLE operation_transaction_roundtrip(value int NOT NULL); \
+    let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE operation_transaction_roundtrip(value int NOT NULL); \
          INSERT INTO operation_transaction_roundtrip VALUES (1); \
-         GRANT SELECT, UPDATE ON operation_transaction_roundtrip TO wamn_app",
-        )
-        .await
-        .unwrap();
-    let value = async || -> i32 {
-        admin
-            .query_one("SELECT value FROM operation_transaction_roundtrip", &[])
+         GRANT SELECT, UPDATE ON operation_transaction_roundtrip TO wamn_app")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .unwrap();
+    let mut value = async || -> i32 {
+        sqlx::query("SELECT value FROM operation_transaction_roundtrip")
+            .fetch_one(&mut admin)
             .await
             .unwrap()
             .get(0)
@@ -422,12 +421,12 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     assert_eq!(value().await, 2, "without a host transaction run commits");
 
     for commit in [true, false] {
-        let transaction = postgres
+        let mut transaction = postgres
             .begin_operation_transaction(OPERATION_OWNER)
             .await
             .expect("the host begins the operation transaction");
         postgres
-            .bind_operation_transaction(OPERATION_OWNER, &transaction)
+            .bind_operation_transaction(OPERATION_OWNER, &mut transaction)
             .expect("the transaction binds");
         let owner = run_owner().await;
         assert!(

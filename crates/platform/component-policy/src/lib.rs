@@ -23,6 +23,8 @@
 //! `wasi:sockets@…`) collapses to the same package and is caught by the one
 //! rule.
 
+pub mod sql;
+
 /// Ordered top-level imports declared by a component world.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentImports {

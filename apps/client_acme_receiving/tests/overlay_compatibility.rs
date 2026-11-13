@@ -1,5 +1,6 @@
 //! Shared fixture and its local tests.
 
+use sqlx::Row as _;
 include!("overlay_compatibility_fixture.rs");
 #[test]
 fn required_contract_observation_refuses_changed_consumed_fields_and_constraints() {
@@ -42,33 +43,33 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
 async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
     let mut postgres = production_server().await?;
-    let (_, project, connection_task) = install_fresh(
+    let (_, mut project) = install_fresh(
         &mut postgres,
         "observer",
         &[super::package_root(), super::overlay_package_root()],
     )
     .await?;
-    let version: i32 = project
-        .query_one("SELECT current_setting('server_version_num')::integer", &[])
+    let version: i32 = sqlx::query("SELECT current_setting('server_version_num')::integer")
+        .fetch_one(&mut project)
         .await?
         .get(0);
-    let schema_acl = project
-        .query_one(
-            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'",
-            &[],
-        )
-        .await?
-        .get::<_, Option<String>>(0)
-        .context("production install must retain an explicit schema ACL")?;
+    let schema_acl =
+        sqlx::query("SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'")
+            .fetch_one(&mut project)
+            .await?
+            .get::<Option<String>, _>(0)
+            .context("production install must retain an explicit schema ACL")?;
     let required = &required_schema_contract(&super::overlay_package_root())?;
-    let baseline = observe_installed_contract(&project, required).await?;
+    let baseline = observe_installed_contract(&mut project, required).await?;
     let positive = required_contract_observation(required, &baseline)?;
-    project
-        .batch_execute(
-            "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text",
-        )
-        .await?;
-    let additive = observe_installed_contract(&project, required).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text")
+            .to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    let additive = observe_installed_contract(&mut project, required).await?;
     ensure!(
         baseline != additive,
         "all-column projection omitted the additive field"
@@ -101,13 +102,22 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     ];
     let mut negative = Vec::new();
     for (name, sql, expected) in controls {
-        project.batch_execute("BEGIN").await?;
-        project.batch_execute(sql).await?;
-        let outcome = match observe_installed_contract(&project, required).await {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string()))
+            .execute(&mut project)
+            .await
+            .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string()))
+            .execute(&mut project)
+            .await
+            .map(drop)?;
+        let outcome = match observe_installed_contract(&mut project, required).await {
             Ok(observed) => required_contract_observation(required, &observed),
             Err(error) => Err(error),
         };
-        project.batch_execute("ROLLBACK").await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+            .execute(&mut project)
+            .await
+            .map(drop)?;
         let error = outcome
             .err()
             .with_context(|| format!("observer accepted {name}"))?;
@@ -117,18 +127,16 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         );
         negative.push(json!({"control":name,"refusal":error.to_string(),"result":"refused"}));
     }
-    let restored = observe_installed_contract(&project, required).await?;
+    let restored = observe_installed_contract(&mut project, required).await?;
     ensure!(
         restored == additive,
         "rolled-back controls changed the installed projection"
     );
-    let retained_acl: String = project
-        .query_one(
-            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'",
-            &[],
-        )
-        .await?
-        .get(0);
+    let retained_acl: String =
+        sqlx::query("SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'")
+            .fetch_one(&mut project)
+            .await?
+            .get(0);
     ensure!(
         retained_acl == schema_acl,
         "observer changed installed ACLs"
@@ -144,7 +152,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     });
     println!("{}", serde_json::to_string_pretty(&evidence)?);
     drop(project);
-    connection_task.await?;
+
     Ok(())
 }
 
@@ -190,13 +198,12 @@ async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible() -
         ("baseline", super::package_root()),
         ("additive", additive_base),
     ] {
-        let (_, project, connection_task) =
-            install_fresh(&mut postgres, name, &[base, overlay.clone()])
-                .await
-                .with_context(|| format!("install the unchanged overlay over the {name} base"))?;
-        let observed = observe_installed_contract(&project, required).await;
+        let (_, mut project) = install_fresh(&mut postgres, name, &[base, overlay.clone()])
+            .await
+            .with_context(|| format!("install the unchanged overlay over the {name} base"))?;
+        let observed = observe_installed_contract(&mut project, required).await;
         drop(project);
-        connection_task.await?;
+
         observations.push(observed?);
     }
     let [baseline, additive] = observations.as_slice() else {

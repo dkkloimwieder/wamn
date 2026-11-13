@@ -1,5 +1,7 @@
 //! The native identity process issues PATs only to verified TLS operators.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::net::SocketAddr;
@@ -17,19 +19,17 @@ use rcgen::{
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 use tokio::process::{Child, ChildStderr, Command};
-use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_ROLE, grant_identity_issuer_surface_sql, identity_issuer_generation_role,
-    prepare_identity_issuer_generation_sql,
+
+use wamn_control_provision::identity_role::{
+    IDENTITY_ISSUER_ROLE, grant_identity_issuer_surface_sql, identity_issuer_login,
 };
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::sql::{
     ensure_db_owner_role_sql, revoke_public_connect_base_grants_sql,
 };
-use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_login};
 use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-    project_env_database_name,
+    PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, project_env_database_name,
 };
 use wamn_identity::tls_config_with_operator_ca;
 use wamn_identity_protocol::PrincipalId;
@@ -123,7 +123,7 @@ fn operator_ca_configuration_refuses_missing_or_malformed_roots() {
 async fn operator_pat_issuance_over_https() {
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
-    let database = postgres
+    let mut database = postgres
         .create_database("wamn_system")
         .expect_redacted("create the wamn_system test database");
     let raw = database.url();
@@ -132,63 +132,64 @@ async fn operator_pat_issuance_over_https() {
         parsed.path() == "/wamn_system",
         "never reset another database"
     );
-    let (mut system, connection) = tokio_postgres::connect(raw, NoTls)
+    let mut system = wamn_postgres::connect(raw)
         .await
         .expect_redacted("connect disposable PostgreSQL");
-    let driver = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let safe: bool = system.query_one("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
+
+    let safe: bool = sqlx::query("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user").fetch_one(&mut system)
         .await.expect_redacted("disposable PG18 preflight").get(0);
     assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
-    let role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A)
-        .expect_redacted("issuer role");
-    let exists: bool = system
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[]))",
-            &[&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()]],
-        )
-        .await
-        .expect_redacted("fixture role absence")
-        .get(0);
+    let role = identity_issuer_login(ISSUER).expect_redacted("issuer role");
+    let exists: bool =
+        sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[]))")
+            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()])
+            .fetch_one(&mut system)
+            .await
+            .expect_redacted("fixture role absence")
+            .get(0);
     assert!(
         !exists,
         "refuse to replace existing identity authority roles"
     );
-    system
-        .batch_execute(ensure_db_owner_role_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)
+    .expect_redacted("record history grants name wamn_db_owner");
+    sqlx::raw_sql("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;").execute(&mut system).await.map(drop).expect_redacted("prepare disposable system schema owner");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut system)
         .await
-        .expect_redacted("record history grants name wamn_db_owner");
-    system.batch_execute("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;")
-        .await.expect_redacted("prepare disposable system schema owner");
-    system
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect_redacted("production system schema");
-    system
-        .batch_execute("RESET ROLE")
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut system)
         .await
+        .map(drop)
         .expect_redacted("restore fixture admin");
-    system
-        .batch_execute(revoke_public_connect_base_grants_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (revoke_public_connect_base_grants_sql()).to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)
+    .expect_redacted("production CONNECT minimum");
+    sqlx::raw_sql("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
+        .execute(&mut system)
         .await
-        .expect_redacted("production CONNECT minimum");
-    system
-        .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
-        .await
+        .map(drop)
         .expect_redacted("production TEMPORARY minimum");
-    system
-        .batch_execute(
-            &prepare_identity_issuer_generation_sql(
-                ISSUER,
-                CredentialGeneration::A,
-                PASSWORD,
-                "2100-01-01T00:00:00Z",
-            )
-            .expect_redacted("targeted credential SQL"),
-        )
-        .await
-        .expect_redacted("provision issuer credential");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::issuer_login_sql(ISSUER, PASSWORD)
+            .expect_redacted("targeted credential SQL"))
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)
+    .expect_redacted("provision issuer credential");
     let mut targeted = parsed.clone();
     targeted
         .set_username(&role)
@@ -196,23 +197,26 @@ async fn operator_pat_issuance_over_https() {
     targeted
         .set_password(Some(PASSWORD))
         .expect_redacted("targeted password");
-    targeted.set_query(None);
     targeted.set_fragment(None);
     let targeted = targeted.to_string();
 
     // The fixture is platform setup, so it writes as wamn:provisioning.
-    system
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut system)
         .await
+        .map(|result| result.rows_affected())
         .expect_redacted("bind wamn:provisioning for the fixture session");
-    let user = create_user(&system, "pat-user", "pat-human@example.invalid", "PAT User")
-        .await
-        .expect_redacted("user fixture");
+    let user = create_user(
+        &mut system,
+        "pat-user",
+        "pat-human@example.invalid",
+        "PAT User",
+    )
+    .await
+    .expect_redacted("user fixture");
     let machine = create_service(
-        &system,
+        &mut system,
         "pat-machine",
         "PAT Machine",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -220,14 +224,14 @@ async fn operator_pat_issuance_over_https() {
     .await
     .expect_redacted("service fixture");
     let disabled = create_user(
-        &system,
+        &mut system,
         "pat-disabled",
         "pat-disabled@example.invalid",
         "PAT Disabled",
     )
     .await
     .expect_redacted("disabled fixture");
-    disable_principal(&system, disabled.id(), &mut AuthDrops::default())
+    disable_principal(&mut system, disabled.id(), &mut AuthDrops::default())
         .await
         .expect_redacted("disable fixture principal");
     let key = publish_session_key(&mut system, ISSUER)
@@ -284,7 +288,7 @@ async fn operator_pat_issuance_over_https() {
     );
     let anonymous = https_client(&server_ca, None);
     let authorized = https_client(&server_ca, Some(&operator));
-    let before = snapshots(&system, false).await;
+    let before = snapshots(&mut system, false).await;
     let process = start(
         &targeted,
         &cert_path,
@@ -296,9 +300,9 @@ async fn operator_pat_issuance_over_https() {
 
     public_routes(&process.endpoint, &anonymous).await;
     for material in [&foreign, &expired, &wrong_usage] {
-        let client = https_client(&server_ca, Some(material));
+        let mut client = https_client(&server_ca, Some(material));
         assert!(
-            request(&client, &process.endpoint, user.id(), "refused", 3600)
+            request(&mut client, &process.endpoint, user.id(), "refused", 3600)
                 .send()
                 .await
                 .is_err(),
@@ -340,7 +344,7 @@ async fn operator_pat_issuance_over_https() {
     )
     .await;
     assert!(
-        before == snapshots(&system, false).await,
+        before == snapshots(&mut system, false).await,
         "refused callers cannot change any system row"
     );
 
@@ -358,7 +362,7 @@ async fn operator_pat_issuance_over_https() {
         &process.endpoint,
         machine.id(),
         "  operator service  ",
-        &system,
+        &mut system,
     )
     .await;
     let machine_pat = success(
@@ -366,10 +370,10 @@ async fn operator_pat_issuance_over_https() {
         &process.endpoint,
         machine.id(),
         "operator service",
-        &system,
+        &mut system,
     )
     .await;
-    let unrelated = snapshots(&system, true).await;
+    let unrelated = snapshots(&mut system, true).await;
     assert_failure(
         request(
             &anonymous,
@@ -386,14 +390,14 @@ async fn operator_pat_issuance_over_https() {
         FORBIDDEN,
     )
     .await;
-    let before_refusals = snapshots(&system, false).await;
+    let before_refusals = snapshots(&mut system, false).await;
     malformed_requests(&authorized, &process.endpoint, user.id(), disabled.id()).await;
     assert!(
-        before_refusals == snapshots(&system, false).await,
+        before_refusals == snapshots(&mut system, false).await,
         "all request refusals preserve every system row"
     );
     assert!(
-        unrelated == snapshots(&system, true).await,
+        unrelated == snapshots(&mut system, true).await,
         "PAT issuance cannot create principals, roles, or membership grants"
     );
 
@@ -402,28 +406,28 @@ async fn operator_pat_issuance_over_https() {
     let end = forged.pop().expect("token secret");
     forged.push(if end == 'a' { 'b' } else { 'a' });
     assert!(
-        authenticate_pat(&system, &forged)
+        authenticate_pat(&mut system, &forged)
             .await
             .expect_redacted("full secret test")
             .is_none(),
         "known prefix alone is insufficient"
     );
     let prefix = service_pat["token_prefix"].as_str().expect("PAT prefix");
-    revoke_pat(&system, prefix, &mut AuthDrops::default())
+    revoke_pat(&mut system, prefix, &mut AuthDrops::default())
         .await
         .expect_redacted("revoke service-issued PAT");
     assert!(
-        authenticate_pat(&system, token)
+        authenticate_pat(&mut system, token)
             .await
             .expect_redacted("revocation test")
             .is_none()
     );
     let machine_token = machine_pat["token"].as_str().expect("machine PAT string");
-    disable_principal(&system, machine.id(), &mut AuthDrops::default())
+    disable_principal(&mut system, machine.id(), &mut AuthDrops::default())
         .await
         .expect_redacted("disable service-issued principal");
     assert!(
-        authenticate_pat(&system, machine_token)
+        authenticate_pat(&mut system, machine_token)
             .await
             .expect_redacted("principal disable test")
             .is_none()
@@ -433,15 +437,14 @@ async fn operator_pat_issuance_over_https() {
         &process.endpoint,
         user.id(),
         "expiry control",
-        &system,
+        &mut system,
     )
     .await;
     // The stamp trigger keeps created_at, so the fixture expires the token just after it.
-    system.execute("UPDATE identity.pats SET expires_at=created_at+interval '1 microsecond' WHERE token_prefix=$1", &[&expired_pat["token_prefix"].as_str().expect("expiry prefix")])
-        .await.expect_redacted("deterministic PAT expiry fixture");
+    sqlx::query("UPDATE identity.pats SET expires_at=created_at+interval '1 microsecond' WHERE token_prefix=$1").bind(&expired_pat["token_prefix"].as_str().expect("expiry prefix")).execute(&mut system).await.map(|result| result.rows_affected()).expect_redacted("deterministic PAT expiry fixture");
     assert!(
         authenticate_pat(
-            &system,
+            &mut system,
             expired_pat["token"].as_str().expect("expiry token")
         )
         .await
@@ -449,14 +452,12 @@ async fn operator_pat_issuance_over_https() {
         .is_none()
     );
 
-    system
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "REVOKE INSERT (principal_id, principal_type, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
             escape_identifier(IDENTITY_ISSUER_ROLE)
-        ))
-        .await
+        ))).execute(&mut system).await.map(drop)
         .expect_redacted("database authority failure control");
-    let before_failure = snapshots(&system, false).await;
+    let before_failure = snapshots(&mut system, false).await;
     assert_failure(
         request(
             &authorized,
@@ -473,13 +474,16 @@ async fn operator_pat_issuance_over_https() {
     )
     .await;
     assert!(
-        before_failure == snapshots(&system, false).await,
+        before_failure == snapshots(&mut system, false).await,
         "database refusal cannot write a PAT"
     );
-    system
-        .batch_execute(&grant_identity_issuer_surface_sql())
-        .await
-        .expect_redacted("restore issuer fixture grants");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&grant_identity_issuer_surface_sql()).to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)
+    .expect_redacted("restore issuer fixture grants");
 
     stop(
         process,
@@ -509,18 +513,20 @@ async fn operator_pat_issuance_over_https() {
     )
     .await;
 
-    system.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
-        .await.expect_redacted("remove owned fixture schemas");
-    system
-        .batch_execute(&format!(
+    sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;").execute(&mut system).await.map(drop).expect_redacted("remove owned fixture schemas");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
             role = escape_identifier(&role),
             stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
-        .await
-        .expect_redacted("remove exact fixture authority roles");
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)
+    .expect_redacted("remove exact fixture authority roles");
     drop(system);
-    driver.abort();
     println!(
         "OPERATOR_PAT_ISSUANCE result=pass native_process=pass mtls=pass anonymous_surfaces=pass bearer_refused=pass token_predicates=pass no_side_effects=pass redaction=pass"
     );
@@ -547,7 +553,7 @@ async fn success(
     endpoint: &str,
     principal: &PrincipalId,
     label: &str,
-    system: &Client,
+    system: &mut Client,
 ) -> Value {
     let before = snapshots(system, true).await;
     let previous_pats = pat_versions(system, "").await;
@@ -586,18 +592,18 @@ async fn success(
         .expect_redacted("real PAT verification")
         .expect("issued token authenticates");
     assert_eq!(authenticated.principal().id(), principal);
-    let record = system.query_one("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1", &[&value["token_prefix"].as_str().expect("token prefix")])
+    let record = sqlx::query("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1").bind(&value["token_prefix"].as_str().expect("token prefix")).fetch_one(&mut *system)
         .await.expect_redacted("persisted PAT record");
-    assert_eq!(record.get::<_, String>(0), principal.to_string().as_str());
+    assert_eq!(record.get::<String, _>(0), principal.to_string().as_str());
     assert!(
-        record.get::<_, String>(1) != token,
+        record.get::<String, _>(1) != token,
         "storage retains no raw PAT"
     );
-    assert_eq!(record.get::<_, String>(2), label.trim());
-    assert_eq!(record.get::<_, i64>(3), 3600);
+    assert_eq!(record.get::<String, _>(2), label.trim());
+    assert_eq!(record.get::<i64, _>(3), 3600);
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
     assert!(
-        record.get::<_, String>(4) == provisioning && record.get::<_, String>(5) == provisioning,
+        record.get::<String, _>(4) == provisioning && record.get::<String, _>(5) == provisioning,
         "the identity service issues the token as wamn:provisioning"
     );
     for field in ["created_at", "expires_at"] {
@@ -620,8 +626,8 @@ async fn success(
     value
 }
 
-async fn pat_versions(system: &Client, exclude_prefix: &str) -> Vec<String> {
-    system.query_one("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM identity.pats t WHERE token_prefix <> $1", &[&exclude_prefix])
+async fn pat_versions(system: &mut Client, exclude_prefix: &str) -> Vec<String> {
+    sqlx::query("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM identity.pats t WHERE token_prefix <> $1").bind(&exclude_prefix).fetch_one(&mut *system)
         .await.expect_redacted("opaque PAT row-version snapshot").get(0)
 }
 
@@ -746,14 +752,14 @@ async fn public_routes(endpoint: &str, client: &reqwest::Client) {
     assert_eq!(value["keys"].as_array().expect("public keys").len(), 1);
 }
 
-async fn snapshots(system: &Client, exclude_pats: bool) -> Vec<Vec<String>> {
-    let tables = system.query("SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning') AND c.relkind='r' AND NOT ($1 AND n.nspname='identity' AND c.relname='pats') ORDER BY n.nspname,c.relname", &[&exclude_pats])
+async fn snapshots(system: &mut Client, exclude_pats: bool) -> Vec<Vec<String>> {
+    let tables = sqlx::query("SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning') AND c.relkind='r' AND NOT ($1 AND n.nspname='identity' AND c.relname='pats') ORDER BY n.nspname,c.relname").bind(&exclude_pats).fetch_all(&mut *system)
         .await.expect_redacted("fixture relation list");
     let mut snapshots = Vec::new();
     for table in tables {
         let schema: String = table.get(0);
         let name: String = table.get(1);
-        snapshots.push(system.query_one(&format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", escape_identifier(&schema), escape_identifier(&name)), &[])
+        snapshots.push(sqlx::query(sqlx::AssertSqlSafe(format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", escape_identifier(&schema), escape_identifier(&name)))).fetch_one(&mut *system)
             .await.expect_redacted("opaque row-version snapshot").get(0));
     }
     snapshots
@@ -765,16 +771,15 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
         project: "pattest".into(),
         env: "dev".into(),
     };
-    let database = project_env_database_name("acme", "pattest", "dev", "pattest1");
-    let role = workload_generation_role(
+    let mut database = project_env_database_name("acme", "pattest", "dev", "pattest1");
+    let role = workload_login(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "pattest",
             environment: "dev",
-            database: &database,
+            database: &mut database,
         },
-        CredentialGeneration::A,
     )
     .expect_redacted("unused reader target");
     let mut url = admin.clone();
@@ -782,8 +787,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
         .expect_redacted("unused reader login");
     url.set_password(Some(PASSWORD))
         .expect_redacted("unused reader password");
-    url.set_path(&database);
-    url.set_query(None);
+    url.set_path(&mut database);
     url.set_fragment(None);
     SessionTarget::new(
         &triple,

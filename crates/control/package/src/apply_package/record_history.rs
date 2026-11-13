@@ -1,3 +1,4 @@
+use sqlx::Row as _;
 use wamn_schema_control::physical_schema::history::function_body;
 use wamn_schema_control::physical_schema::{
     RelationColumn, SELECT_RELATION_COLUMNS_SQL, history_table_sql, history_triggers,
@@ -6,7 +7,6 @@ use wamn_schema_control::physical_schema::{
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::Transaction;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
@@ -46,12 +46,13 @@ SELECT routine.proname::text, routine.prosrc \
 /// for a present table too, so an older table gains the indexes the shape
 /// added since; only a new table counts as a change.
 pub(super) async fn create_history_tables(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     manifest: &PackageManifest,
 ) -> anyhow::Result<bool> {
     // Take the retention lock before CREATE INDEX takes a history-table lock,
     // even when the index already exists. Pruning takes these locks in this order.
-    tx.query_one(AUDIT_RETENTION_LOCK_SQL, &[])
+    sqlx::query(AUDIT_RETENTION_LOCK_SQL)
+        .fetch_one(&mut **tx)
         .await
         .context("lock the audit retention source")?;
     let mut changed = false;
@@ -61,15 +62,19 @@ pub(super) async fn create_history_tables(
         .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
     {
         let history = history_table_name(&model.table);
-        let present = tx
-            .query_one(SELECT_RELATION_PRESENT_SQL, &[&model.schema, &history])
+        let present = sqlx::query(SELECT_RELATION_PRESENT_SQL)
+            .bind(&model.schema)
+            .bind(&history)
+            .fetch_one(&mut **tx)
             .await
             .with_context(|| format!("read history table {}.{history}", model.schema))?
-            .get::<_, bool>(0);
+            .get::<bool, _>(0);
         // The package-owner role owns the relation, so it owns its history table.
         set_package_owner_role(tx, &manifest.package.id).await?;
-        tx.batch_execute(&history_table_sql(&model.into()))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(history_table_sql(&model.into())))
+            .execute(&mut **tx)
             .await
+            .map(drop)
             .with_context(|| format!("create history table {}.{history}", model.schema))?;
         reset_host_role(tx).await?;
         changed |= !present;
@@ -103,7 +108,7 @@ pub(super) async fn create_history_tables(
 /// retention run never sees a retention change between its read and its delete.
 /// This step ends with the audit retention grants, which follow the installed log triggers.
 pub(super) async fn reconcile_record_history_triggers(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     manifest: &PackageManifest,
 ) -> anyhow::Result<bool> {
     let owned = manifest
@@ -166,8 +171,10 @@ pub(super) async fn reconcile_record_history_triggers(
         // The package-owner role owns the relation and the generated
         // functions, so it creates the triggers and the functions.
         set_package_owner_role(tx, &manifest.package.id).await?;
-        tx.batch_execute(statement)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((statement).clone()))
+            .execute(&mut **tx)
             .await
+            .map(drop)
             .with_context(|| format!("reconcile a record-history trigger: {statement}"))?;
         reset_host_role(tx).await?;
     }
@@ -182,9 +189,13 @@ pub(super) async fn reconcile_record_history_triggers(
         "record-history-trigger-mismatch: the owned relations carry {observed:?}, but the declarations derive {expected:?}"
     );
     let grants_changed = reconcile_audit_retention_grants(tx).await?;
-    tx.batch_execute(&wamn_control_provision::sql::grant_executor_history_reads_sql())
-        .await
-        .context("grant event admission its history reads")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::grant_executor_history_reads_sql(),
+    ))
+    .execute(&mut **tx)
+    .await
+    .map(drop)
+    .context("grant event admission its history reads")?;
     Ok(!functions.is_empty()
         || !statements.is_empty()
         || !dropped_functions.is_empty()
@@ -193,12 +204,14 @@ pub(super) async fn reconcile_record_history_triggers(
 
 /// Each column of one relation, read in the transaction that ran its migrations.
 pub(super) async fn read_relation_columns(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     schema: &str,
     relation: &str,
 ) -> anyhow::Result<Vec<RelationColumn>> {
-    let rows = tx
-        .query(SELECT_RELATION_COLUMNS_SQL, &[&schema, &relation])
+    let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
+        .bind(schema)
+        .bind(relation)
+        .fetch_all(&mut **tx)
         .await
         .with_context(|| format!("read the columns of {schema}.{relation}"))?;
     Ok(rows
@@ -213,11 +226,12 @@ pub(super) async fn read_relation_columns(
 
 /// The stored source of each named `wamn_history` function that exists.
 async fn read_history_functions(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     names: &[&str],
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let rows = tx
-        .query(SELECT_HISTORY_FUNCTIONS_SQL, &[&names])
+    let rows = sqlx::query(SELECT_HISTORY_FUNCTIONS_SQL)
+        .bind(names)
+        .fetch_all(&mut **tx)
         .await
         .context("read the generated record-history functions")?;
     Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
@@ -228,15 +242,17 @@ async fn read_history_functions(
 /// The result maps each relation to its name as PostgreSQL quotes it and to
 /// its trigger definitions by trigger name.
 async fn read_relation_triggers(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     relations: &[(String, String)],
 ) -> anyhow::Result<BTreeMap<(String, String), (String, BTreeMap<String, String>)>> {
     let (schemas, tables): (Vec<&str>, Vec<&str>) = relations
         .iter()
         .map(|(schema, table)| (schema.as_str(), table.as_str()))
         .unzip();
-    let rows = tx
-        .query(SELECT_RELATION_TRIGGERS_SQL, &[&schemas, &tables])
+    let rows = sqlx::query(SELECT_RELATION_TRIGGERS_SQL)
+        .bind(&schemas)
+        .bind(&tables)
+        .fetch_all(&mut **tx)
         .await
         .context("read the installed record-history triggers")?;
     let mut triggers = BTreeMap::<_, (String, BTreeMap<_, _>)>::new();
@@ -244,7 +260,7 @@ async fn read_relation_triggers(
         let (_, definitions) = triggers
             .entry((row.get(0), row.get(1)))
             .or_insert_with(|| (row.get(2), BTreeMap::new()));
-        if let Some(name) = row.get::<_, Option<String>>(3) {
+        if let Some(name) = row.get::<Option<String>, _>(3) {
             definitions.insert(name, row.get(4));
         }
     }
@@ -256,32 +272,37 @@ async fn read_relation_triggers(
 ///
 /// The host issues grants across every installed package owner.
 /// The result reports whether the grants of the role changed.
-async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Result<bool> {
-    let read_grants = || async {
-        tx.query(
-            wamn_control_provision::sql::role_database_grants_sql(),
-            &[&AUDIT_RETENTION_ROLE],
-        )
+async fn reconcile_audit_retention_grants(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> anyhow::Result<bool> {
+    let read_grants = async |tx: &mut sqlx::Transaction<'_, sqlx::Postgres>| {
+        sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_control_provision::sql::role_database_grants_sql()).to_string(),
+        ))
+        .bind(AUDIT_RETENTION_ROLE)
+        .fetch_all(&mut **tx)
         .await
         .context("read the audit retention grants")
         .map(|rows| {
             rows.iter()
                 .map(|row| {
                     (
-                        row.get::<_, String>("object_type"),
-                        row.get::<_, String>("schema_name"),
-                        row.get::<_, String>("object_name"),
-                        row.get::<_, String>("privilege_type"),
+                        row.get::<String, _>("object_type"),
+                        row.get::<String, _>("schema_name"),
+                        row.get::<String, _>("object_name"),
+                        row.get::<String, _>("privilege_type"),
                     )
                 })
                 .collect::<Vec<_>>()
         })
     };
-    let before = read_grants().await?;
+    let before = read_grants(tx).await?;
     super::roles::assert_host_role(tx).await?;
-    tx.batch_execute(&reconcile_audit_retention_grants_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(reconcile_audit_retention_grants_sql()))
+        .execute(&mut **tx)
         .await
+        .map(drop)
         .context("reconcile the audit retention grants")?;
     reset_host_role(tx).await?;
-    Ok(read_grants().await? != before)
+    Ok(read_grants(tx).await? != before)
 }

@@ -28,10 +28,9 @@
 //! order. `peek-number` reads the current values with no lock and writes
 //! nothing.
 
+use sqlx::{Row as _, Statement as _};
 use std::collections::BTreeMap;
 
-use deadpool_postgres::Object;
-use tokio_postgres::error::SqlState;
 use tracing::Instrument as _;
 use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Policy};
 use wash_runtime::engine::ctx::SharedCtx;
@@ -152,7 +151,7 @@ async fn render_number(
     let project = plugin.project_for(component_id);
     let span = db_span_for_project(plugin, component_id, &project, call.operation());
     let rendered = transaction
-        .with_host_connection(|connection| async move {
+        .with_host_connection(|mut connection| async move {
             let result =
                 match render(connection.connection(), &application, &name, &keys, call).await {
                     Ok(number) => Ok(Ok(number)),
@@ -187,7 +186,7 @@ enum FailureType {
         source: Option<anyhow::Error>,
     },
     /// A statement failed.
-    Postgres(tokio_postgres::Error),
+    Postgres(sqlx::Error),
 }
 
 impl std::fmt::Display for Failure {
@@ -242,7 +241,7 @@ fn caused_refusal(
 }
 
 async fn render(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     application: &str,
     name: &str,
     keys: &BTreeMap<String, Option<String>>,
@@ -252,24 +251,28 @@ async fn render(
         type_: FailureType::Postgres(error),
         context: format!("render number sequence {name} of application {application}"),
     };
-    let statement = connection
-        .prepare_cached(SEQUENCE_SQL)
-        .await
-        .map_err(failed)?;
-    let row = connection
-        .query_one(&statement, &[&application, &name])
+    let statement = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(SEQUENCE_SQL),
+    )
+    .await
+    .map_err(failed)?;
+    let row = sqlx::query(statement.sql().clone())
+        .bind(application)
+        .bind(name)
+        .fetch_one(&mut *connection)
         .await
         .map_err(failed)?;
     let (Some(sequence), Some(pattern)) = (
-        row.get::<_, Option<String>>(0),
-        row.get::<_, Option<String>>(1),
+        row.get::<Option<String>, _>(0),
+        row.get::<Option<String>, _>(1),
     ) else {
         return Err(refusal(
             UNKNOWN_SEQUENCE,
             format!("{name} is not a number sequence of application {application}"),
         ));
     };
-    let timezone = match row.get::<_, Option<String>>(3).as_deref() {
+    let timezone = match row.get::<Option<String>, _>(3).as_deref() {
         None => Timezone::Unset,
         Some("string") => Timezone::Text(row.get(2)),
         Some(_) => Timezone::NotText,
@@ -353,7 +356,7 @@ enum Timezone {
 /// `timezone` setting of `application`, or in UTC when it has none. With
 /// `iso_year`, `YYYY` and `YY` are the ISO year.
 async fn read_dates(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     application: &str,
     timezone: Timezone,
     iso_year: bool,
@@ -363,7 +366,10 @@ async fn read_dates(
         context: format!("read numbering dates for application {application}"),
     };
     let split = |text: String| text.split('|').map(str::to_owned).collect::<Vec<_>>();
-    let statement = connection.prepare_cached(DATE_SQL).await.map_err(failed)?;
+    let statement =
+        sqlx::Executor::prepare(&mut *connection, sqlx::SqlSafeStr::into_sql_str(DATE_SQL))
+            .await
+            .map_err(failed)?;
     let invalid = || {
         refusal(
             INVALID_INPUT,
@@ -372,8 +378,10 @@ async fn read_dates(
     };
     let timezone = match timezone {
         Timezone::Unset => {
-            let row = connection
-                .query_one(&statement, &[&"UTC", &iso_year])
+            let row = sqlx::query(statement.sql().clone())
+                .bind("UTC")
+                .bind(iso_year)
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(failed)?;
             return Ok(split(row.get(0)));
@@ -381,25 +389,36 @@ async fn read_dates(
         Timezone::NotText => return Err(invalid()),
         Timezone::Text(timezone) => timezone,
     };
-    connection
-        .batch_execute(TIMEZONE_SAVEPOINT_SQL)
+    sqlx::raw_sql(TIMEZONE_SAVEPOINT_SQL)
+        .execute(&mut *connection)
         .await
+        .map(|_| ())
         .map_err(failed)?;
-    match connection
-        .query_one(&statement, &[&timezone, &iso_year])
+    match sqlx::query(statement.sql().clone())
+        .bind(&timezone)
+        .bind(iso_year)
+        .fetch_one(&mut *connection)
         .await
     {
         Ok(row) => {
-            connection
-                .batch_execute(TIMEZONE_RELEASE_SQL)
+            sqlx::raw_sql(TIMEZONE_RELEASE_SQL)
+                .execute(&mut *connection)
                 .await
+                .map(|_| ())
                 .map_err(failed)?;
             Ok(split(row.get(0)))
         }
-        Err(error) if error.code() == Some(&SqlState::INVALID_PARAMETER_VALUE) => {
-            connection
-                .batch_execute(TIMEZONE_ROLLBACK_SQL)
+        Err(error)
+            if error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref()
+                == Some("22023") =>
+        {
+            sqlx::raw_sql(TIMEZONE_ROLLBACK_SQL)
+                .execute(&mut *connection)
                 .await
+                .map(|_| ())
                 .map_err(failed)?;
             Err(caused_refusal(INVALID_INPUT, invalid().context, error))
         }
@@ -410,30 +429,59 @@ async fn read_dates(
 /// The value of one counter for one key: advanced for [`NumberCall::Next`],
 /// and the last issued for [`NumberCall::Peek`], or `None` when none was.
 async fn counter_value(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     sequence: &str,
     counter: &Counter,
     key: &str,
     per: bool,
     call: NumberCall,
-) -> Result<Option<i64>, tokio_postgres::Error> {
+) -> Result<Option<i64>, sqlx::Error> {
     let name = counter.name();
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] = [&sequence, &name, &key];
+
     if call == NumberCall::Next && !per {
-        let bump = connection.prepare_cached(BUMP_SQL).await?;
-        return Ok(Some(connection.query_one(&bump, &params).await?.get(0)));
+        let bump =
+            sqlx::Executor::prepare(&mut *connection, sqlx::SqlSafeStr::into_sql_str(BUMP_SQL))
+                .await?;
+        return Ok(Some(
+            sqlx::query(bump.sql().clone())
+                .bind(sequence)
+                .bind(name)
+                .bind(key)
+                .fetch_one(&mut *connection)
+                .await?
+                .get(0),
+        ));
     }
     // A per= value never changes once assigned, so a hit needs no lock.
-    let read = connection.prepare_cached(COUNTER_SQL).await?;
-    let stored = connection
-        .query_opt(&read, &params)
+    let read = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(COUNTER_SQL),
+    )
+    .await?;
+    let stored = sqlx::query(read.sql().clone())
+        .bind(sequence)
+        .bind(name)
+        .bind(key)
+        .fetch_optional(&mut *connection)
         .await?
-        .map(|row| row.get::<_, i64>(0));
+        .map(|row| row.get::<i64, _>(0));
     Ok(match (call, stored) {
         (NumberCall::Next, Some(value)) => Some(value),
         (NumberCall::Next, None) => {
-            let assign = connection.prepare_cached(ASSIGN_SQL).await?;
-            Some(connection.query_one(&assign, &params).await?.get(0))
+            let assign = sqlx::Executor::prepare(
+                &mut *connection,
+                sqlx::SqlSafeStr::into_sql_str(ASSIGN_SQL),
+            )
+            .await?;
+            Some(
+                sqlx::query(assign.sql().clone())
+                    .bind(sequence)
+                    .bind(name)
+                    .bind(key)
+                    .fetch_one(&mut *connection)
+                    .await?
+                    .get(0),
+            )
         }
         (NumberCall::Peek, stored) if per => stored,
         // The row holds the next value to render, so the last issued is one

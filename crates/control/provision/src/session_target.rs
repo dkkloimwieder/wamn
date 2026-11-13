@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use wamn_registry::{Triple, identifiers::valid_project_env_key};
 
 use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
-use crate::session_role_reader::{SessionRoleReaderConnection, parse_session_role_reader_url};
+use wamn_postgres::ConnectionConfig;
 
 /// The Secret key mounted as one explicitly configured target file.
 pub const SESSION_TARGET_KEY: &str = "target.json";
@@ -66,8 +66,7 @@ struct TargetDocument {
     env: String,
     instance_suffix: String,
     project_env_key: String,
-    database: String,
-    database_url: String,
+    connection: ConnectionConfig,
 }
 
 /// One validated target; cloning preserves its exact target and redacted diagnostics.
@@ -75,7 +74,6 @@ struct TargetDocument {
 pub struct SessionTarget {
     document: TargetDocument,
     triple: Triple,
-    connection: SessionRoleReaderConnection,
 }
 
 impl fmt::Debug for SessionTarget {
@@ -109,14 +107,21 @@ impl SessionTarget {
             triple.env.as_str(),
             instance_suffix,
         );
-        let connection = parse_session_role_reader_url(
-            database_url,
-            &triple.org,
-            &triple.project,
-            triple.env.as_str(),
-            &database,
+        let connection: ConnectionConfig = serde_json::from_str(database_url)
+            .map_err(|_| refused("session connection configuration refused"))?;
+        let role = crate::workload_login(
+            crate::WorkloadRoleFamily::SessionRoleReader,
+            crate::WorkloadRoleIdentity::ProjectEnvironment {
+                org: &triple.org,
+                project: &triple.project,
+                environment: triple.env.as_str(),
+                database: &database,
+            },
         )
-        .map_err(|_| refused("session target reader credential refused"))?;
+        .map_err(|_| refused("session reader identity refused"))?;
+        if connection.database != database || connection.username != role {
+            return Err(refused("session reader configuration names another target"));
+        }
         Ok(Self {
             document: TargetDocument {
                 audience,
@@ -125,11 +130,9 @@ impl SessionTarget {
                 env: triple.env.to_string(),
                 instance_suffix: instance_suffix.to_owned(),
                 project_env_key: project_env_key.to_owned(),
-                database,
-                database_url: database_url.to_owned(),
+                connection,
             },
             triple: triple.clone(),
-            connection,
         })
     }
 
@@ -146,10 +149,13 @@ impl SessionTarget {
             &triple,
             &document.instance_suffix,
             &document.project_env_key,
-            &document.database_url,
+            &document
+                .connection
+                .to_json()
+                .map_err(|_| refused("session connection refused"))?,
         )?;
         if target.document.audience != document.audience
-            || target.document.database != document.database
+            || target.document.connection.database != document.connection.database
         {
             return Err(refused("session target target mismatch"));
         }
@@ -178,7 +184,7 @@ impl SessionTarget {
         &self.document.project_env_key
     }
     /// Borrow the validated reader capability for the database driver only.
-    pub fn connection(&self) -> &SessionRoleReaderConnection {
-        &self.connection
+    pub fn connection(&self) -> &ConnectionConfig {
+        &self.document.connection
     }
 }

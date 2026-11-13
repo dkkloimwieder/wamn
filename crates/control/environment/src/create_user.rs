@@ -6,7 +6,6 @@
 //! comes from `reconcile-run-plane`.
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_platform_identity::{Principal, create_user};
@@ -34,19 +33,25 @@ pub async fn create_user_principal(
     args: CreateUserRequest,
     changes: &Publisher,
 ) -> anyhow::Result<Principal> {
-    let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
+    let mut client = wamn_postgres::connect(&args.system_database_url)
         .await
         .context("connect to the system database to create a user principal")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut client)
             .await
+            .map(drop)
             .context("SET ROLE wamn_system to create a user principal")?;
-        let transaction = provisioning_transaction(&mut client).await?;
-        let principal = create_user(&transaction, &args.subject, &args.email, &args.display_name)
-            .await
-            .context("create the user principal")?;
+        let mut transaction = provisioning_transaction(&mut client).await?;
+        let principal = create_user(
+            &mut transaction,
+            &args.subject,
+            &args.email,
+            &args.display_name,
+        )
+        .await
+        .context("create the user principal")?;
         let mut drops = AuthDrops::default();
         drops.identity(principal.id().to_string().as_str());
         transaction
@@ -58,6 +63,5 @@ pub async fn create_user_principal(
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result
 }

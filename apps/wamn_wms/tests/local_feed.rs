@@ -64,11 +64,10 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         attachments: &attachments,
     })
     .await?;
-    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    let (identity, identity_connection) =
-        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
-    let identity_connection = tokio::spawn(identity_connection);
+    let mut admin = wamn_postgres::connect(project.url()).await?;
+
+    let mut identity = wamn_postgres::connect(system.url()).await?;
+
     let result = async {
         let target = crate::environment::identity();
         let subject = wamn_platform_identity::operator_subject(
@@ -77,7 +76,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
             &target.environment,
         )?;
         let user = wamn_platform_identity::resolve_subject(
-            &identity,
+            &mut identity,
             wamn_platform_identity::PrincipalType::Service,
             &subject,
         )
@@ -89,7 +88,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
             &wamn_registry::Triple::new(target.org.clone(), target.environment.as_str(), target.project.clone()),
             "localapp",
         )?;
-        crate::business_fixture::seed_fixture(&admin, 1).await?;
+        crate::business_fixture::seed_fixture(&mut admin, 1).await?;
         let bench = app.join("../../web/sync-bench").canonicalize()?;
         let mut driver = tokio::process::Command::new("node")
             .arg("bench/follow.mjs")
@@ -118,15 +117,13 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
             if let Some(id) = line.strip_prefix("DELETE ") {
                 // A delete with no operation route: the test is the writer,
                 // and the history entry names it.
-                admin
-                    .batch_execute(&format!(
+                sqlx::raw_sql(sqlx::AssertSqlSafe((&format!(
                         "BEGIN;\n\
                          SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
                                 set_config('app.operation', 'admin:follow-delete', true);\n\
                          DELETE FROM wms.packaging WHERE id = '{id}';\n\
                          COMMIT;"
-                    ))
-                    .await
+                    )).to_string())).execute(&mut admin).await.map(drop)
                     .context("delete the created row")?;
                 stdin.write_all(b"deleted\n").await?;
                 stdin.flush().await?;
@@ -148,9 +145,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
     }
     .await;
     drop(admin);
-    connection.abort();
     drop(identity);
-    identity_connection.abort();
     application.shutdown().await?;
     result
 }

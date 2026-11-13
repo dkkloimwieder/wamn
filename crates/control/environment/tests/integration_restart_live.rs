@@ -1,5 +1,6 @@
 //! Real registry pulls and Modbus TCP reads follow the connection facts per call.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{
@@ -73,9 +74,9 @@ async fn read_register(instance: &Integration, interface: &str, unit: u8) -> any
     }
 }
 
-async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-    tokio::spawn(driver);
+async fn connect(url: &str) -> anyhow::Result<sqlx::PgConnection> {
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -391,40 +392,55 @@ fn loaded_release(
 }
 
 async fn apply(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     system_url: &str,
     project_url: &str,
     document: &EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let mut project = connect(project_url).await?;
-    project
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
-        .await?;
-    project
-        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
-        .await?;
-    project
-        .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS wamn_run")
+        .execute(&mut project)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run")).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
     // The connection memory reads the release fact as CallableHttp, and the
     // pool probes membership of its ACL role on every new connection.
-    project
-        .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
     let _ = bindings::project_authority(system_url, project_url, document).await?;
     for application in document.applications.keys() {
         let selected = wamn_environment_control::environment::analyse::select_application(
             document,
             Some(application),
         )?;
-        let source = client.transaction().await?;
-        source.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
-        let bindings = bindings::analyse(&source, &selected, packages).await?;
+        let mut source = client.begin().await?;
+        sqlx::raw_sql("SET LOCAL ROLE wamn_db_owner")
+            .execute(&mut *source)
+            .await
+            .map(drop)?;
+        let bindings = bindings::analyse(&mut source, &selected, packages).await?;
         source.commit().await?;
         let release = loaded_release(document, application)?;
         let project_env_key = "acme--dev--one";
@@ -439,11 +455,13 @@ async fn apply(
                 .to_string(),
         )
         .await?;
-        let tx = project.transaction().await?;
-        tx.batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
+        let mut tx = project.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
         ))
-        .await?;
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
         for component in &release.manifest().components {
             let package = &component.package_id;
             let manifest = packages
@@ -455,10 +473,10 @@ async fn apply(
                 wamn_compiler::manifest::ConnectionMode::Read => "read",
                 wamn_compiler::manifest::ConnectionMode::Write => "write",
             };
-            tx.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING", &[&project_env_key, &component.descriptor.component_digest, package, &requirement.interface, &mode]).await?;
+            sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING").bind(&project_env_key).bind(&component.descriptor.component_digest).bind(package).bind(&requirement.interface).bind(&mode).execute(&mut *tx).await.map(|result| result.rows_affected())?;
         }
         bindings::write(
-            &tx,
+            &mut tx,
             project_env_key,
             digest,
             &selected,
@@ -483,13 +501,17 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let database = wamn_control_provision::test_database::system();
     let project_database = wamn_platform_identity::test_database::project_platform();
     let mut admin = connect(database.url()).await?;
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET ROLE wamn_system; {}",
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")
         ))
-        .await?;
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
     let registry = local_registry::LocalRegistry::start("modbus-restart");
     registry.ready().await;
     let auth = scratch.path().join("auth.json");
@@ -522,17 +544,19 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
     let (observer_authority, _, observer_task) = simulator().await?;
-    let tx = admin.transaction().await?;
-    tx.batch_execute(&bind_platform_principal_sql(
-        PlatformComponent::Provisioning,
+    let mut tx = admin.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
     ))
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     for (name, endpoint) in [
         ("meter", &authority),
         ("observer-meter", &observer_authority),
     ] {
-        wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":endpoint}}),&store).await?;
+        wamn_test_infrastructure::credentials::define(&mut tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":endpoint}}),&store).await?;
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
@@ -582,28 +606,25 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let mut reader_url = url::Url::parse(database.url())?;
     reader_url.set_username(&login).unwrap();
     reader_url.set_password(Some("fixture")).unwrap();
-    let reader_database = Arc::new(connect(reader_url.as_str()).await?);
-    reader_database
-        .batch_execute("SET app.org='forged'; SET app.project='forged'")
-        .await?;
+    let mut reader_database = connect(reader_url.as_str()).await?;
+    sqlx::raw_sql("SET app.org='forged'; SET app.project='forged'")
+        .execute(&mut reader_database)
+        .await
+        .map(drop)?;
     assert_eq!(
-        reader_database
-            .query_one(
-                "SELECT count(*) FROM registry.read_connection_fact('forged','one','dev','00000000-0000-0000-0000-000000000001')",
-                &[]
-            )
+        sqlx::query("SELECT count(*) FROM registry.read_connection_fact('forged','one','dev','00000000-0000-0000-0000-000000000001')").fetch_one(&mut reader_database)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     assert!(
-        reader_database
-            .query("SELECT * FROM registry.connection_generation", &[])
+        sqlx::query("SELECT * FROM registry.connection_generation")
+            .fetch_all(&mut reader_database)
             .await
             .is_err()
     );
     let credentials = Arc::new(ConnectionCredentials::from_database(
-        Arc::clone(&reader_database),
+        wamn_postgres::pool(reader_url.as_str(), 4).await?,
         "acme",
     ));
     let postgres = Arc::new(
@@ -675,28 +696,19 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     );
     // A missing new digest refuses its first call before the old instance runs.
     let absent = format!("sha256:{}", "f".repeat(64));
-    let control = connect(database.url()).await?;
-    let parameters: serde_json::Value = control
-        .query_one(
-            "SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2",
-            &[],
-        )
+    let mut control = connect(database.url()).await?;
+    let parameters: serde_json::Value = sqlx::query("SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2").fetch_one(&mut control)
         .await?
         .get(0);
-    control.batch_execute("SET ROLE wamn_control").await?;
-    control
-        .query_one(
-            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/client@1.0.0',$3,ARRAY['wamn:modbus/write@1.0.0'])",
-            &[
-                &absent,
-                &parameters,
-                &vec![
+    sqlx::raw_sql("SET ROLE wamn_control")
+        .execute(&mut control)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/client@1.0.0',$3,ARRAY['wamn:modbus/write@1.0.0'])").bind(&absent).bind(&parameters).bind(&vec![
                     "wamn:modbus/read@1.0.0".to_string(),
                     "wamn:modbus/write@1.0.0".to_string(),
                     "wamn:integration/health@0.1.0".to_string(),
-                ],
-            ],
-        )
+                ]).fetch_one(&mut control)
         .await?;
     document.integrations.get_mut("meter").unwrap().version = 4;
     apply(
@@ -733,14 +745,16 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     assert_eq!(wamn_engine::integration::compile_count(&second_code), 0);
     let id = facts.env_connections().await?.connections["meter"];
     let old = facts.connection(&id).await?.unwrap();
-    let tx = admin.transaction().await?;
-    tx.batch_execute(&bind_platform_principal_sql(
-        PlatformComponent::Provisioning,
+    let mut tx = admin.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
     ))
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     wamn_platform_identity::connections::administration::execute_with_store(
-        &tx,
+        &mut tx,
         "acme",
         "connection.write",
         &json!({"project":"one","env":"dev","name":"meter","parameters":{"authority":authority}})

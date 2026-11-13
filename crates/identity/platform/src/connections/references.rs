@@ -1,7 +1,7 @@
 //! Refuse deletion before system authority or projected rows change.
 
 use serde_json::Value;
-use tokio_postgres::Transaction;
+use sqlx::Row as _;
 use wamn_kubernetes::Store as _;
 
 use super::{ConnectionError, refuse};
@@ -18,16 +18,17 @@ fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
 
 /// Refuse deleting a row that this environment database still references.
 pub async fn refuse_environment_references(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     group: &str,
     id: &str,
 ) -> Result<(), ConnectionError> {
     let projection = projection_relation(group)?;
     // Foreign-key inserts wait here until deletion commits or rolls back.
-    tx.query(
-        &format!("SELECT id FROM {projection} WHERE id=$1::text::uuid FOR UPDATE"),
-        &[&id],
-    )
+    sqlx::query(sqlx::AssertSqlSafe(
+        format!("SELECT id FROM {projection} WHERE id=$1::text::uuid FOR UPDATE").clone(),
+    ))
+    .bind(id)
+    .fetch_all(&mut **tx)
     .await?;
     if group == "connection" {
         for (field, sql) in [
@@ -44,24 +45,26 @@ pub async fn refuse_environment_references(
                 "SELECT EXISTS(SELECT FROM platform.file WHERE connection_id=$1::text::uuid)",
             ),
         ] {
-            if tx.query_one(sql, &[&id]).await?.get::<_, bool>(0) {
+            if sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
+                .bind(id)
+                .fetch_one(&mut **tx)
+                .await?
+                .get::<bool, _>(0)
+            {
                 return Err(refuse("referenced", field));
             }
         }
     } else if group == "external_system" {
         // A foreign key identifies every record source, including application tables.
-        for row in tx.query(
-            "SELECT quote_ident(n.nspname)||'.'||quote_ident(t.relname), quote_ident(a.attname) \
+        for row in sqlx::query("SELECT quote_ident(n.nspname)||'.'||quote_ident(t.relname), quote_ident(a.attname) \
              FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid \
              JOIN pg_namespace n ON n.oid=t.relnamespace \
              JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] \
              WHERE c.contype='f' AND c.confrelid='platform.external_system'::regclass \
-               AND cardinality(c.conkey)=1 AND NOT (n.nspname='platform' AND t.relname='integration')",
-            &[],
-        ).await? {
+               AND cardinality(c.conkey)=1 AND NOT (n.nspname='platform' AND t.relname='integration')").fetch_all(&mut **tx).await? {
             let relation: String = row.get(0);
             let column: String = row.get(1);
-            if tx.query_one(&format!("SELECT EXISTS(SELECT FROM {relation} WHERE {column}=$1::text::uuid)"), &[&id]).await?.get::<_, bool>(0) {
+            if sqlx::query(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT FROM {relation} WHERE {column}=$1::text::uuid)").clone())).bind(id).fetch_one(&mut **tx).await?.get::<bool, _>(0) {
                 return Err(refuse("referenced", "record"));
             }
         }
@@ -71,23 +74,25 @@ pub async fn refuse_environment_references(
 
 /// Remove only the deleted identity from each database after the system commit.
 pub async fn remove_projection(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     group: &str,
     id: &str,
 ) -> Result<(), ConnectionError> {
     let relation = projection_relation(group)?;
-    tx.execute(
-        &format!("DELETE FROM {relation} WHERE id=$1::text::uuid"),
-        &[&id],
-    )
-    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(
+        format!("DELETE FROM {relation} WHERE id=$1::text::uuid").clone(),
+    ))
+    .bind(id)
+    .execute(&mut **tx)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
 /// Push the project's administration rows into one environment database.
 pub async fn project_administration(
-    system: &Transaction<'_>,
-    environment: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    environment: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,

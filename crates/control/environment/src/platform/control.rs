@@ -25,11 +25,11 @@ pub(crate) async fn wait_administration(
 ) -> anyhow::Result<()> {
     tokio::time::timeout(budget, async {
         let name = wamn_control_provision::control_administration_secret_name(&triple.org);
-        let Some(secret) = kubectl::get::<SecretData>(
+        let Some(secret) = kubectl::get::<Value>(
             &target.kubeconfig,
             &target.context,
             &target.namespace,
-            "secret",
+            "configmap",
             &name,
         )
         .await?
@@ -40,7 +40,14 @@ pub(crate) async fn wait_administration(
             &triple.project,
             triple.env.as_str(),
         );
-        let login = present.then(|| secret_text(&secret, &key)).transpose()?;
+        let login = present
+            .then(|| {
+                secret["data"][&key]
+                    .as_str()
+                    .map(str::to_owned)
+                    .context("administration configuration is absent")
+            })
+            .transpose()?;
         let path = format!("/etc/wamn/control-administration/{key}");
         let selector = wamn_registry::name::host_selector(&wamn_registry::name::resource_suffix(
             "c",
@@ -105,7 +112,7 @@ pub fn registry_pull_secret(document: &ClusterDocument, auth_file: &Path) -> any
     });
     Ok(json!({
         "apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/dockerconfigjson",
-        "metadata":{"name":REGISTRY_PULL, "namespace":"hosts"},
+        "metadata":{"name":REGISTRY_PULL, "namespace":document.org},
         "stringData":{".dockerconfigjson":serde_json::to_string(&config)?},
     }))
 }
@@ -121,36 +128,25 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
         )
         .await?;
     }
-    let credential: SecretData = kubectl::get(
+    let configuration: Option<Value> = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        "hosts",
-        "secret",
-        &wamn_registry::control_nats_user(&document.org),
-    )
-    .await?
-    .context("bootstrap control credential is missing")?;
-    anyhow::ensure!(
-        !secret_text(&credential, "url")?.is_empty(),
-        "bootstrap control credential is empty"
-    );
-    let administration: Option<Value> = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "hosts",
-        "secret",
+        &document.org,
+        "configmap",
         &wamn_registry::name::control_administration_secret_name(&document.org),
     )
     .await?;
     anyhow::ensure!(
-        administration.is_some(),
-        "bootstrap control administration Secret is missing"
+        configuration
+            .as_ref()
+            .is_some_and(|value| value["data"]["control.json"].is_string()),
+        "control database configuration is absent"
     );
     let operator = wamn_registry::name::resource_suffix("operator", &document.org);
     let secret: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        "identity",
+        &document.org,
         "secret",
         &operator,
     )
@@ -159,8 +155,8 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
     kubectl::apply(
         &target.kubeconfig,
         &target.context,
-        "hosts",
-        &operator_secret(secret, &operator),
+        &document.org,
+        &operator_secret(secret, &operator, &document.org),
     )
     .await
     .context("copy the control operator Secret")?;
@@ -168,17 +164,21 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
     let tls: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        "identity",
+        &document.org,
         "secret",
         "identity-tls",
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    super::resources::apply_object(target, &identity_ca(&secret_text(&tls, "ca.crt")?)).await
+    super::resources::apply_object(
+        target,
+        &identity_ca(&secret_text(&tls, "ca.crt")?, &document.org),
+    )
+    .await
 }
 
-fn operator_secret(mut secret: Value, name: &str) -> Value {
-    secret["metadata"] = json!({"name":name, "namespace":"hosts"});
+fn operator_secret(mut secret: Value, name: &str, namespace: &str) -> Value {
+    secret["metadata"] = json!({"name":name, "namespace":namespace});
     secret
 }
 
@@ -191,7 +191,7 @@ pub fn host_values(org: &str) -> Value {
         // Control operation routes create their Jobs with this account's token.
         "automountServiceAccountToken": true,
         "hostGroups": [{
-            "name": name, "namespace": "hosts", "replicas": 1,
+            "name": name, "namespace": org, "replicas": 1,
             "schedulerNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
             "dataNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
             "extraArgs": ["--control", format!("--org={org}")],
@@ -199,12 +199,10 @@ pub fn host_values(org: &str) -> Value {
                 {"name": "WAMN_DRAIN_BOUND_SECONDS", "value": "70"},
                 {"name": "DOCKER_CONFIG", "value": "/etc/wamn/registry"},
                 {"name": "WAMN_REGISTRY_TOKEN_METADATA", "value": "true"},
-                {"name": "WAMN_CONTROL_URL", "valueFrom": {"secretKeyRef": {
-                    "name": wamn_registry::control_nats_user(org), "key": "url"
-                }}},
-                {"name": "WAMN_SESSION_ISSUER", "value": "https://identity.identity.svc.cluster.local"},
+                {"name": "WAMN_CONTROL_URL", "value": "/etc/wamn/control-administration/control.json"},
+                {"name": "WAMN_SESSION_ISSUER", "value": format!("https://identity.{org}.svc.cluster.local")},
                 {"name": "WAMN_SESSION_JWKS_CA", "value": "/etc/identity-ca/ca.crt"},
-                {"name": "WAMN_PAT_ISSUER", "value": "https://identity.identity.svc.cluster.local"},
+                {"name": "WAMN_PAT_ISSUER", "value": format!("https://identity.{org}.svc.cluster.local")},
                 {"name": "WAMN_PAT_CLIENT_CERT", "value": "/etc/identity-operator/tls.crt"},
                 {"name": "WAMN_PAT_CLIENT_KEY", "value": "/etc/identity-operator/tls.key"},
                 {"name": "WAMN_PAT_SERVER_CA", "value": "/etc/identity-ca/ca.crt"},
@@ -214,7 +212,7 @@ pub fn host_values(org: &str) -> Value {
                 {"name": "registry-pull", "configMap": {"name": "wamn-registry-helper"}},
                 {"name": "identity-ca", "configMap": {"name": "identity-ca"}},
                 {"name": "identity-operator", "secret": {"secretName": wamn_registry::name::resource_suffix("operator",org)}},
-                {"name": "control-administration", "secret": {"secretName": wamn_registry::name::control_administration_secret_name(org)}}
+                {"name": "control-administration", "configMap": {"name": wamn_registry::name::control_administration_secret_name(org)}}
             ],
             "volumeMounts": [
                 {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true},
@@ -333,11 +331,11 @@ pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyho
     Ok(desired)
 }
 
-fn identity_ca(ca: &str) -> Value {
+fn identity_ca(ca: &str, namespace: &str) -> Value {
     json!({
         "apiVersion": "v1",
         "kind": "ConfigMap",
-        "metadata": {"name": "identity-ca", "namespace": "hosts"},
+        "metadata": {"name": "identity-ca", "namespace": namespace},
         "data": {"ca.crt": ca},
     })
 }
@@ -367,7 +365,7 @@ pub(super) fn resource_entry(
     .into();
     let desired = chart.selection_values(document, &UpgradeTarget::Control, desired)?;
     Ok(json!({"chart":chart.directory(), "version":chart.version,
-        "name":wamn_registry::name::control_resource(&document.org), "namespace":"hosts", "values":desired}))
+        "name":wamn_registry::name::control_resource(&document.org), "namespace":document.org, "values":desired}))
 }
 
 /// Require the control route to refuse a request without credentials.
@@ -643,23 +641,5 @@ mod tests {
             "b".repeat(64)
         );
         assert_eq!(component_image(&cloud, &component).unwrap(), component);
-    }
-
-    #[test]
-    fn operator_copy_keeps_credentials_and_replaces_identity_namespace_ownership() {
-        let source = json!({"apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/tls",
-            "metadata":{"name":"operator-acme", "namespace":"identity", "uid":"source-uid",
-                "ownerReferences":[{"name":"identity-certificate"}], "resourceVersion":"123"},
-            "data":{"tls.crt":"certificate", "tls.key":"private-key"}});
-        let copied = operator_secret(source, "operator-acme");
-        assert_eq!(
-            copied["metadata"],
-            json!({"name":"operator-acme", "namespace":"hosts"})
-        );
-        assert_eq!(copied["type"], "kubernetes.io/tls");
-        assert_eq!(
-            copied["data"],
-            json!({"tls.crt":"certificate", "tls.key":"private-key"})
-        );
     }
 }

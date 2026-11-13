@@ -16,8 +16,6 @@
 //! Credentials and targets are control-plane data, so no row here holds
 //! them.
 
-use tokio_postgres::GenericClient;
-
 use crate::{IdentityError, database_error};
 
 const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system (id, name) \
@@ -134,61 +132,64 @@ impl PlatformConfiguration {
 /// that binds `app.user_id` and `app.operation` for recorded writes.
 /// Projection writes follow foreign key order: external systems, integrations, connections.
 pub async fn write_configuration(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     configuration: &PlatformConfiguration,
 ) -> Result<u64, IdentityError> {
     let mut written = 0;
     for row in &configuration.external_systems {
-        written += execute(client, EXTERNAL_SYSTEM_SQL, &[&row.id, &row.name]).await?;
+        written += sqlx::query(EXTERNAL_SYSTEM_SQL)
+            .bind(&row.id)
+            .bind(&row.name)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     for row in &configuration.integrations {
-        written += execute(
-            client,
-            INTEGRATION_SQL,
-            &[
-                &row.id,
-                &row.integration_type,
-                &row.external_system_id,
-                &row.name,
-                &row.status,
-            ],
-        )
-        .await?;
+        written += sqlx::query(INTEGRATION_SQL)
+            .bind(&row.id)
+            .bind(&row.integration_type)
+            .bind(&row.external_system_id)
+            .bind(&row.name)
+            .bind(&row.status)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     for row in &configuration.connections {
-        written += execute(
-            client,
-            CONNECTION_SQL,
-            &[
-                &row.id,
-                &row.integration_id,
-                &row.integration_type,
-                &row.status,
-            ],
-        )
-        .await?;
+        written += sqlx::query(CONNECTION_SQL)
+            .bind(&row.id)
+            .bind(&row.integration_id)
+            .bind(&row.integration_type)
+            .bind(&row.status)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     for row in &configuration.number_sequences {
-        written += execute(
-            client,
-            NUMBER_SEQUENCE_SQL,
-            &[&row.id, &row.application, &row.name, &row.pattern],
-        )
-        .await?;
+        written += sqlx::query(NUMBER_SEQUENCE_SQL)
+            .bind(&row.id)
+            .bind(&row.application)
+            .bind(&row.name)
+            .bind(&row.pattern)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     for row in &configuration.settings {
-        written += execute(
-            client,
-            SETTING_SQL,
-            &[
-                &row.target_type,
-                &row.target_id,
-                &row.key,
-                &row.value.to_string(),
-                &row.locked,
-            ],
-        )
-        .await?;
+        written += sqlx::query(SETTING_SQL)
+            .bind(&row.target_type)
+            .bind(&row.target_id)
+            .bind(&row.key)
+            .bind(row.value.to_string())
+            .bind(row.locked)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     Ok(written)
 }
@@ -211,28 +212,19 @@ pub struct SequenceDefault {
 /// `wamn_administration` authority, in a transaction that binds `app.user_id`
 /// and `app.operation`.
 pub async fn create_default_sequences(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     defaults: &[SequenceDefault],
 ) -> Result<u64, IdentityError> {
     let mut created = 0;
     for row in defaults {
-        created += execute(
-            client,
-            DEFAULT_NUMBER_SEQUENCE_SQL,
-            &[&row.application, &row.name, &row.pattern],
-        )
-        .await?;
+        created += sqlx::query(DEFAULT_NUMBER_SEQUENCE_SQL)
+            .bind(&row.application)
+            .bind(&row.name)
+            .bind(&row.pattern)
+            .execute(&mut *client)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(|error| database_error(&error))?;
     }
     Ok(created)
-}
-
-async fn execute(
-    client: &(impl GenericClient + Sync),
-    statement: &str,
-    params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
-) -> Result<u64, IdentityError> {
-    client
-        .execute(statement, params)
-        .await
-        .map_err(|error| database_error(&error))
 }

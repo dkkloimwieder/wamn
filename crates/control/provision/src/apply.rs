@@ -1,28 +1,11 @@
 //! The environment apply login and its system database grants.
 
-use postgres_protocol::escape::escape_literal;
-
 /// The fixed login used outside the privileged provisioning phase.
 pub const APPLY_ROLE: &str = "wamn_apply";
 
 /// Create the apply login without system-owner membership.
 pub fn ensure_apply_role_sql() -> &'static str {
-    "DO $apply$ BEGIN \
-       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_apply') THEN \
-         CREATE ROLE wamn_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           INHERIT NOREPLICATION NOBYPASSRLS; \
-       END IF; \
-     END $apply$; \
-     GRANT wamn_db_owner TO wamn_apply WITH ADMIN FALSE, INHERIT TRUE, SET TRUE;"
-}
-
-/// Set the password emitted only through the provisioning Secret.
-pub fn apply_password_sql(password: &str) -> String {
-    format!(
-        "ALTER ROLE wamn_apply PASSWORD {};",
-        escape_literal(password)
-    )
+    "GRANT wamn_db_owner TO wamn_apply WITH ADMIN FALSE, INHERIT TRUE, SET TRUE;"
 }
 
 /// Exact privileges used by the apply phases on the system database.
@@ -37,6 +20,7 @@ mod tests {
         let _lock = wamn_test_postgres::lock();
         let database = crate::test_database::system();
         database.execute(&[
+            "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
             ensure_apply_role_sql(),
             &crate::sql::ensure_platform_group_role_sql(),
             "GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE",

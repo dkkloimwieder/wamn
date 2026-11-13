@@ -4,6 +4,8 @@
 //! principal row, then consumes every outstanding invitation atomically. The
 //! service must share one password-work budget across all its requests.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -14,7 +16,7 @@ use argon2::{
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
 use tokio::sync::Semaphore;
-use tokio_postgres::{Client, GenericClient, Transaction};
+
 use wamn_identity_protocol::secret::{SecretToken, SecretType};
 use zeroize::Zeroizing;
 
@@ -162,13 +164,17 @@ fn infrastructure(
         source: Some(Box::new(source)),
     }
 }
-fn database(source: &tokio_postgres::Error) -> PasswordError {
+fn database(source: &sqlx::Error) -> PasswordError {
     // DbError Display contains row-bearing DETAIL/HINT. Never retain it in the
     // error chain, which callers often log in full.
-    let source =
-        std::io::Error::other(source.code().map_or("database failure".to_owned(), |code| {
-            format!("SQLSTATE {}", code.code())
-        }));
+    let source = std::io::Error::other(
+        source
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .map_or("database failure".to_owned(), |code| {
+                format!("SQLSTATE {code}")
+            }),
+    );
     infrastructure("password database operation failed", source)
 }
 
@@ -304,33 +310,34 @@ fn secret_type(purpose: &str) -> SecretType {
         SecretType::Reset
     }
 }
-async fn bind_actor(tx: &Transaction<'_>, actor: &PrincipalId) -> Result<(), PasswordError> {
-    tx.execute(
-        "SELECT set_config('app.user_id', $1, true)",
-        &[&actor.to_string().as_str()],
-    )
-    .await
-    .map_err(|source| database(&source))?;
+async fn bind_actor(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    actor: &PrincipalId,
+) -> Result<(), PasswordError> {
+    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(actor.to_string().as_str())
+        .execute(&mut **tx)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(|source| database(&source))?;
     Ok(())
 }
 /// Lock the principal, and return the cause and its reason when it cannot
 /// take this operation.
 async fn lock_account(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     principal: &PrincipalId,
     enrolled: bool,
 ) -> Result<Option<(RefusalCause, Option<&'static str>)>, PasswordError> {
-    let row = tx
-        .query_opt(
-            "SELECT identity.lock_password_principal($1::text::uuid)",
-            &[&principal.to_string().as_str()],
-        )
+    let row = sqlx::query("SELECT identity.lock_password_principal($1::text::uuid)")
+        .bind(principal.to_string().as_str())
+        .fetch_optional(&mut **tx)
         .await
         .map_err(|source| database(&source))?;
-    if !row.is_some_and(|row| row.get::<_, bool>(0)) {
+    if !row.is_some_and(|row| row.get::<bool, _>(0)) {
         return Ok(Some((RefusalCause::NoSuchAccount, None)));
     }
-    let has_password = tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.to_string().as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0);
+    let has_password = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)").bind(principal.to_string().as_str()).fetch_one(&mut **tx).await.map_err(|source| database(&source))?.get::<bool, _>(0);
     Ok(match (enrolled, has_password) {
         (false, true) => Some((RefusalCause::AlreadyEnrolled, None)),
         (true, false) => Some((RefusalCause::NoSuchAccount, Some("no-password"))),
@@ -380,22 +387,20 @@ async fn issue_token(
     })?;
     let hash = token.digest();
     let secret = token.into_secret();
-    let tx = client
-        .transaction()
-        .await
-        .map_err(|source| database(&source))?;
-    if let Some((cause, reason)) = lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
+    let mut tx = client.begin().await.map_err(|source| database(&source))?;
+    if let Some((cause, reason)) =
+        lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
+    {
         return Err(refused_because("invitation refused", cause, reason));
     }
     if let Some(email) = expected_email {
-        let current: String = tx
-            .query_one(
-                "SELECT email FROM identity.principals WHERE id=$1::text::uuid",
-                &[&principal.to_string().as_str()],
-            )
-            .await
-            .map_err(|source| database(&source))?
-            .get(0);
+        let current: String =
+            sqlx::query("SELECT email FROM identity.principals WHERE id=$1::text::uuid")
+                .bind(principal.to_string().as_str())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|source| database(&source))?
+                .get(0);
         if current != email {
             return Err(refused_because(
                 "recovery address changed",
@@ -404,27 +409,27 @@ async fn issue_token(
             ));
         }
     }
-    bind_actor(&tx, actor).await?;
-    let expires_at: String = tx.query_one("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')", &[&hash, &principal.to_string().as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?.get(0);
+    bind_actor(&mut tx, actor).await?;
+    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(&hash).bind(principal.to_string().as_str()).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
 }
 /// Return the cause when the token cannot establish this principal's password.
 async fn usable_token(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     hash: &[u8],
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.to_string().as_str(), &purpose]).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3").bind(hash).bind(principal.to_string().as_str()).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
-    Ok(if row.get::<_, bool>(0) {
+    Ok(if row.get::<bool, _>(0) {
         Some(RefusalCause::Consumed)
-    } else if row.get::<_, bool>(1) {
+    } else if row.get::<bool, _>(1) {
         Some(RefusalCause::Expired)
-    } else if !row.get::<_, bool>(2) {
+    } else if !row.get::<bool, _>(2) {
         Some(RefusalCause::NoSuchAccount)
     } else {
         None
@@ -504,27 +509,26 @@ async fn store_password(
     hash: &str,
     purpose: &str,
 ) -> Result<(), PasswordError> {
-    let tx = client
-        .transaction()
-        .await
-        .map_err(|source| database(&source))?;
-    if let Some((cause, reason)) = lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
+    let mut tx = client.begin().await.map_err(|source| database(&source))?;
+    if let Some((cause, reason)) =
+        lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
+    {
         return Err(refused_because("invitation refused", cause, reason));
     }
-    if let Some(cause) = usable_token(&tx, principal, token_digest, purpose).await? {
+    if let Some(cause) = usable_token(&mut tx, principal, token_digest, purpose).await? {
         return Err(refused("invitation refused", cause));
     }
-    bind_actor(&tx, principal).await?;
+    bind_actor(&mut tx, principal).await?;
     if purpose == RESET_PURPOSE {
-        tx.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid", &[&principal.to_string().as_str(), &hash]).await.map_err(|source| database(&source))?;
+        sqlx::query("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid").bind(principal.to_string().as_str()).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
         // reset_password records the drop of this revoke after the commit.
-        crate::password_login::revoke_all(&tx, principal, &mut AuthDrops::default())
+        crate::password_login::revoke_all(&mut tx, principal, &mut AuthDrops::default())
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {
-        tx.execute("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)", &[&principal.to_string().as_str(), &hash]).await.map_err(|source| database(&source))?;
+        sqlx::query("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)").bind(principal.to_string().as_str()).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     }
-    tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL", &[&principal.to_string().as_str()]).await.map_err(|source| database(&source))?;
+    sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL").bind(principal.to_string().as_str()).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))
 }
 
@@ -533,19 +537,19 @@ async fn store_password(
 /// The service still owns source/account throttling and all admission tests.
 /// Unknown, disabled, and unenrolled accounts perform the same bounded hash work.
 pub async fn authenticate_password(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     work: &PasswordWork,
     email: &str,
     password: Password,
 ) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
-    let row = client.query_opt("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'", &[&email]).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'").bind(email).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         work.hash(password).await?;
         return Ok(None);
     };
     let hash: String = row.get(5);
     let valid = work.verify(password, hash).await?;
-    if !valid || row.get::<_, &str>(4) != "active" {
+    if !valid || row.get::<&str, _>(4) != "active" {
         return Ok(None);
     }
     let principal = decode_principal(&row)
@@ -639,7 +643,6 @@ mod tests {
             ready.await.unwrap();
         }
         for task in tasks {
-            task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
         }
         assert_eq!(

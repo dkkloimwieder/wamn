@@ -10,6 +10,7 @@
 //! release.
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use sqlx::Row as _;
 use wamn_catalog::{ServingManifest, condition_workflow_document, resolve_workflow_components};
 use wamn_identity_protocol::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_run_state::queue::{
@@ -70,7 +71,7 @@ impl WamnPostgres {
         project_env_key: &str,
         admission: &ManualRunAdmission<'_>,
     ) -> Result<ManualRunAdmitted, ProductionLeaseError> {
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -83,7 +84,7 @@ impl WamnPostgres {
         let executor = PlatformComponent::Executor.principal_id().to_string();
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 project_env_key,
@@ -106,42 +107,44 @@ impl WamnPostgres {
             ));
         }
         let result = async {
-            require_executor_authority(&connection).await?;
+            require_executor_authority(&mut connection).await?;
             let input = admission.input.to_string();
             let node_digests = admission.node_digests.to_string();
-            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 13] = [
-                &project_env_key,
-                &admission.package_id,
-                &admission.manifest_digest,
-                &admission.environment,
-                &admission.workflow_id,
-                &admission.workflow_version,
-                &admission.wiring_hash,
-                &admission.execution_principal_id,
-                &admission.execution_role,
-                &admission.invoked_by_user_id,
-                &node_digests,
-                &admission.idempotency_key,
-                &input,
-            ];
-            let inserted = connection
-                .query_opt(&insert_manual_run_sql(), &binds)
+
+            let inserted = sqlx::query(sqlx::AssertSqlSafe(insert_manual_run_sql()))
+                .bind(project_env_key)
+                .bind(admission.package_id)
+                .bind(admission.manifest_digest)
+                .bind(admission.environment)
+                .bind(admission.workflow_id)
+                .bind(admission.workflow_version)
+                .bind(admission.wiring_hash)
+                .bind(admission.execution_principal_id)
+                .bind(admission.execution_role)
+                .bind(admission.invoked_by_user_id)
+                .bind(&node_digests)
+                .bind(admission.idempotency_key)
+                .bind(&input)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(|error| storage("admit the manual run", &error))?;
             if let Some(row) = inserted {
                 let run_id: String = row.get(0);
-                connection
-                    .execute(insert_run_queue_sql(), &[&project_env_key, &run_id])
+                sqlx::query(sqlx::AssertSqlSafe((insert_run_queue_sql()).to_string()))
+                    .bind(project_env_key)
+                    .bind(&run_id)
+                    .execute(&mut *connection)
                     .await
+                    .map(|result| result.rows_affected())
                     .map_err(|error| storage("queue the manual run", &error))?;
                 return Ok(ManualRunAdmitted::Queued { run_id });
             }
             Ok(
-                match connection
-                    .query_opt(
-                        select_manual_run_sql(),
-                        &[&project_env_key, &admission.idempotency_key, &input],
-                    )
+                match sqlx::query(sqlx::AssertSqlSafe((select_manual_run_sql()).to_string()))
+                    .bind(project_env_key)
+                    .bind(admission.idempotency_key)
+                    .bind(&input)
+                    .fetch_optional(&mut *connection)
                     .await
                     .map_err(|error| storage("read the first manual run", &error))?
                 {
@@ -216,7 +219,7 @@ impl WamnPostgres {
         project_env_key: &str,
         admission: &ScheduleRunAdmission<'_>,
     ) -> Result<ScheduleRunAdmitted, ProductionLeaseError> {
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -229,7 +232,7 @@ impl WamnPostgres {
         let executor = PlatformComponent::Executor.principal_id().to_string();
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 project_env_key,
@@ -252,17 +255,13 @@ impl WamnPostgres {
             ));
         }
         let result = async {
-            require_executor_authority(&connection).await?;
-            let Some(workflow) = connection
-                .query_opt(
-                    ENABLED_SCHEDULE_SQL,
-                    &[
-                        &project_env_key,
-                        &admission.environment,
-                        &admission.application,
-                        &admission.workflow_id,
-                    ],
-                )
+            require_executor_authority(&mut connection).await?;
+            let Some(workflow) = sqlx::query(ENABLED_SCHEDULE_SQL)
+                .bind(project_env_key)
+                .bind(admission.environment)
+                .bind(admission.application)
+                .bind(admission.workflow_id)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(|error| storage("read the enabled schedule version", &error))?
             else {
@@ -278,11 +277,10 @@ impl WamnPostgres {
             let graph = parse_graph(&graph_json).map_err(|error| {
                 contract("parse the stored workflow graph", format!("{error:#}"))
             })?;
-            let bytes: Vec<u8> = connection
-                .query_opt(
-                    PINNED_RELEASE_SQL,
-                    &[&project_env_key, &admission.manifest_digest],
-                )
+            let bytes: Vec<u8> = sqlx::query(PINNED_RELEASE_SQL)
+                .bind(project_env_key)
+                .bind(admission.manifest_digest)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(|error| storage("read the serving release", &error))?
                 .ok_or_else(|| {
@@ -319,40 +317,44 @@ impl WamnPostgres {
                 admission.application, admission.workflow_id
             );
             let input = serde_json::json!({ "due": due }).to_string();
-            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
-                &project_env_key,
-                &admission.application,
-                &admission.manifest_digest,
-                &admission.environment,
-                &admission.workflow_id,
-                &version,
-                &wiring_hash,
-                &principal,
-                &role,
-                &node_digests,
-                &idempotency_key,
-                &input,
-            ];
-            let inserted = connection
-                .query_opt(&insert_workflow_schedule_run_sql(), &binds)
+
+            let inserted = sqlx::query(sqlx::AssertSqlSafe(insert_workflow_schedule_run_sql()))
+                .bind(project_env_key)
+                .bind(admission.application)
+                .bind(admission.manifest_digest)
+                .bind(admission.environment)
+                .bind(admission.workflow_id)
+                .bind(version)
+                .bind(&wiring_hash)
+                .bind(&principal)
+                .bind(&role)
+                .bind(&node_digests)
+                .bind(&idempotency_key)
+                .bind(&input)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(|error| storage("admit the schedule run", &error))?;
             if let Some(row) = inserted {
                 let run_id: String = row.get(0);
-                connection
-                    .execute(insert_run_queue_sql(), &[&project_env_key, &run_id])
+                sqlx::query(sqlx::AssertSqlSafe((insert_run_queue_sql()).to_string()))
+                    .bind(project_env_key)
+                    .bind(&run_id)
+                    .execute(&mut *connection)
                     .await
+                    .map(|result| result.rows_affected())
                     .map_err(|error| storage("queue the schedule run", &error))?;
                 return Ok(ScheduleRunAdmitted::Queued { run_id });
             }
             Ok(
-                match connection
-                    .query_opt(
-                        select_workflow_schedule_run_sql(),
-                        &[&project_env_key, &idempotency_key, &input],
-                    )
-                    .await
-                    .map_err(|error| storage("read the first schedule run", &error))?
+                match sqlx::query(sqlx::AssertSqlSafe(
+                    (select_workflow_schedule_run_sql()).to_string(),
+                ))
+                .bind(project_env_key)
+                .bind(&idempotency_key)
+                .bind(&input)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(|error| storage("read the first schedule run", &error))?
                 {
                     Some(row) => ScheduleRunAdmitted::Queued { run_id: row.get(0) },
                     None => ScheduleRunAdmitted::Conflict,

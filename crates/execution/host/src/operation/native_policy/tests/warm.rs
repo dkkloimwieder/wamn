@@ -160,7 +160,6 @@ fn native_warm_failures_retire_instances() {
                 timeout(CLEANUP, fixture.entered.notified())
                     .await
                     .expect("guest entered");
-                task.abort();
                 assert!(task.await.expect_err("aborted caller").is_cancelled());
             } else {
                 assert!(invoke_native(&target, request).await.is_err());

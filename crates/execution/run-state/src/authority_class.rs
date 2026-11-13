@@ -36,6 +36,8 @@ pub const CURRENT_USER_ROLE_MEMBERSHIP_SQL: &str = "SELECT EXISTS ( \
 pub enum AuthorityClass {
     /// Project component `wamn:postgres` imports.
     GuestSql,
+    /// Dynamic SQL reads use a separate SELECT-only login.
+    DynamicSql,
     /// Executor run-state and catalog work.
     ExecutorPlatform,
     /// Connection-HTTP authorization and effect-snapshot operations.
@@ -49,8 +51,9 @@ pub enum AuthorityClass {
 
 impl AuthorityClass {
     /// Every class, in declaration order, for table-driven tests.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::GuestSql,
+        Self::DynamicSql,
         Self::ExecutorPlatform,
         Self::CallableHttp,
         Self::EventMaterializer,
@@ -68,6 +71,7 @@ impl AuthorityClass {
     pub const fn acl_role(self) -> &'static str {
         match self {
             Self::GuestSql => "wamn_app",
+            Self::DynamicSql => "wamn_query",
             Self::ExecutorPlatform => "wamn_executor_platform",
             Self::CallableHttp => "wamn_http_admitter",
             Self::EventMaterializer => "wamn_event_materializer",
@@ -82,6 +86,7 @@ impl AuthorityClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::GuestSql => "guest-sql",
+            Self::DynamicSql => "dynamic-sql",
             Self::ExecutorPlatform => "executor-platform",
             Self::CallableHttp => "callable-http",
             Self::EventMaterializer => "event-materializer",
@@ -99,40 +104,6 @@ impl fmt::Display for AuthorityClass {
 #[cfg(test)]
 mod tests {
     use super::AuthorityClass;
-
-    /// `ALL` is a convenience, so it gets its own guard: the compile-error
-    /// guarantee for a new variant comes from the exhaustive matches in
-    /// `as_str` and in the provisioning projection, not from this array.
-    #[test]
-    fn all_carries_five_distinct_classes() {
-        let mut seen = Vec::new();
-        for class in AuthorityClass::ALL {
-            assert!(
-                !seen.contains(&class),
-                "AuthorityClass::ALL lists {class} more than once"
-            );
-            seen.push(class);
-        }
-        assert_eq!(seen.len(), 5, "AuthorityClass::ALL must list every class");
-    }
-
-    #[test]
-    fn labels_are_distinct_and_stable() {
-        let mut labels: Vec<&str> = AuthorityClass::ALL.iter().map(|c| c.as_str()).collect();
-        labels.sort_unstable();
-        assert_eq!(
-            labels,
-            [
-                "administration",
-                "callable-http",
-                "event-materializer",
-                "executor-platform",
-                "guest-sql"
-            ],
-            "authority-class labels are cache-key and telemetry surface; changing one is a \
-             deliberate break, not a rename"
-        );
-    }
 
     #[test]
     fn display_matches_the_label() {

@@ -22,7 +22,7 @@ use wamn_broker::Publisher;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
@@ -53,7 +53,7 @@ pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering test of an `admin` revoke.
-    pub(crate) identity: Option<(&'a Client, &'a str)>,
+    pub(crate) identity: Option<(&'a sqlx::PgPool, &'a str)>,
 }
 
 #[derive(Deserialize)]
@@ -319,7 +319,7 @@ impl ApplicationRoutes<'_> {
                     for user in application_users(client).await? {
                         let id: PrincipalId = user.id.parse()?;
                         let covered = is_project_admin(
-                            identity,
+                            &mut *identity.acquire().await?,
                             &id,
                             org,
                             self.project,
@@ -504,7 +504,7 @@ impl ApplicationRoutes<'_> {
 
     /// The identity reader of the host. `project-admin`, which `org-admin`
     /// writes in every project of the org, covers a user's `admin`.
-    fn identity_reader(&self) -> Result<(&Client, &str), Refusal> {
+    fn identity_reader(&self) -> Result<(&sqlx::PgPool, &str), Refusal> {
         self.identity.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
                 "the covering condition of admin needs the identity reader of the host"
@@ -519,7 +519,7 @@ impl ApplicationRoutes<'_> {
         attachment: &HostAttachment,
         principal: &PrincipalId,
         lock: bool,
-        work: impl AsyncFnOnce(&Client) -> Result<Value, Refusal>,
+        work: impl AsyncFnOnce(&mut Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
         let project_env_key = self.release.target().project_env_key.as_str();
         self.postgres
@@ -530,8 +530,9 @@ impl ApplicationRoutes<'_> {
                 &attachment.operation,
                 async |client| {
                     if lock {
-                        client
-                            .query_one(OPERATION_GRANT_LOCK_SQL, &[&project_env_key])
+                        sqlx::query(OPERATION_GRANT_LOCK_SQL)
+                            .bind(project_env_key)
+                            .fetch_one(&mut *client)
                             .await?;
                     }
                     work(client).await

@@ -155,7 +155,7 @@ STABLE
 PARALLEL SAFE
 SET search_path = pg_catalog
 AS $$
-    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+    SELECT substring(current_user::text from '^(?:wamn_app|wamn_query)_([0-9a-f]{40})$')
 $$;
 ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
 REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;

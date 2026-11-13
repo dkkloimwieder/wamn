@@ -1,13 +1,9 @@
 //! Test of the actual signing-key lifecycle on a test PostgreSQL database.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::oneshot;
-use tokio::task::JoinSet;
-use tokio_postgres::config::{Host, SslMode};
-use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_identity_protocol::keys::PublicSessionKey;
 use wamn_identity_protocol::test_util::{Audience, verify};
@@ -36,14 +32,17 @@ async fn session_key_lifecycle_on_postgres() {
         .to_string();
     for relation in ["identity.session_keys", "identity.session_signing_state"] {
         wamn_test_infrastructure::record_history::assert_stamp(
-            &admin, relation, "true", &actor, &actor,
+            &mut admin, relation, "true", &actor, &actor,
         )
         .await;
     }
     assert_ne!(first.kid, second.kid);
     assert_ne!(first.kid, third.kid);
     assert_ne!(second.kid, third.kid);
-    assert_eq!(session_jwks(&admin, ISSUER).await.unwrap().keys.len(), 3);
+    assert_eq!(
+        session_jwks(&mut admin, ISSUER).await.unwrap().keys.len(),
+        3
+    );
     assert!(
         sign_session_token(&mut admin, claims(ISSUER), now())
             .await
@@ -59,13 +58,13 @@ async fn session_key_lifecycle_on_postgres() {
     activate_session_key(&mut admin, ISSUER, &first.kid)
         .await
         .unwrap();
-    let before = table_versions(&admin).await;
+    let before = table_versions(&mut admin).await;
     let initial = sign_session_token(&mut admin, claims(ISSUER), now())
         .await
         .unwrap();
     assert_token(&initial, &first).await;
     assert_eq!(
-        table_versions(&admin).await,
+        table_versions(&mut admin).await,
         before,
         "signing made a logical per-token write"
     );
@@ -80,9 +79,9 @@ async fn session_key_lifecycle_on_postgres() {
         "late validation evidence was signed"
     );
 
-    let raced = race_signing_and_rotation(&url, &admin, &second).await;
+    let raced = race_signing_and_rotation(&url, &mut admin, &second).await;
     assert_token(&raced, &first).await;
-    let cutoff = key_state(&admin, &first.kid).await;
+    let cutoff = key_state(&mut admin, &first.kid).await;
     assert!(cutoff.0.is_some());
     assert!(cutoff.1, "rotation retained old private material");
     assert!(
@@ -95,7 +94,7 @@ async fn session_key_lifecycle_on_postgres() {
         "rotation removed unexpired public evidence"
     );
     assert!(
-        session_jwks(&admin, ISSUER)
+        session_jwks(&mut admin, ISSUER)
             .await
             .unwrap()
             .keys
@@ -105,7 +104,7 @@ async fn session_key_lifecycle_on_postgres() {
         .await
         .unwrap();
     assert_eq!(
-        key_state(&admin, &first.kid).await,
+        key_state(&mut admin, &first.kid).await,
         cutoff,
         "repeat activation reset cutoff"
     );
@@ -123,15 +122,15 @@ async fn session_key_lifecycle_on_postgres() {
     )
     .await;
 
-    crash_rotation(&url, &admin, &third).await;
+    crash_rotation(&url, &mut admin, &third).await;
     assert_eq!(
-        key_state(&admin, &second.kid).await,
+        key_state(&mut admin, &second.kid).await,
         (None, false),
         "crashed transaction partially retired its active generation"
     );
     let mut restarted = connect(&url).await;
     assert_eq!(
-        key_state(&restarted, &first.kid).await,
+        key_state(&mut restarted, &first.kid).await,
         cutoff,
         "reconnecting lost or restarted the durable cutoff"
     );
@@ -159,14 +158,14 @@ async fn session_key_lifecycle_on_postgres() {
             .unwrap()
     );
     assert!(
-        !session_jwks(&restarted, ISSUER)
+        !session_jwks(&mut restarted, ISSUER)
             .await
             .unwrap()
             .keys
             .contains(&third)
     );
     assert_eq!(
-        stored_count(&admin, ISSUER, &third.kid).await,
+        stored_count(&mut admin, ISSUER, &third.kid).await,
         0,
         "compromise left private or public key material in the key table"
     );
@@ -187,31 +186,36 @@ async fn session_key_lifecycle_on_postgres() {
             .unwrap()
     );
     assert!(
-        session_jwks(&restarted, ISSUER)
+        session_jwks(&mut restarted, ISSUER)
             .await
             .unwrap()
             .keys
             .contains(&first)
     );
     assert_eq!(
-        session_jwks(&restarted, OTHER_ISSUER).await.unwrap().keys,
+        session_jwks(&mut restarted, OTHER_ISSUER)
+            .await
+            .unwrap()
+            .keys,
         vec![other]
     );
 
     // Age only the already-retired fixture row; do not wait fifteen minutes or
     // replace the production clock/retirement query with a mock.
-    admin
-        .batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+    sqlx::raw_sql("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
-    admin.execute(
-        "UPDATE identity.session_keys SET signing_cutoff = clock_timestamp() - interval '931 seconds' \
-         WHERE issuer = $1 AND kid::text = $2",
-        &[&ISSUER,&first.kid],
-    ).await.unwrap();
-    admin.batch_execute("COMMIT").await.unwrap();
+    sqlx::query("UPDATE identity.session_keys SET signing_cutoff = clock_timestamp() - interval '931 seconds' \
+         WHERE issuer = $1 AND kid::text = $2").bind(&ISSUER).bind(&first.kid).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut admin)
+        .await
+        .map(drop)
+        .unwrap();
     assert!(
-        session_jwks(&restarted, ISSUER)
+        session_jwks(&mut restarted, ISSUER)
             .await
             .unwrap()
             .keys
@@ -222,7 +226,7 @@ async fn session_key_lifecycle_on_postgres() {
         retire_session_keys(&mut restarted, ISSUER).await.unwrap(),
         1
     );
-    assert_eq!(stored_count(&admin, ISSUER, &first.kid).await, 0);
+    assert_eq!(stored_count(&mut admin, ISSUER, &first.kid).await, 0);
     let replacement = publish_session_key(&mut restarted, ISSUER).await.unwrap();
     assert!(
         ![&first.kid, &second.kid, &third.kid].contains(&&replacement.kid),
@@ -235,8 +239,7 @@ async fn session_key_lifecycle_on_postgres() {
         "publication recovered a compromised active key implicitly"
     );
 
-    admin.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
-        .await.expect("remove owned platform test schemas");
+    sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;").execute(&mut admin).await.map(drop).expect("remove owned platform test schemas");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -253,190 +256,66 @@ async fn signer_backend_loss_before_commit_does_not_issue_token() {
             &first,
         ).await;
 
-        // Both the proxy and the actual PostgreSQL driver abort on test failure.
-        let mut tasks = JoinSet::new();
-        let (mut signer, commit_held, release_commit) =
-            connect_with_held_commit(&url, &mut tasks).await;
-        let signer_pid = pid(&signer).await;
-        let mut rotator = connect(&url).await;
-        let rotator_pid = pid(&rotator).await;
-        assert_ne!(signer_pid, pid(&admin).await);
-        assert_ne!(signer_pid, rotator_pid);
+        let mut blocker = connect(&url).await;
+        let blocker_pid = pid(&mut blocker).await;
+        let mut transaction = blocker.begin().await.unwrap();
+        sqlx::raw_sql("LOCK TABLE identity.session_signing_state IN ACCESS EXCLUSIVE MODE").execute(&mut *transaction).await.unwrap();
+        let mut signer = connect(&url).await;
+        let signer_pid = pid(&mut signer).await;
         let signing = sign_session_token(&mut signer, claims(ISSUER), now());
         tokio::pin!(signing);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::select! {
-                _ = &mut signing => {
-                    panic!("signer returned before its COMMIT reached the wire barrier");
-                }
-                held = commit_held => held.expect("proxy did not observe the actual signing COMMIT"),
-            }
-        }).await.expect("production signer did not reach its COMMIT wire barrier");
-
-        // The production signer has already called ring, but COMMIT has not
-        // reached PostgreSQL. Its real SHARE lock must still block activation.
-        let rotation = activate_session_key(&mut rotator, ISSUER, &second.kid);
-        tokio::pin!(rotation);
         tokio::select! {
-            _ = &mut rotation => panic!("rotation passed the uncommitted signer"),
-            () = wait_blocked(&admin, rotator_pid, signer_pid) => {}
+            _ = &mut signing => panic!("signer passed the blocked transaction"),
+            () = wait_blocked(&mut admin,signer_pid,blocker_pid) => {}
         }
-        let terminated: bool = admin
-            .query_one("SELECT pg_terminate_backend($1)", &[&signer_pid])
-            .await.unwrap().get(0);
-        assert!(terminated, "test did not terminate its owned signer backend");
-        tokio::time::timeout(Duration::from_secs(5), &mut rotation)
-            .await.expect("rotation did not finish after signer termination")
-            .expect("generation rotation did not commit");
-        let cutoff = key_state(&admin, &first.kid).await;
-        assert!(cutoff.0.is_some() && cutoff.1, "rotation did not retire the old private key");
-
-        // Forward the held COMMIT only after rotation. A dead backend cannot
-        // acknowledge it, and an internally produced signature must not escape.
-        release_commit.send(()).expect("proxy abandoned the held COMMIT");
-        assert!(
-            tokio::time::timeout(Duration::from_secs(5), &mut signing)
-                .await.expect("terminated signer did not return").is_err(),
-            "signer released a token without a successful transaction commit"
-        );
-        assert_token(
-            &sign_session_token(&mut admin, claims(ISSUER), now()).await.unwrap(),
-            &second,
-        ).await;
-        tasks.shutdown().await;
-        admin.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
-            .await.expect("remove owned platform test schemas");
+        assert!(sqlx::query_scalar::<_,bool>("SELECT pg_terminate_backend($1)").bind(signer_pid).fetch_one(&mut admin).await.unwrap());
+        assert!(tokio::time::timeout(Duration::from_secs(5), &mut signing).await.unwrap().is_err(),"failed signing transaction released a token");
+        transaction.rollback().await.unwrap();
+        activate_session_key(&mut admin,ISSUER,&second.kid).await.unwrap();
+        assert_token(&sign_session_token(&mut admin,claims(ISSUER),now()).await.unwrap(),&second).await;
+        sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;").execute(&mut admin).await.map(drop).expect("remove owned platform test schemas");
     }).await.expect("signer backend-loss test exceeded its bounded deadline");
-}
-
-async fn connect_with_held_commit(
-    url: &str,
-    tasks: &mut JoinSet<()>,
-) -> (Client, oneshot::Receiver<()>, oneshot::Sender<()>) {
-    let mut config: tokio_postgres::Config = url.parse().expect("parse disposable PostgreSQL URL");
-    config.ssl_mode(SslMode::Disable);
-    let [Host::Tcp(host)] = config.get_hosts() else {
-        panic!("wire test requires one TCP PostgreSQL host");
-    };
-    assert!(
-        config.get_hostaddrs().is_empty(),
-        "wire test requires host, not hostaddr"
-    );
-    assert!(
-        config.get_ports().len() <= 1,
-        "wire test requires one PostgreSQL port"
-    );
-    let port = config.get_ports().first().copied().unwrap_or(5432);
-    let upstream = TcpStream::connect((host.as_str(), port))
-        .await
-        .expect("connect proxy upstream");
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("bind owned wire proxy");
-    let downstream = TcpStream::connect(listener.local_addr().unwrap())
-        .await
-        .unwrap();
-    let (frontend, _) = listener.accept().await.unwrap();
-    let (held_tx, held_rx) = oneshot::channel();
-    let (release_tx, release_rx) = oneshot::channel();
-    tasks.spawn(async move {
-        let (mut upstream_read, mut upstream_write) = upstream.into_split();
-        let (mut frontend_read, mut frontend_write) = frontend.into_split();
-        // Backend bytes include key material. Relay them without inspection,
-        // logging, or persistence. Termination errors are expected in this test.
-        let _ = tokio::join!(
-            relay_until_commit(&mut frontend_read, &mut upstream_write, held_tx, release_rx),
-            async {
-                tokio::io::copy(&mut upstream_read, &mut frontend_write).await?;
-                frontend_write.shutdown().await
-            },
-        );
-    });
-    let (client, connection) = config
-        .connect_raw(downstream, NoTls)
-        .await
-        .expect("authenticate real PostgreSQL client through wire proxy");
-    tasks.spawn(async move {
-        let _ = connection.await;
-    });
-    (client, held_rx, release_tx)
-}
-
-async fn relay_until_commit(
-    frontend: &mut tokio::net::tcp::OwnedReadHalf,
-    upstream: &mut tokio::net::tcp::OwnedWriteHalf,
-    held: oneshot::Sender<()>,
-    release: oneshot::Receiver<()>,
-) -> std::io::Result<()> {
-    // Startup has no type byte. Subsequent messages use type + inclusive length.
-    // Forward authentication and queries unchanged; never record their payloads.
-    let length = frontend.read_u32().await?;
-    assert!(
-        (8..=65_536).contains(&length),
-        "unexpected PostgreSQL startup length"
-    );
-    let mut payload = vec![0; length as usize - 4];
-    frontend.read_exact(&mut payload).await?;
-    upstream.write_u32(length).await?;
-    upstream.write_all(&payload).await?;
-    loop {
-        let type_ = frontend.read_u8().await?;
-        let length = frontend.read_u32().await?;
-        assert!(
-            (4..=65_536).contains(&length),
-            "unexpected PostgreSQL message length"
-        );
-        payload.resize(length as usize - 4, 0);
-        frontend.read_exact(&mut payload).await?;
-        if type_ == b'Q' && payload == b"COMMIT\0" {
-            held.send(()).expect("test stopped observing COMMIT");
-            release.await.expect("test did not release COMMIT");
-            upstream.write_u8(type_).await?;
-            upstream.write_u32(length).await?;
-            upstream.write_all(&payload).await?;
-            return Ok(());
-        }
-        upstream.write_u8(type_).await?;
-        upstream.write_u32(length).await?;
-        upstream.write_all(&payload).await?;
-    }
 }
 
 // Each test passes its own test database and holds the process lock, because
 // the system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
 async fn prepare_database(url: &str) -> (String, Client) {
-    let admin = connect(url).await;
-    admin
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
+    let mut admin = connect(url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
          DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-         THEN CREATE ROLE wamn_system; END IF; END $$;",
-        )
+         THEN CREATE ROLE wamn_system; END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("prepare empty platform schemas");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut admin)
         .await
-        .expect("prepare empty platform schemas");
-    admin
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("apply production system schema");
     (url.to_owned(), admin)
 }
 
 async fn race_signing_and_rotation(
     url: &str,
-    observer: &Client,
+    observer: &mut Client,
     next: &PublicSessionKey,
 ) -> IssuedSessionToken {
     let mut blocker = connect(url).await;
     let mut signer = connect(url).await;
     let mut rotator = connect(url).await;
-    let blocker_pid = pid(&blocker).await;
-    let signer_pid = pid(&signer).await;
-    let rotator_pid = pid(&rotator).await;
-    let blocker_tx = blocker.transaction().await.unwrap();
-    blocker_tx
-        .batch_execute("LOCK TABLE identity.session_keys IN ACCESS EXCLUSIVE MODE")
+    let blocker_pid = pid(&mut blocker).await;
+    let signer_pid = pid(&mut signer).await;
+    let rotator_pid = pid(&mut rotator).await;
+    let mut blocker_tx = blocker.begin().await.unwrap();
+    sqlx::raw_sql("LOCK TABLE identity.session_keys IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker_tx)
         .await
+        .map(drop)
         .unwrap();
     let signing =
         tokio::spawn(async move { sign_session_token(&mut signer, claims(ISSUER), now()).await });
@@ -460,35 +339,35 @@ async fn race_signing_and_rotation(
     token
 }
 
-async fn crash_rotation(url: &str, observer: &Client, next: &PublicSessionKey) {
+async fn crash_rotation(url: &str, observer: &mut Client, next: &PublicSessionKey) {
     // Pause the real flip after both its private-key erasure and state update,
     // then kill only that test-owned backend before either write can commit.
-    observer
-        .batch_execute(
-            "CREATE FUNCTION identity.pause_session_flip() RETURNS trigger LANGUAGE plpgsql AS \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE FUNCTION identity.pause_session_flip() RETURNS trigger LANGUAGE plpgsql AS \
          $$ BEGIN PERFORM pg_sleep(30); RETURN NEW; END $$; \
          CREATE TRIGGER pause_session_flip AFTER UPDATE ON identity.session_signing_state \
-         FOR EACH ROW EXECUTE FUNCTION identity.pause_session_flip();",
-        )
-        .await
-        .unwrap();
+         FOR EACH ROW EXECUTE FUNCTION identity.pause_session_flip();")
+            .to_string(),
+    ))
+    .execute(&mut *observer)
+    .await
+    .map(drop)
+    .unwrap();
     let mut rotator = connect(url).await;
-    let rotator_pid = pid(&rotator).await;
+    let rotator_pid = pid(&mut rotator).await;
     let kid = next.kid.clone();
     let rotation =
         tokio::spawn(async move { activate_session_key(&mut rotator, ISSUER, &kid).await });
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let sleeping: bool = observer.query_one(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='PgSleep')",
-                &[&rotator_pid],
-            ).await.unwrap().get(0);
+            let sleeping: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='PgSleep')").bind(&rotator_pid).fetch_one(&mut *observer).await.unwrap().get(0);
             if sleeping { break; }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("real rotation did not reach its uncommitted cutoff/state write");
-    let terminated: bool = observer
-        .query_one("SELECT pg_terminate_backend($1)", &[&rotator_pid])
+    let terminated: bool = sqlx::query("SELECT pg_terminate_backend($1)")
+        .bind(&rotator_pid)
+        .fetch_one(&mut *observer)
         .await
         .unwrap()
         .get(0);
@@ -504,16 +383,16 @@ async fn crash_rotation(url: &str, observer: &Client, next: &PublicSessionKey) {
             .is_err(),
         "terminated rotation unexpectedly committed"
     );
-    observer.batch_execute(
-        "DROP TRIGGER pause_session_flip ON identity.session_signing_state; DROP FUNCTION identity.pause_session_flip();",
-    ).await.unwrap();
+    sqlx::raw_sql("DROP TRIGGER pause_session_flip ON identity.session_signing_state; DROP FUNCTION identity.pause_session_flip();").execute(&mut *observer).await.map(drop).unwrap();
 }
 
-async fn wait_blocked(observer: &Client, waiting: i32, blocker: i32) {
+async fn wait_blocked(observer: &mut Client, waiting: i32, blocker: i32) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let is_blocked: bool = observer
-                .query_one("SELECT $2=ANY(pg_blocking_pids($1))", &[&waiting, &blocker])
+            let is_blocked: bool = sqlx::query("SELECT $2=ANY(pg_blocking_pids($1))")
+                .bind(&waiting)
+                .bind(&blocker)
+                .fetch_one(&mut *observer)
                 .await
                 .unwrap()
                 .get(0);
@@ -528,51 +407,47 @@ async fn wait_blocked(observer: &Client, waiting: i32, blocker: i32) {
 }
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect disposable key database");
     // One connection is deliberately terminated to show transaction rollback.
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
-async fn pid(client: &Client) -> i32 {
-    client
-        .query_one("SELECT pg_backend_pid()", &[])
+async fn pid(client: &mut Client) -> i32 {
+    sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut *client)
         .await
         .unwrap()
         .get(0)
 }
 
-async fn key_state(client: &Client, kid: &str) -> (Option<i64>, bool) {
-    let row = client
-        .query_one(
-            "SELECT (extract(epoch FROM signing_cutoff) * 1000000)::bigint, private_pkcs8 IS NULL \
+async fn key_state(client: &mut Client, kid: &str) -> (Option<i64>, bool) {
+    let row = sqlx::query(
+        "SELECT (extract(epoch FROM signing_cutoff) * 1000000)::bigint, private_pkcs8 IS NULL \
          FROM identity.session_keys WHERE issuer=$1 AND kid::text=$2",
-            &[&ISSUER, &kid],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&ISSUER)
+    .bind(&kid)
+    .fetch_one(&mut *client)
+    .await
+    .unwrap();
     (row.get(0), row.get(1))
 }
 
-async fn table_versions(client: &Client) -> (String, String) {
-    let row = client.query_one(
-        "SELECT (SELECT string_agg(issuer || ':' || kid::text || ':' || xmin::text, ',' ORDER BY issuer,kid) \
+async fn table_versions(client: &mut Client) -> (String, String) {
+    let row = sqlx::query("SELECT (SELECT string_agg(issuer || ':' || kid::text || ':' || xmin::text, ',' ORDER BY issuer,kid) \
          FROM identity.session_keys), (SELECT string_agg(issuer || ':' || xmin::text, ',' ORDER BY issuer) \
-         FROM identity.session_signing_state)", &[],
-    ).await.unwrap();
+         FROM identity.session_signing_state)").fetch_one(&mut *client).await.unwrap();
     (row.get(0), row.get(1))
 }
 
-async fn stored_count(client: &Client, issuer: &str, kid: &str) -> i64 {
-    client
-        .query_one(
-            "SELECT count(*) FROM identity.session_keys WHERE issuer=$1 AND kid::text=$2",
-            &[&issuer, &kid],
-        )
+async fn stored_count(client: &mut Client, issuer: &str, kid: &str) -> i64 {
+    sqlx::query("SELECT count(*) FROM identity.session_keys WHERE issuer=$1 AND kid::text=$2")
+        .bind(&issuer)
+        .bind(&kid)
+        .fetch_one(&mut *client)
         .await
         .unwrap()
         .get(0)

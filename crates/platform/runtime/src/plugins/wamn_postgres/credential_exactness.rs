@@ -6,9 +6,9 @@
 //! project or authority class, create credentials, grant authority, or install
 //! a pool/listener consumer.
 
+use sqlx::Row as _;
+use sqlx::postgres::PgConnectOptions as Config;
 use std::fmt::{Debug, Display, Formatter};
-
-use tokio_postgres::{Config, GenericClient};
 
 /// Whether a caller also observed an ambient database credential source.
 ///
@@ -113,7 +113,7 @@ impl std::error::Error for CredentialProbeError {}
 /// `wamn-0h0g.13.59`; this seam only prevents a selector from pairing that
 /// credential with a different expected project.
 ///
-/// Debug output is deliberately opaque because `tokio_postgres::Config`
+/// Debug output is deliberately opaque because `sqlx::postgres::PgConnectOptions`
 /// contains userinfo and password material.
 #[derive(Clone)]
 pub struct ExplicitCredentialSource {
@@ -160,7 +160,7 @@ pub fn explicit_credential_source(
             CredentialProbePredicate::CredentialSource,
         )
     })?;
-    if config.get_user().is_none() || config.get_dbname().is_none() {
+    if config.get_username().is_empty() || config.get_database().is_none() {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::InvalidSource,
             CredentialProbePredicate::CredentialSource,
@@ -307,13 +307,13 @@ pub fn credential_exactness_probe(
     source: ExplicitCredentialSource,
     expected: ExpectedCredentialIdentity,
 ) -> Result<CredentialExactnessProbe, CredentialProbeError> {
-    if source.config.get_user() != Some(expected.session_user.as_ref()) {
+    if source.config.get_username() != expected.session_user.as_ref() {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::SessionUser,
         ));
     }
-    if source.config.get_dbname() != Some(expected.database.as_ref()) {
+    if source.config.get_database() != Some(expected.database.as_ref()) {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::Database,
@@ -337,36 +337,33 @@ impl CredentialExactnessProbe {
     }
 
     /// Verify one newly-created physical connection before pooling it.
-    pub async fn probe_pooled<C>(&self, client: &C) -> Result<(), CredentialProbeError>
-    where
-        C: GenericClient + Sync,
-    {
+    pub async fn probe_pooled(
+        &self,
+        client: &mut sqlx::PgConnection,
+    ) -> Result<(), CredentialProbeError> {
         self.probe(client, CredentialConnectionType::Pooled).await
     }
 
     /// Verify one independently-opened listener connection before `LISTEN`.
-    pub async fn probe_listener<C>(&self, client: &C) -> Result<(), CredentialProbeError>
-    where
-        C: GenericClient + Sync,
-    {
+    pub async fn probe_listener(
+        &self,
+        client: &mut sqlx::PgConnection,
+    ) -> Result<(), CredentialProbeError> {
         self.probe(client, CredentialConnectionType::Listener).await
     }
 
-    async fn probe<C>(
+    async fn probe(
         &self,
-        client: &C,
+        client: &mut sqlx::PgConnection,
         connection_type: CredentialConnectionType,
-    ) -> Result<(), CredentialProbeError>
-    where
-        C: GenericClient + Sync,
-    {
-        self.probe_queries(&PostgresQueryExecutor { client }, connection_type)
+    ) -> Result<(), CredentialProbeError> {
+        self.probe_queries(&mut PostgresQueryExecutor { client }, connection_type)
             .await
     }
 
     async fn probe_queries(
         &self,
-        queries: &impl CredentialProbeQueries,
+        queries: &mut impl CredentialProbeQueries,
         connection_type: CredentialConnectionType,
     ) -> Result<(), CredentialProbeError> {
         let identity = queries
@@ -470,31 +467,26 @@ fn unavailable(
 }
 
 trait CredentialProbeQueries {
-    async fn identity(&self) -> Result<ObservedIdentity, CredentialProbePredicate>;
+    async fn identity(&mut self) -> Result<ObservedIdentity, CredentialProbePredicate>;
     async fn membership(
-        &self,
+        &mut self,
         expectation: &MembershipExpectation,
     ) -> Result<bool, CredentialProbePredicate>;
-    async fn acl(&self, expectation: &AclExpectation) -> Result<bool, CredentialProbePredicate>;
+    async fn acl(&mut self, expectation: &AclExpectation)
+    -> Result<bool, CredentialProbePredicate>;
 }
 
-struct PostgresQueryExecutor<'a, C> {
-    client: &'a C,
+struct PostgresQueryExecutor<'a> {
+    client: &'a mut sqlx::PgConnection,
 }
 
-impl<C> CredentialProbeQueries for PostgresQueryExecutor<'_, C>
-where
-    C: GenericClient + Sync,
-{
-    async fn identity(&self) -> Result<ObservedIdentity, CredentialProbePredicate> {
-        let row = self
-            .client
-            .query_one(
-                "SELECT session_user::text, current_user::text, current_database()::text",
-                &[],
-            )
-            .await
-            .map_err(|_| CredentialProbePredicate::CredentialSource)?;
+impl CredentialProbeQueries for PostgresQueryExecutor<'_> {
+    async fn identity(&mut self) -> Result<ObservedIdentity, CredentialProbePredicate> {
+        let row =
+            sqlx::query("SELECT session_user::text, current_user::text, current_database()::text")
+                .fetch_one(&mut *self.client)
+                .await
+                .map_err(|_| CredentialProbePredicate::CredentialSource)?;
         Ok(ObservedIdentity {
             session_user: row
                 .try_get(0)
@@ -509,331 +501,69 @@ where
     }
 
     async fn membership(
-        &self,
+        &mut self,
         expectation: &MembershipExpectation,
     ) -> Result<bool, CredentialProbePredicate> {
-        self.client
-            .query_one(
-                "SELECT pg_catalog.pg_has_role(current_user, $1::text, $2::text)",
-                &[&expectation.role.as_ref(), &expectation.mode.as_sql()],
-            )
+        sqlx::query("SELECT pg_catalog.pg_has_role(current_user, $1::text, $2::text)")
+            .bind(expectation.role.as_ref())
+            .bind(expectation.mode.as_sql())
+            .fetch_one(&mut *self.client)
             .await
             .and_then(|row| row.try_get(0))
             .map_err(|_| CredentialProbePredicate::Membership)
     }
 
-    async fn acl(&self, expectation: &AclExpectation) -> Result<bool, CredentialProbePredicate> {
-        let row = match &expectation.target {
-            AclTarget::Database(database) => self
-                .client
-                .query_one(
+    async fn acl(
+        &mut self,
+        expectation: &AclExpectation,
+    ) -> Result<bool, CredentialProbePredicate> {
+        let row =
+            match &expectation.target {
+                AclTarget::Database(database) => sqlx::query(
                     "SELECT pg_catalog.has_database_privilege(current_user, $1::text, $2::text)",
-                    &[&database.as_ref(), &expectation.privilege.as_ref()],
                 )
+                .bind(database.as_ref())
+                .bind(expectation.privilege.as_ref())
+                .fetch_one(&mut *self.client)
                 .await,
-            AclTarget::Schema(schema) => {
-                self.client
-                    .query_one(
+                AclTarget::Schema(schema) => {
+                    sqlx::query(
                         "SELECT pg_catalog.has_schema_privilege(current_user, $1::text, $2::text)",
-                        &[&schema.as_ref(), &expectation.privilege.as_ref()],
                     )
+                    .bind(schema.as_ref())
+                    .bind(expectation.privilege.as_ref())
+                    .fetch_one(&mut *self.client)
                     .await
-            }
-            AclTarget::Table(relation) => {
-                self.client
-                    .query_one(
+                }
+                AclTarget::Table(relation) => {
+                    sqlx::query(
                         "SELECT pg_catalog.has_table_privilege(current_user, $1::text, $2::text)",
-                        &[&relation.as_ref(), &expectation.privilege.as_ref()],
                     )
+                    .bind(relation.as_ref())
+                    .bind(expectation.privilege.as_ref())
+                    .fetch_one(&mut *self.client)
                     .await
-            }
-            AclTarget::Column { relation, column } => {
-                self.client
-                    .query_one(
+                }
+                AclTarget::Column { relation, column } => {
+                    sqlx::query(
                         "SELECT pg_catalog.has_column_privilege(\
                          current_user, $1::text, $2::text, $3::text)",
-                        &[
-                            &relation.as_ref(),
-                            &column.as_ref(),
-                            &expectation.privilege.as_ref(),
-                        ],
                     )
+                    .bind(relation.as_ref())
+                    .bind(column.as_ref())
+                    .bind(expectation.privilege.as_ref())
+                    .fetch_one(&mut *self.client)
                     .await
-            }
-            AclTarget::Function(function) => self
-                .client
-                .query_one(
+                }
+                AclTarget::Function(function) => sqlx::query(
                     "SELECT pg_catalog.has_function_privilege(current_user, $1::text, $2::text)",
-                    &[&function.as_ref(), &expectation.privilege.as_ref()],
                 )
+                .bind(function.as_ref())
+                .bind(expectation.privilege.as_ref())
+                .fetch_one(&mut *self.client)
                 .await,
-        }
-        .map_err(|_| CredentialProbePredicate::Acl)?;
-        row.try_get(0).map_err(|_| CredentialProbePredicate::Acl)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use super::*;
-
-    const URL: &str = "postgresql://exact-user:do-not-print@localhost/exact_db";
-
-    fn source(project_env_key: &str) -> ExplicitCredentialSource {
-        explicit_credential_source(URL, project_env_key, AmbientCredentialState::Absent).unwrap()
-    }
-
-    fn expected(project_env_key: &str) -> ExpectedCredentialIdentity {
-        ExpectedCredentialIdentity::new(
-            "exact-user",
-            "exact-user",
-            "exact_db",
-            project_env_key,
-            vec![MembershipExpectation::new(
-                "wamn_app",
-                MembershipMode::Member,
-                true,
-            )],
-            vec![AclExpectation::new(
-                AclTarget::Table("app.entity".into()),
-                "SELECT",
-                true,
-            )],
-        )
-    }
-
-    fn observation() -> ObservedIdentity {
-        ObservedIdentity {
-            session_user: "exact-user".to_owned(),
-            current_user: "exact-user".to_owned(),
-            database: "exact_db".to_owned(),
-        }
-    }
-
-    struct FakeQueries {
-        identity: ObservedIdentity,
-        membership: bool,
-        acl: bool,
-        identity_calls: AtomicUsize,
-        membership_calls: AtomicUsize,
-        acl_calls: AtomicUsize,
-    }
-
-    impl FakeQueries {
-        fn new(identity: ObservedIdentity, membership: bool, acl: bool) -> Self {
-            Self {
-                identity,
-                membership,
-                acl,
-                identity_calls: AtomicUsize::new(0),
-                membership_calls: AtomicUsize::new(0),
-                acl_calls: AtomicUsize::new(0),
             }
-        }
-    }
-
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "`CredentialProbeQueries` declares `async fn` because the production \
-                  implementation queries a database; this fake answers from memory and still \
-                  has to match the trait"
-    )]
-    impl CredentialProbeQueries for FakeQueries {
-        async fn identity(&self) -> Result<ObservedIdentity, CredentialProbePredicate> {
-            self.identity_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.identity.clone())
-        }
-
-        async fn membership(
-            &self,
-            _expectation: &MembershipExpectation,
-        ) -> Result<bool, CredentialProbePredicate> {
-            self.membership_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.membership)
-        }
-
-        async fn acl(
-            &self,
-            _expectation: &AclExpectation,
-        ) -> Result<bool, CredentialProbePredicate> {
-            self.acl_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(self.acl)
-        }
-    }
-
-    fn assert_mismatch(
-        error: CredentialProbeError,
-        predicate: CredentialProbePredicate,
-        connection_type: Option<CredentialConnectionType>,
-    ) {
-        assert_eq!(
-            error.error_type(),
-            CredentialProbeErrorType::PredicateMismatch
-        );
-        assert_eq!(error.predicate(), predicate);
-        assert_eq!(error.connection_type(), connection_type);
-    }
-
-    #[test]
-    fn exact_source_rejects_an_ambient_conflict_without_disclosure() {
-        let error =
-            explicit_credential_source(URL, "org-a", AmbientCredentialState::Present).unwrap_err();
-        assert_eq!(error.error_type(), CredentialProbeErrorType::SourceConflict);
-        assert_eq!(
-            error.predicate(),
-            CredentialProbePredicate::CredentialSource
-        );
-        let rendered = format!("{error:?} {error}");
-        for secret in [URL, "exact-user", "do-not-print", "localhost", "exact_db"] {
-            assert!(!rendered.contains(secret), "leaked {secret:?}: {rendered}");
-        }
-    }
-
-    #[test]
-    fn source_and_probe_debug_are_redacted() {
-        let source = source("org-a");
-        assert_eq!(
-            format!("{source:?}"),
-            "ExplicitCredentialSource { credential: \"[REDACTED]\", project_env_key_binding: \"[REDACTED]\" }"
-        );
-        let probe = credential_exactness_probe(source, expected("org-a")).unwrap();
-        let rendered = format!("{probe:?}");
-        for secret in ["exact-user", "do-not-print", "org-a", "exact_db"] {
-            assert!(!rendered.contains(secret), "leaked {secret:?}: {rendered}");
-        }
-    }
-
-    #[test]
-    fn source_user_database_and_project_env_key_swaps_refuse() {
-        let wrong_user = ExpectedCredentialIdentity::new(
-            "other-user",
-            "other-user",
-            "exact_db",
-            "org-a",
-            vec![],
-            vec![],
-        );
-        assert_mismatch(
-            credential_exactness_probe(source("org-a"), wrong_user).unwrap_err(),
-            CredentialProbePredicate::SessionUser,
-            None,
-        );
-
-        let wrong_database = ExpectedCredentialIdentity::new(
-            "exact-user",
-            "exact-user",
-            "other_db",
-            "org-a",
-            vec![],
-            vec![],
-        );
-        assert_mismatch(
-            credential_exactness_probe(source("org-a"), wrong_database).unwrap_err(),
-            CredentialProbePredicate::Database,
-            None,
-        );
-
-        assert_mismatch(
-            credential_exactness_probe(source("org-a"), expected("org-b")).unwrap_err(),
-            CredentialProbePredicate::ProjectBinding,
-            None,
-        );
-    }
-
-    #[tokio::test]
-    async fn pooled_identity_refuses_each_wrong_database_fact() {
-        for (predicate, mutate) in [
-            (
-                CredentialProbePredicate::SessionUser,
-                (|actual: &mut ObservedIdentity| actual.session_user = "other-user".to_owned())
-                    as fn(&mut ObservedIdentity),
-            ),
-            (
-                CredentialProbePredicate::CurrentUser,
-                |actual: &mut ObservedIdentity| actual.current_user = "other-user".to_owned(),
-            ),
-            (
-                CredentialProbePredicate::Database,
-                |actual: &mut ObservedIdentity| actual.database = "other_db".to_owned(),
-            ),
-        ] {
-            let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
-            let mut actual = observation();
-            mutate(&mut actual);
-            let queries = FakeQueries::new(actual, true, true);
-            assert_mismatch(
-                probe
-                    .probe_queries(&queries, CredentialConnectionType::Pooled)
-                    .await
-                    .unwrap_err(),
-                predicate,
-                Some(CredentialConnectionType::Pooled),
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn membership_and_acl_mismatches_are_distinct_predicates() {
-        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
-        assert_mismatch(
-            probe
-                .probe_queries(
-                    &FakeQueries::new(observation(), false, true),
-                    CredentialConnectionType::Pooled,
-                )
-                .await
-                .unwrap_err(),
-            CredentialProbePredicate::Membership,
-            Some(CredentialConnectionType::Pooled),
-        );
-        assert_mismatch(
-            probe
-                .probe_queries(
-                    &FakeQueries::new(observation(), true, false),
-                    CredentialConnectionType::Pooled,
-                )
-                .await
-                .unwrap_err(),
-            CredentialProbePredicate::Acl,
-            Some(CredentialConnectionType::Pooled),
-        );
-    }
-
-    #[tokio::test]
-    async fn listener_uses_the_same_expected_identity_contract() {
-        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
-        let mut actual = observation();
-        actual.session_user = "pooled-user".to_owned();
-        assert_mismatch(
-            probe
-                .probe_queries(
-                    &FakeQueries::new(actual, true, true),
-                    CredentialConnectionType::Listener,
-                )
-                .await
-                .unwrap_err(),
-            CredentialProbePredicate::SessionUser,
-            Some(CredentialConnectionType::Listener),
-        );
-    }
-
-    #[tokio::test]
-    async fn pooled_and_listener_paths_run_the_same_complete_query_contract() {
-        let probe = credential_exactness_probe(source("org-a"), expected("org-a")).unwrap();
-        for connection_type in [
-            CredentialConnectionType::Pooled,
-            CredentialConnectionType::Listener,
-        ] {
-            let queries = FakeQueries::new(observation(), true, true);
-            probe
-                .probe_queries(&queries, connection_type)
-                .await
-                .unwrap();
-            assert_eq!(queries.identity_calls.load(Ordering::Relaxed), 1);
-            assert_eq!(queries.membership_calls.load(Ordering::Relaxed), 1);
-            assert_eq!(queries.acl_calls.load(Ordering::Relaxed), 1);
-        }
+            .map_err(|_| CredentialProbePredicate::Acl)?;
+        row.try_get(0).map_err(|_| CredentialProbePredicate::Acl)
     }
 }

@@ -1,24 +1,24 @@
 //! Execute integration SQL under the generated application grants on PostgreSQL 18.
 use serde_json::{Value, json};
 use std::path::Path;
-use tokio_postgres::NoTls;
 use wamn_compiler::{
     DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
     render_effective_data_access_sql,
 };
 
+use sqlx::{Connection as _, Row as _};
 #[tokio::test]
 async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
-    let driver = tokio::spawn(connection);
+    let mut client = wamn_postgres::connect(database.url()).await?;
     let package =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform/wamn_integration");
-    client.batch_execute("DO $$ BEGIN CREATE ROLE wamn_app NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$").await?;
-    client
-        .batch_execute("CREATE SCHEMA wamn_integration")
-        .await?;
+    sqlx::raw_sql("DO $$ BEGIN CREATE ROLE wamn_app NOLOGIN NOINHERIT; EXCEPTION WHEN duplicate_object THEN NULL; END $$").execute(&mut client).await.map(drop)?;
+    sqlx::raw_sql("CREATE SCHEMA wamn_integration")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
     let migration = package.join("migrations/0001_initial.sql");
     let bytes = std::fs::read(&migration)?;
     wamn_schema_introspection::migration_policy::validate_migration_bytes_for_schemas(
@@ -27,7 +27,12 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
         &["wamn_integration"],
         &[],
     )?;
-    client.batch_execute(std::str::from_utf8(&bytes)?).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (std::str::from_utf8(&bytes)?).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
     wamn_compiler::build_record::require_current(&package)?;
     let overlay = DataAccessOverlay::from_slice(&std::fs::read(
         wamn_compiler::output_root(&package).join("platform-policy/data-access.json"),
@@ -43,65 +48,82 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
             )
         })
         .collect::<Vec<_>>();
-    client
-        .batch_execute(&render_effective_data_access_sql(
-            &derive_effective_data_access(&relations, &[overlay])?,
-        )?)
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&render_effective_data_access_sql(&derive_effective_data_access(
+            &relations,
+            &[overlay],
+        )?)?)
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
     let write = std::fs::read_to_string(package.join("command/setting/write.sql"))?;
     let read = std::fs::read_to_string(package.join("command/setting/read.sql"))?;
     let append = std::fs::read_to_string(package.join("command/log/append.sql"))?;
-    let transaction = client.transaction().await?;
-    transaction
-        .batch_execute("SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_integration, public")
-        .await?;
+    let mut transaction = client.begin().await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_integration, public")
+        .execute(&mut *transaction)
+        .await
+        .map(drop)?;
     assert_eq!(
-        transaction
-            .query_one("SELECT current_user::text", &[])
+        sqlx::query("SELECT current_user::text")
+            .fetch_one(&mut *transaction)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "wamn_app"
     );
     assert!(
-        transaction
-            .query_opt(&read, &[&"last_synced_at"])
+        sqlx::query(sqlx::AssertSqlSafe((&read).to_string()))
+            .bind(&"last_synced_at")
+            .fetch_optional(&mut *transaction)
             .await?
             .is_none()
     );
     for due in ["2026-10-21T12:00:00Z", "2026-10-21T12:01:00Z"] {
-        transaction
-            .query_one(&write, &[&"last_synced_at", &json!(due)])
+        sqlx::query(sqlx::AssertSqlSafe((&write).to_string()))
+            .bind(&"last_synced_at")
+            .bind(&json!(due))
+            .fetch_one(&mut *transaction)
             .await?;
-        let row = transaction.query_one(&read, &[&"last_synced_at"]).await?;
-        assert_eq!(row.get::<_, Value>(0), json!(due));
+        let row = sqlx::query(sqlx::AssertSqlSafe((&read).to_string()))
+            .bind(&"last_synced_at")
+            .fetch_one(&mut *transaction)
+            .await?;
+        assert_eq!(row.get::<Value, _>(0), json!(due));
     }
     for expected in [1, 0] {
-        let rows = transaction
-            .query(
-                &append,
-                &[&"delivery-1", &"item-1", &"pushed", &None::<Value>],
-            )
+        let rows = sqlx::query(sqlx::AssertSqlSafe((&append).to_string()))
+            .bind(&"delivery-1")
+            .bind(&"item-1")
+            .bind(&"pushed")
+            .bind(&None::<Value>)
+            .fetch_all(&mut *transaction)
             .await?;
         assert_eq!(rows.len(), expected);
     }
     assert_eq!(
-        transaction
-            .query_one("SELECT count(record_id) FROM log", &[])
+        sqlx::query("SELECT count(record_id) FROM log")
+            .fetch_one(&mut *transaction)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
-    assert!(!transaction.query_one("SELECT has_column_privilege(current_user, 'wamn_integration.log', 'outcome', 'UPDATE')", &[]).await?.get::<_, bool>(0));
-    transaction.commit().await?;
-    let row = client
-        .query_one(
-            "SELECT recorded_at IS NOT NULL, detail IS NULL FROM wamn_integration.log",
-            &[],
+    assert!(
+        !sqlx::query(
+            "SELECT has_column_privilege(current_user, 'wamn_integration.log', 'outcome', 'UPDATE')"
         )
-        .await?;
-    assert!(row.get::<_, bool>(0));
-    assert!(row.get::<_, bool>(1));
+        .fetch_one(&mut *transaction)
+        .await?
+        .get::<bool, _>(0)
+    );
+    transaction.commit().await?;
+    let row =
+        sqlx::query("SELECT recorded_at IS NOT NULL, detail IS NULL FROM wamn_integration.log")
+            .fetch_one(&mut client)
+            .await?;
+    assert!(row.get::<bool, _>(0));
+    assert!(row.get::<bool, _>(1));
     drop(client);
-    driver.await??;
     Ok(())
 }

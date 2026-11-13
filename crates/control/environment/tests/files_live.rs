@@ -1,7 +1,7 @@
 //! C4 file schema, grants, history, and reference constraints on real PostgreSQL.
 //! Object transfer and HTTP exposure require the integrated native file routes.
 
-use tokio_postgres::error::SqlState;
+use sqlx::Row as _;
 
 #[path = "support/files.rs"]
 #[expect(
@@ -40,8 +40,8 @@ fn file_fixture_declares_each_binding_mode() {
 #[tokio::test]
 async fn application_file_writes_are_refused_and_history_uses_the_standard_contract()
 -> anyhow::Result<()> {
-    let fixture = files::fixture("file_authority").await?;
-    files::metadata(&fixture.writer).await?;
+    let mut fixture = files::fixture("file_authority").await?;
+    files::metadata(&mut fixture.writer).await?;
     for statement in [
         "INSERT INTO platform.file DEFAULT VALUES",
         "UPDATE platform.file SET name='forged'",
@@ -49,112 +49,107 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
         "TRUNCATE platform.file",
         "INSERT INTO platform.file_history DEFAULT VALUES",
     ] {
-        let error = fixture.guest.batch_execute(statement).await.unwrap_err();
+        let error = sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
+            .execute(&mut fixture.guest)
+            .await
+            .map(drop)
+            .unwrap_err();
         assert_eq!(
-            error.code(),
-            Some(&SqlState::INSUFFICIENT_PRIVILEGE),
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("42501"),
             "{statement}"
         );
     }
-    let row = fixture
-        .guest
-        .query_one(
-            "SELECT application,connection_id::text,created_by::text, \
-         updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid",
-            &[&files::FILE],
-        )
+    let row = sqlx::query("SELECT application,connection_id::text,created_by::text, \
+         updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid").bind(&files::FILE).fetch_one(&mut fixture
+        .guest)
         .await?;
-    assert_eq!(row.get::<_, String>(0), files::APPLICATION);
-    assert_eq!(row.get::<_, String>(1), files::CONNECTION);
-    assert_eq!(row.get::<_, String>(2), files::CALLER);
-    assert_eq!(row.get::<_, String>(3), files::CALLER);
-    assert!(row.get::<_, bool>(4));
-    assert_eq!(row.get::<_, String>(5), "application");
-    assert!(row.get::<_, Option<String>>(6).is_none());
-    let entry = fixture
-        .observer
-        .query_one(
-            "SELECT changed_by::text,operation,after->>'id' FROM platform.file_history",
-            &[],
-        )
-        .await?;
-    assert_eq!(entry.get::<_, String>(0), files::CALLER);
-    assert_eq!(entry.get::<_, String>(1), "admin:file-fixture");
-    assert_eq!(entry.get::<_, String>(2), files::FILE);
+    assert_eq!(row.get::<String, _>(0), files::APPLICATION);
+    assert_eq!(row.get::<String, _>(1), files::CONNECTION);
+    assert_eq!(row.get::<String, _>(2), files::CALLER);
+    assert_eq!(row.get::<String, _>(3), files::CALLER);
+    assert!(row.get::<bool, _>(4));
+    assert_eq!(row.get::<String, _>(5), "application");
+    assert!(row.get::<Option<String>, _>(6).is_none());
+    let entry =
+        sqlx::query("SELECT changed_by::text,operation,after->>'id' FROM platform.file_history")
+            .fetch_one(&mut fixture.observer)
+            .await?;
+    assert_eq!(entry.get::<String, _>(0), files::CALLER);
+    assert_eq!(entry.get::<String, _>(1), "admin:file-fixture");
+    assert_eq!(entry.get::<String, _>(2), files::FILE);
     Ok(())
 }
 
 #[tokio::test]
 async fn disabling_a_connection_preserves_file_references_and_referenced_delete_refuses()
 -> anyhow::Result<()> {
-    let fixture = files::fixture("file_references").await?;
-    files::metadata(&fixture.writer).await?;
-    fixture
-        .guest
-        .execute(
-            "INSERT INTO file_fixture.document (id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
-            &[&files::FILE],
-        )
-        .await?;
-    fixture
-        .writer
-        .execute(
-            "UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid",
-            &[&files::CONNECTION],
-        )
-        .await?;
-    let row = fixture
-        .guest
-        .query_one(
-            "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
-         JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
-            &[],
-        )
-        .await?;
-    assert_eq!(row.get::<_, String>(0), "disabled");
-    assert_eq!(row.get::<_, String>(1), files::CONNECTION);
-    let error = fixture
-        .writer
-        .execute(
-            "DELETE FROM platform.file WHERE id=$1::text::uuid",
-            &[&files::FILE],
-        )
+    let mut fixture = files::fixture("file_references").await?;
+    files::metadata(&mut fixture.writer).await?;
+    sqlx::query(
+        "INSERT INTO file_fixture.document (id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
+    )
+    .bind(&files::FILE)
+    .execute(&mut fixture.guest)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&files::CONNECTION)
+        .execute(&mut fixture.writer)
         .await
+        .map(|result| result.rows_affected())?;
+    let row = sqlx::query(
+        "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
+         JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
+    )
+    .fetch_one(&mut fixture.guest)
+    .await?;
+    assert_eq!(row.get::<String, _>(0), "disabled");
+    assert_eq!(row.get::<String, _>(1), files::CONNECTION);
+    let error = sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
+        .bind(&files::FILE)
+        .execute(&mut fixture.writer)
+        .await
+        .map(|result| result.rows_affected())
         .unwrap_err();
-    assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
-    fixture
-        .guest
-        .execute("DELETE FROM file_fixture.document", &[])
-        .await?;
     assert_eq!(
-        fixture
-            .guest
-            .query_one("SELECT count(*) FROM platform.file", &[])
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23503")
+    );
+    sqlx::query("DELETE FROM file_fixture.document")
+        .execute(&mut fixture.guest)
+        .await
+        .map(|result| result.rows_affected())?;
+    assert_eq!(
+        sqlx::query("SELECT count(*) FROM platform.file")
+            .fetch_one(&mut fixture.guest)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     assert_eq!(
-        fixture
-            .writer
-            .execute(
-                "DELETE FROM platform.file WHERE id=$1::text::uuid",
-                &[&files::FILE],
-            )
-            .await?,
+        sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&files::FILE)
+            .execute(&mut fixture.writer)
+            .await
+            .map(|result| result.rows_affected())?,
         1
     );
     // The migration owner needs no lasting platform privileges to keep the FK.
-    let privilege = fixture
-        .migrator
-        .query_one(
-            "SELECT has_table_privilege(current_user, \
+    let privilege = sqlx::query(
+        "SELECT has_table_privilege(current_user, \
              (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
               WHERE n.nspname='platform' AND c.relname='file'), 'REFERENCES')",
-            &[],
-        )
-        .await?;
-    assert!(!privilege.get::<_, bool>(0));
+    )
+    .fetch_one(&mut fixture.migrator)
+    .await?;
+    assert!(!privilege.get::<bool, _>(0));
     Ok(())
 }
 
@@ -165,7 +160,7 @@ fn registry_definition() -> serde_json::Value {
 
 #[tokio::test]
 async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyhow::Result<()> {
-    let registry = files::registry("file-org", "project", registry_definition()).await?;
+    let mut registry = files::registry("file-org", "project", registry_definition()).await?;
     assert_eq!(
         files::active_file_connections(
             &registry.reader,
@@ -177,15 +172,13 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyho
         .len(),
         1
     );
-    registry
-        .unmapped
-        .batch_execute("SET app.org='file-org'; SET app.project='project'")
-        .await?;
+    sqlx::raw_sql("SET app.org='file-org'; SET app.project='project'")
+        .execute(&mut registry.unmapped)
+        .await
+        .map(drop)?;
     for (client, org, project) in [
-        (&registry.unmapped, "file-org", "project"),
-        (registry.reader.as_ref(), "other-org", "project"),
-        (registry.reader.as_ref(), "file-org", "unenabled"),
-        (&registry.unenabled, "file-org", "unenabled"),
+        (&mut registry.unmapped, "file-org", "project"),
+        (&mut registry.unenabled, "file-org", "unenabled"),
     ] {
         assert!(
             files::active_file_connections(client, org, project, Some(&registry.connection_id))
@@ -193,14 +186,27 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_target() -> anyho
                 .is_empty()
         );
     }
+    for (org, project) in [("other-org", "project"), ("file-org", "unenabled")] {
+        assert!(
+            files::active_file_connections(
+                &registry.reader,
+                org,
+                project,
+                Some(&registry.connection_id)
+            )
+            .await?
+            .is_empty()
+        );
+    }
     assert_eq!(
-        registry
-            .reader
-            .query("SELECT * FROM registry.connection_generation", &[])
+        sqlx::query("SELECT * FROM registry.connection_generation")
+            .fetch_all(&registry.reader)
             .await
             .unwrap_err()
-            .code(),
-        Some(&SqlState::INSUFFICIENT_PRIVILEGE)
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501")
     );
     Ok(())
 }
@@ -231,10 +237,10 @@ async fn file_connection_lookup_requires_an_active_connection_and_integration() 
             serde_json::json!({"name":files::STORE_NAME}),
         )
         .await?;
-    registry
-        .owner
-        .batch_execute("UPDATE registry.integration SET status='disabled' WHERE name='file-store'")
-        .await?;
+    sqlx::raw_sql("UPDATE registry.integration SET status='disabled' WHERE name='file-store'")
+        .execute(&mut registry.owner)
+        .await
+        .map(drop)?;
     assert!(
         files::active_file_connections(
             &registry.reader,
@@ -314,9 +320,9 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
         path::Path,
         signer::{Method, Signer as _},
     };
-    let metadata = files::fixture("file_lifecycle").await?;
-    files::metadata(&metadata.writer).await?;
-    files::age_metadata(&metadata).await?;
+    let mut metadata = files::fixture("file_lifecycle").await?;
+    files::metadata(&mut metadata.writer).await?;
+    files::age_metadata(&mut metadata).await?;
     let minio = files::Minio::start().await?;
     let store = AmazonS3Builder::new()
         .with_endpoint(&minio.endpoint)
@@ -351,45 +357,34 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
             response.text().await?
         );
     }
-    metadata
-        .writer
-        .execute(
-            "UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid",
-            &[
-                &i64::try_from(b"aged fixture bytes".len())?,
-                &hex::encode(
-                    ring::digest::digest(&ring::digest::SHA256, b"aged fixture bytes").as_ref(),
-                ),
-                &files::FILE,
-            ],
-        )
-        .await?;
-    let row = metadata
-        .guest
-        .query_one(
-            "SELECT created_at FROM platform.file WHERE id=$1::text::uuid",
-            &[&files::FILE],
-        )
+    sqlx::query("UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid")
+        .bind(&i64::try_from(b"aged fixture bytes".len())?)
+        .bind(&hex::encode(
+            ring::digest::digest(&ring::digest::SHA256, b"aged fixture bytes").as_ref(),
+        ))
+        .bind(&files::FILE)
+        .execute(&mut metadata.writer)
+        .await
+        .map(|result| result.rows_affected())?;
+    let row = sqlx::query("SELECT created_at FROM platform.file WHERE id=$1::text::uuid")
+        .bind(&files::FILE)
+        .fetch_one(&mut metadata.guest)
         .await?;
     let created: chrono::DateTime<chrono::Utc> = row.get(0);
     assert!(created < chrono::Utc::now() - chrono::Duration::days(30));
     assert_eq!(
-        metadata
-            .guest
-            .query_one("SELECT count(*) FROM file_fixture.document", &[])
+        sqlx::query("SELECT count(*) FROM file_fixture.document")
+            .fetch_one(&mut metadata.guest)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     assert_eq!(
-        metadata
-            .guest
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&staging_id]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&staging_id)
+            .fetch_one(&mut metadata.guest)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     let cutoff = chrono::Utc::now() - chrono::Duration::days(2);
@@ -430,14 +425,11 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
         b"aged fixture bytes"
     );
     assert_eq!(
-        metadata
-            .guest
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&files::FILE]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&files::FILE)
+            .fetch_one(&mut metadata.guest)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     Ok(())
@@ -459,8 +451,8 @@ async fn file_reads_select_the_active_generation_and_refuse_another_connection()
     )
     .await?;
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].get::<_, i64>(2) > registry.generation);
-    assert_eq!(rows[0].get::<_, serde_json::Value>(3), changed);
+    assert!(rows[0].get::<i64, _>(2) > registry.generation);
+    assert_eq!(rows[0].get::<serde_json::Value, _>(3), changed);
     assert!(
         files::active_file_connections(
             &registry.reader,

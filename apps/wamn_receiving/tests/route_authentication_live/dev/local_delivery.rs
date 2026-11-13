@@ -1,5 +1,6 @@
 //! Saved-edit acceptance through the existing Receiving developer command.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,7 +71,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
 
-    let (admin, admin_task) = connect(&system_url).await?;
+    let mut admin = connect(&system_url).await?;
     std::fs::write(
         root.join("environment.k"),
         include_str!(concat!(
@@ -80,7 +81,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     )?;
     let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
-        admin.as_ref(),
+        &mut admin,
         root,
         PLATFORM_DOMAIN,
         &wamn_environment_control::environment::document::EnvironmentDocument::compile(
@@ -88,7 +89,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         )?,
     )
     .await?;
-    let system_acl = current_database_acl(admin.as_ref()).await?;
+    let system_acl = current_database_acl(&mut admin).await?;
     let provisioning = inputs.environment.nats.connect().await?;
     let target = wamn_registry::Triple::new(
         &environment.identity.org,
@@ -117,10 +118,9 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let result = async {
         let first = watch.served().await?;
         ensure!(!first.skipped.contains("migrate"), "a new local session must prepare its schema");
-        let (project, task) = connect(&environment.route.database_url).await?;
-        seed_receiving_business_rows(project.as_ref()).await?;
-        project.execute("INSERT INTO receiving.location(id,location_code) VALUES ('00000000-0000-0000-0000-000000000202','DOCK-2')", &[]).await?;
-        task.abort();
+        let mut project = connect(&environment.route.database_url).await?;
+        seed_receiving_business_rows(&mut project).await?;
+        sqlx::query("INSERT INTO receiving.location(id,location_code) VALUES ('00000000-0000-0000-0000-000000000202','DOCK-2')").execute(&mut project).await.map(|result| result.rows_affected())?;
         let token = &environment.route.token;
         let denied = http_client()?.get(format!("{}/location/list", first.url))
             .header("Host", &first.host).send().await?;
@@ -197,7 +197,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         reset.locations(token, &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, &environment.route.database_url).await?;
-        ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");
+        ensure!(current_database_acl(&mut admin).await? == system_acl, "the local loop changed the system database ACL");
         Ok::<_, anyhow::Error>(())
     }.await;
     let stopped = watch.stop().await;
@@ -214,7 +214,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     });
     drop(watch);
     let restored = original.restore();
-    admin_task.abort();
+
     provisioning.drain().await?;
     result?;
     stopped?;
@@ -229,9 +229,8 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 }
 
 async fn require_revision(url: &str) -> anyhow::Result<()> {
-    let (client, task) = connect(url).await?;
-    let version: i32 = client.query_one("SELECT row_version FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000301'", &[]).await?.get(0);
-    task.abort();
+    let mut client = connect(url).await?;
+    let version: i32 = sqlx::query("SELECT row_version FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000301'").fetch_one(&mut client).await?.get(0);
     ensure!(
         version == 2,
         "a compatible save lost or replayed the authenticated mutation"
@@ -240,9 +239,8 @@ async fn require_revision(url: &str) -> anyhow::Result<()> {
 }
 
 async fn location_note(url: &str) -> anyhow::Result<bool> {
-    let (client, task) = connect(url).await?;
-    let present: bool = client.query_one("SELECT count(*) = 1 FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'note'", &[]).await?.get(0);
-    task.abort();
+    let mut client = connect(url).await?;
+    let present: bool = sqlx::query("SELECT count(*) = 1 FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'note'").fetch_one(&mut client).await?.get(0);
     Ok(present)
 }
 
@@ -261,26 +259,24 @@ async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()
         !facts.applications.is_empty(),
         "dev host declares no local application"
     );
-    let (target, task) = connect(target_url).await?;
-    let wirings: i64 = target
-        .query_one(
-            "SELECT count(*) FROM catalog.workflows WHERE project_env_key=$1",
-            &[&identity().project_env_key().as_str()],
-        )
-        .await?
-        .get(0);
+    let mut target = connect(target_url).await?;
+    let wirings: i64 =
+        sqlx::query("SELECT count(*) FROM catalog.workflows WHERE project_env_key=$1")
+            .bind(&identity().project_env_key().as_str())
+            .fetch_one(&mut target)
+            .await?
+            .get(0);
     // The local run plane needs the release row its runs pin, and nothing
     // else: dev authors no workflow on its own.
-    let releases = target
-        .query(
-            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
-            &[&identity().project_env_key().as_str()],
-        )
-        .await?
-        .into_iter()
-        .map(|row| (row.get::<_, String>(0), row.get::<_, Vec<u8>>(1)))
-        .collect::<Vec<_>>();
-    task.abort();
+    let releases = sqlx::query(
+        "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
+    )
+    .bind(&identity().project_env_key().as_str())
+    .fetch_all(&mut target)
+    .await?
+    .into_iter()
+    .map(|row| (row.get::<String, _>(0), row.get::<Vec<u8>, _>(1)))
+    .collect::<Vec<_>>();
     ensure!(
         wirings == 0,
         "local execution wrote permanent publication facts"

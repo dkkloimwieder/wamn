@@ -1,5 +1,6 @@
 //! Timed Receiving calls, mixed traffic, and shared-order contention.
 
+use sqlx::Row as _;
 #[path = "../../services/ctl/src/read_query.rs"]
 mod read_query;
 
@@ -267,7 +268,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         authorization: format!("Bearer {token}"),
     });
 
-    let database = match &args.db_url {
+    let mut database = match &args.db_url {
         Some(url) => Some(connect(url).await?),
         None => None,
     };
@@ -285,7 +286,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         orders.truncate(4);
     }
     let receipt_id = if args.mix || matches!(args.call, Call::AppPath | Call::ReceiptQuery) {
-        seed_app_path(database.as_ref().context("receipt reads need --db-url")?).await?
+        seed_app_path(database.as_mut().context("receipt reads need --db-url")?).await?
     } else {
         String::new()
     };
@@ -294,7 +295,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let count =
             u64::try_from(args.concurrency)? * args.duration_secs * RECEIPTS_PER_WORKER_SECOND;
         seed_receipts(
-            database.as_ref().context("receipt seed needs --db-url")?,
+            database.as_mut().context("receipt seed needs --db-url")?,
             &format!("BENCH-{started_at_unix}-"),
             count,
             args.call == Call::AcmeRecordReceipt,
@@ -343,7 +344,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     warm.run = run.saturating_sub(1);
     for call in types {
         warm.invoke(call).await?;
-        if let Some(database) = &database {
+        if let Some(database) = &mut database {
             let before = statement_calls(database).await?;
             for _ in 0..5 {
                 warm.invoke(call).await?;
@@ -357,7 +358,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     if args.contention
         && (args.mix || args.call == Call::Update)
-        && let Some(database) = &database
+        && let Some(database) = &mut database
     {
         // Measure the refused update path too: it rolls back instead of
         // finishing the claim and committing. Recovery reads are separate calls.
@@ -382,9 +383,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     for (order, warmed) in orders.iter_mut().zip(&warm.own) {
         *order = warmed.clone();
     }
-    let before = match &database {
+    let before = match &mut database {
         Some(database) => {
-            database.simple_query("SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))").await?;
+            sqlx::query("SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))").execute(&mut *database).await?;
             Some(sample(database).await?)
         }
         None => None,
@@ -450,7 +451,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     let ended_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let postgres = match (&database, before) {
+    let postgres = match (&mut database, before) {
         (Some(database), Some(before)) => Some(Samples {
             before,
             after: sample(database).await?,
@@ -498,17 +499,13 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 }
 
 /// Seed enough receipts for multiple list pages, and return one get target.
-async fn seed_app_path(database: &tokio_postgres::Client) -> anyhow::Result<String> {
-    let row = database
-        .query_one(
-            "WITH identity AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
+async fn seed_app_path(database: &mut sqlx::PgConnection) -> anyhow::Result<String> {
+    let row = sqlx::query("WITH identity AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
              set_config('app.operation', 'admin:benchmark-app-path', true)), inserted AS ( \
              INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
              SELECT purchase_order.id, gen_random_uuid()::text, now() \
              FROM receiving.purchase_order CROSS JOIN identity ORDER BY purchase_order.id LIMIT 100 \
-             RETURNING id::text) SELECT id FROM inserted LIMIT 1",
-            &[&SEED_PRINCIPAL],
-        )
+             RETURNING id::text) SELECT id FROM inserted LIMIT 1").bind(SEED_PRINCIPAL).fetch_one(&mut *database)
         .await
         .context("seed the application-path receipt")?;
     Ok(row.get(0))
@@ -705,11 +702,8 @@ async fn run_worker(
     Ok(measured)
 }
 
-async fn statement_calls(database: &tokio_postgres::Client) -> anyhow::Result<i64> {
-    Ok(database.query_one(
-        "SELECT coalesce(sum(s.calls), 0)::bigint FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND s.toplevel AND NOT r.rolsuper AND (pg_has_role(r.oid, 'wamn_app', 'MEMBER') OR pg_has_role(r.oid, 'wamn_http_admitter', 'MEMBER'))",
-        &[],
-    ).await?.get(0))
+async fn statement_calls(database: &mut sqlx::PgConnection) -> anyhow::Result<i64> {
+    Ok(sqlx::query("SELECT coalesce(sum(s.calls), 0)::bigint FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND s.toplevel AND NOT r.rolsuper AND (pg_has_role(r.oid, 'wamn_app', 'MEMBER') OR pg_has_role(r.oid, 'wamn_http_admitter', 'MEMBER'))").fetch_one(&mut *database).await?.get(0))
 }
 
 /// One read route, with its item in the query string.
@@ -829,27 +823,26 @@ async fn list_orders(target: &Target) -> anyhow::Result<(Vec<Order>, Vec<String>
 }
 
 /// Connect to the project database.
-async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+async fn connect(url: &str) -> anyhow::Result<sqlx::PgConnection> {
+    let mut client = wamn_postgres::connect(url)
         .await
         .context("connect to --db-url")?;
-    tokio::spawn(connection);
+
     // This connection observes and seeds. Application connections keep sampling.
-    client.batch_execute("SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0").await?;
+    sqlx::raw_sql("SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0").execute(&mut client).await.map(drop)?;
     Ok(client)
 }
 
 /// Seed open orders with `lines` lines each, optionally with Acme approval.
 async fn seed_receipts(
-    database: &tokio_postgres::Client,
+    database: &mut sqlx::PgConnection,
     prefix: &str,
     count: u64,
     acme: bool,
     contention: bool,
     lines: u16,
 ) -> anyhow::Result<Vec<Receipt>> {
-    database
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{SEED_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:benchmark-seed', true); \
@@ -859,8 +852,7 @@ async fn seed_receipts(
                ON CONFLICT DO NOTHING; \
              INSERT INTO receiving.supplier (id, name) VALUES ('{SEED_SUPPLIER}', 'SUPPLIER-BENCH') \
                ON CONFLICT DO NOTHING;"
-        ))
-        .await
+        ))).execute(&mut *database).await.map(drop)
         .context("seed the item, location and supplier")?;
     let count = i32::try_from(count).context("the seed count fits an int4")?;
     let orders = if contention { 4 } else { count };
@@ -871,9 +863,7 @@ async fn seed_receipts(
         ""
     };
     let extra_values = if acme { ", true, 'approved'" } else { "" };
-    let rows = database
-        .query(
-            &format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "WITH orders AS ( \
                    INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, \
                      status, row_version{extra_columns}) \
@@ -888,14 +878,13 @@ async fn seed_receipts(
                    RETURNING purchase_order_id, id) \
                  SELECT purchase_order_id::text, array_agg(id::text ORDER BY id) \
                  FROM seeded GROUP BY purchase_order_id"
-            ),
-            &[&prefix, &orders, &quantity, &i32::from(lines)],
-        )
+            ))).bind(prefix).bind(orders).bind(quantity).bind(i32::from(lines)).fetch_all(&mut *database)
         .await
         .context("seed the purchase orders")?;
-    database
-        .batch_execute("COMMIT")
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *database)
         .await
+        .map(drop)
         .context("commit the receipt seed")?;
     Ok(rows
         .iter()
@@ -909,29 +898,27 @@ async fn seed_receipts(
 }
 
 /// One sample of `pg_stat_database` and `pg_stat_statements`.
-async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
-    let row = database
-        .query_one(
-            "SELECT xact_commit, blks_hit, blks_read, numbackends FROM pg_stat_database \
+async fn sample(database: &mut sqlx::PgConnection) -> anyhow::Result<Sample> {
+    let row = sqlx::query(
+        "SELECT xact_commit, blks_hit, blks_read, numbackends FROM pg_stat_database \
              WHERE datname = current_database()",
-            &[],
-        )
-        .await
-        .context("read pg_stat_database")?;
-    let statements = database
-        .query(
-            "SELECT (to_jsonb(s) || jsonb_build_object('role', r.rolname))::text \
+    )
+    .fetch_one(&mut *database)
+    .await
+    .context("read pg_stat_database")?;
+    let statements = sqlx::query(
+        "SELECT (to_jsonb(s) || jsonb_build_object('role', r.rolname))::text \
              FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid \
              WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
              ORDER BY total_exec_time DESC",
-            &[],
-        )
-        .await;
+    )
+    .fetch_all(&mut *database)
+    .await;
     let (statements, statements_error) = match statements {
         Ok(rows) => (
             Some(
                 rows.iter()
-                    .map(|row| serde_json::from_str::<Value>(row.get::<_, &str>(0)))
+                    .map(|row| serde_json::from_str::<Value>(row.get::<&str, _>(0)))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             None,
@@ -940,17 +927,17 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
             None,
             Some(
                 error
-                    .as_db_error()
+                    .as_database_error()
                     .map_or_else(|| error.to_string(), |db| db.message().to_owned()),
             ),
         ),
     };
-    let cluster = database
-        .query_one(include_str!("../bench/database-snapshot.sql"), &[])
+    let cluster = sqlx::query(include_str!("../bench/database-snapshot.sql"))
+        .fetch_one(&mut *database)
         .await
         .context("read cluster counters")?;
     Ok(Sample {
-        cluster: serde_json::from_str(cluster.get::<_, &str>(0))?,
+        cluster: serde_json::from_str(cluster.get::<&str, _>(0))?,
         database: DatabaseStats {
             xact_commit: row.get(0),
             blks_hit: row.get(1),

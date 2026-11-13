@@ -1,9 +1,11 @@
 //! PostgreSQL 18 `pg_catalog` reader for the normalized schema IR.
 
+use sqlx::PgConnection as Client;
+use sqlx::postgres::PgRow as Row;
+use sqlx::{Row as _, Statement as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use tokio_postgres::{Client, Row};
 use wamn_record_history::{
     AUDIT_RETENTION_ROLE, HISTORY_TABLE_SUFFIX, LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name,
 };
@@ -77,7 +79,7 @@ pub struct PostgresIntrospectionError {
     schema: Option<Box<str>>,
     object: Option<Box<str>>,
     detail: Box<str>,
-    source: Option<tokio_postgres::Error>,
+    source: Option<sqlx::Error>,
 }
 
 impl PostgresIntrospectionError {
@@ -830,10 +832,7 @@ fn refusal(
     }
 }
 
-fn database_error(
-    context: &'static str,
-    source: tokio_postgres::Error,
-) -> PostgresIntrospectionError {
+fn database_error(context: &'static str, source: sqlx::Error) -> PostgresIntrospectionError {
     PostgresIntrospectionError {
         type_: PostgresIntrospectionErrorType::Database,
         schema: None,
@@ -863,24 +862,20 @@ fn configured_schemas(application_schemas: &[&str]) -> Vec<String> {
 }
 
 async fn validate_schemas(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(
-            SCHEMAS_SQL,
-            &[
-                &schemas,
-                &PLATFORM_GRANTEES.as_slice(),
-                &EXECUTOR_HISTORY_READER,
-            ],
-        )
+    let rows = sqlx::query(SCHEMAS_SQL)
+        .bind(schemas)
+        .bind(PLATFORM_GRANTEES.as_slice())
+        .bind(EXECUTOR_HISTORY_READER)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured schemas", error))?;
 
     for row in rows {
-        let schema = row.get::<_, String>("schema_name");
-        if !row.get::<_, bool>("present") {
+        let schema = row.get::<String, _>("schema_name");
+        if !row.get::<bool, _>("present") {
             return Err(refusal(
                 PostgresIntrospectionErrorType::MissingSchema,
                 Some(&schema),
@@ -888,7 +883,7 @@ async fn validate_schemas(
                 "configured application schema does not exist",
             ));
         }
-        if row.get::<_, bool>("has_acl") {
+        if row.get::<bool, _>("has_acl") {
             return Err(refusal(
                 PostgresIntrospectionErrorType::UnsupportedAcl,
                 Some(&schema),
@@ -902,26 +897,22 @@ async fn validate_schemas(
 
 /// Refuse a grant to the event admission reader beyond its history reads.
 async fn validate_executor_grants(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(
-            EXECUTOR_GRANTS_SQL,
-            &[
-                &schemas,
-                &EXECUTOR_HISTORY_READER,
-                &EVENT_ADMISSION_HISTORY_COLUMNS.as_slice(),
-                &ENTITY_MAP_TABLE,
-                &HISTORY_TABLE_SUFFIX,
-            ],
-        )
+    let rows = sqlx::query(EXECUTOR_GRANTS_SQL)
+        .bind(schemas)
+        .bind(EXECUTOR_HISTORY_READER)
+        .bind(EVENT_ADMISSION_HISTORY_COLUMNS.as_slice())
+        .bind(ENTITY_MAP_TABLE)
+        .bind(HISTORY_TABLE_SUFFIX)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query event admission reader grants", error))?;
     if let Some(row) = rows.first() {
-        let schema = row.get::<_, String>("schema_name");
-        let object = row.get::<_, String>("object_name");
-        let privilege = row.get::<_, String>("privilege");
+        let schema = row.get::<String, _>("schema_name");
+        let object = row.get::<String, _>("object_name");
+        let privilege = row.get::<String, _>("privilege");
         return Err(refusal(
             PostgresIntrospectionErrorType::UnsupportedAcl,
             Some(&schema),
@@ -934,34 +925,36 @@ async fn validate_executor_grants(
 
 /// Read the catalog's views without imposing table or synchronization policy.
 pub async fn read_views(
-    client: &Client,
+    client: &mut Client,
     application_schemas: &[&str],
 ) -> Result<Vec<View>, PostgresIntrospectionError> {
     load_views(client, &configured_schemas(application_schemas), &[]).await
 }
 
 async fn load_views(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
 ) -> Result<Vec<View>, PostgresIntrospectionError> {
     let mut columns = BTreeMap::<TableKey, Vec<ViewColumn>>::new();
-    for row in client
-        .query(VIEW_COLUMNS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+    for row in sqlx::query(VIEW_COLUMNS_SQL)
+        .bind(schemas)
+        .bind(PLATFORM_GRANTEES.as_slice())
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema view columns", error))?
     {
-        let schema = row.get::<_, String>("schema_name");
-        let name = row.get::<_, String>("view_name");
+        let schema = row.get::<String, _>("schema_name");
+        let name = row.get::<String, _>("view_name");
         if relation_is_excluded(excluded_relations, &schema, &name) {
             continue;
         }
         let view_columns = columns.entry((schema.clone(), name.clone())).or_default();
-        let Some(column) = row.get::<_, Option<String>>("column_name") else {
+        let Some(column) = row.get::<Option<String>, _>("column_name") else {
             continue;
         };
         let object = format!("{name}.{column}");
-        if row.get::<_, bool>("has_acl") {
+        if row.get::<bool, _>("has_acl") {
             return Err(refusal(
                 PostgresIntrospectionErrorType::UnsupportedAcl,
                 Some(&schema),
@@ -969,7 +962,7 @@ async fn load_views(
                 "column has an explicit ACL",
             ));
         }
-        if !row.get::<_, bool>("has_default_collation") {
+        if !row.get::<bool, _>("has_default_collation") {
             return Err(refusal(
                 PostgresIntrospectionErrorType::UnsupportedColumnCollation,
                 Some(&schema),
@@ -977,24 +970,25 @@ async fn load_views(
                 "column must use its PostgreSQL type default collation",
             ));
         }
-        let column_type = postgres_type(&row.get::<_, String>("type_name"))
+        let column_type = postgres_type(&row.get::<String, _>("type_name"))
             .map_err(|error| ir_error(&schema, &object, &error))?;
         view_columns.push(ViewColumn::new(column, column_type));
     }
     let mut base_tables = BTreeMap::<TableKey, Vec<ViewBaseTable>>::new();
-    for row in client
-        .query(VIEW_BASE_TABLES_SQL, &[&schemas])
+    for row in sqlx::query(VIEW_BASE_TABLES_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query view base tables", error))?
     {
-        let schema = row.get::<_, String>("view_schema");
-        let name = row.get::<_, String>("view_name");
+        let schema = row.get::<String, _>("view_schema");
+        let name = row.get::<String, _>("view_name");
         if relation_is_excluded(excluded_relations, &schema, &name) {
             continue;
         }
-        let base_schema = row.get::<_, String>("base_schema");
-        let base_name = row.get::<_, String>("base_name");
-        if row.get::<_, bool>("row_security") {
+        let base_schema = row.get::<String, _>("base_schema");
+        let base_name = row.get::<String, _>("base_name");
+        if row.get::<bool, _>("row_security") {
             return Err(refusal(
                 PostgresIntrospectionErrorType::UnsupportedPolicy,
                 Some(&schema),
@@ -1011,36 +1005,36 @@ async fn load_views(
     }
     let mut views = Vec::new();
     for ((schema, name), columns) in columns {
-        let row = client
-            .query_one(
-                "SELECT pg_catalog.pg_get_viewdef(rewrite.ev_class, false),
+        let row = sqlx::query(
+            "SELECT pg_catalog.pg_get_viewdef(rewrite.ev_class, false),
                     rewrite.ev_action::text LIKE '%:hasTargetSRFs true%' AS target_srfs
                FROM pg_catalog.pg_rewrite AS rewrite
                JOIN pg_catalog.pg_class AS relation ON relation.oid = rewrite.ev_class
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
               WHERE namespace.nspname = $1 AND relation.relname = $2
                 AND rewrite.rulename = '_RETURN'",
-                &[&schema, &name],
-            )
-            .await
-            .map_err(|error| database_error("read the view definition", error))?;
+        )
+        .bind(&schema)
+        .bind(&name)
+        .fetch_one(&mut *client)
+        .await
+        .map_err(|error| database_error("read the view definition", error))?;
         let definition: String = row.get(0);
         let target_srfs: bool = row.get(1);
-        let statement = client
-            .prepare(&definition)
-            .await
-            .map_err(|error| database_error("describe the view definition", error))?;
+        let statement = sqlx::Executor::prepare(
+            &mut *client,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(definition.clone())),
+        )
+        .await
+        .map_err(|error| database_error("describe the view definition", error))?;
         let mut origins = Vec::new();
         for (column, described) in columns.into_iter().zip(statement.columns()) {
-            let origin = match (described.table_oid(), described.column_id()) {
-                (Some(table), Some(number)) => client.query_opt(
-                    "SELECT namespace.nspname::text, relation.relname::text, attribute.attname::text
+            let origin = match (described.relation_id(), described.relation_attribute_no()) {
+                (Some(table), Some(number)) => sqlx::query("SELECT namespace.nspname::text, relation.relname::text, attribute.attname::text
                        FROM pg_catalog.pg_attribute AS attribute
                        JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
                        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-                      WHERE attribute.attrelid = $1 AND attribute.attnum = $2",
-                    &[&table, &number],
-                ).await.map_err(|error| database_error("read a view column origin", error))?,
+                      WHERE attribute.attrelid = $1 AND attribute.attnum = $2").bind(table).bind(number).fetch_optional(&mut *client).await.map_err(|error| database_error("read a view column origin", error))?,
                 _ => None,
             };
             origins.push(if let Some(origin) = origin {
@@ -1064,11 +1058,13 @@ async fn load_views(
 }
 
 async fn load_relations(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<Vec<RelationRow>, PostgresIntrospectionError> {
-    client
-        .query(RELATIONS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+    sqlx::query(RELATIONS_SQL)
+        .bind(schemas)
+        .bind(PLATFORM_GRANTEES.as_slice())
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema relations", error))
         .map(|rows| rows.iter().map(relation_row).collect())
@@ -1208,21 +1204,22 @@ fn validate_relations(
 }
 
 async fn refuse_routines(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
-    let row = client
-        .query_opt(ROUTINES_SQL, &[&schemas])
+    let row = sqlx::query(ROUTINES_SQL)
+        .bind(schemas)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema routines", error))?;
     let Some(row) = row else {
         return Ok(());
     };
 
-    let schema = row.get::<_, String>("schema_name");
-    let name = row.get::<_, String>("routine_name");
-    let arguments = row.get::<_, String>("arguments");
-    let routine_kind = row.get::<_, String>("routine_kind");
+    let schema = row.get::<String, _>("schema_name");
+    let name = row.get::<String, _>("routine_name");
+    let arguments = row.get::<String, _>("arguments");
+    let routine_kind = row.get::<String, _>("routine_kind");
     let type_ = match routine_kind.as_str() {
         "f" => "function",
         "p" => "procedure",
@@ -1239,30 +1236,31 @@ async fn refuse_routines(
 }
 
 async fn refuse_triggers(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(TRIGGERS_SQL, &[&schemas])
+    let rows = sqlx::query(TRIGGERS_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema triggers", error))?;
     // The record history triggers are platform fixtures, so
     // their names alone skip them.
     let Some(row) = rows.into_iter().find(|row| {
-        let trigger = row.get::<_, String>("trigger_name");
+        let trigger = row.get::<String, _>("trigger_name");
         ![STAMP_TRIGGER, LOG_TRIGGER].contains(&trigger.as_str())
             && !relation_is_excluded(
                 excluded_relations,
-                &row.get::<_, String>("schema_name"),
-                &row.get::<_, String>("table_name"),
+                &row.get::<String, _>("schema_name"),
+                &row.get::<String, _>("table_name"),
             )
     }) else {
         return Ok(());
     };
-    let schema = row.get::<_, String>("schema_name");
-    let table = row.get::<_, String>("table_name");
-    let trigger = row.get::<_, String>("trigger_name");
+    let schema = row.get::<String, _>("schema_name");
+    let table = row.get::<String, _>("table_name");
+    let trigger = row.get::<String, _>("trigger_name");
     Err(refusal(
         PostgresIntrospectionErrorType::UnsupportedTrigger,
         Some(&schema),
@@ -1272,26 +1270,27 @@ async fn refuse_triggers(
 }
 
 async fn refuse_rules(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(RULES_SQL, &[&schemas])
+    let rows = sqlx::query(RULES_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema rules", error))?;
     let Some(row) = rows.into_iter().find(|row| {
         !relation_is_excluded(
             excluded_relations,
-            &row.get::<_, String>("schema_name"),
-            &row.get::<_, String>("relation_name"),
+            &row.get::<String, _>("schema_name"),
+            &row.get::<String, _>("relation_name"),
         )
     }) else {
         return Ok(());
     };
-    let schema = row.get::<_, String>("schema_name");
-    let relation = row.get::<_, String>("relation_name");
-    let rule = row.get::<_, String>("rule_name");
+    let schema = row.get::<String, _>("schema_name");
+    let relation = row.get::<String, _>("relation_name");
+    let rule = row.get::<String, _>("rule_name");
     Err(refusal(
         PostgresIntrospectionErrorType::UnsupportedRule,
         Some(&schema),
@@ -1301,26 +1300,27 @@ async fn refuse_rules(
 }
 
 async fn refuse_policies(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(POLICIES_SQL, &[&schemas])
+    let rows = sqlx::query(POLICIES_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema policies", error))?;
     let Some(row) = rows.into_iter().find(|row| {
         !relation_is_excluded(
             excluded_relations,
-            &row.get::<_, String>("schema_name"),
-            &row.get::<_, String>("table_name"),
+            &row.get::<String, _>("schema_name"),
+            &row.get::<String, _>("table_name"),
         )
     }) else {
         return Ok(());
     };
-    let schema = row.get::<_, String>("schema_name");
-    let table = row.get::<_, String>("table_name");
-    let policy = row.get::<_, String>("policy_name");
+    let schema = row.get::<String, _>("schema_name");
+    let table = row.get::<String, _>("table_name");
+    let policy = row.get::<String, _>("policy_name");
     Err(refusal(
         PostgresIntrospectionErrorType::UnsupportedPolicy,
         Some(&schema),
@@ -1330,24 +1330,26 @@ async fn refuse_policies(
 }
 
 async fn validate_types(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
     views: &[View],
 ) -> Result<(), PostgresIntrospectionError> {
-    let rows = client
-        .query(TYPES_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+    let rows = sqlx::query(TYPES_SQL)
+        .bind(schemas)
+        .bind(PLATFORM_GRANTEES.as_slice())
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema types", error))?;
 
     for row in rows {
-        let schema = row.get::<_, String>("schema_name");
-        let name = row.get::<_, String>("type_name");
-        let relation_kind = row.get::<_, Option<String>>("relation_kind");
-        let relation_name = row.get::<_, Option<String>>("relation_name");
-        let element_schema = row.get::<_, Option<String>>("element_schema");
-        let element_relation_kind = row.get::<_, Option<String>>("element_relation_kind");
-        let element_relation_name = row.get::<_, Option<String>>("element_relation_name");
+        let schema = row.get::<String, _>("schema_name");
+        let name = row.get::<String, _>("type_name");
+        let relation_kind = row.get::<Option<String>, _>("relation_kind");
+        let relation_name = row.get::<Option<String>, _>("relation_name");
+        let element_schema = row.get::<Option<String>, _>("element_schema");
+        let element_relation_kind = row.get::<Option<String>, _>("element_relation_kind");
+        let element_relation_name = row.get::<Option<String>, _>("element_relation_name");
         let is_table_row = relation_kind.as_deref() == Some("r");
         let is_table_row_array = element_schema.as_deref() == Some(schema.as_str())
             && element_relation_kind.as_deref() == Some("r");
@@ -1374,7 +1376,7 @@ async fn validate_types(
         }
 
         if is_table_row || is_table_row_array || is_view_row || is_view_row_array {
-            if row.get::<_, bool>("has_acl") {
+            if row.get::<bool, _>("has_acl") {
                 return Err(refusal(
                     PostgresIntrospectionErrorType::UnsupportedAcl,
                     Some(&schema),
@@ -1388,7 +1390,7 @@ async fn validate_types(
             continue;
         }
 
-        let type_ = row.get::<_, String>("type_kind");
+        let type_ = row.get::<String, _>("type_kind");
         return Err(refusal(
             PostgresIntrospectionErrorType::UnsupportedCustomType,
             Some(&schema),
@@ -1400,19 +1402,20 @@ async fn validate_types(
 }
 
 async fn refuse_default_acls(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
-    let row = client
-        .query_opt(DEFAULT_ACLS_SQL, &[&schemas])
+    let row = sqlx::query(DEFAULT_ACLS_SQL)
+        .bind(schemas)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema default ACLs", error))?;
     let Some(row) = row else {
         return Ok(());
     };
-    let schema = row.get::<_, String>("schema_name");
-    let owner = row.get::<_, String>("owner_name");
-    let object_kind = row.get::<_, String>("object_kind");
+    let schema = row.get::<String, _>("schema_name");
+    let owner = row.get::<String, _>("owner_name");
+    let object_kind = row.get::<String, _>("object_kind");
     Err(refusal(
         PostgresIntrospectionErrorType::UnsupportedAcl,
         Some(&schema),
@@ -1422,11 +1425,13 @@ async fn refuse_default_acls(
 }
 
 async fn load_columns(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<Vec<ColumnRow>, PostgresIntrospectionError> {
-    client
-        .query(COLUMNS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+    sqlx::query(COLUMNS_SQL)
+        .bind(schemas)
+        .bind(PLATFORM_GRANTEES.as_slice())
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema columns", error))
         .map(|rows| rows.iter().map(column_row).collect())
@@ -1572,11 +1577,12 @@ fn map_columns(
 }
 
 async fn load_sequences(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<Vec<SequenceRow>, PostgresIntrospectionError> {
-    client
-        .query(SEQUENCES_SQL, &[&schemas])
+    sqlx::query(SEQUENCES_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query identity sequences", error))
         .map(|rows| rows.iter().map(sequence_row).collect())
@@ -1706,11 +1712,12 @@ fn validate_sequences(
 }
 
 async fn load_constraints(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<Vec<ConstraintRow>, PostgresIntrospectionError> {
-    client
-        .query(CONSTRAINTS_SQL, &[&schemas])
+    sqlx::query(CONSTRAINTS_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query configured-schema constraints", error))
         .map(|rows| rows.iter().map(constraint_row).collect())
@@ -1756,11 +1763,12 @@ fn constraint_row(row: &Row) -> ConstraintRow {
 }
 
 async fn load_indexes(
-    client: &Client,
+    client: &mut Client,
     schemas: &[String],
 ) -> Result<Vec<IndexRow>, PostgresIntrospectionError> {
-    client
-        .query(INDEXES_SQL, &[&schemas])
+    sqlx::query(INDEXES_SQL)
+        .bind(schemas)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error("query ordinary indexes", error))
         .map(|rows| rows.iter().map(index_row).collect())
@@ -2357,7 +2365,7 @@ fn map_indexes(
 
 /// Read explicitly configured application schemas from PostgreSQL 18.
 pub async fn read_catalog(
-    client: &Client,
+    client: &mut Client,
     application_schemas: &[&str],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
     read_catalog_excluding_relations(client, application_schemas, &[]).await
@@ -2370,7 +2378,7 @@ pub async fn read_catalog(
 /// `wamn_record_history_stamp` and `wamn_record_history_log` triggers, and the
 /// ACL entries of the `wamn_audit_retention` role by name.
 pub async fn read_catalog_excluding_relations(
-    client: &Client,
+    client: &mut Client,
     application_schemas: &[&str],
     excluded_relations: &[(&str, &str)],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
@@ -2404,7 +2412,7 @@ pub async fn read_catalog_excluding_relations(
         .collect::<Vec<_>>();
     let mut attributes = map_columns(&columns, &mut tables)?;
     // These platform identity keys are public references outside application schemas.
-    for row in client.query("SELECT c.relname::text, a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname IN ('external_system', 'file') AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped", &[]).await.map_err(|error| database_error("read the platform reference keys", error))? {
+    for row in sqlx::query("SELECT c.relname::text, a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname IN ('external_system', 'file') AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped").fetch_all(&mut *client).await.map_err(|error| database_error("read the platform reference keys", error))? {
         attributes.insert(("platform".into(), row.get(0), row.get(1)), "id".into());
     }
     let sequences = load_sequences(client, &schemas)

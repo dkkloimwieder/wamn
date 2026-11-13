@@ -2,7 +2,8 @@
 
 use super::{Platform, analyse::Analysis, document::EnvironmentDocument};
 use anyhow::{Context as _, ensure};
-use wamn_package_control::database::connect;
+use sqlx::{Connection as _, Row as _};
+use wamn_postgres::connect;
 
 /// Prepare a selected release without changing application SQL or shared environment state.
 /// Old bindings and grants remain usable after any preparation or rollout failure.
@@ -109,8 +110,8 @@ pub(super) async fn prepare_at(
     let mut project = super::analyse::connect_project(project_url)
         .await
         .context("application database is absent; run env provision and env initialize")?;
-    let initialized: bool = project
-        .query_one("SELECT to_regclass('catalog.packages') IS NOT NULL", &[])
+    let initialized: bool = sqlx::query("SELECT to_regclass('catalog.packages') IS NOT NULL")
+        .fetch_one(&mut project)
         .await?
         .get(0);
     ensure!(
@@ -119,49 +120,52 @@ pub(super) async fn prepare_at(
     );
     for package in &manifest.release.packages {
         ensure!(
-            project
-                .query_opt(
-                    "SELECT 1 FROM catalog.packages WHERE project_env_key=$1 AND package_id=$2",
-                    &[&project_env_key, &package.package_id()]
-                )
-                .await?
-                .is_some(),
+            sqlx::query(
+                "SELECT 1 FROM catalog.packages WHERE project_env_key=$1 AND package_id=$2"
+            )
+            .bind(&project_env_key)
+            .bind(package.package_id())
+            .fetch_optional(&mut project)
+            .await?
+            .is_some(),
             "package {} has no installed baseline; run env initialize",
             package.package_id()
         );
     }
-    let system = connect(&platform.system_database_url).await?;
-    let bindings = super::bindings::analyse(&system, document, packages).await?;
+    let mut system = connect(&platform.system_database_url).await?;
+    let bindings = super::bindings::analyse(&mut system, document, packages).await?;
     let changes = platform.auth_changes().await?;
     // The immutable cache can survive a later preparation failure. It selects no release.
     super::stage::write_release(project_url, &project_env_key, digest, manifest, actor).await?;
-    let tx = project.transaction().await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_identity_protocol::PlatformComponent::Provisioning,
+    let mut tx = project.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_identity_protocol::PlatformComponent::Provisioning,
+        ),
     ))
-    .await?;
-    tx.query_one(
-        "SELECT set_config('app.project_env_key', $1, true)",
-        &[&project_env_key],
-    )
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(&project_env_key)
+        .fetch_one(&mut *tx)
+        .await?;
     wamn_package_control::connection_requirement::prepare_release(
-        &tx,
+        &mut tx,
         &project_env_key,
         manifest,
         packages,
         platform.component_source()?,
     )
     .await?;
-    tx.query_one(
-        wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-        &[&project_env_key],
-    )
-    .await?;
+    sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+        .bind(&project_env_key)
+        .fetch_one(&mut *tx)
+        .await?;
     let mut auth = wamn_broker::auth_changes::AuthDrops::default();
     super::stage::write_runtime_grants(
-        &system,
-        &tx,
+        &mut system,
+        &mut tx,
         &project_env_key,
         manifest,
         packages,
@@ -170,7 +174,7 @@ pub(super) async fn prepare_at(
     .await?;
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     super::bindings::write(
-        &tx,
+        &mut tx,
         &project_env_key,
         digest,
         document,

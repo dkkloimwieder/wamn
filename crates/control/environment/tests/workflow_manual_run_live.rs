@@ -18,20 +18,20 @@
 //! (4), a workflow user without the role (5), two enabled versions (6) and a
 //! held lifecycle lock (11).
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio_postgres::{Client, NoTls};
+
 use wamn_broker::Publisher;
 use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION,
     ServingManifest, WiringDocument,
 };
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
@@ -257,12 +257,10 @@ fn load(manifest: &ServingManifest) -> Arc<LoadedRelease> {
 }
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the disposable database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -277,6 +275,7 @@ fn start_attachment() -> String {
 
 struct Fixture {
     admin: Client,
+    observer: sqlx::PgPool,
     url: String,
     engine: Arc<wash_runtime::engine::Engine>,
     postgres: Arc<WamnPostgres>,
@@ -293,33 +292,38 @@ struct Fixture {
 async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
     let url = database.url().to_owned();
-    let admin = connect(&url).await;
+    let mut admin = connect(&url).await;
     let schema = BareSchemaName::new("wamn_run").unwrap();
-    admin
-        .batch_execute("CREATE SCHEMA application_data")
+    sqlx::raw_sql("CREATE SCHEMA application_data")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
-    wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, true)
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true)
         .await
         .expect("install the run plane and the catalog");
-    admin
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
-    admin
-        .batch_execute(&wamn_control_provision::platform_principals_sql("manual.invalid").unwrap())
-        .await
-        .expect("write the platform principals and the workflow user");
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::platform_principals_sql("manual.invalid").unwrap()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("write the platform principals and the workflow user");
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:manual-live-fixture', false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await
-        .unwrap();
-    admin
-        .batch_execute(&format!(
+    )
+    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@manual.invalid'), \
                ('{CLERK}', 'user', 'clerk@manual.invalid');
@@ -337,8 +341,7 @@ async fn fixture() -> Fixture {
                VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
              CREATE TABLE application_data.orders (id text PRIMARY KEY, total int NOT NULL, status text NOT NULL);
              INSERT INTO application_data.orders VALUES ('o-1', 1250, 'open'), ('o-2', 300, 'closed');"
-        ))
-        .await
+        ))).execute(&mut admin).await.map(drop)
         .expect("seed the users, roles, permissions and application rows");
 
     let engine = Arc::new(build_engine(&[]).unwrap());
@@ -372,21 +375,26 @@ async fn fixture() -> Fixture {
     let served = manifest(Some(&read), &jsonata);
     let release = load(&served);
     let digest = release.release().manifest_digest.as_str().to_owned();
-    admin
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&PROJECT_ENV_KEY, &digest, &served.canonical_bytes()],
-        )
-        .await
-        .expect("install the serving release");
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&digest)
+    .bind(&served.canonical_bytes())
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("install the serving release");
 
-    let postgres = targeted_postgres(&admin, &url).await;
+    let postgres = targeted_postgres(&mut admin, &url).await;
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     let delivery = host(&postgres, &release);
 
+    let observer = wamn_postgres::pool(&url, 4).await.unwrap();
     Fixture {
         admin,
+        observer,
         url,
         engine,
         postgres,
@@ -404,9 +412,9 @@ async fn fixture() -> Fixture {
 /// The host's database access under the targeted logins of its families: the
 /// application login for guest SQL, the executor for admission and the
 /// queue, and the admitter for the session permission reads.
-async fn targeted_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
-    let database: String = admin
-        .query_one("SELECT current_database()", &[])
+async fn targeted_postgres(admin: &mut Client, url: &str) -> Arc<WamnPostgres> {
+    let mut database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut *admin)
         .await
         .unwrap()
         .get(0);
@@ -435,23 +443,22 @@ async fn targeted_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
                 database: &database,
             }
         };
-        let role = workload_generation_role(family, target, CredentialGeneration::A).unwrap();
-        admin
-            .batch_execute(&sql::prepare_workload_generation_sql(
-                family,
-                &database,
-                &role,
-                PASSWORD,
-                "2099-01-01T00:00:00Z",
-            ))
-            .await
-            .expect("prepare the targeted login");
-        admin
-            .batch_execute(&format!(
-                "ALTER ROLE \"{role}\" SET search_path = application_data"
-            ))
-            .await
-            .unwrap();
+        let role = workload_login(family, target).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(family, &database, &role, PASSWORD))
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .expect("prepare the targeted login");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER ROLE \"{role}\" SET search_path = application_data"
+        )))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .unwrap();
         let mut login = url::Url::parse(url).unwrap();
         login.set_username(&role).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
@@ -581,18 +588,17 @@ impl Fixture {
     /// roles a session signs that the user still holds, read by the session
     /// permission reader, and the one active role they give.
     async fn session(&self, user: &str) -> AuthenticatedCaller {
-        let signed: Vec<wamn_identity_protocol::RoleName> = self
-            .admin
-            .query(
-                "SELECT role_name FROM platform.user_role \
+        let signed: Vec<wamn_identity_protocol::RoleName> = sqlx::query(
+            "SELECT role_name FROM platform.user_role \
                   WHERE user_id = $1::text::uuid",
-                &[&user],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| row.get::<_, String>(0).parse().unwrap())
-            .collect();
+        )
+        .bind(&user)
+        .fetch_all(&self.observer)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get::<String, _>(0).parse().unwrap())
+        .collect();
         let principal: PrincipalId = user.parse().unwrap();
         let held = self
             .postgres
@@ -689,17 +695,16 @@ impl Fixture {
 
     /// `(status, result_json, fail_type)` of a run.
     async fn outcome(&self, run: &str) -> (String, Option<Value>, Option<String>) {
-        let row = self
-            .admin
-            .query_one(
-                "SELECT status, result_json::text, fail_type FROM wamn_run.runs WHERE run_id = $1",
-                &[&run],
-            )
-            .await
-            .unwrap();
+        let row = sqlx::query(
+            "SELECT status, result_json::text, fail_type FROM wamn_run.runs WHERE run_id = $1",
+        )
+        .bind(&run)
+        .fetch_one(&self.observer)
+        .await
+        .unwrap();
         (
             row.get(0),
-            row.get::<_, Option<String>>(1)
+            row.get::<Option<String>, _>(1)
                 .map(|text| serde_json::from_str(&text).unwrap()),
             row.get(2),
         )
@@ -708,36 +713,35 @@ impl Fixture {
     /// The facts a run must not change: the release row, the environment
     /// row and the environment policy.
     async fn environment_facts(&self) -> Vec<String> {
-        self.admin
-            .query(
-                "SELECT format('release %s %s', manifest_digest, md5(canonical_bytes)) \
+        sqlx::query(
+            "SELECT format('release %s %s', manifest_digest, md5(canonical_bytes)) \
                    FROM catalog.releases WHERE project_env_key = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
                    FROM platform.environment \
                  UNION ALL SELECT format('policy %s', expected_environment) \
                    FROM wamn_run.environment_policies WHERE project_env_key = $1 \
                  ORDER BY 1",
-                &[&PROJECT_ENV_KEY],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| row.get(0))
-            .collect()
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_all(&self.observer)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect()
     }
 
     async fn application_rows(&self) -> Vec<String> {
-        self.admin
-            .query(
-                "SELECT format('%s %s %s', id, total, status) FROM application_data.orders \
+        sqlx::query(
+            "SELECT format('%s %s %s', id, total, status) FROM application_data.orders \
                   ORDER BY id",
-                &[],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| row.get(0))
-            .collect()
+        )
+        .fetch_all(&self.observer)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect()
     }
 
     /// A run refused at its node `read`: failed, with its refusal
@@ -793,36 +797,35 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
         "the read changed nothing"
     );
 
-    let row = fixture
-        .admin
-        .query_one(
-            "SELECT trigger_source, execution_principal_id::text, execution_role, invoked_by, \
+    let row = sqlx::query(
+        "SELECT trigger_source, execution_principal_id::text, execution_role, invoked_by, \
                     invoked_by_user_id::text, service_principal_id IS NULL, manifest_digest, \
                     node_digests_json::text, package_id, wiring_id, wiring_version \
                FROM wamn_run.runs WHERE run_id = $1",
-            &[&run],
-        )
-        .await
-        .unwrap();
-    assert_eq!(row.get::<_, String>(0), "manual");
-    assert_eq!(row.get::<_, String>(1), READER);
-    assert_eq!(row.get::<_, String>(2), "reader");
-    assert_eq!(row.get::<_, String>(3), "manual");
-    assert_eq!(row.get::<_, String>(4), READER);
+    )
+    .bind(&run)
+    .fetch_one(&mut fixture.admin)
+    .await
+    .unwrap();
+    assert_eq!(row.get::<String, _>(0), "manual");
+    assert_eq!(row.get::<String, _>(1), READER);
+    assert_eq!(row.get::<String, _>(2), "reader");
+    assert_eq!(row.get::<String, _>(3), "manual");
+    assert_eq!(row.get::<String, _>(4), READER);
     assert!(
-        row.get::<_, bool>(5),
+        row.get::<bool, _>(5),
         "a manual run has no service principal"
     );
-    assert_eq!(row.get::<_, String>(6), fixture.digest);
+    assert_eq!(row.get::<String, _>(6), fixture.digest);
     assert_eq!(
-        serde_json::from_str::<Value>(&row.get::<_, String>(7)).unwrap(),
+        serde_json::from_str::<Value>(&row.get::<String, _>(7)).unwrap(),
         json!({"read": fixture.read.component_digest, "shape": fixture.jsonata.component_digest})
     );
     assert_eq!(
         (
-            row.get::<_, String>(8),
-            row.get::<_, String>(9),
-            row.get::<_, i32>(10)
+            row.get::<String, _>(8),
+            row.get::<String, _>(9),
+            row.get::<i32, _>(10)
         ),
         (APP.to_owned(), WORKFLOW.to_owned(), 1)
     );
@@ -853,25 +856,23 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
     // A row written past authorship, enabled, under another graph's hash.
     let graph = serde_json::to_string(&workflow(1, READ)).unwrap();
     let wrong = format!("sha256:{}", "e".repeat(64));
-    fixture
-        .admin
-        .execute(
-            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
+    sqlx::query(
+        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, \
                 version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) \
              VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', true, \
                 $7::text::uuid)",
-            &[
-                &PROJECT_ENV_KEY,
-                &ENVIRONMENT,
-                &APP,
-                &WORKFLOW,
-                &graph,
-                &wrong,
-                &READER,
-            ],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&ENVIRONMENT)
+    .bind(&APP)
+    .bind(&WORKFLOW)
+    .bind(&graph)
+    .bind(&wrong)
+    .bind(&READER)
+    .execute(&mut fixture.admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     let request_element = fixture
         .start_on(&fixture.delivery, READER, "wrong-row")
         .await;
@@ -956,9 +957,8 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
         request_element["error"]["code"], "workflow_not_served",
         "{request_element}"
     );
-    let runs: i64 = fixture
-        .admin
-        .query_one("SELECT count(*) FROM wamn_run.runs", &[])
+    let runs: i64 = sqlx::query("SELECT count(*) FROM wamn_run.runs")
+        .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
         .get(0);
@@ -982,12 +982,9 @@ async fn a_start_by_a_role_without_the_read_fails_at_the_first_node() {
     let run = fixture.start(CLERK, "clerk").await;
     fixture.drain(&fixture.release).await;
     fixture.assert_permission_denied(&run).await;
-    let role: String = fixture
-        .admin
-        .query_one(
-            "SELECT execution_role FROM wamn_run.runs WHERE run_id = $1",
-            &[&run],
-        )
+    let role: String = sqlx::query("SELECT execution_role FROM wamn_run.runs WHERE run_id = $1")
+        .bind(&run)
+        .fetch_one(&mut fixture.admin)
         .await
         .unwrap()
         .get(0);
@@ -1005,15 +1002,15 @@ async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     fixture.enabled().await;
-    fixture
-        .admin
-        .execute(
-            "DELETE FROM platform.permission \
+    sqlx::query(
+        "DELETE FROM platform.permission \
               WHERE role_name = 'reader' AND permission = $1",
-            &[&READ_REFERENCE],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&READ_REFERENCE)
+    .execute(&mut fixture.admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
 
     let run = fixture.start(READER, "revoked").await;
     fixture.drain(&fixture.release).await;
@@ -1044,21 +1041,17 @@ async fn a_host_of_another_release_cannot_lease_the_run() {
         "the other release has its own digest"
     );
     fixture.drain(&other).await;
-    let queued = fixture
-        .admin
-        .query_one(
-            "SELECT r.status, q.attempts, q.lease_expires_at IS NULL \
+    let queued = sqlx::query("SELECT r.status, q.attempts, q.lease_expires_at IS NULL \
                FROM wamn_run.runs AS r JOIN wamn_run.run_queue AS q USING (project_env_key, run_id) \
-              WHERE r.run_id = $1",
-            &[&run],
-        )
+              WHERE r.run_id = $1").bind(&run).fetch_one(&mut fixture
+        .admin)
         .await
         .unwrap();
     assert_eq!(
         (
-            queued.get::<_, String>(0),
-            queued.get::<_, i32>(1),
-            queued.get::<_, bool>(2)
+            queued.get::<String, _>(0),
+            queued.get::<i32, _>(1),
+            queued.get::<bool, _>(2)
         ),
         ("dispatched".to_owned(), 0, true),
         "the run stays queued and unleased"

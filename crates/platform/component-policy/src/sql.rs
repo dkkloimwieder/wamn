@@ -32,7 +32,7 @@ use serde_json::Value;
 
 /// Why a declared statement is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RefusalType {
+pub enum RefusalType {
     /// The SQL does not parse with PostgreSQL's grammar.
     Unparsed,
     /// The SQL holds no statement or more than one.
@@ -57,7 +57,7 @@ pub(super) enum RefusalType {
 
 /// A declared statement that admission refuses.
 #[derive(Debug)]
-pub(super) struct DeclaredStatementRefusal {
+pub struct DeclaredStatementRefusal {
     type_: RefusalType,
     detail: String,
 }
@@ -82,16 +82,19 @@ impl fmt::Display for DeclaredStatementRefusal {
     }
 }
 
+impl std::error::Error for DeclaredStatementRefusal {}
+
 /// The platform functions that write `number_counter`. Only the numbering
 /// renderer of the host calls them, on its own connection access.
 const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
 
 /// Statement nodes refused wherever they occur in the tree.
-const REFUSED_NODES: [(&str, RefusalType); 4] = [
+const REFUSED_NODES: [(&str, RefusalType); 5] = [
     ("DoStmt", RefusalType::CodeBlock),
     ("CreateFunctionStmt", RefusalType::CodeBlock),
     ("ExecuteStmt", RefusalType::DynamicExecute),
     ("VariableSetStmt", RefusalType::SessionWrite),
+    ("TransactionStmt", RefusalType::SessionWrite),
 ];
 
 /// Write nodes and the field that holds the relation each one writes.
@@ -105,7 +108,7 @@ const WRITE_NODES: [(&str, &str); 6] = [
 ];
 
 /// Refuse `sql` unless it is one statement that passes every test above.
-pub(super) fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatementRefusal> {
+pub fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatementRefusal> {
     let unparsed = |error: pg_query::Error| {
         DeclaredStatementRefusal::new(RefusalType::Unparsed, error.to_string())
     };

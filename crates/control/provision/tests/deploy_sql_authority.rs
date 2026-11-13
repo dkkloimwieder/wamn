@@ -29,12 +29,10 @@
 
 use std::fmt::Write as _;
 use std::process::Command;
-
-use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::project_key::project_key;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
 use wamn_record_history::{HistoryRow, RowState, state_at};
 
@@ -63,13 +61,12 @@ const CATALOG_INSTALLER: &str = "wamn_minimum_installer";
 /// `Retention` is platform grain AND holds a real grant on a governed relation — `wamn_run.runs` — which the arm below reads back from
 /// `has_any_column_privilege` rather than assuming.
 fn platform_probe_retention() -> String {
-    workload_generation_role(
+    workload_login(
         WorkloadRoleFamily::Retention,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t1",
             database: "wamn",
         },
-        CredentialGeneration::A,
     )
     .expect("Retention takes a project target")
 }
@@ -384,13 +381,12 @@ fn the_swept_minimum_admits_only_the_connected_guest_on_postgres() {
     // 3. A MINTED GUEST READS ITS OWN PROJECT AND ONLY ITS OWN. The role name is
     //    composed by the mint, not by hand, so this also shows the digest the
     //    provisioner would issue matches the key the predicate computes.
-    let guest = workload_generation_role(
+    let guest = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t1",
             database: "wamn",
         },
-        CredentialGeneration::A,
     )
     .expect("App takes a project target");
     assert_eq!(
@@ -755,7 +751,7 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
                  DROP ROLE wamn_system; END IF; \
              END $$;\n\
-             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             CREATE ROLE wamn_system NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOREPLICATION NOBYPASSRLS;\n"
         ),
     );
@@ -859,13 +855,12 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
 /// The production guest identity the record-history cases write as, composed
 /// by the real mint. A member of `wamn_app` and nothing else.
 fn record_history_guest() -> String {
-    workload_generation_role(
+    workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t1",
             database: "wamn",
         },
-        CredentialGeneration::A,
     )
     .expect("App takes a project target")
 }
@@ -1518,7 +1513,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
                  DROP ROLE wamn_system; END IF; \
              END $$;\n\
-             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             CREATE ROLE wamn_system NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOREPLICATION NOBYPASSRLS;\n"
         ),
     );

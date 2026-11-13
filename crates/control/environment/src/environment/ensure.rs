@@ -1,9 +1,9 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
+use sqlx::Row as _;
 pub(super) mod plan;
 pub use plan::credential_access;
-use plan::credential_request;
 pub(super) use plan::management_author_pat_name;
 
 use std::io::Write as _;
@@ -12,20 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
-use base64::Engine as _;
-use wamn_control_provision::host_credentials::{
-    CredentialDatabase, HOST_CREDENTIALS, HostCredential,
-};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_registry::Triple;
 
 use super::Platform;
 use super::document::EnvironmentDocument;
 use crate::provision_project_env::{
-    ProvisionProjectEnvRequest, WorkloadActionRequest, WorkloadActionVerb,
-    WorkloadGenerationAction, provision_project_env, read_project_env_instance, resolve_cluster,
+    ProvisionProjectEnvRequest, provision_project_env, read_project_env_instance, resolve_cluster,
 };
-use wamn_package_control::database::connect;
+use wamn_postgres::connect;
 
 /// The run-plane schema of every environment.
 pub(super) const RUN_SCHEMA: &str = "wamn_run";
@@ -49,7 +43,7 @@ pub async fn provision_resources(
         .events
         .as_ref()
         .context("environment provisioning requires the event broker")?;
-    let admin = connect(admin_url).await?;
+    let mut admin = connect(admin_url).await?;
     let triple = document.triple();
     let policy = document.policy.as_str();
     let cluster = resolve_cluster(&platform.system_database_url, &document.org, policy).await?;
@@ -73,7 +67,7 @@ pub async fn provision_resources(
     )
     .await?;
     crate::platform::operations::provision(platform, document, &cluster).await?;
-    ensure_credential_access(platform, document).await?;
+    ensure_credential_access(platform, document, &cluster).await?;
     kubectl(
         platform,
         &platform.database_namespace,
@@ -83,9 +77,10 @@ pub async fn provision_resources(
     .await
     .context("apply the Database CR")?;
     wait_applied(platform, "database", &outcome.database).await?;
-    admin
-        .batch_execute(&outcome.privilege_sql)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(outcome.privilege_sql.clone()))
+        .execute(&mut admin)
         .await
+        .map(drop)
         .context("ensure the database base privileges")?;
     private.apply_and_shred(platform, &database_secret).await?;
     if issue_pat {
@@ -94,49 +89,20 @@ pub async fn provision_resources(
 
     // The run plane: the run schema the credentials are granted on.
     let project_admin =
-        ensure_project_database(platform, document, packages, &admin, admin_url).await?;
+        ensure_project_database(platform, document, packages, &mut admin, admin_url).await?;
     restore_project_database_access(platform, document, &project_admin).await?;
 
-    // Generation a of each credential, only where its Secret is absent.
-    for credential in HOST_CREDENTIALS {
-        let name = wamn_control_provision::workload_secret_name(
-            credential.family,
-            &document.org,
-            &document.project,
-            &document.env,
-        );
-        if secret_exists(platform, namespace, &name).await? {
-            continue;
-        }
-        let request = credential_request(
-            credential,
-            platform,
-            document,
-            &private,
-            &cluster,
-            &project_admin,
-        );
-        crate::provision_project_env::workload::run_workload_action_with_admin(&request, admin_url)
-            .await
-            .with_context(|| format!("prepare generation a of {}", credential.family.label()))?;
-        private
-            .apply_and_shred(platform, &private.path(credential.file_name))
-            .await?;
-        // The org's control host holds every environment's administration
-        // login. Where the platform runs no control host, there is nothing
-        // to patch.
-        if let Some(patch) = request.control_administration_patch {
-            let control = wamn_control_provision::control_administration_secret_name(&document.org);
-            if secret_exists(platform, namespace, &control).await? {
-                private
-                    .patch_and_shred(platform, &patch, namespace, &control)
-                    .await?;
-            }
-        }
-    }
+    crate::provision_project_env::workload::provision(
+        platform,
+        document,
+        &cluster,
+        &project_admin,
+        admin_url,
+    )
+    .await?;
 
-    let client = connect(&platform.system_database_url).await?;
-    let policy = super::analyse::read_policy(&client, &document.org, &document.policy).await?;
+    let mut client = connect(&platform.system_database_url).await?;
+    let policy = super::analyse::read_policy(&mut client, &document.org, &document.policy).await?;
     crate::platform::control::wait_administration(
         &platform.target,
         &triple,
@@ -160,7 +126,7 @@ pub async fn provision_resources(
         )
         .await?;
     }
-    prepare_cdc(platform, document, &admin, &project_admin).await?;
+    prepare_cdc(platform, document, &mut admin, &project_admin).await?;
     ensure_streams(platform, document, &[]).await?;
     provision_materializer(platform, control, document).await?;
     Ok(())
@@ -173,8 +139,11 @@ pub(super) async fn resources_in_place(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<bool> {
-    let system = connect(&platform.system_database_url).await?;
-    if super::analyse::read_row(&system, document).await?.is_none() {
+    let mut system = connect(&platform.system_database_url).await?;
+    if super::analyse::read_row(&mut system, document)
+        .await?
+        .is_none()
+    {
         return Ok(false);
     }
     let name = environment_host_name(&document.org, &document.project, &document.env)?;
@@ -362,8 +331,8 @@ pub(super) async fn provision_materializer(
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
     use wamn_release_control::release_chart;
-    let system = connect(&platform.system_database_url).await?;
-    let policy = super::analyse::read_policy(&system, &document.org, &document.policy).await?;
+    let mut system = connect(&platform.system_database_url).await?;
+    let policy = super::analyse::read_policy(&mut system, &document.org, &document.policy).await?;
     let events = platform
         .events
         .as_ref()
@@ -478,9 +447,8 @@ pub async fn provision(
     })
     .await
     .context("record the environment and render its database")?;
-    connect(admin_url)
-        .await?
-        .batch_execute(&outcome.role_sql)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(outcome.role_sql.clone()))
+        .execute(&mut connect(admin_url).await?)
         .await
         .context("ensure the database roles")?;
     Ok(outcome)
@@ -499,7 +467,7 @@ pub async fn ensure_project_database(
     platform: &Platform,
     document: &EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     admin_url: &str,
 ) -> anyhow::Result<String> {
     ensure_project_database_with_migrations(
@@ -519,25 +487,33 @@ pub(crate) async fn ensure_project_database_with_migrations(
     platform: &Platform,
     document: &EnvironmentDocument,
     packages: &[wamn_compiler::manifest::PackageManifest],
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     admin_url: &str,
     sources: &[wamn_schema_control::MigrationSource],
 ) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
-    let mut project_admin = url::Url::parse(admin_url)?;
-    project_admin.set_path(url::Url::parse(&project_url)?.path());
-    let project_admin = project_admin.to_string();
-    connect(&project_admin)
-        .await?
-        .batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
-        .await?;
-    admin
-        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
-        .await?;
-    admin.batch_execute(&format!(
+    let database = wamn_postgres::identity(&project_url)?.1;
+    let project_admin = wamn_postgres::database_configuration(admin_url, &database)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::install_platform_extensions_sql(),
+    ))
+    .execute(&mut connect(&project_admin).await?)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::install_platform_extensions_sql(),
+    ))
+    .execute(&mut connect(&project_admin).await?)
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_platform_group_role_sql(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
-        postgres_protocol::escape::escape_identifier(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
-    )).await?;
+        postgres_protocol::escape::escape_identifier(&database),
+    ))).execute(&mut *admin).await.map(drop)?;
     ensure_package_roles(admin, packages).await?;
     let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
         system_database_url: platform.system_database_url.clone(),
@@ -576,23 +552,25 @@ pub async fn restore_project_database_access(
 
 /// Prepare only the selected packages' roles through the administrator.
 pub(super) async fn ensure_package_roles(
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     packages: &[wamn_compiler::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     for package in packages {
-        admin
-            .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
-                &package.package.id,
-            ))
-            .await?;
-        admin
-            .batch_execute(&format!(
-                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-                postgres_protocol::escape::escape_identifier(
-                    &wamn_control_provision::package_owner_role(&package.package.id)
-                )
-            ))
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_package_owner_role_sql(&package.package.id),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
+            postgres_protocol::escape::escape_identifier(
+                &wamn_control_provision::package_owner_role(&package.package.id)
+            )
+        )))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     }
     Ok(())
 }
@@ -601,10 +579,10 @@ pub(super) async fn ensure_package_roles(
 pub(super) async fn prepare_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     project_admin_url: &str,
 ) -> anyhow::Result<()> {
-    let project_admin = connect(project_admin_url).await?;
+    let mut project_admin = connect(project_admin_url).await?;
     let instance =
         read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
     let role = wamn_control_provision::cdc_object_name(
@@ -613,84 +591,47 @@ pub(super) async fn prepare_cdc(
         &document.env,
         &instance,
     );
-    let namespace = platform.target.namespace.as_str();
+    let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
     let secret_name = wamn_control_provision::project_env_cdc_secret_name(
         &document.org,
         &document.project,
         &document.env,
     );
-    let replication_password = match wamn_kubernetes::kubectl::get::<serde_json::Value>(
+    crate::provision_project_env::workload::reconcile(
         &platform.target.kubeconfig,
         &platform.target.context,
-        namespace,
-        "secret",
-        &secret_name,
-    )
-    .await?
-    {
-        Some(secret) => {
-            let encoded = secret["data"]["url"]
-                .as_str()
-                .context("the CDC Secret has no URL")?;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .context("decode the CDC credential")?;
-            let url = std::str::from_utf8(&bytes).context("decode the CDC URL")?;
-            let config: tokio_postgres::Config = url.parse().context("parse the CDC URL")?;
-            String::from_utf8(
-                config
-                    .get_password()
-                    .context("the CDC URL has no password")?
-                    .to_vec(),
-            )
-            .context("decode the replication password")?
-        }
-        None => random_password()?,
-    };
-    admin
-        .batch_execute(&wamn_control_provision::sql::ensure_replication_role_sql(
-            &role,
-            &replication_password,
-        ))
-        .await?;
-    project_admin
-        .batch_execute(&wamn_control_provision::sql::create_failover_slot_sql(
-            &role,
-        ))
-        .await?;
-    let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
-    let database = wamn_control_provision::project_env_database_name(
         &document.org,
-        &document.project,
-        &document.env,
-        &instance,
-    );
-    let mut url = url::Url::parse(&platform.system_database_url)?;
-    url.set_username(&role)
-        .map_err(|()| anyhow::anyhow!("encode replication user"))?;
-    url.set_password(Some(&replication_password))
-        .map_err(|()| anyhow::anyhow!("encode replication password"))?;
-    url.set_host(Some(&crate::provision_project_env::database_host(
-        platform.database_host.as_deref(),
         &cluster,
-        &platform.database_namespace,
-    )))?;
-    url.set_port(Some(platform.database_port))
-        .map_err(|()| anyhow::anyhow!("encode replication port"))?;
-    url.set_path(&database);
-    let secret = wamn_control_provision::render_project_env_cdc_secret_manifest(
-        &document.triple(),
-        &instance,
-        namespace,
-        url.as_str(),
-    );
-    kubectl(
-        platform,
-        namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&secret)?),
+        &wamn_control_provision::connection::managed_replication_role(
+            role.clone(),
+            secret_name.clone(),
+        ),
     )
     .await?;
+    crate::provision_project_env::workload::wait_role(admin, &role).await?;
+    let options = wamn_postgres::connect_options(project_admin_url).await?;
+    let config = crate::provision_project_env::workload::configuration(
+        &document.org,
+        &cluster,
+        options.get_host().into(),
+        options.get_port(),
+        options
+            .get_database()
+            .context("capture database is absent")?
+            .into(),
+        role.clone(),
+        secret_name.clone(),
+    );
+    wamn_kubernetes::kubectl::apply(&platform.target.kubeconfig,&platform.target.context,&document.org,
+        &serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":document.org,"name":secret_name},"data":{"connection.json":config.to_json()?}})
+    ).await?;
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::create_failover_slot_sql(&role),
+    ))
+    .execute(&mut project_admin)
+    .await
+    .map(drop)?;
     Ok(())
 }
 
@@ -743,18 +684,19 @@ pub(crate) async fn ensure_cdc_inputs(
         &document.env,
         &instance,
     );
-    let project = super::analyse::connect_project(&project_url(platform, &triple).await?).await?;
-    let mut full = project
-        .query(
-            wamn_schema_control::select_replica_identity_sql(),
-            &[&schemas],
-        )
-        .await
-        .context("read captured replica identities")?
-        .into_iter()
-        .filter(|row| row.get::<_, String>(2) == "f")
-        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<std::collections::BTreeSet<_>>();
+    let mut project =
+        super::analyse::connect_project(&project_url(platform, &triple).await?).await?;
+    let mut full = sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_schema_control::select_replica_identity_sql()).to_string(),
+    ))
+    .bind(&schemas)
+    .fetch_all(&mut project)
+    .await
+    .context("read captured replica identities")?
+    .into_iter()
+    .filter(|row| row.get::<String, _>(2) == "f")
+    .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+    .collect::<std::collections::BTreeSet<_>>();
     for manifest in &manifests {
         for model in manifest.models.values() {
             if !full.insert((model.schema.clone(), model.table.clone())) {
@@ -765,12 +707,16 @@ pub(crate) async fn ensure_cdc_inputs(
                 &model.table,
                 wamn_schema_control::ReplicaIdentity::Full,
             );
-            project.batch_execute(&sql).await.with_context(|| {
-                format!(
-                    "capture {}.{} with full row images",
-                    model.schema, model.table
-                )
-            })?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&mut project)
+                .await
+                .map(drop)
+                .with_context(|| {
+                    format!(
+                        "capture {}.{} with full row images",
+                        model.schema, model.table
+                    )
+                })?;
         }
     }
     let database = wamn_control_provision::project_env_database_name(
@@ -787,8 +733,7 @@ pub(crate) async fn ensure_cdc_inputs(
             std::env::var("WAMN_SYSTEM_ADMIN_URL").context("CDC administrator URL")?;
         &administrator_env
     };
-    let mut admin_url = url::Url::parse(administrator)?;
-    admin_url.set_path(&database);
+    let admin_url = wamn_postgres::database_configuration(administrator, &database)?;
     crate::enable_cdc_project_env::apply_cdc_sql(
         admin_url.as_str(),
         &schemas,
@@ -796,7 +741,7 @@ pub(crate) async fn ensure_cdc_inputs(
         &database,
     )
     .await?;
-    if !cdc_in_place(&project, &cdc_name, &schemas).await? {
+    if !cdc_in_place(&mut project, &cdc_name, &schemas).await? {
         enable_cdc(platform, document, &schemas, &instance).await?;
     }
     ensure_streams(platform, document, &manifests).await?;
@@ -825,7 +770,7 @@ pub(crate) async fn ensure_cdc_inputs(
         events.dup_window_secs,
     );
     if crate::provision_project_env::registry::pending_database(
-        &connect(&platform.system_database_url).await?,
+        &mut connect(&platform.system_database_url).await?,
         &triple,
     )
     .await?
@@ -909,7 +854,7 @@ async fn enable_cdc(
          set WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate",
     )?;
     let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
-    let database = wamn_control_provision::project_env_database_name(
+    let mut database = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,
         &document.env,
@@ -938,7 +883,7 @@ async fn enable_cdc(
             &[
                 "delete",
                 "publication",
-                &database,
+                &mut database,
                 "--ignore-not-found",
                 "--wait=true",
                 APPLIED_TIMEOUT,
@@ -954,10 +899,10 @@ async fn enable_cdc(
         )
         .await?;
         wait_applied(platform, "publication", &database).await?;
-        let project =
+        let mut project =
             super::analyse::connect_project(&project_url(platform, &document.triple()).await?)
                 .await?;
-        while !cdc_in_place(&project, &capture, schemas).await? {
+        while !cdc_in_place(&mut project, &capture, schemas).await? {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         Ok::<_, anyhow::Error>(())
@@ -975,19 +920,15 @@ async fn enable_cdc(
 ///
 /// When the probe fails.
 pub async fn cdc_in_place(
-    project: &tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
     cdc_name: &str,
     schemas: &[String],
 ) -> anyhow::Result<bool> {
-    Ok(project
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
+    Ok(sqlx::query("SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
          AND NOT p.puballtables \
          AND coalesce((SELECT array_agg(n.nspname::text ORDER BY n.nspname) \
               FROM pg_publication_namespace pn JOIN pg_namespace n ON n.oid = pn.pnnspid \
-              WHERE pn.pnpubid = p.oid), ARRAY[]::text[]) = ARRAY(SELECT DISTINCT unnest($2::text[]) ORDER BY 1))",
-            &[&cdc_name, &schemas],
-        )
+              WHERE pn.pnpubid = p.oid), ARRAY[]::text[]) = ARRAY(SELECT DISTINCT unnest($2::text[]) ORDER BY 1))").bind(cdc_name).bind(schemas).fetch_one(&mut *project)
         .await
         .context("probe the CDC publication schema")?
         .get(0))
@@ -997,17 +938,15 @@ pub async fn cdc_in_place(
 /// the database the registry row names.
 pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
     let instance = read_project_env_instance(&platform.system_database_url, triple).await?;
-    let mut url = url::Url::parse(&platform.system_database_url).context("parse the system URL")?;
-    url.set_path(&format!(
-        "/{}",
-        wamn_control_provision::project_env_database_name(
+    wamn_postgres::database_configuration(
+        &platform.system_database_url,
+        &wamn_control_provision::project_env_database_name(
             &triple.org,
             &triple.project,
-            triple.env.as_str(),
-            &instance
-        )
-    ));
-    Ok(url.to_string())
+            &triple.env,
+            &instance,
+        ),
+    )
 }
 
 /// Whether the Secret `name` exists in `namespace`.
@@ -1065,16 +1004,6 @@ pub(crate) async fn kubectl(
     .await
 }
 
-/// A replication password: 32 random bytes in hexadecimal.
-pub(super) fn random_password() -> anyhow::Result<String> {
-    use ring::rand::SecureRandom as _;
-    let mut random = [0u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("generate the replication password"))?;
-    Ok(hex::encode(random))
-}
-
 /// A private mode 0700 directory for the Secrets a library function writes
 /// only to a file. Each file is shredded after its apply, and the directory
 /// goes on drop.
@@ -1114,33 +1043,6 @@ impl PrivateDirectory {
         shred(file)?;
         applied.map(drop)
     }
-
-    async fn patch_and_shred(
-        &self,
-        platform: &Platform,
-        file: &Path,
-        namespace: &str,
-        name: &str,
-    ) -> anyhow::Result<()> {
-        let bytes = std::fs::read(file).context("read a private patch file")?;
-        let patched = kubectl(
-            platform,
-            namespace,
-            &[
-                "patch",
-                "secret",
-                name,
-                "--type",
-                "merge",
-                "--patch-file",
-                "/dev/stdin",
-            ],
-            Some(&bytes),
-        )
-        .await;
-        shred(file)?;
-        patched.map(drop)
-    }
 }
 
 impl Drop for PrivateDirectory {
@@ -1173,34 +1075,44 @@ fn shred(file: &Path) -> anyhow::Result<()> {
 async fn ensure_credential_access(
     platform: &Platform,
     document: &EnvironmentDocument,
+    cluster: &str,
 ) -> anyhow::Result<()> {
     let account =
         wamn_registry::service_account_name(&document.org, &document.project, &document.env);
     let secret =
         wamn_registry::credential_secret_name(&document.org, &document.project, &document.env);
-    for (resource, object) in credential_access(&account, &secret) {
-        let namespace = &platform.target.namespace;
-        let observed = kubectl(
-            platform,
-            namespace,
-            &[
-                "get",
-                resource,
-                &account,
-                "--ignore-not-found",
-                "-o",
-                "json",
-            ],
-            None,
-        )
-        .await?;
-        if !observed.trim().is_empty() {
-            continue;
+    let mut secrets = vec![
+        secret,
+        format!("{}-ca", cluster),
+        "wamn-pg-ca".into(),
+        wamn_control_provision::project_env_cdc_secret_name(
+            &document.org,
+            &document.project,
+            &document.env,
+        ),
+    ];
+    secrets.extend(
+        wamn_control_provision::WorkloadRoleFamily::project_env_families()
+            .filter(|family| {
+                *family != wamn_control_provision::WorkloadRoleFamily::SessionRoleReader
+            })
+            .map(|family| {
+                wamn_control_provision::workload_secret_name(
+                    family,
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                )
+            }),
+    );
+    for (_, mut object) in credential_access(&account, &secrets[0]) {
+        if object["kind"] == "Role" {
+            object["rules"][0]["resourceNames"] = serde_json::to_value(&secrets)?;
         }
         kubectl(
             platform,
-            namespace,
-            &["create", "-f", "-"],
+            &document.org,
+            &["apply", "-f", "-"],
             Some(&serde_json::to_vec(&object)?),
         )
         .await?;
@@ -1400,95 +1312,6 @@ mod tests {
             );
         }
         Ok(())
-    }
-
-    #[test]
-    fn apply_writes_the_registry_reader_secret_of_the_cdc_reader() {
-        assert!(
-            HOST_CREDENTIALS.iter().any(|credential| {
-                credential.family == WorkloadRoleFamily::RegistryReader
-                    && credential.database == CredentialDatabase::Control
-            }),
-            "the registry reader addresses the control database, not the project database"
-        );
-    }
-
-    #[test]
-    fn apply_prepares_a_secret_for_every_credential() {
-        let platform = Platform {
-            system_database_url: "postgresql://control".into(),
-            target: wamn_release_control::release_chart::Target {
-                kubeconfig: PathBuf::new(),
-                context: String::new(),
-                namespace: "hosts".into(),
-            },
-            chart: PathBuf::new(),
-            release_artifact_base: String::new(),
-            registry_token_metadata: false,
-            registry_auth_file: PathBuf::new(),
-            oci_ca_paths: Vec::new(),
-            insecure_registry: false,
-            component_artifact_base: None,
-            package_artifact_base: None,
-            database_namespace: "databases".into(),
-            database_host: Some("database".into()),
-            database_port: 5432,
-            host_group: None,
-            pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
-            events: None,
-            auth_nats: None,
-        };
-        let document: EnvironmentDocument = serde_json::from_value(serde_json::json!({
-            "org": "example", "project": "fixture", "env": "dev",
-            "target": "test",
-            "policy": "default",
-            "applications": {}}))
-        .unwrap();
-        let private = PrivateDirectory::create().unwrap();
-        let group = super::super::write::host_group(None, "example", "fixture", "dev").unwrap();
-        for credential in HOST_CREDENTIALS {
-            let request = credential_request(
-                credential,
-                &platform,
-                &document,
-                &private,
-                "cluster",
-                "postgresql://project",
-            );
-            assert_eq!(request.cluster_namespace, platform.database_namespace);
-            assert_eq!(request.namespace, platform.target.namespace);
-            assert_eq!(request.db_host, platform.database_host);
-            assert_eq!(request.action.family, credential.family);
-            assert_eq!(request.action.verb, WorkloadActionVerb::Prepare);
-            assert_eq!(request.action.generation, CredentialGeneration::A);
-            assert_eq!(request.secret, Some(private.path(credential.file_name)));
-            assert_eq!(
-                request.system_database_url.as_deref(),
-                Some("postgresql://control")
-            );
-            assert_eq!(
-                request.target_admin_database_url.as_deref(),
-                (credential.database == CredentialDatabase::Project)
-                    .then_some("postgresql://project")
-            );
-            if let Some(variable) = credential.host_variable {
-                let reference = group["env"]
-                    .as_sequence()
-                    .unwrap()
-                    .iter()
-                    .find(|entry| entry["name"] == variable)
-                    .unwrap();
-                assert_eq!(
-                    reference["valueFrom"]["secretKeyRef"]["name"],
-                    wamn_control_provision::workload_secret_name(
-                        request.action.family,
-                        "example",
-                        "fixture",
-                        "dev"
-                    )
-                );
-            }
-        }
     }
 }
 

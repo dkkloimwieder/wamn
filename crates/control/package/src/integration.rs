@@ -1,5 +1,6 @@
 //! Build and publish digest-addressed wasm integration artifacts.
 
+use sqlx::Connection as _;
 pub(super) mod plan;
 use plan::require_code;
 
@@ -252,22 +253,22 @@ pub async fn publish(
         &pulled,
         &built.code,
     )?;
-    let mut system = crate::database::connect(database_url).await?;
-    let tx = system.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
-    tx.query_one(
-        wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH,
-        &[
-            &built.code,
-            &publication.version,
-            &built.digest,
-            &publication.parameter_schema.to_string(),
-            &publication.operations,
-            &exports,
-            &publication.write_interfaces,
-        ],
-    )
-    .await?;
+    let mut system = wamn_postgres::connect(database_url).await?;
+    let mut tx = system.begin().await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
+    sqlx::query(wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH)
+        .bind(&built.code)
+        .bind(publication.version)
+        .bind(&built.digest)
+        .bind(publication.parameter_schema.to_string())
+        .bind(&publication.operations)
+        .bind(&exports)
+        .bind(&publication.write_interfaces)
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }

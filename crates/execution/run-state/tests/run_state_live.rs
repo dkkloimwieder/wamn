@@ -6,8 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
-    workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql, workload_login,
 };
 use wamn_run_state::queue::{
     advance_lease_attempts_sql, clear_pre_effect_state_sql, grant_production_lease_sql,
@@ -123,28 +122,25 @@ fn run_state_live() {
     let database = success(&url, "SELECT current_database();")
         .trim()
         .to_string();
-    let app_login = workload_generation_role(
+    let app_login = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t1",
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("derive the transitions App generation");
-    let app_generation = provision_sql::prepare_workload_generation_sql(
+    let app_generation = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &app_login,
         "transitions-app-test-password",
-        "2099-01-01T00:00:00Z",
     );
-    let executor_generation = provision_sql::prepare_workload_generation_sql(
+    let executor_generation = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
         EXECUTOR_LOGIN,
         "transitions-test-password",
-        "2099-01-01T00:00:00Z",
     );
     success(
         &url,

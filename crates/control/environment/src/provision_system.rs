@@ -4,37 +4,18 @@
 //! The database and its owner role `wamn_system` exist before this runs. On
 //! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
-//! `wamn_system`, closes the PUBLIC minimums, creates the login
-//! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
+//! `wamn_system`, closes the PUBLIC minimums, creates `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. A complete installation needs no replay.
 //! Partial initialization requires explicit repair. Interrupted migrations resume
 //! through `wamn platform schema apply --target system --chart <prepared-chart>`.
 //!
-//! With the emit flags, the verb installs nothing. It writes the Secret
-//! manifest of `wamn_provisioner` and the role statement that sets its
-//! password, see [`emit_provisioner_credential`].
-
-pub(super) mod plan;
-use plan::scram_sha256_verifier;
-
-use std::fmt;
-use std::io;
-use std::num::NonZeroU32;
-use std::path::PathBuf;
 use std::time::Duration;
+use std::{fmt, io};
 
-use anyhow::{Context as _, ensure};
-use base64::engine::general_purpose::STANDARD;
-use ring::rand::{SecureRandom as _, SystemRandom};
-use ring::{digest, hmac, pbkdf2};
-use serde_json::json;
-use tokio_postgres::{Client, Connection, GenericClient, NoTls, Socket, tls::NoTlsStream};
-use url::Url;
-use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statement_sql};
+use anyhow::Context as _;
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 
-use crate::provision_project_env::{
-    ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
-};
 use wamn_control_provision::schema_migrations::MigrationDatabase;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
 use wamn_schema_control::MigrationSource;
@@ -52,10 +33,10 @@ pub struct ProvisionSystemRequest {
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
     validate_platform_domain(&request.platform_domain)
         .context("make sure of the platform domain")?;
-    let (mut client, connection) = connect_system_database(&request.system_database_url)
+    let mut client = connect_system_database(&request.system_database_url)
         .await
         .context("connect to the system database")?;
-    let connection = tokio::spawn(connection);
+
     let result = async {
         initialize_system(
             &mut client,
@@ -67,7 +48,6 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     }
     .await;
     drop(client);
-    let _ = connection.await;
     result
 }
 
@@ -76,15 +56,12 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
 const CONNECT_RETRIES: u32 = 30;
 const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(1);
 
-async fn connect_system_database(
-    url: &str,
-) -> anyhow::Result<(Client, Connection<Socket, NoTlsStream>)> {
+async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
     let mut retries = 0;
     loop {
-        match tokio_postgres::connect(url, NoTls).await {
+        match wamn_postgres::connect(url).await {
             Ok(connection) => return Ok(connection),
             Err(error) => {
-                let error = anyhow::Error::new(error);
                 let refused = error.chain().any(|cause| {
                     cause
                         .downcast_ref::<io::Error>()
@@ -102,15 +79,62 @@ async fn connect_system_database(
 
 /// Record the deployment domain with the provisioning actor.
 pub async fn set_platform_domain(client: &mut Client, domain: &str) -> anyhow::Result<()> {
-    let transaction = crate::provision_project_env::provisioning_transaction(client).await?;
-    transaction
-        .execute(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN,
-            &[&domain],
-        )
+    let mut transaction = crate::provision_project_env::provisioning_transaction(client).await?;
+    sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN)
+        .bind(domain)
+        .execute(&mut *transaction)
         .await
+        .map(|result| result.rows_affected())
         .context("record the platform domain")?;
     transaction.commit().await?;
+    Ok(())
+}
+
+/// Reconcile the apply login after the SQL schema installer completes.
+pub async fn provision_apply(input: &str) -> anyhow::Result<()> {
+    let mut connection = wamn_postgres::connect(input).await?;
+    let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+    let options = wamn_postgres::connect_options(input).await?;
+    let cluster = options
+        .get_host()
+        .split('.')
+        .next()
+        .context("database host is absent")?
+        .trim_end_matches("-rw");
+    let kubeconfig = std::env::var_os("KUBECONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let role = wamn_control_provision::connection::managed_role(
+        "wamn_apply".into(),
+        "wamn_db_owner",
+        "wamn-apply".into(),
+    );
+    crate::provision_project_env::workload::reconcile(
+        &kubeconfig,
+        "",
+        &api.namespace,
+        cluster,
+        &role,
+    )
+    .await?;
+    crate::provision_project_env::workload::wait_role(&mut connection, &role.name).await?;
+    sqlx::raw_sql(wamn_control_provision::apply::ensure_apply_role_sql())
+        .execute(&mut connection)
+        .await?;
+    sqlx::raw_sql(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .execute(&mut connection)
+        .await?;
+    let config = crate::provision_project_env::workload::configuration(
+        &api.namespace,
+        cluster,
+        options.get_host().into(),
+        options.get_port(),
+        "wamn_system".into(),
+        role.name,
+        role.password_secret.name,
+    );
+    let value = serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"wamn-apply","namespace":api.namespace},"data":{"apply.json":config.to_json()?}});
+    wamn_kubernetes::kubectl::apply(&kubeconfig, "", &api.namespace, &value).await?;
     Ok(())
 }
 
@@ -142,39 +166,34 @@ impl fmt::Display for SystemState {
 }
 
 /// Read the completion record without changing schemas, grants, or data.
-pub async fn system_state(client: &(impl GenericClient + Sync)) -> anyhow::Result<SystemState> {
+pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<SystemState> {
     // Development resets retain the shared history schema. It does not identify
     // a control-store installation on its own.
-    let present: bool = client
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN \
+    let present: bool = sqlx::query(
+        "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN \
          ('registry', 'provisioning', 'identity', 'catalog', 'wamn_run', 'wamn_authority'))",
-            &[],
-        )
-        .await
-        .context("look for control-store schemas")?
-        .get(0);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .context("look for control-store schemas")?
+    .get(0);
     if !present {
         return Ok(SystemState::Absent);
     }
-    let baseline: bool = client
-        .query_one(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2,
-            &[],
-        )
-        .await
-        .context("look for the system baseline table")?
-        .get(0);
+    let baseline: bool =
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2)
+            .fetch_one(&mut *client)
+            .await
+            .context("look for the system baseline table")?
+            .get(0);
     if !baseline {
         return Ok(SystemState::Incomplete);
     }
-    let Some(row) = client
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE,
-            &[],
-        )
-        .await
-        .context("read the system schema baseline")?
+    let Some(row) =
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE)
+            .fetch_optional(&mut *client)
+            .await
+            .context("read the system schema baseline")?
     else {
         return Ok(SystemState::Incomplete);
     };
@@ -197,7 +216,10 @@ pub async fn initialize_system(
     sources: &[MigrationSource],
 ) -> anyhow::Result<()> {
     if install_control_store(admin).await? {
-        admin.batch_execute("SET ROLE wamn_system").await?;
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut *admin)
+            .await
+            .map(drop)?;
         let result = crate::platform_migrations::apply_reported(
             admin,
             crate::platform_migrations::MigrationTarget::System,
@@ -205,7 +227,10 @@ pub async fn initialize_system(
             None,
         )
         .await;
-        let reset = admin.batch_execute("RESET ROLE").await;
+        let reset = sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *admin)
+            .await
+            .map(drop);
         result?;
         reset?;
     }
@@ -213,80 +238,87 @@ pub async fn initialize_system(
 }
 
 /// Install the control store and baseline atomically. Return true only for a new installation.
-pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
-    admin
-        .batch_execute("BEGIN")
+pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *admin)
         .await
+        .map(drop)
         .context("begin system initialization")?;
     let result = async {
-        admin
-            .batch_execute("SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))")
+        sqlx::raw_sql("SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))")
+            .execute(&mut *admin)
             .await
+            .map(drop)
             .context("lock system initialization")?;
         match system_state(admin).await? {
             SystemState::Absent => {}
             SystemState::Complete => {
-                admin
-                    .batch_execute("COMMIT")
+                sqlx::raw_sql("COMMIT")
+                    .execute(&mut *admin)
                     .await
+                    .map(drop)
                     .context("finish system initialization read")?;
                 return Ok(false);
             }
             state => anyhow::bail!("{state}"),
         }
 
-        admin
-            .batch_execute(sql::ensure_db_owner_role_sql())
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (sql::ensure_db_owner_role_sql()).to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .context("ensure the database-owner role that the record history grants name")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+                                            current_database()); END $$;")
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .context("give wamn_system the system database")?;
+        sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+            .execute(&mut *admin)
             .await
-            .context("ensure the database-owner role that the record history grants name")?;
-        admin
-            .batch_execute(
-                "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-                                            current_database()); END $$;",
-            )
-            .await
-            .context("give wamn_system the system database")?;
-        admin
-            .batch_execute("SET LOCAL ROLE wamn_system")
-            .await
+            .map(drop)
             .context("assume the control owner")?;
         for stage in CONTROL_BOOTSTRAP_SQL {
-            admin
-                .batch_execute(stage)
+            sqlx::raw_sql(sqlx::AssertSqlSafe((stage).to_string()))
+                .execute(&mut *admin)
                 .await
+                .map(drop)
                 .context("install the control store")?;
         }
         wamn_package_control::schema_baseline::record_system(admin)
             .await
             .context("record the system schema baseline")?;
-        admin
-            .batch_execute("RESET ROLE")
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *admin)
             .await
+            .map(drop)
             .context("release the control owner before cluster ACL convergence")?;
-        admin
-            .batch_execute(sql::revoke_public_connect_base_grants_sql())
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (sql::revoke_public_connect_base_grants_sql()).to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .context("converge the cluster PUBLIC CONNECT base grants")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("DO $$ BEGIN EXECUTE format(\
+                   'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;")
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .context("converge the system database PUBLIC TEMPORARY base grants")?;
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut *admin)
             .await
-            .context("converge the cluster PUBLIC CONNECT base grants")?;
-        admin
-            .batch_execute(
-                "DO $$ BEGIN EXECUTE format(\
-                   'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
-            )
-            .await
-            .context("converge the system database PUBLIC TEMPORARY base grants")?;
-        admin
-            .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
-            .await
-            .context("create the provisioning worker's login")?;
-        admin
-            .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
-            .await?;
-        admin
-            .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
-            .await?;
-        admin
-            .batch_execute("COMMIT")
-            .await
+            .map(drop)
             .context("commit system initialization")?;
         Ok(true)
     }
@@ -294,129 +326,14 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
     match result {
         Ok(initialized) => Ok(initialized),
         Err(error) => {
-            admin
-                .batch_execute("ROLLBACK")
+            sqlx::raw_sql("ROLLBACK")
+                .execute(&mut *admin)
                 .await
+                .map(drop)
                 .with_context(|| format!("roll back system initialization after {error:#}"))?;
             Err(error)
         }
     }
-}
-
-/// Write the restricted apply credential after system provisioning.
-pub async fn emit_apply_credential(
-    system_url: &str,
-    host: &str,
-    port: u16,
-    path: &std::path::Path,
-) -> anyhow::Result<()> {
-    ensure_secret_path(path, "--emit-apply-secret")?;
-    let mut bytes = [0u8; 32];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| anyhow::anyhow!("generate apply credential"))?;
-    let password = hex::encode(bytes);
-    let (admin, connection) = tokio_postgres::connect(system_url, NoTls).await?;
-    let task = tokio::spawn(connection);
-    admin
-        .batch_execute(&wamn_control_provision::apply::apply_password_sql(
-            &password,
-        ))
-        .await?;
-    let mut url = Url::parse(system_url)?;
-    url.set_username(wamn_control_provision::apply::APPLY_ROLE)
-        .map_err(|()| anyhow::anyhow!("encode apply user"))?;
-    url.set_password(Some(&password))
-        .map_err(|()| anyhow::anyhow!("encode apply password"))?;
-    url.set_host(Some(host))?;
-    url.set_port(Some(port))
-        .map_err(|()| anyhow::anyhow!("encode apply port"))?;
-    let secret =
-        wamn_control_provision::render_control_administration_secret_manifest("apply", "platform");
-    let mut secret = secret;
-    secret["metadata"]["name"] = "wamn-apply".into();
-    secret["metadata"]["labels"] = json!({"app.kubernetes.io/name": "wamn-apply"});
-    secret["stringData"] = json!({"url": url.as_str()});
-    write_secret_json(path, &secret)?;
-    drop(admin);
-    task.await??;
-    Ok(())
-}
-
-/// Inputs of one `provision-system` run with the emit flags.
-pub struct EmitProvisionerRequest {
-    /// Superuser URL of the system database. The run reads only its database
-    /// name and opens no connection.
-    pub system_database_url: String,
-    /// Where the Secret manifest `wamn-provisioner` goes, mode 0600.
-    pub emit_secret: PathBuf,
-    /// Where the role statement goes.
-    pub emit_provisioner_sql: PathBuf,
-    /// Host the URL in the Secret names.
-    pub db_host: String,
-    /// Port the URL in the Secret names.
-    pub db_port: u16,
-}
-
-impl fmt::Debug for EmitProvisionerRequest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmitProvisionerRequest")
-            .field("system_database_url", &"[REDACTED]")
-            .field("emit_secret", &self.emit_secret)
-            .field("emit_provisioner_sql", &self.emit_provisioner_sql)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Generate the password of `wamn_provisioner` and write the two outputs of
-/// one run: the Secret manifest `wamn-provisioner` in `platform`, which holds
-/// the password, and the role statement, which holds only its SCRAM-SHA-256
-/// verifier. The operator applies the Secret with `kubectl apply` and the
-/// statement as superuser (owner rulings of 2026-10-02 on `wamn-zua8.3`).
-pub fn emit_provisioner_credential(request: &EmitProvisionerRequest) -> anyhow::Result<()> {
-    ensure_secret_path(&request.emit_secret, "--emit-secret")?;
-    ensure_distinct_secret_paths([
-        ("--emit-secret", Some(request.emit_secret.as_path())),
-        (
-            "--emit-provisioner-sql",
-            Some(request.emit_provisioner_sql.as_path()),
-        ),
-    ])?;
-    let mut url = Url::parse(&request.system_database_url)
-        .map_err(|_| anyhow::anyhow!("the system database URL cannot be parsed"))?;
-    ensure!(
-        url.path().len() > 1,
-        "the system database URL names no database"
-    );
-    let rng = SystemRandom::new();
-    let mut random = [0_u8; 32];
-    rng.fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
-    let password = hex::encode(random);
-    let mut salt = [0_u8; 16];
-    rng.fill(&mut salt)
-        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
-    url.set_username(PROVISIONER_ROLE)
-        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner user"))?;
-    url.set_password(Some(&password))
-        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner password"))?;
-    url.set_host(Some(&request.db_host))
-        .context("cannot encode the provisioner host")?;
-    url.set_port(Some(request.db_port))
-        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner port"))?;
-    url.set_query(None);
-    url.set_fragment(None);
-    let document = json!({
-        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-        "metadata": {"name": "wamn-provisioner", "namespace": "platform",
-            "labels": {"app.kubernetes.io/name": "wamn-provisioner", "app.kubernetes.io/managed-by": "wamn"}},
-        "stringData": {"url": url.as_str()}
-    });
-    write_secret_json(&request.emit_secret, &document)?;
-    let statement = provisioner_statement_sql(&scram_sha256_verifier(&password, &salt));
-    std::fs::write(&request.emit_provisioner_sql, statement)
-        .with_context(|| format!("write {}", request.emit_provisioner_sql.display()))
 }
 
 #[cfg(test)]
@@ -430,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn initial_connect_retries_only_connection_refusal() -> anyhow::Result<()> {
         let database = wamn_test_postgres::database();
-        let mut url = Url::parse(database.url())?;
+        let mut url = url::Url::parse(database.url())?;
         let upstream = (url.host_str().unwrap().to_owned(), url.port().unwrap());
         let reserved = TcpListener::bind("127.0.0.1:0").await?;
         let address = reserved.local_addr()?;
@@ -439,7 +356,7 @@ mod tests {
 
         let attempts = Arc::new(AtomicUsize::new(0));
         let mut proxy = JoinSet::new();
-        let (client, connection) = {
+        let mut client = {
             let connecting = connect_system_database(url.as_str());
             tokio::pin!(connecting);
             tokio::select! {
@@ -466,11 +383,12 @@ mod tests {
             });
             connecting.await?
         };
-        let connection = tokio::spawn(connection);
-        let row = client.query_one("SELECT current_database()", &[]).await?;
-        assert_eq!(row.get::<_, String>(0), database.name());
+
+        let row = sqlx::query("SELECT current_database()")
+            .fetch_one(&mut client)
+            .await?;
+        assert_eq!(row.get::<String, _>(0), database.name());
         drop(client);
-        connection.await??;
 
         // PostgreSQL accepts the TCP connection but refuses an absent database.
         url.set_path(&format!("/{}_absent", database.name()));
@@ -479,10 +397,12 @@ mod tests {
         };
         assert_eq!(
             error
-                .downcast_ref::<tokio_postgres::Error>()
+                .downcast_ref::<sqlx::Error>()
                 .unwrap()
-                .code(),
-            Some(&tokio_postgres::error::SqlState::INVALID_CATALOG_NAME)
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("3D000")
         );
         assert_eq!(
             attempts.load(Ordering::Relaxed),

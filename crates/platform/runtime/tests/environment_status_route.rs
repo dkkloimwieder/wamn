@@ -8,14 +8,14 @@
 //! This test starts its own PostgreSQL 18 server.
 #![cfg(feature = "test-util")]
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use tokio_postgres::{Client, NoTls};
+
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
@@ -33,8 +33,8 @@ const PASSWORD: &str = "environment-status-test-only";
 const ACTOR: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { connection.await.expect("fixture database connection") });
+    let mut client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -96,41 +96,47 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("environment_status")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(
-            "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
              \
-             CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
-        )
-        .await?;
-    admin
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
-        .await?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+             CREATE SCHEMA wamn_run AUTHORIZATION postgres;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &database,
             &generation,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
@@ -159,28 +165,28 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
 
     // No row means active, and an anonymous route admits no caller.
     assert_eq!(admitted(&route).await, Ok(false));
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:environment-status-fixture', false)",
-            &[&ACTOR],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO platform.environment (status) VALUES ('inactive')",
-            &[],
-        )
-        .await?;
+    )
+    .bind(&ACTOR)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.environment (status) VALUES ('inactive')")
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     // This host watches no auth bucket, so it keeps no answer and reads the
     // row on every request (wamn-f2qud).
     assert_eq!(
         admitted(&route).await,
         Err((503, "environment-inactive".to_owned()))
     );
-    admin
-        .execute("UPDATE platform.environment SET status = 'active'", &[])
-        .await?;
+    sqlx::query("UPDATE platform.environment SET status = 'active'")
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         admitted(&route).await,
         Ok(false),

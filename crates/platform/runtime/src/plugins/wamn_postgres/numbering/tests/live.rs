@@ -8,6 +8,7 @@
 //! `wamn_app`. Each test holds the process lock, because both generations are
 //! cluster-wide roles.
 
+use sqlx::Row as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::super::{
@@ -18,10 +19,7 @@ use crate::plugins::wamn_postgres::session_identity::tests::{LIVE_PRINCIPAL, liv
 use crate::plugins::wamn_postgres::{
     ClassCredentials, PgError, SessionIdentity, StatementError, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
-    workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 const PROJECT_ENV_KEY: &str = "test--dev--numbering";
 const APPLICATION: &str = "receiving";
@@ -51,19 +49,17 @@ enum Finish {
 
 struct Live {
     database: wamn_test_postgres::Database,
-    administration: tokio_postgres::Client,
+    administration: sqlx::PgConnection,
     plugin: WamnPostgres,
     scopes: AtomicU32,
     _lock: wamn_test_postgres::ProcessLock,
 }
 
-async fn connect(url: &str) -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+async fn connect(url: &str) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the test database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -74,7 +70,7 @@ impl Live {
         database
             .execute(&["CREATE SCHEMA wamn_run;"])
             .expect("create the run-plane schema that administration revokes in");
-        let generation = workload_generation_role(
+        let generation = workload_login(
             WorkloadRoleFamily::Administration,
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: "org",
@@ -82,16 +78,14 @@ impl Live {
                 environment: "dev",
                 database: database.name(),
             },
-            CredentialGeneration::A,
         )
         .expect("the administration family takes a project-environment identity");
         database
-            .execute(&[&provision_sql::prepare_workload_generation_sql(
+            .execute(&[&wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::Administration,
                 database.name(),
                 &generation,
                 ADMINISTRATION_PASSWORD,
-                "2100-01-01T00:00:00Z",
             )])
             .expect("mint the administration generation");
         let mut url = url::Url::parse(database.url()).expect("parse the test url");
@@ -99,7 +93,7 @@ impl Live {
         url.set_password(Some(ADMINISTRATION_PASSWORD))
             .expect("set the password");
         let administration = connect(url.as_str()).await;
-        let live = Self {
+        let mut live = Self {
             plugin: WamnPostgres::new(WamnPostgresConfig {
                 credentials: Some(ClassCredentials::every_class(
                     live_guest_url(database.url(), PROJECT_ENV_KEY).await,
@@ -126,19 +120,23 @@ impl Live {
 
     /// Write platform rows as the administration generation, in one
     /// transaction that binds a caller and an operation.
-    async fn administer(&self, statements: &str) {
-        self.administration
-            .batch_execute(&format!(
+    async fn administer(&mut self, statements: &str) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "BEGIN; \
                  SELECT pg_catalog.set_config('app.user_id', '{LIVE_PRINCIPAL}', true), \
                         pg_catalog.set_config('app.operation', 'admin:numbering', true); \
                  {statements} COMMIT;"
             ))
-            .await
-            .expect("the administration generation writes the platform rows");
+                .to_string(),
+        ))
+        .execute(&mut self.administration)
+        .await
+        .map(drop)
+        .expect("the administration generation writes the platform rows");
     }
 
-    async fn sequence(&self, application: &str, name: &str, pattern: &str) {
+    async fn sequence(&mut self, application: &str, name: &str, pattern: &str) {
         self.administer(&format!(
             "INSERT INTO platform.number_sequence (application, name, pattern) \
              VALUES ('{application}', '{name}', '{pattern}');"
@@ -172,13 +170,13 @@ impl Live {
         if finish == Finish::Outside {
             return render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         }
-        let transaction = self
+        let mut transaction = self
             .plugin
             .begin_operation_transaction(&scope)
             .await
             .expect("the operation transaction begins");
         self.plugin
-            .bind_operation_transaction(&scope, &transaction)
+            .bind_operation_transaction(&scope, &mut transaction)
             .expect("the transaction binds");
         let result = render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         self.plugin.revoke_operation_transaction(&scope);
@@ -216,7 +214,7 @@ fn sqlstate(error: &StatementError) -> &str {
 /// repeated, and peek reads the last one.
 #[tokio::test]
 async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
     assert_eq!(
@@ -238,7 +236,7 @@ async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates() {
 /// A number fetched in a transaction that rolls back is never consumed.
 #[tokio::test]
 async fn live_a_rollback_gives_the_number_back() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-0001");
@@ -264,7 +262,7 @@ async fn live_a_rollback_gives_the_number_back() {
 /// on their own. A null key field is refused.
 #[tokio::test]
 async fn live_reset_starts_at_one_per_key() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(
         APPLICATION,
         "purchase_order",
@@ -299,7 +297,7 @@ async fn live_reset_starts_at_one_per_key() {
 /// `reset=` lines count 1 to N. A second batch takes the next number.
 #[tokio::test]
 async fn live_per_assigns_once_per_key_under_concurrency() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(
         APPLICATION,
         "pick_label",
@@ -335,7 +333,7 @@ async fn live_per_assigns_once_per_key_under_concurrency() {
 /// name is not read, and a key given twice is refused.
 #[tokio::test]
 async fn live_a_caller_numbers_with_no_record_and_with_a_key_map() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "label", "L-{seq:n}").await;
     live.sequence(
         APPLICATION,
@@ -379,7 +377,7 @@ async fn live_a_caller_numbers_with_no_record_and_with_a_key_map() {
 /// takes it.
 #[tokio::test]
 async fn live_a_rolled_back_per_assignment_is_not_consumed() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "batch", "B{seq:batch,per=batch_id}")
         .await;
     let rolled_back = live
@@ -402,7 +400,7 @@ async fn live_a_rolled_back_per_assignment_is_not_consumed() {
 /// renders.
 #[tokio::test]
 async fn live_a_sequence_of_another_application_is_refused() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
@@ -431,7 +429,7 @@ async fn live_a_sequence_of_another_application_is_refused() {
 /// application's (wamn-9e4ks).
 #[tokio::test]
 async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
@@ -449,22 +447,23 @@ async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
         )
         .await
         .expect("the identity bind");
-    let transaction = live
+    let mut transaction = live
         .plugin
         .begin_operation_transaction(scope)
         .await
         .expect("the operation transaction begins");
     live.plugin
-        .bind_operation_transaction(scope, &transaction)
+        .bind_operation_transaction(scope, &mut transaction)
         .expect("the transaction binds");
     transaction
-        .with_host_connection(|connection| async move {
-            let result = connection
-                .connection()
-                .batch_execute(&format!(
-                    "SELECT set_config('app.application', '{OTHER_APPLICATION}', true)"
-                ))
-                .await;
+        .with_host_connection(|mut connection| async move {
+            let result = sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&format!("SELECT set_config('app.application', '{OTHER_APPLICATION}', true)"))
+                    .to_string(),
+            ))
+            .execute(&mut *connection.connection())
+            .await
+            .map(drop);
             (connection, result)
         })
         .await
@@ -492,7 +491,7 @@ async fn live_a_rewritten_application_identity_reaches_no_other_sequence() {
 /// nothing: both calls are refused and no counter moves.
 #[tokio::test]
 async fn live_a_call_with_no_application_in_host_state_is_refused() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     let scope = "numbering-no-application";
@@ -507,13 +506,13 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
         )
         .await
         .expect("the identity bind");
-    let transaction = live
+    let mut transaction = live
         .plugin
         .begin_operation_transaction(scope)
         .await
         .expect("the operation transaction begins");
     live.plugin
-        .bind_operation_transaction(scope, &transaction)
+        .bind_operation_transaction(scope, &mut transaction)
         .expect("the transaction binds");
     for call in [NumberCall::Next, NumberCall::Peek] {
         let refused = render_number(
@@ -542,7 +541,7 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
 /// counter moves.
 #[tokio::test]
 async fn live_a_call_outside_an_operation_transaction_is_refused() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
@@ -568,7 +567,7 @@ async fn live_a_call_outside_an_operation_transaction_is_refused() {
 /// application, else in UTC, and `reset=date:` keys on it.
 #[tokio::test]
 async fn live_the_date_uses_the_application_timezone_else_utc() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     let pattern = "{date:YYYY}{date:MM}{date:DD}-{seq:n,reset=date:YYYY}";
     live.sequence(APPLICATION, "stamp", pattern).await;
     live.sequence(OTHER_APPLICATION, "stamp", pattern).await;
@@ -604,18 +603,17 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
 }
 
 /// Every counter row of the database, in key order.
-async fn counter_rows(client: &tokio_postgres::Client) -> Vec<(String, String, i64)> {
-    client
-        .query(
-            "SELECT counter, key_value, value FROM platform.number_counter \
+async fn counter_rows(client: &mut sqlx::PgConnection) -> Vec<(String, String, i64)> {
+    sqlx::query(
+        "SELECT counter, key_value, value FROM platform.number_counter \
              ORDER BY sequence_id, counter, key_value",
-            &[],
-        )
-        .await
-        .expect("read the counter rows")
-        .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect()
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read the counter rows")
+    .iter()
+    .map(|row| (row.get(0), row.get(1), row.get(2)))
+    .collect()
 }
 
 /// An empty or null key is refused before the first `bump_counter` or
@@ -624,17 +622,17 @@ async fn counter_rows(client: &tokio_postgres::Client) -> Vec<(String, String, i
 /// row unchanged.
 #[tokio::test]
 async fn live_a_refused_key_moves_no_counter() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(
         APPLICATION,
         "pick_label",
         "{seq:a}-{seq:b,per=batch_id}-{field:dock}{seq:c,reset=dock}",
     )
     .await;
-    let superuser = connect(live.database.url()).await;
+    let mut superuser = connect(live.database.url()).await;
     let good = &[("batch_id", Some("x")), ("dock", Some("D"))];
     assert_eq!(live.next("pick_label", good).await, "1-1-D1");
-    let before = counter_rows(&superuser).await;
+    let before = counter_rows(&mut superuser).await;
     for (keys, code) in [
         (&[("batch_id", Some("")), ("dock", Some("D"))], "22023"),
         (&[("batch_id", Some("y")), ("dock", Some(""))], "22023"),
@@ -652,7 +650,7 @@ async fn live_a_refused_key_moves_no_counter() {
             .await
             .unwrap_err();
         assert_eq!(sqlstate(&refused), code, "{keys:?}");
-        assert_eq!(counter_rows(&superuser).await, before, "{keys:?}");
+        assert_eq!(counter_rows(&mut superuser).await, before, "{keys:?}");
     }
     assert_eq!(live.next("pick_label", good).await, "2-1-D2");
 }
@@ -662,7 +660,7 @@ async fn live_a_refused_key_moves_no_counter() {
 /// operation transaction usable, and a pattern with no date still renders.
 #[tokio::test]
 async fn live_an_invalid_timezone_setting_is_refused() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     for (application, value) in [(APPLICATION, "\"Mars/Olympus\""), (OTHER_APPLICATION, "5")] {
         live.sequence(application, "stamp", "{date:YY}-{seq:n,reset=date:YY}")
             .await;
@@ -685,13 +683,13 @@ async fn live_an_invalid_timezone_setting_is_refused() {
             )
             .await
             .expect("the identity bind");
-        let transaction = live
+        let mut transaction = live
             .plugin
             .begin_operation_transaction(&scope)
             .await
             .expect("the operation transaction begins");
         live.plugin
-            .bind_operation_transaction(&scope, &transaction)
+            .bind_operation_transaction(&scope, &mut transaction)
             .expect("the transaction binds");
         let render = |name: &str| {
             render_number(
@@ -726,15 +724,17 @@ async fn live_an_invalid_timezone_setting_is_refused() {
 /// `reset=date:YY` key in such a pattern keys on the ISO year too.
 #[tokio::test]
 async fn live_a_week_pattern_renders_the_iso_year() {
-    let live = Live::new().await;
-    let superuser = connect(live.database.url()).await;
+    let mut live = Live::new().await;
+    let mut superuser = connect(live.database.url()).await;
     let boundary = DATE_SQL.replace(
         "transaction_timestamp()",
         "timestamptz '2027-01-01 12:00:00+00'",
     );
     for (iso_year, dates) in [(true, "2026|26|01|01|53|1"), (false, "2027|27|01|01|53|1")] {
-        let text: String = superuser
-            .query_one(&boundary, &[&"UTC", &iso_year])
+        let text: String = sqlx::query(sqlx::AssertSqlSafe((&boundary).to_string()))
+            .bind(&"UTC")
+            .bind(&iso_year)
+            .fetch_one(&mut superuser)
             .await
             .expect("render the boundary date")
             .get(0);
@@ -754,14 +754,12 @@ async fn live_a_week_pattern_renders_the_iso_year() {
         format!("{}-{:02}-1", iso.year(), iso.week()),
         "rendered at {now}"
     );
-    let key: String = superuser
-        .query_one(
-            "SELECT key_value FROM platform.number_counter WHERE counter = 'n'",
-            &[],
-        )
-        .await
-        .expect("the reset counter row")
-        .get(0);
+    let key: String =
+        sqlx::query("SELECT key_value FROM platform.number_counter WHERE counter = 'n'")
+            .fetch_one(&mut superuser)
+            .await
+            .expect("the reset counter row")
+            .get(0);
     assert_eq!(key, format!("{:02}", iso.year() % 100));
 }
 
@@ -772,17 +770,19 @@ const SET_OPERATION: &str = "wamn-control:number-counter/set@0.9.0";
 impl Live {
     /// A table of the application's records whose unique `number` holds
     /// rendered numbers, readable by `wamn_app`.
-    async fn records(&self) -> tokio_postgres::Client {
-        let superuser = connect(self.database.url()).await;
-        superuser
-            .batch_execute(
-                "CREATE SCHEMA numbered; \
+    async fn records(&self) -> sqlx::PgConnection {
+        let mut superuser = connect(self.database.url()).await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("CREATE SCHEMA numbered; \
                  CREATE TABLE numbered.purchase_order (id serial PRIMARY KEY, number text UNIQUE); \
                  GRANT USAGE ON SCHEMA numbered TO wamn_app; \
-                 GRANT SELECT ON numbered.purchase_order TO wamn_app;",
-            )
-            .await
-            .expect("create the records table");
+                 GRANT SELECT ON numbered.purchase_order TO wamn_app;")
+                .to_string(),
+        ))
+        .execute(&mut superuser)
+        .await
+        .map(drop)
+        .expect("create the records table");
         superuser
     }
 
@@ -832,17 +832,16 @@ impl Live {
 /// already carries is caught by the model's `UQ` on the insert.
 #[tokio::test]
 async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "PO-{seq:po,width=6}")
         .await;
-    let superuser = live.records().await;
-    let record = async |number: &str| {
-        superuser
-            .execute(
-                "INSERT INTO numbered.purchase_order (number) VALUES ($1)",
-                &[&number],
-            )
+    let mut superuser = live.records().await;
+    let mut record = async |number: &str| {
+        sqlx::query("INSERT INTO numbered.purchase_order (number) VALUES ($1)")
+            .bind(&number)
+            .execute(&mut superuser)
             .await
+            .map(|result| result.rows_affected())
     };
     for _ in 0..3 {
         let number = live.next("purchase_order", NO_KEYS).await;
@@ -868,8 +867,11 @@ async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number
         .await
         .expect_err("the model's UQ refuses the live number");
     assert_eq!(
-        collision.code(),
-        Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+        collision
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23505")
     );
     assert_eq!(
         live.refused("purchase_order", "po", "", 0).await,
@@ -893,7 +895,7 @@ async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number
 /// is allowed; a `per=` counter is refused, and no mapping row changes.
 #[tokio::test]
 async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(
         APPLICATION,
         "pick_label",
@@ -925,7 +927,7 @@ async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
 
 #[tokio::test]
 async fn live_set_errors_keep_the_request_and_source() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "broken", "{seq:").await;
     let error = live
         .set("bad-pattern", "broken", "n", "", 23)
@@ -972,7 +974,7 @@ async fn live_set_errors_keep_the_request_and_source() {
 /// the next number after both renders the set value.
 #[tokio::test]
 async fn live_set_counter_serializes_with_a_concurrent_next_number() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
@@ -1035,36 +1037,37 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
 /// row names the caller.
 #[tokio::test]
 async fn live_set_counter_is_logged_by_its_request_id() {
-    let live = Live::new().await;
+    let mut live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
-    let superuser = live.records().await;
-    superuser
-        .batch_execute(
-            "ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
+    let mut superuser = live.records().await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
              CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ \
              BEGIN RAISE EXCEPTION 'the known result must not need an update'; END $$; \
              CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log \
-             FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()",
-        )
-        .await
-        .unwrap();
+             FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()")
+            .to_string(),
+    ))
+    .execute(&mut superuser)
+    .await
+    .map(drop)
+    .unwrap();
     assert_eq!(
         live.set("logged", "purchase_order", "po", "", 10)
             .await
             .unwrap(),
         10
     );
-    let row = superuser
-        .query_one(
-            "SELECT result FROM platform.write_log \
+    let row = sqlx::query(
+        "SELECT result FROM platform.write_log \
              WHERE operation = 'wamn-control:number-counter/set' AND idempotency_key = 'logged'",
-            &[],
-        )
-        .await
-        .expect("the set has its write log row");
+    )
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the set has its write log row");
     assert_eq!(
-        row.get::<_, Option<String>>(0).as_deref(),
+        row.get::<Option<String>, _>(0).as_deref(),
         Some(r#"{"value":10}"#)
     );
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-10");
@@ -1083,21 +1086,19 @@ async fn live_set_counter_is_logged_by_its_request_id() {
             .refusal(),
         Some(&CounterSetRefusal::IdempotencyConflict)
     );
-    let updated_by: String = superuser
-        .query_one(
-            "SELECT updated_by::text FROM platform.number_counter WHERE counter = 'po'",
-            &[],
-        )
-        .await
-        .expect("the counter row")
-        .get(0);
+    let updated_by: String =
+        sqlx::query("SELECT updated_by::text FROM platform.number_counter WHERE counter = 'po'")
+            .fetch_one(&mut superuser)
+            .await
+            .expect("the counter row")
+            .get(0);
     assert_eq!(updated_by, LIVE_PRINCIPAL);
     assert_eq!(
         live.refused("missing", "po", "", 5).await,
         CounterSetRefusal::SequenceNotFound
     );
-    let identity: i64 = superuser
-        .query_one("SELECT count(*) FROM platform.write_log", &[])
+    let identity: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
+        .fetch_one(&mut superuser)
         .await
         .unwrap()
         .get(0);

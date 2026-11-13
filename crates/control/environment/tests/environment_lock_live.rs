@@ -4,6 +4,7 @@
 //! another coordinate is not blocked, and closing the holder's connection
 //! releases the lock.
 
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -85,12 +86,8 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
     let database = wamn_test_postgres::database();
     let triple = Triple::new("acme", "prod", "wms");
     let mut tasks = JoinSet::new();
-    let (observer, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tasks.spawn(async move {
-        connection.await.unwrap();
-    });
+    let mut observer = wamn_postgres::connect(database.url()).await.unwrap();
+    tasks.spawn(async move {});
 
     for application in [None, Some("orders")] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -117,9 +114,8 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
             drop(server);
         });
         let held = acquire(proxy_url.as_str(), &triple, application).await;
-        let pid: i32 = held
-            .client()
-            .query_one("SELECT pg_backend_pid()", &[])
+        let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+            .fetch_one(&mut *held.client().await)
             .await
             .unwrap()
             .get(0);
@@ -128,10 +124,7 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
             .await
             .unwrap()
             .unwrap();
-        assert!(observer.query_one(
-            "SELECT EXISTS (SELECT FROM pg_locks WHERE pid = $1 AND locktype = 'advisory' AND granted)",
-            &[&pid],
-        ).await.unwrap().get::<_, bool>(0), "the abandoned server session still holds its lock");
+        assert!(sqlx::query("SELECT EXISTS (SELECT FROM pg_locks WHERE pid = $1 AND locktype = 'advisory' AND granted)").bind(&pid).fetch_one(&mut observer).await.unwrap().get::<bool, _>(0), "the abandoned server session still holds its lock");
 
         let recovered = timeout(
             Duration::from_secs(7),
@@ -141,14 +134,12 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
         .expect("an abandoned lock becomes available within the acquisition bound");
         recovered.release().await;
         assert!(
-            !observer
-                .query_one(
-                    "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid = $1)",
-                    &[&pid]
-                )
+            !sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid = $1)")
+                .bind(&pid)
+                .fetch_one(&mut observer)
                 .await
                 .unwrap()
-                .get::<_, bool>(0),
+                .get::<bool, _>(0),
             "PostgreSQL ends the abandoned session"
         );
     }

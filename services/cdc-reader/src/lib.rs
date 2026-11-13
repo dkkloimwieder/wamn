@@ -73,6 +73,7 @@
 //!   remain valid across renames because OIDs survive. Exclusions are counted;
 //!   an undeclared relation is a typed publication refusal.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -87,11 +88,10 @@ use pg_walstream::{
     CancellationToken, ColumnValue, EventStream, EventType, LogicalReplicationStream,
     ReplicationError, ReplicationStreamConfig, RetryConfig, RowData, StreamingMode,
 };
-use tokio_postgres::NoTls;
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_broker::events::{advisory_stream_config, source_stream_config, stream_config_matches};
-use wamn_control_provision::{SystemReader, parse_system_reader_url};
+use wamn_control_provision::{SystemReader, system_reader_login};
 #[cfg(test)]
 use wamn_event_wire::stream_subjects;
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_name, subject};
@@ -145,10 +145,6 @@ pub struct EventReaderArgs {
     /// The key of the client certificate.
     #[arg(long, env = "WAMN_NATS_TLS_KEY", requires_all = ["nats_tls_ca", "nats_tls_cert"])]
     pub nats_tls_key: Option<PathBuf>,
-
-    /// sslmode appended to both the walsender and the preflight connection.
-    #[arg(long, default_value = "disable")]
-    pub sslmode: String,
 
     /// Declared replicas for the provisioned event streams. A mismatch refuses activation.
     #[arg(long, default_value_t = 3)]
@@ -315,24 +311,6 @@ impl ReopenLadder {
     }
 }
 
-/// `<plain url>?sslmode=…&replication=database` — the walsender connection.
-/// The Secret's url is contractually plain (no query string); refuse anything
-/// else rather than guess how to merge.
-fn walsender_url(plain: &str, sslmode: &str) -> anyhow::Result<String> {
-    if plain.contains('?') {
-        bail!("the CDC url must be a plain libpq URL without a query string (R8b Secret contract)");
-    }
-    Ok(format!("{plain}?sslmode={sslmode}&replication=database"))
-}
-
-/// `<plain url>?sslmode=…` — the ordinary SQL connection for the preflight.
-fn preflight_url(plain: &str, sslmode: &str) -> anyhow::Result<String> {
-    if plain.contains('?') {
-        bail!("the CDC url must be a plain libpq URL without a query string (R8b Secret contract)");
-    }
-    Ok(format!("{plain}?sslmode={sslmode}"))
-}
-
 /// Resolve one WAL relation OID against the two closed package classifications:
 /// a publishable entity or an explicitly excluded internal relation.
 fn relation_classification_lookup_sql(schema: &str) -> String {
@@ -417,26 +395,24 @@ async fn resolve_relation_classification(
     schema: &str,
     relation_oid: u32,
 ) -> Result<RelationClassification, ReplicationError> {
-    let url = preflight_url(&args.cdc_url, &args.sslmode)
+    let url = Ok::<_, anyhow::Error>(args.cdc_url.clone())
         .map_err(|e| ReplicationError::Config(e.to_string()))?;
-    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+    let mut client = wamn_postgres::connect(&url)
         .await
         .map_err(|e| ReplicationError::TransientConnection(format!("relation-map connect: {e}")))?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    match client
-        .query_one(
-            relation_classification_lookup_sql(schema).as_str(),
-            &[&relation_oid],
-        )
-        .await
+
+    match sqlx::query(sqlx::AssertSqlSafe(
+        (relation_classification_lookup_sql(schema).as_str()).to_string(),
+    ))
+    .bind(sqlx::postgres::types::Oid(relation_oid))
+    .fetch_one(&mut client)
+    .await
     {
         Ok(row) => {
-            let entity_package = row.get::<_, Option<String>>("entity_package_id");
-            let entity_id = row.get::<_, Option<String>>("entity_id");
-            let excluded_package = row.get::<_, Option<String>>("excluded_package_id");
-            let excluded_relation = row.get::<_, Option<String>>("relation_id");
+            let entity_package = row.get::<Option<String>, _>("entity_package_id");
+            let entity_id = row.get::<Option<String>, _>("entity_id");
+            let excluded_package = row.get::<Option<String>, _>("excluded_package_id");
+            let excluded_relation = row.get::<Option<String>, _>("relation_id");
             match (
                 entity_package,
                 entity_id,
@@ -463,7 +439,13 @@ async fn resolve_relation_classification(
                 ))),
             }
         }
-        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) => {
+        Err(error)
+            if error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref()
+                == Some("42P01") =>
+        {
             Err(ReplicationError::Config(format!(
                 "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} has incomplete CDC relation maps; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
             )))
@@ -544,19 +526,20 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
     // own registry-reader generation before a socket is opened. The accepted
     // value is deliberately discarded — this call exists to fix the ORDER, so a
     // mis-targeted or over-wide Secret refuses here instead of connecting with it.
-    parse_system_reader_url(
+    let expected = system_reader_login(
         SystemReader::Registry,
-        &args.system_database_url,
         &args.org,
         &args.project,
         &args.env,
-    )?;
-    let client = connect_system(args).await?;
-    let row = client
-        .query_opt(
-            select_event_reader_sql(),
-            &[&args.org, &args.project, &args.env],
-        )
+        "wamn_system",
+    );
+    wamn_postgres::require_identity(&args.system_database_url, &expected, "wamn_system")?;
+    let mut client = connect_system(args).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe((select_event_reader_sql()).to_string()))
+        .bind(&args.org)
+        .bind(&args.project)
+        .bind(&args.env)
+        .fetch_optional(&mut client)
         .await
         .context("read registry.event_readers")?
         .with_context(|| {
@@ -574,13 +557,11 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
     })
 }
 
-async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, conn) = tokio_postgres::connect(&args.system_database_url, NoTls)
+async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<sqlx::PgConnection> {
+    let client = wamn_postgres::connect(&args.system_database_url)
         .await
         .context("connect to the system DB (--system-database-url)")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+
     Ok(client)
 }
 
@@ -632,16 +613,16 @@ struct CaptureGap {
 /// The newest `registry.capture_gap` row of this registration, when its
 /// `resync_at` is not set.
 async fn open_capture_gap(args: &EventReaderArgs) -> anyhow::Result<Option<CaptureGap>> {
-    let client = connect_system(args).await?;
-    let row = client
-        .query_opt(
-            select_capture_gap_sql(),
-            &[&args.org, &args.project, &args.env],
-        )
+    let mut client = connect_system(args).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe((select_capture_gap_sql()).to_string()))
+        .bind(&args.org)
+        .bind(&args.project)
+        .bind(&args.env)
+        .fetch_optional(&mut client)
         .await
         .context("read registry.capture_gap")?;
     Ok(row
-        .filter(|row| !row.get::<_, bool>(1))
+        .filter(|row| !row.get::<bool, _>(1))
         .map(|row| CaptureGap {
             slot: row.get(0),
             reason: "the newest capture gap waits for close-capture-gap".to_owned(),
@@ -733,20 +714,18 @@ async fn preflight(
     args: &EventReaderArgs,
     reg: &Registration,
 ) -> anyhow::Result<Option<CaptureGap>> {
-    let url = preflight_url(&args.cdc_url, &args.sslmode)?;
-    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+    let url = Ok::<_, anyhow::Error>(args.cdc_url.clone())?;
+    let mut client = wamn_postgres::connect(&url)
         .await
         .context("preflight: connect the CDC credential to the project-env DB")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    preflight_server_version(&client).await?;
+
+    preflight_server_version(&mut client).await?;
     let schema = reg
         .schema
         .as_deref()
         .context("require_registration refuses a registration with no schema")?;
-    preflight_publication(&client, &reg.publication, schema).await?;
-    preflight_slot(&client, &reg.slot).await
+    preflight_publication(&mut client, &reg.publication, schema).await?;
+    preflight_slot(&mut client, &reg.slot).await
 }
 
 /// The major version carried by a `server_version_num` setting.
@@ -756,9 +735,9 @@ fn postgres_major(version_num: i32) -> i32 {
 
 /// Refuse a server below [`POSTGRES_MAJOR_MINIMUM`]. The reader states its
 /// requirement at startup instead of failing later inside the walsender.
-async fn preflight_server_version(client: &tokio_postgres::Client) -> anyhow::Result<()> {
-    let row = client
-        .query_one("SELECT current_setting('server_version_num')::int4", &[])
+async fn preflight_server_version(client: &mut sqlx::PgConnection) -> anyhow::Result<()> {
+    let row = sqlx::query("SELECT current_setting('server_version_num')::int4")
+        .fetch_one(&mut *client)
         .await
         .context("preflight: read server_version_num")?;
     let version_num: i32 = row.get(0);
@@ -871,22 +850,22 @@ fn slot_drift(shape: &SlotShape) -> Vec<String> {
 /// registered schema set, no explicit tables, never `FOR ALL TABLES`, and the three
 /// row operations the event plane carries with TRUNCATE excluded.
 async fn preflight_publication(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     publication: &str,
     schema: &[String],
 ) -> anyhow::Result<()> {
-    let row = client
-        .query_opt(
-            "SELECT p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, \
+    let row = sqlx::query(
+        "SELECT p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, \
                     ARRAY(SELECT s.nspname::text FROM pg_publication_namespace n \
                             JOIN pg_namespace s ON s.oid = n.pnnspid \
                            WHERE n.pnpubid = p.oid ORDER BY 1), \
                     (SELECT count(*) FROM pg_publication_rel r WHERE r.prpubid = p.oid) \
              FROM pg_publication p WHERE p.pubname = $1",
-            &[&publication],
-        )
-        .await
-        .context("preflight: read pg_publication")?;
+    )
+    .bind(publication)
+    .fetch_optional(&mut *client)
+    .await
+    .context("preflight: read pg_publication")?;
     let Some(row) = row else {
         bail!(
             "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} does not exist — \
@@ -924,18 +903,18 @@ async fn preflight_publication(
 /// ordinary SQL connection, and log the resume position. Absent or invalidated
 /// ⇒ the v3 §11 incident. A different shape ⇒ a drift refusal.
 async fn preflight_slot(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     slot: &str,
 ) -> anyhow::Result<Option<CaptureGap>> {
-    let row = client
-        .query_opt(
-            "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text, \
+    let row = sqlx::query(
+        "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text, \
                     slot_type::text, plugin::text, temporary, two_phase, failover \
              FROM pg_replication_slots WHERE slot_name = $1",
-            &[&slot],
-        )
-        .await
-        .context("preflight: read pg_replication_slots")?;
+    )
+    .bind(slot)
+    .fetch_optional(&mut *client)
+    .await
+    .context("preflight: read pg_replication_slots")?;
     let Some(row) = row else {
         // The reader never creates slots: recover-capture-gap does.
         return Ok(Some(CaptureGap {
@@ -983,8 +962,8 @@ async fn open_session(
     reg: &Registration,
     token: CancellationToken,
 ) -> Result<EventStream, ReplicationError> {
-    let url = walsender_url(&args.cdc_url, &args.sslmode)
-        .map_err(|e| ReplicationError::Config(e.to_string()))?;
+    let url =
+        replication_url(&args.cdc_url).map_err(|e| ReplicationError::Config(e.to_string()))?;
     let cfg = ReplicationStreamConfig::new(
         reg.slot.clone(),
         reg.publication.clone(),
@@ -1071,9 +1050,32 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
 /// The service body, shutdown injected — the live acceptance test drives this directly
 /// (abort = the crash drill, shutdown = clean stop).
 pub async fn run_with_shutdown(
-    args: EventReaderArgs,
+    mut args: EventReaderArgs,
     shutdown: ReaderShutdown,
 ) -> anyhow::Result<()> {
+    use sqlx::ConnectOptions as _;
+    use std::io::Write as _;
+    let options = wamn_postgres::connect_options(&args.cdc_url).await?;
+    let mut input = options.to_url_lossy();
+    let ca = input
+        .query_pairs()
+        .find(|(name, _)| name == "sslrootcert")
+        .map(|(_, value)| value.into_owned());
+    let mut certificate = tempfile::NamedTempFile::new()?;
+    if let Some(ca) = ca.filter(|ca| ca.starts_with("-----BEGIN CERTIFICATE-----")) {
+        certificate.write_all(ca.as_bytes())?;
+        let pairs: Vec<_> = input
+            .query_pairs()
+            .filter(|(name, _)| name != "sslrootcert")
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
+        input
+            .query_pairs_mut()
+            .clear()
+            .extend_pairs(pairs)
+            .append_pair("sslrootcert", &certificate.path().to_string_lossy());
+    }
+    args.cdc_url = input.into();
     let token = shutdown.token;
     let nats_options = wamn_broker::nats::tls_options(
         async_nats::ConnectOptions::new(),
@@ -1398,24 +1400,25 @@ async fn drain(
                 // Hold the same shared environment exclusion as SQL Jobs until
                 // broker acknowledgments settle. Reset waits before purging.
                 let publication = async {
-                    let client = connect_system(args).await?;
-                    let held: bool = client
-                        .query_one(
-                            wamn_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL,
-                            &[&args.org, &args.project, &args.env],
-                        )
+                    let mut client = connect_system(args).await?;
+                    let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL)
+                        .bind(&args.org)
+                        .bind(&args.project)
+                        .bind(&args.env)
+                        .fetch_one(&mut client)
                         .await?
                         .get(0);
                     if !held {
                         return Ok::<_, anyhow::Error>(None);
                     }
-                    let row = client
-                        .query_one(
-                            select_event_reader_sql(),
-                            &[&args.org, &args.project, &args.env],
-                        )
-                        .await?;
-                    if !row.get::<_, bool>(5) || row.get::<_, String>(1) != expected_slot {
+                    let row =
+                        sqlx::query(sqlx::AssertSqlSafe((select_event_reader_sql()).to_string()))
+                            .bind(&args.org)
+                            .bind(&args.project)
+                            .bind(&args.env)
+                            .fetch_one(&mut client)
+                            .await?;
+                    if !row.get::<bool, _>(5) || row.get::<String, _>(1) != expected_slot {
                         return Ok(None);
                     }
                     Ok(Some(client))
@@ -1848,27 +1851,24 @@ fn confirmed_lsn_age_seconds(last_lsn_advance_ms: &AtomicI64) -> i64 {
 /// `slot_wal_lag_bytes`, and `confirmed_lsn_age_seconds` as stable fields.
 async fn poll_slot_once(
     cdc_url: &str,
-    sslmode: &str,
     slot: &str,
     warn_minimum: i64,
     last_lsn_advance_ms: &AtomicI64,
 ) -> anyhow::Result<()> {
-    let url = preflight_url(cdc_url, sslmode)?;
-    let (client, conn) = tokio_postgres::connect(&url, NoTls)
+    let url = Ok::<_, anyhow::Error>(cdc_url.to_owned())?;
+    let mut client = wamn_postgres::connect(&url)
         .await
         .context("slot-monitor connect")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let row = client
-        .query_opt(
-            "SELECT wal_status::text, safe_wal_size, \
+
+    let row = sqlx::query(
+        "SELECT wal_status::text, safe_wal_size, \
              (pg_current_wal_lsn() - restart_lsn)::bigint \
              FROM pg_replication_slots WHERE slot_name = $1",
-            &[&slot],
-        )
-        .await
-        .context("slot-monitor query")?;
+    )
+    .bind(slot)
+    .fetch_optional(&mut client)
+    .await
+    .context("slot-monitor query")?;
     let confirmed_lsn_age_seconds = confirmed_lsn_age_seconds(last_lsn_advance_ms);
     let Some(row) = row else {
         tracing::error!(
@@ -1931,19 +1931,12 @@ fn spawn_slot_monitor(
         return;
     }
     let cdc_url = args.cdc_url.clone();
-    let sslmode = args.sslmode.clone();
     let warn_minimum = args.slot_safe_wal_warn_bytes;
     let poll = Duration::from_secs(args.slot_poll_secs);
     tokio::spawn(async move {
         loop {
-            if let Err(e) = poll_slot_once(
-                &cdc_url,
-                &sslmode,
-                &slot,
-                warn_minimum,
-                &last_lsn_advance_ms,
-            )
-            .await
+            if let Err(e) =
+                poll_slot_once(&cdc_url, &slot, warn_minimum, &last_lsn_advance_ms).await
             {
                 tracing::warn!(
                     target: "wamn::event_reader",
@@ -2258,20 +2251,6 @@ mod tests {
         assert!(postgres_major(180_001) >= POSTGRES_MAJOR_MINIMUM);
     }
 
-    #[test]
-    fn walsender_url_appends_replication_database() {
-        assert_eq!(
-            walsender_url("postgres://u:p@h:5432/db", "disable").unwrap(),
-            "postgres://u:p@h:5432/db?sslmode=disable&replication=database"
-        );
-        // The R8b Secret contract: a plain URL only.
-        assert!(walsender_url("postgres://h/db?sslmode=require", "disable").is_err());
-        assert_eq!(
-            preflight_url("postgres://u:p@h:5432/db", "require").unwrap(),
-            "postgres://u:p@h:5432/db?sslmode=require"
-        );
-    }
-
     /// THE CONSUMER-WIRING GUARD (`wamn-0h0g.12.116`).
     ///
     /// `wamn-system-db` authenticates as `wamn_system`, which owns
@@ -2288,14 +2267,11 @@ mod tests {
         let Err(error) = read_registration(&args).await else {
             panic!("the wide system-owner credential was accepted");
         };
-        let refusal = error
-            .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
-            .expect("the refusal is the pure target condition, not a connection failure");
-        assert_eq!(
-            refusal.error_type(),
-            wamn_control_provision::SystemReaderUrlErrorType::Role
+        assert!(
+            error
+                .downcast_ref::<wamn_postgres::IdentityMismatch>()
+                .is_some()
         );
-        assert_eq!(refusal.reader(), SystemReader::Registry);
         // The refusal must not echo the input: it carries a password.
         assert!(!format!("{error}").contains("pw@"));
     }
@@ -2306,13 +2282,12 @@ mod tests {
     #[tokio::test]
     async fn the_registration_read_accepts_its_own_generation_and_then_connects() {
         let mut args = reader_args_fixture();
-        let role = wamn_control_provision::system_reader_generation_role(
+        let role = wamn_control_provision::system_reader_login(
             SystemReader::Registry,
             &args.org,
             &args.project,
             &args.env,
             "wamn_system",
-            wamn_control_provision::CredentialGeneration::A,
         );
         args.system_database_url = format!("postgres://{role}:pw@sysdb.invalid:5432/wamn_system");
         let Err(error) = read_registration(&args).await else {
@@ -2320,7 +2295,7 @@ mod tests {
         };
         assert!(
             error
-                .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
+                .downcast_ref::<wamn_postgres::IdentityMismatch>()
                 .is_none(),
             "the reader's own generation was refused by the target condition: {error}"
         );
@@ -2337,7 +2312,6 @@ mod tests {
             nats_tls_ca: None,
             nats_tls_cert: None,
             nats_tls_key: None,
-            sslmode: "disable".into(),
             stream_replicas: 1,
             dup_window_secs: 120,
             feedback_secs: 1,
@@ -3069,4 +3043,12 @@ mod tests {
 
         js.delete_stream(&stream_name).await.expect("delete stream");
     }
+}
+
+fn replication_url(input: &str) -> anyhow::Result<String> {
+    let mut input = url::Url::parse(input)?;
+    input
+        .query_pairs_mut()
+        .append_pair("replication", "database");
+    Ok(input.into())
 }

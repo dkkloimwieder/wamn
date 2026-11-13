@@ -38,6 +38,8 @@ path = "tests/prune_run_history_live.rs"
 required-features = ["ops"]
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
@@ -83,14 +85,12 @@ wamn-runtime = { workspace = true }
 # The `workflow` verbs call the workflow contract over a project-admin
 # connection.
 wamn-workflow = { workspace = true }
-tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 wamn-identity-protocol = { workspace = true }
 wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 postgres-protocol = { workspace = true }
 wamn-environment-control = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }

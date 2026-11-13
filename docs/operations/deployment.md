@@ -687,7 +687,7 @@ wamn-ctl invite --email <email> --display-name <name> --org <org> \
 ```
 
 Restart the Deployment after changing the credential, sender, or operator CA.
-The issuer credential needs the current grants from `provision-identity-issuer --prepare-generation`.
+CloudNativePG manages the issuer login and its basic-auth Secret. `provision-identity-issuer` publishes its public connection configuration.
 Use the current system schema on a fresh database, following the repository's schema installation contract.
 
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
@@ -796,7 +796,7 @@ Run `wamn-ctl env apply` for affected environments to update their copied user r
 
 ## Identity target credentials
 
-After replacing the identity service target Secret, restart the identity service.
+After changing the identity service connection ConfigMap, restart the identity service.
 Its database target connections are selected at process startup.
 Use the environment's identity Deployment and require its readiness before issuing new sessions.
 
@@ -805,8 +805,8 @@ Use the environment's identity Deployment and require its readiness before issui
 Select the prepared chart explicitly for each platform SQL operation.
 Set `KUBECONFIG` to the target cluster file and select its current context first.
 Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
-System target reads the existing `platform/wamn-pg-superuser` Secret.
-Both targets execute SQL in a bounded Job in `platform`.
+System target reads the administrator basic-auth Secret in the org namespace.
+Both targets execute SQL in a bounded Job in that namespace.
 
 ```bash
 wamn platform schema diff --target system --chart /prepared/platform
@@ -912,12 +912,20 @@ Restart the host to change trust or pool configuration. The replacement process 
 
 ### Environment apply credentials
 
-For separate application setup, set `WAMN_SYSTEM_ADMIN_URL` to the system administrator URL.
-Run `wamn-ctl provision-system --platform-domain DOMAIN --emit-apply-secret PATH --db-host HOST` to write the restricted apply Secret.
-Platform deployment does not emit this application credential Secret.
-Set `WAMN_APPLY_DATABASE_URL` from the Secret URL before `wamn-ctl env apply`.
-Set `WAMN_SYSTEM_ADMIN_URL` for its ensure phase.
-The other apply phases use the restricted credential.
+Set `WAMN_SYSTEM_ADMIN_URL` to the administrator connection configuration for the ensure phase.
+Run `wamn-ctl provision-system --platform-domain DOMAIN` in the org namespace.
+It declares the restricted apply login through CloudNativePG and publishes its connection data in the `wamn-apply` ConfigMap.
+Set `WAMN_APPLY_DATABASE_URL` from its `apply.json` entry before `wamn-ctl env apply`.
+The other apply phases use the restricted credential. The SQLx constructor reads its native basic-auth Secret and cluster CA.
+
+## PostgreSQL client TLS
+
+Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
+Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
+Both Secrets and the consumer belong to the org namespace.
+Explicit operator connection strings must name a readable CA file through `sslrootcert`.
+The database hostname must match the server certificate.
+The provisioned CNPG clusters accept client connections only over TLS.
 
 ## Kubernetes credentials
 

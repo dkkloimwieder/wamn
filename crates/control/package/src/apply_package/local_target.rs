@@ -1,7 +1,7 @@
 //! Working-tree SQL application on a recorded local target.
 
 use anyhow::Context as _;
-use tokio_postgres::Transaction;
+use sqlx::Row as _;
 use wamn_runtime::local_application::LocalTargetComment;
 use wamn_schema_control::PackageDirectory;
 
@@ -20,7 +20,7 @@ const COMMENT_ON_TARGET_SQL: &str = "SELECT pg_catalog.format(\
 /// its working tree and records no artifact digest, so the comment names the
 /// `wamn.json` the running application came from ([`manifest_digest`]).
 pub async fn record_manifest(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     comment: &mut LocalTargetComment,
     coordinate: &str,
     manifest_digest: &str,
@@ -31,13 +31,16 @@ pub async fn record_manifest(
     comment
         .manifests
         .insert(coordinate.to_owned(), manifest_digest.to_owned());
-    let statement: String = tx
-        .query_one(COMMENT_ON_TARGET_SQL, &[&comment.to_string()])
+    let statement: String = sqlx::query(COMMENT_ON_TARGET_SQL)
+        .bind(comment.to_string())
+        .fetch_one(&mut **tx)
         .await
         .context("render the local target comment")?
         .get(0);
-    tx.batch_execute(&statement)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(statement.clone()))
+        .execute(&mut **tx)
         .await
+        .map(drop)
         .context("record the current manifest digest in the local target comment")?;
     Ok(true)
 }

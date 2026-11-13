@@ -1,3 +1,4 @@
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -9,11 +10,11 @@ use anyhow::{Context as _, Result, ensure};
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use uuid::Uuid;
-use wamn_identity_protocol::PrincipalId;
-use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_broker::nats::PlatformNats;
+use wamn_broker::{Publisher, auth_changes::AuthDrops};
+use wamn_identity_protocol::PrincipalId;
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -272,7 +273,7 @@ struct Reproduction {
 }
 
 async fn reproduce_history(
-    db: &Client,
+    db: &mut Client,
     route: &Route,
     selected: &History,
     evidence: &mut File,
@@ -310,7 +311,7 @@ async fn reproduce_history(
 }
 
 async fn explicit_history(
-    db: &Client,
+    db: &mut Client,
     route: &Route,
     selected: &History,
     evidence: &mut File,
@@ -343,7 +344,12 @@ async fn explicit_history(
     })
 }
 
-async fn history(db: &Client, route: &Route, history: &History, evidence: &mut File) -> Result<()> {
+async fn history(
+    db: &mut Client,
+    route: &Route,
+    history: &History,
+    evidence: &mut File,
+) -> Result<()> {
     ensure!(
         !history.steps.is_empty() && history.steps.len() <= 12,
         "history requires 1..=12 steps"
@@ -391,11 +397,15 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                 };
                 // purchase_order.supplier_id references receiving.supplier, so
                 // the supplier that the update names exists first.
-                db.execute(
+                sqlx::query(
                     "INSERT INTO receiving.supplier (id, name) VALUES ($1, $2 || '-' || $3)",
-                    &[&supplier, &fixture.key_prefix, &request_id],
                 )
+                .bind(&supplier)
+                .bind(&fixture.key_prefix)
+                .bind(&request_id)
+                .execute(&mut *db)
                 .await
+                .map(|result| result.rows_affected())
                 .context("insert the supplier that the update names")?;
                 (
                     "/purchase_order/update",
@@ -603,7 +613,7 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
     result
 }
 
-async fn invalid_status(db: &Client, route: &Route, evidence: &mut File) -> Result<()> {
+async fn invalid_status(db: &mut Client, route: &Route, evidence: &mut File) -> Result<()> {
     let fixture = seed(db, [2, 2], "cancelled").await?;
     let before = snapshot(db, &fixture).await?;
     let body = receipt_body(
@@ -630,7 +640,7 @@ async fn invalid_status(db: &Client, route: &Route, evidence: &mut File) -> Resu
     )
 }
 
-async fn mixed_request_elements(db: &Client, route: &Route, evidence: &mut File) -> Result<()> {
+async fn mixed_request_elements(db: &mut Client, route: &Route, evidence: &mut File) -> Result<()> {
     let fixture = seed(db, [3, 1], "open").await?;
     let commands = [
         Receipt {
@@ -693,25 +703,24 @@ async fn mixed_request_elements(db: &Client, route: &Route, evidence: &mut File)
 }
 
 async fn competing_receipts(
-    db: &Client,
+    db: &mut Client,
     route: &Route,
     inputs: &Inputs,
     evidence: &mut File,
     same_key: bool,
 ) -> Result<()> {
     let fixture = seed(db, [3, 1], "open").await?;
-    let controller = connect(&inputs.project_pg_url).await?;
-    controller.client.batch_execute("BEGIN").await?;
-    controller
-        .client
-        .query_one(
-            "SELECT id FROM receiving.purchase_order WHERE id=$1 FOR UPDATE",
-            &[&fixture.id],
-        )
+    let mut controller = connect(&inputs.project_pg_url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string()))
+        .execute(&mut controller.client)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT id FROM receiving.purchase_order WHERE id=$1 FOR UPDATE")
+        .bind(&fixture.id)
+        .fetch_one(&mut controller.client)
         .await?;
-    let pid: i32 = controller
-        .client
-        .query_one("SELECT pg_backend_pid()", &[])
+    let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut controller.client)
         .await?
         .get(0);
     let first_body = receipt_body(
@@ -738,7 +747,10 @@ async fn competing_receipts(
     let second = tokio::spawn(async move { second_route.post(RECEIPT_PATH, &second_body).await });
     let blocked = wait_for_blocked(db, pid, 2).await;
     // Release the controller even when the overlap assertion fails.
-    controller.client.batch_execute("ROLLBACK").await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+        .execute(&mut controller.client)
+        .await
+        .map(drop)?;
     let (a, b) = tokio::join!(first, second);
     let a = a.context("join first competing route")??;
     let b = b.context("join second competing route")??;
@@ -773,14 +785,14 @@ async fn competing_receipts(
 }
 
 async fn rollback_after_write(
-    db: &Client,
+    db: &mut Client,
     route: &Route,
     inputs: &Inputs,
     evidence: &mut File,
 ) -> Result<()> {
     let fixture = seed(db, [3, 1], "open").await?;
     let before = snapshot(db, &fixture).await?;
-    let controller = connect(&inputs.project_pg_url).await?;
+    let mut controller = connect(&inputs.project_pg_url).await?;
     let lock: i64 = i64::from_be_bytes(Uuid::new_v4().as_bytes()[..8].try_into()?);
     // This disposable trigger reaches the barrier only after the new receipt
     // and its open write log claim (no result yet) are visible inside the real
@@ -799,15 +811,20 @@ async fn rollback_after_write(
          FOR EACH ROW EXECUTE FUNCTION receiving.receiving_history_rollback();",
         id = fixture.id,
     );
-    db.batch_execute(&trigger).await?;
-    controller.client.batch_execute("BEGIN").await?;
-    controller
-        .client
-        .query_one("SELECT pg_advisory_xact_lock($1)", &[&lock])
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&trigger).to_string()))
+        .execute(&mut *db)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string()))
+        .execute(&mut controller.client)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(&lock)
+        .fetch_one(&mut controller.client)
         .await?;
-    let pid: i32 = controller
-        .client
-        .query_one("SELECT pg_backend_pid()", &[])
+    let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut controller.client)
         .await?
         .get(0);
     let body = receipt_body(
@@ -822,14 +839,19 @@ async fn rollback_after_write(
     let calling_route = route.clone();
     let call = tokio::spawn(async move { calling_route.post(RECEIPT_PATH, &body).await });
     let blocked = wait_for_blocked(db, pid, 1).await;
-    controller.client.batch_execute("ROLLBACK").await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("ROLLBACK").to_string()))
+        .execute(&mut controller.client)
+        .await
+        .map(drop)?;
     let response = call.await.context("join rollback call");
-    let cleanup = db
-        .batch_execute(
-            "DROP TRIGGER receiving_history_rollback ON receiving.receipt; \
-        DROP FUNCTION receiving.receiving_history_rollback()",
-        )
-        .await;
+    let cleanup = sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP TRIGGER receiving_history_rollback ON receiving.receipt; \
+        DROP FUNCTION receiving.receiving_history_rollback()")
+            .to_string(),
+    ))
+    .execute(&mut *db)
+    .await
+    .map(drop);
     let blocked = blocked?;
     let response = response??;
     cleanup?;
@@ -845,7 +867,7 @@ async fn rollback_after_write(
     )
 }
 
-async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Result<()> {
+async fn lost_response(db: &mut Client, route: &Route, evidence: &mut File) -> Result<()> {
     let fixture = seed(db, [3, 1], "open").await?;
     let body = receipt_body(
         &fixture,
@@ -888,14 +910,14 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     );
     call.await.context("join response suppression")??;
     let value = succeeded(&route.post(RECEIPT_PATH, &body).await?, "lost-response")?;
-    let expected: String = db
-        .query_one(
-            "SELECT result FROM platform.write_log \
+    let expected: String = sqlx::query(
+        "SELECT result FROM platform.write_log \
          WHERE operation='wamn-receiving:receiving/record-receipt' AND idempotency_key=$1",
-            &[&format!("{}-0", fixture.key_prefix)],
-        )
-        .await?
-        .get(0);
+    )
+    .bind(&format!("{}-0", fixture.key_prefix))
+    .fetch_one(&mut *db)
+    .await?
+    .get(0);
     ensure!(
         value == serde_json::from_str::<Value>(&expected)?["value"],
         "REC-LOST-RESPONSE retry did not return the independently observed original result"
@@ -911,7 +933,12 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     )
 }
 
-async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut File) -> Result<()> {
+async fn authority(
+    db: &mut Client,
+    route: &Route,
+    inputs: &Inputs,
+    evidence: &mut File,
+) -> Result<()> {
     // A committed receipt makes every propagation probe a replay. The fresh
     // receipt below must stay unwritten until the role is restored.
     let probe_fixture = seed(db, [3, 1], "open").await?;
@@ -958,15 +985,15 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         nats_tls_server_name: Some(inputs.auth_nats.server_name.clone()),
     })
     .await?;
-    let holders = db
-        .query(
-            "SELECT user_id::text FROM platform.user_role WHERE role_name=$1 ORDER BY user_id",
-            &[&inputs.caller_role],
-        )
-        .await?
-        .into_iter()
-        .map(|row| row.get::<_, String>(0).parse::<PrincipalId>())
-        .collect::<Result<Vec<_>, _>>()?;
+    let holders = sqlx::query(
+        "SELECT user_id::text FROM platform.user_role WHERE role_name=$1 ORDER BY user_id",
+    )
+    .bind(&inputs.caller_role)
+    .fetch_all(&mut *db)
+    .await?
+    .into_iter()
+    .map(|row| row.get::<String, _>(0).parse::<PrincipalId>())
+    .collect::<Result<Vec<_>, _>>()?;
     ensure!(
         !holders.is_empty(),
         "authority fixture found no holder of {}",
@@ -1017,20 +1044,17 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
 
 /// Whether `principal` holds `org-admin` in the fixture org.
 async fn holds_org_admin(inputs: &Inputs, principal: &PrincipalId) -> Result<bool> {
-    let system = connect(&inputs.system_pg_url).await?;
-    Ok(system
-        .client
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
+    let mut system = connect(&inputs.system_pg_url).await?;
+    Ok(sqlx::query(
+        "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
              WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)",
-            &[
-                &principal.to_string().as_str(),
-                &inputs.org,
-                &wamn_platform_identity::org::ORG_ADMIN_ROLE,
-            ],
-        )
-        .await?
-        .get(0))
+    )
+    .bind(&principal.to_string().as_str())
+    .bind(&inputs.org)
+    .bind(&wamn_platform_identity::org::ORG_ADMIN_ROLE)
+    .fetch_one(&mut system.client)
+    .await?
+    .get(0))
 }
 
 /// Grant or revoke `project-admin` of one principal in the system authority,
@@ -1046,17 +1070,25 @@ async fn project_admin(
     let mut system = connect(&inputs.system_pg_url).await?;
     let mut target = connect(&inputs.project_pg_url).await?;
     let mut drops = AuthDrops::default();
-    let authority =
-        wamn_environment_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
+    let mut authority = wamn_environment_control::provision_project_env::provisioning_transaction(
+        &mut system.client,
+    )
+    .await?;
     if org_admin && grant {
-        wamn_platform_identity::org::grant_org_admin(&authority, principal, &inputs.org).await?;
+        wamn_platform_identity::org::grant_org_admin(&mut authority, principal, &inputs.org)
+            .await?;
         drops.identity(principal.to_string().as_str());
     } else if org_admin {
-        wamn_platform_identity::org::revoke_org_admin(&authority, principal, &inputs.org, &mut drops)
-            .await?;
+        wamn_platform_identity::org::revoke_org_admin(
+            &mut authority,
+            principal,
+            &inputs.org,
+            &mut drops,
+        )
+        .await?;
     } else if grant {
         wamn_platform_identity::assign_project_role(
-            &authority,
+            &mut authority,
             principal,
             &inputs.org,
             &inputs.project,
@@ -1066,7 +1098,7 @@ async fn project_admin(
         .await?;
     } else {
         wamn_platform_identity::org::revoke_project_admin(
-            &authority,
+            &mut authority,
             principal,
             &inputs.org,
             &inputs.project,
@@ -1075,16 +1107,20 @@ async fn project_admin(
         .await?;
     }
     authority.commit().await?;
-    let authority = system.client.transaction().await?;
-    let transaction = target.client.transaction().await?;
-    transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    let mut authority = system.client.begin().await?;
+    let mut transaction = target.client.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)?;
     wamn_platform_identity::application::project_authority(
-        &authority,
-        &transaction,
+        &mut authority,
+        &mut transaction,
         wamn_platform_identity::application::ApplicationTarget {
             org: &inputs.org,
             project: &inputs.project,
@@ -1118,9 +1154,7 @@ pub(crate) fn assert_histories_with_cancellation(
     for (component, root) in &inputs.packages {
         package_tree_digests.insert(
             component.clone(),
-            json!(wamn_package_control::package_artifact::package_artifact_digest(
-                root
-            )?),
+            json!(wamn_package_control::package_artifact::package_artifact_digest(root)?),
         );
     }
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.operator_secret)?)?;
@@ -1138,7 +1172,7 @@ pub(crate) fn assert_histories_with_cancellation(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let db = run_before(
+    let mut db = run_before(
         &runtime,
         deadline,
         cancellation,
@@ -1148,13 +1182,13 @@ pub(crate) fn assert_histories_with_cancellation(
         &runtime,
         deadline,
         cancellation,
-        bind_fixture_principal(&db.client),
+        bind_fixture_principal(&mut db.client),
     )?;
     let version: String = run_before(
         &runtime,
         deadline,
         cancellation,
-        db.client.query_one("SHOW server_version_num", &[]),
+        sqlx::query("SHOW server_version_num").fetch_one(&mut db.client),
     )?
     .get(0);
     ensure!(
@@ -1179,7 +1213,7 @@ pub(crate) fn assert_histories_with_cancellation(
             &runtime,
             deadline,
             cancellation,
-            explicit_history(&db.client, &route, selected, &mut evidence),
+            explicit_history(&mut db.client, &route, selected, &mut evidence),
         )?;
         record(
             &mut evidence,
@@ -1192,7 +1226,7 @@ pub(crate) fn assert_histories_with_cancellation(
             &runtime,
             deadline,
             cancellation,
-            explicit_history(&db.client, &route, &example, &mut evidence),
+            explicit_history(&mut db.client, &route, &example, &mut evidence),
         )?;
     }
     let config = Config {
@@ -1208,6 +1242,7 @@ pub(crate) fn assert_histories_with_cancellation(
     let failures = std::cell::RefCell::new(ShrinkFailures::default());
     let generated = {
         let evidence_cell = std::cell::RefCell::new(&mut evidence);
+        let client_cell = std::cell::RefCell::new(&mut db.client);
         runner.run(&model::histories(), |case| {
             if failures.borrow().infrastructure.is_some() {
                 return Ok(());
@@ -1216,7 +1251,12 @@ pub(crate) fn assert_histories_with_cancellation(
                 &runtime,
                 deadline,
                 cancellation,
-                history(&db.client, &route, &case, &mut evidence_cell.borrow_mut()),
+                history(
+                    &mut **client_cell.borrow_mut(),
+                    &route,
+                    &case,
+                    &mut evidence_cell.borrow_mut(),
+                ),
             );
             shrink_result(&mut failures.borrow_mut(), &case, result)
         })
@@ -1237,7 +1277,7 @@ pub(crate) fn assert_histories_with_cancellation(
                 deadline,
                 cancellation,
                 reproduce_history(
-                    &db.client,
+                    &mut db.client,
                     &route,
                     &minimized,
                     &mut evidence,
@@ -1267,13 +1307,13 @@ pub(crate) fn assert_histories_with_cancellation(
         return Err(anyhow::anyhow!("REC-HISTORY generation aborted: {error}"));
     }
     run_before(&runtime, deadline, cancellation, async {
-        invalid_status(&db.client, &route, &mut evidence).await?;
-        mixed_request_elements(&db.client, &route, &mut evidence).await?;
-        competing_receipts(&db.client, &route, inputs, &mut evidence, false).await?;
-        competing_receipts(&db.client, &route, inputs, &mut evidence, true).await?;
-        rollback_after_write(&db.client, &route, inputs, &mut evidence).await?;
-        lost_response(&db.client, &route, &mut evidence).await?;
-        authority(&db.client, &route, inputs, &mut evidence).await
+        invalid_status(&mut db.client, &route, &mut evidence).await?;
+        mixed_request_elements(&mut db.client, &route, &mut evidence).await?;
+        competing_receipts(&mut db.client, &route, inputs, &mut evidence, false).await?;
+        competing_receipts(&mut db.client, &route, inputs, &mut evidence, true).await?;
+        rollback_after_write(&mut db.client, &route, inputs, &mut evidence).await?;
+        lost_response(&mut db.client, &route, &mut evidence).await?;
+        authority(&mut db.client, &route, inputs, &mut evidence).await
     })?;
     record(
         &mut evidence,

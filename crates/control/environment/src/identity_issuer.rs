@@ -1,678 +1,112 @@
-//! Prepare, retire, or abort a targeted identity database credential.
-//!
-//! Preparation writes a Secret only after the new login authenticates. It
-//! does not install the Secret or access session signing keys. Retirement
-//! requires a live session on the replacement generation.
-
-pub(super) mod plan;
-
-use std::collections::BTreeSet;
-use std::fmt;
-use std::path::PathBuf;
+//! Provision the identity issuer through CloudNativePG's managed roles.
 
 use anyhow::Context as _;
-use chrono::{SecondsFormat, Utc};
-use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::json;
-use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
-use url::Url;
-use wamn_control_provision::CredentialGeneration;
-use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_PASSWORD_COLUMNS, IDENTITY_ISSUER_PAT_INSERT_COLUMNS,
-    IDENTITY_ISSUER_READ_COLUMNS, IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES,
-    identity_issuer_generation_role, parse_identity_issuer_url,
-    prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
-    validate_identity_issuer,
+use std::path::PathBuf;
+use wamn_control_provision::identity_role::{
+    grant_identity_issuer_surface_sql, identity_issuer_login,
 };
-use wamn_control_provision::sql;
 
-/// Provisioning inputs for one identity authority, not a project environment.
 pub struct IdentityIssuerRequest {
-    /// Exact HTTPS issuer configured on wamn-identity.
     pub issuer: String,
-    /// Administrator URL for the wamn_system database.
     pub system_database_url: String,
-    /// Prepare an inactive A/B credential slot.
-    pub prepare_generation: Option<CredentialGeneration>,
-    /// Retire a slot after its replacement has a live session.
-    pub retire_generation: Option<CredentialGeneration>,
-    /// Abort an unused prepared slot that has no live sessions.
-    pub abort_generation: Option<CredentialGeneration>,
-    /// Write the prepared credential Secret atomically with mode 0600.
-    pub emit_secret: Option<PathBuf>,
-    /// Host the emitted credential URL names. Only preparation takes it, and it
-    /// has no default: the admin URL's host is often a port-forward that no pod
-    /// can reach (finding wamn-lczu).
     pub db_host: Option<String>,
-    /// Port the emitted credential URL names.
     pub db_port: u16,
-    /// Namespace for the emitted Secret.
     pub namespace: String,
-    /// Name for the emitted Secret, matching the identity chart.
     pub secret_name: String,
 }
 
-impl fmt::Debug for IdentityIssuerRequest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IdentityIssuerRequest")
-            .field("system_database_url", &"[REDACTED]")
-            .field("prepare_generation", &self.prepare_generation)
-            .field("retire_generation", &self.retire_generation)
-            .field("abort_generation", &self.abort_generation)
+impl std::fmt::Debug for IdentityIssuerRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityIssuerRequest")
+            .field("issuer", &self.issuer)
             .finish_non_exhaustive()
     }
 }
 
-/// The generation action the request selected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdentityIssuerAction {
-    /// An inactive slot became a live credential.
-    Prepared,
-    /// A live slot was retired behind its replacement.
-    Retired,
-    /// An unused prepared slot was aborted.
-    Aborted,
-}
-
-/// What one identity credential provisioning run did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct IdentityIssuerOutcome {
-    /// The action that completed.
-    pub action: IdentityIssuerAction,
-    /// The credential generation the action ran on.
-    pub generation: CredentialGeneration,
+    pub role: String,
+    pub configuration: wamn_postgres::ConnectionConfig,
 }
 
-fn admin_config(args: &IdentityIssuerRequest) -> anyhow::Result<Config> {
-    validate_identity_issuer(&args.issuer)?;
-    let url = Url::parse(&args.system_database_url)
-        .map_err(|_| anyhow::anyhow!("system administrator credential must be a URL"))?;
-    anyhow::ensure!(
-        matches!(url.scheme(), "postgres" | "postgresql")
-            && url.host_str().is_some_and(|host| !host.is_empty())
-            && url.path() == "/wamn_system"
-            && url.query().is_none()
-            && url.fragment().is_none()
-            && !args.system_database_url.chars().any(char::is_whitespace),
-        "system administrator credential must name wamn_system with no query or fragment"
-    );
-    anyhow::ensure!(
-        [
-            args.prepare_generation,
-            args.retire_generation,
-            args.abort_generation
-        ]
-        .iter()
-        .filter(|action| action.is_some())
-        .count()
-            == 1,
-        "select exactly one identity generation action"
-    );
-    anyhow::ensure!(
-        args.prepare_generation.is_some() == args.emit_secret.is_some(),
-        "only preparation requires --emit-secret"
-    );
-    anyhow::ensure!(
-        args.prepare_generation.is_some() == args.db_host.is_some(),
-        "only preparation requires --db-host"
-    );
-    for (name, value, maximum) in [
-        ("namespace", &args.namespace, 63),
-        ("secret name", &args.secret_name, 253),
-    ] {
-        anyhow::ensure!(
-            !value.is_empty()
-                && value.len() <= maximum
-                && value.split('.').all(|label| !label.is_empty()
-                    && label.len() <= 63
-                    && label
-                        .as_bytes()
-                        .first()
-                        .is_some_and(u8::is_ascii_alphanumeric)
-                    && label
-                        .as_bytes()
-                        .last()
-                        .is_some_and(u8::is_ascii_alphanumeric)
-                    && label.bytes().all(|byte| byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || byte == b'-'))
-                && (name != "namespace" || !value.contains('.')),
-            "invalid identity credential {name}"
-        );
-    }
-    args.system_database_url
-        .parse()
-        .map_err(|_| anyhow::anyhow!("system administrator credential cannot be parsed"))
-}
-
-async fn connect(
-    config: &Config,
-) -> anyhow::Result<(
-    Client,
-    tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
-)> {
-    let (client, connection) = config
-        .connect(NoTls)
-        .await
-        .map_err(|_| anyhow::anyhow!("identity database connection failed"))?;
-    Ok((client, tokio::spawn(connection)))
-}
-
-/// Run a provisioning action without reading or minting session signing keys.
+/// Create one role Secret and its public component configuration. CNPG owns the password.
 pub async fn provision_identity_issuer(
-    request: IdentityIssuerRequest,
-) -> anyhow::Result<IdentityIssuerOutcome> {
-    let config = admin_config(&request)?;
-    let (mut admin, connection) = connect(&config).await?;
-    let result = async {
-        let row = admin
-            .query_one(
-                "SELECT current_database(), rolsuper FROM pg_roles WHERE rolname = current_user",
-                &[],
-            )
-            .await?;
-        anyhow::ensure!(
-            row.get::<_, String>(0) == IDENTITY_ISSUER_DATABASE && row.get::<_, bool>(1),
-            "identity credential provisioning requires the system database administrator"
-        );
-        admin
-            .query_one(sql::workload_identity_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
-            .await?;
-        if let Some(generation) = request.prepare_generation {
-            prepare(&mut admin, &config, &request, generation).await?;
-            Ok(IdentityIssuerOutcome {
-                action: IdentityIssuerAction::Prepared,
-                generation,
-            })
-        } else {
-            let (generation, abort) = if let Some(generation) = request.retire_generation {
-                (generation, false)
-            } else {
-                (
-                    request
-                        .abort_generation
-                        .context("identity generation action is required")?,
-                    true,
-                )
-            };
-            retire(&mut admin, &request.issuer, generation, abort).await?;
-            Ok(IdentityIssuerOutcome {
-                action: if abort {
-                    IdentityIssuerAction::Aborted
-                } else {
-                    IdentityIssuerAction::Retired
-                },
-                generation,
-            })
-        }
-    }
-    .await;
-    drop(admin);
-    let _ = connection.await;
-    result
-}
-
-async fn state(client: &(impl GenericClient + Sync), role: &str) -> anyhow::Result<Option<Row>> {
-    client
-        .query_opt(&sql::system_generation_state_sql(), &[&role])
-        .await
-        .context("read identity database role state")
-}
-
-fn restricted(row: &Row) -> bool {
-    plan::restricted(&role_state(row))
-}
-
-fn active(row: &Row) -> bool {
-    plan::active(&role_state(row))
-}
-
-fn inactive(row: &Row) -> bool {
-    plan::inactive(&role_state(row))
-}
-
-#[derive(Clone, Copy)]
-enum Grants {
-    None,
-    Generation,
-    Stable,
-    StableBeforePrepare,
-}
-
-async fn exact_grants(
-    client: &(impl GenericClient + Sync),
-    role: &str,
-    expected: Grants,
-) -> anyhow::Result<()> {
-    const PAT_RETURN_COLUMNS: [&str; 3] = ["id", "label", "created_at"];
-
-    let rows = client
-        .query(sql::role_database_grants_sql(), &[&role])
-        .await?;
-    let schemas: BTreeSet<_> = std::iter::once("identity")
-        .chain(
-            IDENTITY_ISSUER_READ_COLUMNS
-                .iter()
-                .map(|(schema, _, _)| *schema),
-        )
-        .collect();
-    // Recognize complete preceding key, exchange, and PAT issuance surfaces
-    // only at preparation preflight;
-    // a partial upgrade or any extra grant remains unexpected drift.
-    let foundation = matches!(expected, Grants::StableBeforePrepare)
-        && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
-    let password_count = 6 + IDENTITY_ISSUER_PASSWORD_COLUMNS
-        .iter()
-        .map(|(_, _, c)| c.len())
-        .sum::<usize>();
-    let previous_count = schemas.len()
-        + IDENTITY_ISSUER_TABLES.len() * 4
-        + IDENTITY_ISSUER_READ_COLUMNS
-            .iter()
-            .map(|(_, _, columns)| columns.len())
-            .sum::<usize>()
-        + IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len();
-    let current_count = previous_count + password_count;
-    let previous = matches!(expected, Grants::StableBeforePrepare) && rows.len() == previous_count;
-    let read_only_pat = matches!(expected, Grants::StableBeforePrepare)
-        && rows.len()
-            == previous_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len();
-    let count = match expected {
-        Grants::None => 0,
-        Grants::Generation => 1,
-        Grants::StableBeforePrepare if foundation => 1 + IDENTITY_ISSUER_TABLES.len() * 4,
-        Grants::StableBeforePrepare if read_only_pat => {
-            previous_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len()
-        }
-        Grants::StableBeforePrepare if previous => previous_count,
-        Grants::Stable | Grants::StableBeforePrepare => current_count,
-    };
-    anyhow::ensure!(
-        rows.len() == count
-            && rows.iter().all(|row| {
-                let type_: &str = row.get("object_type");
-                let schema: &str = row.get("schema_name");
-                let object: &str = row.get("object_name");
-                let privilege: &str = row.get("privilege_type");
-                !row.get::<_, bool>("is_grantable")
-                    && match expected {
-                        Grants::None => false,
-                        Grants::Generation => {
-                            type_ == "database"
-                                && object == IDENTITY_ISSUER_DATABASE
-                                && privilege == "CONNECT"
-                        }
-                        Grants::Stable | Grants::StableBeforePrepare => {
-                            type_ == "schema"
-                                && if foundation {
-                                    schema == "identity"
-                                } else {
-                                    schemas.contains(schema)
-                                }
-                                && object == schema
-                                && privilege == "USAGE"
-                                || type_ == "relation"
-                                    && schema == "identity"
-                                    && IDENTITY_ISSUER_TABLES.contains(&object)
-                                    && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
-                                || !foundation
-                                    && !previous
-                                    && !read_only_pat
-                                    && schema == "identity"
-                                    && ((type_ == "routine"
-                                        && object == "lock_password_principal"
-                                        && privilege == "EXECUTE")
-                                        || (type_ == "relation"
-                                            && object == "password_logins"
-                                            && privilege == "DELETE")
-                                        || (type_ == "relation"
-                                            && object == "password_attempts"
-                                            && ["SELECT", "INSERT", "UPDATE", "DELETE"]
-                                                .contains(&privilege))
-                                        || (type_ == "column"
-                                            && IDENTITY_ISSUER_PASSWORD_COLUMNS.iter().any(
-                                                |(table, p, columns)| {
-                                                    privilege == *p
-                                                        && columns.iter().any(|column| {
-                                                            object == format!("{table}.{column}")
-                                                        })
-                                                },
-                                            )))
-                                || !foundation
-                                    && type_ == "column"
-                                    && privilege == "SELECT"
-                                    && IDENTITY_ISSUER_READ_COLUMNS.iter().any(
-                                        |(expected_schema, table, columns)| {
-                                            schema == *expected_schema
-                                                && columns.iter().any(|column| {
-                                                    object == format!("{table}.{column}")
-                                                        && !(read_only_pat
-                                                            && *table == "pats"
-                                                            && PAT_RETURN_COLUMNS.contains(column))
-                                                })
-                                        },
-                                    )
-                                || !foundation
-                                    && !read_only_pat
-                                    && type_ == "column"
-                                    && schema == "identity"
-                                    && privilege == "INSERT"
-                                    && IDENTITY_ISSUER_PAT_INSERT_COLUMNS
-                                        .iter()
-                                        .any(|column| object == format!("pats.{column}"))
-                        }
-                    }
-            }),
-        "identity role has unexpected direct privileges"
-    );
-    let foreign: bool = client.query_one(
-        "SELECT EXISTS (SELECT FROM pg_shdepend d JOIN pg_roles r ON r.oid = d.refobjid \
-         WHERE d.refclassid = 'pg_authid'::regclass AND r.rolname = $1 \
-           AND d.dbid NOT IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))) \
-         OR EXISTS (SELECT FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a \
-           JOIN pg_roles r ON r.oid = a.grantee WHERE r.rolname = $1 \
-           AND (d.datname <> 'wamn_system' OR a.privilege_type <> 'CONNECT' OR a.is_grantable))",
-        &[&role],
-    ).await?.get(0);
-    anyhow::ensure!(
-        !foreign,
-        "identity role has authority outside its system database target"
-    );
-    Ok(())
-}
-
-async fn stable(client: &(impl GenericClient + Sync), before_prepare: bool) -> anyhow::Result<()> {
-    if let Some(row) = state(client, IDENTITY_ISSUER_ROLE).await? {
-        let members: Vec<String> = row.get("member_roles");
-        anyhow::ensure!(
-            restricted(&row)
-                && !row.get::<_, bool>("rolcanlogin")
-                && !row.get::<_, bool>("rolinherit")
-                && !row.get::<_, bool>("password_set")
-                && row.get::<_, Vec<String>>("memberships").is_empty()
-                && row.get::<_, Vec<String>>("connect_databases").is_empty()
-                && row.get::<_, bool>("generation_children_exact")
-                && row.get::<_, i64>("sessions") == 0
-                && members.iter().all(|role| {
-                    role.strip_prefix("wamn_identity_issuer_")
-                        .is_some_and(|suffix| {
-                            let bytes = suffix.as_bytes();
-                            bytes.len() == 42
-                                && matches!(&bytes[40..], b"_a" | b"_b")
-                                && bytes[..40].iter().all(|byte| {
-                                    byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
-                                })
-                        })
-                }),
-            "identity stable role has unexpected attributes or memberships"
-        );
-        exact_grants(
-            client,
-            IDENTITY_ISSUER_ROLE,
-            if before_prepare {
-                Grants::StableBeforePrepare
-            } else {
-                Grants::Stable
-            },
-        )
-        .await?;
-        for member in members {
-            exact_grants(client, &member, Grants::Generation).await?;
-        }
-    }
-    Ok(())
-}
-
-async fn public_base_grants(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        client
-            .query(sql::public_connect_databases_sql(), &[])
-            .await?
-            .is_empty(),
-        "prepare the cluster PUBLIC CONNECT base grants before provisioning identity credentials"
-    );
-    anyhow::ensure!(
-        !client
-            .query_one(sql::public_temporary_on_current_database_sql(), &[])
-            .await?
-            .get::<_, bool>(0),
-        "revoke PUBLIC TEMPORARY on wamn_system before provisioning identity credentials"
-    );
-    Ok(())
-}
-
-async fn prepare(
-    admin: &mut Client,
-    config: &Config,
     args: &IdentityIssuerRequest,
-    generation: CredentialGeneration,
-) -> anyhow::Result<()> {
-    let role = identity_issuer_generation_role(&args.issuer, generation)?;
-    let other_role = identity_issuer_generation_role(&args.issuer, generation.other())?;
-    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_base_grants(&transaction).await?;
-    stable(&transaction, true).await?;
-    let target = state(&transaction, &role).await?;
-    let other = state(&transaction, &other_role).await?;
+) -> anyhow::Result<IdentityIssuerOutcome> {
+    let role = identity_issuer_login(&args.issuer)?;
+    let options = wamn_postgres::connect_options(&args.system_database_url).await?;
+    let database = options
+        .get_database()
+        .context("issuer database is absent")?
+        .to_owned();
     anyhow::ensure!(
-        target.as_ref().is_none_or(inactive),
-        "prepare requires an inactive identity credential slot"
+        database == wamn_control_provision::identity_role::IDENTITY_ISSUER_DATABASE,
+        "issuer database is not the system database"
     );
-    anyhow::ensure!(
-        (generation == CredentialGeneration::A && other.is_none())
-            || other.as_ref().is_some_and(active),
-        "initial identity generation must be a, or the opposite generation must be active"
-    );
-    exact_grants(&transaction, &role, Grants::None).await?;
-    if other.is_some() {
-        exact_grants(&transaction, &other_role, Grants::Generation).await?;
-    }
-    let mut random = [0_u8; 32];
-    SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
-    let password = hex::encode(random);
-    // Match the existing provisioning lifetime for database credentials, not JWTs.
-    let expires_at =
-        (Utc::now() + chrono::Duration::days(30)).to_rfc3339_opts(SecondsFormat::Secs, true);
-    transaction
-        .batch_execute(&prepare_identity_issuer_generation_sql(
-            &args.issuer,
-            generation,
-            &password,
-            &expires_at,
-        )?)
-        .await
-        .map_err(|_| anyhow::anyhow!("prepare identity database credential failed"))?;
-    let fingerprint = hex::encode(ring::digest::digest(
-        &ring::digest::SHA256,
-        password.as_bytes(),
-    ));
-    transaction
-        .execute(
-            sql::record_generation_password_sql(),
-            &[&role, &fingerprint],
-        )
-        .await
-        .context("record the identity credential password fingerprint")?;
-    // The accepted old surface must have converged completely before commit.
-    stable(&transaction, false).await?;
-    transaction.commit().await?;
-    let publish = async {
-        let mut connection_config = config.clone();
-        connection_config.user(&role).password(&password);
-        let (probe, task) = connect(&connection_config).await?;
-        let observed = probe.query_one("SELECT current_user::text, current_database()::text", &[]).await;
-        drop(probe);
-        let _ = task.await;
-        let observed = observed.context("authenticate prepared identity credential")?;
-        anyhow::ensure!(observed.get::<_, String>(0) == role && observed.get::<_, String>(1) == IDENTITY_ISSUER_DATABASE,
-            "prepared identity credential authenticated with an unexpected target");
-        stable(admin, false).await?;
-        let prepared = state(admin, &role).await?.context("prepared identity credential disappeared")?;
-        anyhow::ensure!(active(&prepared) && prepared.get::<_, Option<String>>("valid_until").as_deref() == Some(expires_at.as_str()),
-            "prepared identity credential has an unexpected state");
-        exact_grants(admin, &role, Grants::Generation).await?;
-        let mut url = Url::parse(&args.system_database_url).expect("administrator URL was validated before I/O");
-        url.set_username(&role).map_err(|()| anyhow::anyhow!("cannot encode identity credential user"))?;
-        url.set_password(Some(&password)).map_err(|()| anyhow::anyhow!("cannot encode identity credential password"))?;
-        url.set_host(args.db_host.as_deref()).context("cannot encode identity credential host")?;
-        url.set_port(Some(args.db_port)).map_err(|()| anyhow::anyhow!("cannot encode identity credential port"))?;
-        let issuer = parse_identity_issuer_url(url.as_str(), &args.issuer)?;
-        let document = json!({
-            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-            "metadata": {"name": args.secret_name, "namespace": args.namespace,
-                "labels": {"app.kubernetes.io/name": "wamn-identity", "app.kubernetes.io/managed-by": "wamn"}},
-            "stringData": {"url": issuer.url()}
-        });
-        crate::provision_project_env::write_secret_json(args.emit_secret.as_deref().context("--emit-secret is required")?, &document)
-    }.await;
-    if let Err(error) = publish {
-        deactivate(admin, &args.issuer, generation)
-            .await
-            .context("rollback prepared identity credential after publication failure")?;
-        return Err(error);
-    }
-    Ok(())
-}
-
-async fn deactivate(
-    admin: &mut Client,
-    issuer: &str,
-    generation: CredentialGeneration,
-) -> anyhow::Result<()> {
-    let role = identity_issuer_generation_role(issuer, generation)?;
-    admin
-        .batch_execute(&retire_identity_issuer_generation_sql(issuer, generation)?)
+    let host = args
+        .db_host
+        .as_deref()
+        .context("issuer database host is absent")?;
+    let cluster = host
+        .split('.')
+        .next()
+        .context("issuer database host is absent")?
+        .trim_end_matches("-rw");
+    let mut connection = wamn_postgres::connect(&args.system_database_url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
+        .execute(&mut connection)
         .await?;
-    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    transaction
-        .execute(sql::forget_generation_password_sql(), &[&role])
-        .await?;
-    transaction.commit().await?;
-    admin
-        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
-        .await?;
-    let row = state(admin, &role)
-        .await?
-        .context("retired identity credential disappeared")?;
-    anyhow::ensure!(
-        inactive(&row),
-        "identity credential did not reach inactive state"
-    );
-    exact_grants(admin, &role, Grants::None).await
-}
-
-async fn retire(
-    admin: &mut Client,
-    issuer: &str,
-    generation: CredentialGeneration,
-    abort: bool,
-) -> anyhow::Result<()> {
-    let role = identity_issuer_generation_role(issuer, generation)?;
-    let replacement_role = identity_issuer_generation_role(issuer, generation.other())?;
-    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_base_grants(&transaction).await?;
-    stable(&transaction, false).await?;
-    let old = state(&transaction, &role)
-        .await?
-        .context("identity credential does not exist")?;
-    anyhow::ensure!(active(&old), "identity credential is not active");
-    exact_grants(&transaction, &role, Grants::Generation).await?;
-    if abort {
+    let kubeconfig = std::env::var_os("KUBECONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    super::provision_project_env::workload::reconcile(
+        &kubeconfig,
+        "",
+        &args.namespace,
+        cluster,
+        &wamn_control_provision::connection::managed_role(
+            role.clone(),
+            wamn_control_provision::identity_role::IDENTITY_ISSUER_ROLE,
+            args.secret_name.clone(),
+        ),
+    )
+    .await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin)",
+    )
+    .bind(&role)
+    .fetch_one(&mut connection)
+    .await?
+    {
         anyhow::ensure!(
-            old.get::<_, i64>("sessions") == 0,
-            "an in-use identity credential cannot be aborted"
+            tokio::time::Instant::now() < deadline,
+            "CNPG did not create the issuer login"
         );
-    } else {
-        let replacement = state(&transaction, &replacement_role)
-            .await?
-            .context("replacement identity credential does not exist")?;
-        anyhow::ensure!(
-            active(&replacement) && replacement.get::<_, i64>("sessions") > 0,
-            "replacement identity credential requires an exact active role and a live session"
-        );
-        exact_grants(&transaction, &replacement_role, Grants::Generation).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    transaction
-        .batch_execute(&retire_identity_issuer_generation_sql(issuer, generation)?)
+    let statement = format!(
+        "GRANT CONNECT ON DATABASE {} TO {}",
+        postgres_protocol::escape::escape_identifier(&database),
+        postgres_protocol::escape::escape_identifier(&role)
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+        .execute(&mut connection)
         .await?;
-    transaction
-        .execute(sql::forget_generation_password_sql(), &[&role])
-        .await?;
-    transaction.commit().await?;
-    deactivate(admin, issuer, generation).await
-}
-
-fn role_state(row: &Row) -> plan::RoleState {
-    plan::RoleState {
-        rolsuper: row.get("rolsuper"),
-        rolcreaterole: row.get("rolcreaterole"),
-        rolcreatedb: row.get("rolcreatedb"),
-        rolreplication: row.get("rolreplication"),
-        rolbypassrls: row.get("rolbypassrls"),
-        owned_objects: row.get("owned_objects"),
-        rolcanlogin: row.get("rolcanlogin"),
-        rolinherit: row.get("rolinherit"),
-        password_set: row.get("password_set"),
-        valid_until_finite: row.get("valid_until_finite"),
-        memberships: row.get("memberships"),
-        membership_options_exact: row.get("membership_options_exact"),
-        member_roles: row.get("member_roles"),
-        connect_databases: row.get("connect_databases"),
-        valid_until: row.get("valid_until"),
-        sessions: row.get("sessions"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CredentialGeneration, IdentityIssuerRequest, admin_config};
-
-    fn request() -> IdentityIssuerRequest {
-        IdentityIssuerRequest {
-            issuer: "https://identity.wamn-system.svc".to_owned(),
-            system_database_url: "postgres://admin:hidden-value@sysdb/wamn_system".to_owned(),
-            prepare_generation: Some(CredentialGeneration::A),
-            retire_generation: None,
-            abort_generation: None,
-            emit_secret: Some("identity.json".into()),
-            db_host: Some("wamn-pg-rw".to_owned()),
-            db_port: 5432,
-            namespace: "wamn-system".to_owned(),
-            secret_name: "wamn-identity-db".to_owned(),
-        }
-    }
-
-    #[test]
-    fn a_targeted_prepare_request_is_accepted_and_redacts_admin_credentials() {
-        let request = request();
-        assert!(admin_config(&request).is_ok());
-        assert!(!format!("{request:?}").contains("hidden-value"));
-    }
-
-    #[test]
-    fn actions_and_secret_output_are_not_ambiguous() {
-        let mut request = request();
-        request.retire_generation = Some(CredentialGeneration::B);
-        assert!(admin_config(&request).is_err());
-        request.retire_generation = None;
-        request.emit_secret = None;
-        assert!(admin_config(&request).is_err());
-        // wamn-lczu: a prepare names the host its credential URL carries.
-        request.emit_secret = Some("identity.json".into());
-        request.db_host = None;
-        assert!(admin_config(&request).is_err());
-    }
-
-    #[test]
-    fn wrong_admin_database_and_issuer_are_refused_before_io() {
-        let mut request = request();
-        request.system_database_url = "postgres://admin:hidden-value@sysdb/postgres".into();
-        let error = admin_config(&request).unwrap_err();
-        assert!(!format!("{error:?}").contains("hidden-value"));
-        request.issuer = "http://identity".into();
-        assert!(admin_config(&request).is_err());
-    }
+    let configuration = super::provision_project_env::workload::configuration(
+        &args.namespace,
+        cluster,
+        host.into(),
+        args.db_port,
+        database,
+        role.clone(),
+        args.secret_name.clone(),
+    );
+    let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":format!("{}-configuration",args.secret_name),"namespace":args.namespace},"data":{"connection.json":configuration.to_json()?}});
+    wamn_kubernetes::kubectl::apply(&kubeconfig, "", &args.namespace, &object).await?;
+    Ok(IdentityIssuerOutcome {
+        role,
+        configuration,
+    })
 }

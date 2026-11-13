@@ -16,9 +16,8 @@ use wamn_control_provision::project_key::{
     authority_derivations_bootstrap_sql, authority_derivations_sql, project_key,
 };
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
-use wamn_run_state::CredentialGeneration;
 
 /// Every test gets its OWN database and its OWN roles.
 ///
@@ -389,7 +388,7 @@ fn role_url(admin_url: &str, role: &str, database: &str) -> String {
 
 /// THE PREDICATE, END TO END, against a login the MINT actually produced.
 ///
-/// `workload_generation_role` composes the name and `current_project_key`
+/// `workload_login` composes the name and `current_project_key`
 /// decomposes it, in two languages. The Rust unit tests can only show the
 /// shape they share; whether PostgreSQL's regex agrees is a fact about
 /// PostgreSQL, and this is the only place it is established.
@@ -403,13 +402,12 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 
     let project_env_key = "acme";
     let key = project_key(project_env_key, &target.db);
-    let login = workload_generation_role(
+    let login = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key,
             database: &target.db,
         },
-        CredentialGeneration::A,
     )
     .expect("App takes a project target");
 
@@ -593,7 +591,7 @@ fn administration_uses_the_database_boundary_while_catalog_keeps_project_keys() 
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let url = database.url();
-    psql_file(url, "CREATE ROLE wamn_app NOLOGIN; ");
+    psql_file(url, "CREATE ROLE wamn_app NOLOGIN NOINHERIT; ");
     psql_file(url, wamn_catalog::CATALOG_SCHEMA_SQL);
     psql_file(url, wamn_control_provision::APP_SCHEMA_SQL);
     psql_file(url, "DO $$ BEGIN

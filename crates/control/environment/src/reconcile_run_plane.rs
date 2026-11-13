@@ -3,11 +3,11 @@
 //! Dry runs read database facts without changing roles or schema.
 //! Apply requires SUPERUSER or BYPASSRLS to observe every project row.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
     APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
@@ -211,7 +211,7 @@ pub async fn reconcile_run_plane_with_migrations(
             })?;
     let expected_database =
         project_env_database_name(&args.org, &args.project, &args.env, &instance);
-    let (mut client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+    let mut client = wamn_postgres::connect(&args.admin_database_url)
         .await
         .map_err(|source| {
             ReconcileTargetError::with_source(
@@ -220,11 +220,11 @@ pub async fn reconcile_run_plane_with_migrations(
                 source,
             )
         })?;
-    let conn_task = tokio::spawn(conn);
-    let actual_database = client
-        .query_one("SELECT pg_catalog.current_database()::text", &[])
+
+    let actual_database = sqlx::query("SELECT pg_catalog.current_database()::text")
+        .fetch_one(&mut client)
         .await
-        .map(|row| row.get::<_, String>(0))
+        .map(|row| row.get::<String, _>(0))
         .map_err(|source| {
             ReconcileTargetError::with_source(
                 ReconcileTargetErrorType::DatabaseTarget,
@@ -236,13 +236,11 @@ pub async fn reconcile_run_plane_with_migrations(
         Ok(actual_database) => actual_database,
         Err(error) => {
             drop(client);
-            let _ = conn_task.await;
             return Err(error.into());
         }
     };
     if actual_database != expected_database {
         drop(client);
-        let _ = conn_task.await;
         return Err(
             ReconcileTargetError::mismatch(&triple, expected_database, actual_database).into(),
         );
@@ -263,26 +261,24 @@ pub async fn reconcile_run_plane_with_migrations(
             )
             .await?;
         // Validate completed initialization before any substrate reconciliation writes.
-        if client
-            .query_one(
-                "SELECT to_regclass('platform.schema_baseline') IS NOT NULL",
-                &[],
-            )
+        if sqlx::query("SELECT to_regclass('platform.schema_baseline') IS NOT NULL")
+            .fetch_one(&mut client)
             .await?
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
         {
             wamn_package_control::schema_baseline::observe(
-                &client,
+                &mut client,
                 wamn_control_provision::schema_migrations::MigrationDatabase::Project,
                 sources,
             )
             .await?;
         }
-        let system = wamn_package_control::database::connect(&args.system_database_url).await?;
+        let mut system = wamn_postgres::connect(&args.system_database_url).await?;
         let reset_sources =
-            crate::environment::sql::reset::migration_sources(&system, &triple, sources).await?;
+            crate::environment::sql::reset::migration_sources(&mut system, &triple, sources)
+                .await?;
         drop(system);
-        let plan = reconcile(&client, &schema, !args.dry_run).await?;
+        let plan = reconcile(&mut client, &schema, !args.dry_run).await?;
         let policy_changed = converge_environment_policy(
             &mut client,
             &schema,
@@ -294,16 +290,16 @@ pub async fn reconcile_run_plane_with_migrations(
         .await?;
         // After the catalog schema, because app-schema.sql's stamp triggers
         // call the record-history function that composition installs.
-        let (mut system, connection) =
-            tokio_postgres::connect(&args.system_database_url, NoTls).await?;
-        let connection = tokio::spawn(connection);
+        let mut system = wamn_postgres::connect(&args.system_database_url).await?;
+
         let identity_result = async {
-            let authority = system.transaction().await?;
+            let mut authority = system.begin().await?;
             if !args.dry_run {
-                wamn_platform_identity::org::lock_org_memberships(&authority, &args.org).await?;
+                wamn_platform_identity::org::lock_org_memberships(&mut authority, &args.org)
+                    .await?;
             }
             let identity_source = read_project_env_key_identity_source(
-                &authority,
+                &mut authority,
                 &args.org,
                 &args.project,
                 &args.env,
@@ -322,7 +318,7 @@ pub async fn reconcile_run_plane_with_migrations(
                 &identity_source,
                 !args.dry_run,
                 &args.changes,
-                &authority,
+                &mut authority,
                 target,
             )
             .await?;
@@ -331,7 +327,6 @@ pub async fn reconcile_run_plane_with_migrations(
         }
         .await;
         drop(system);
-        let _ = connection.await;
         let project_env_key_identity = identity_result?;
         if !args.dry_run
             && (project_env_key_identity.app_schema_installed || reset_sources.is_some())
@@ -346,7 +341,6 @@ pub async fn reconcile_run_plane_with_migrations(
     }
     .await;
     drop(client);
-    let _ = conn_task.await;
     let (plan, policy_changed, project_env_key_identity) = result?;
     Ok(ReconcileRunPlaneOutcome {
         plan,
@@ -409,21 +403,21 @@ const PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identi
     (SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4)";
 
 async fn read_project_env_key_identity_source(
-    client: &tokio_postgres::Transaction<'_>,
+    client: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,
 ) -> anyhow::Result<ProjectEnvKeyIdentitySource> {
-    let platform_domain: Option<String> = client
-        .query_one(
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
-            &[],
-        )
-        .await
-        .context("read the deployment platform domain")?
-        .get(0);
-    let services = client
-        .query(PROJECT_ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
+    let platform_domain: Option<String> =
+        sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
+            .fetch_one(&mut **client)
+            .await
+            .context("read the deployment platform domain")?
+            .get(0);
+    let services = sqlx::query(PROJECT_ENV_KEY_IDENTITY_SOURCE_SQL)
+        .bind(org)
+        .bind(project)
+        .fetch_all(&mut **client)
         .await
         .context("read the project's service principals")?
         .into_iter()
@@ -433,23 +427,22 @@ async fn read_project_env_key_identity_source(
             display_name: row.get(2),
         })
         .collect();
-    let users = client
-        .query(PROJECT_ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
+    let users = sqlx::query(PROJECT_ENV_KEY_IDENTITY_USERS_SQL)
+        .bind(org)
+        .bind(project)
+        .bind(env)
+        .fetch_all(&mut **client)
         .await
         .context("read the project environment's user members")?
         .into_iter()
         .map(|row| UserPrincipal { id: row.get(0) })
         .collect();
-    let admins = client
-        .query(
-            PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL,
-            &[
-                &org,
-                &project,
-                &env,
-                &wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
-            ],
-        )
+    let admins = sqlx::query(PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL)
+        .bind(org)
+        .bind(project)
+        .bind(env)
+        .bind(wamn_platform_identity::control::PROJECT_ADMIN_ROLE)
+        .fetch_all(&mut **client)
         .await
         .context("read the project environment's administrators")?
         .into_iter()
@@ -513,49 +506,47 @@ pub struct ProjectEnvKeyIdentityOutcome {
 ///
 /// `apply=false` observes only and writes nothing.
 async fn converge_project_env_key_identity(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     source: &ProjectEnvKeyIdentitySource,
     apply: bool,
     changes: &wamn_broker::Publisher,
-    system: &tokio_postgres::Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: wamn_platform_identity::application::ApplicationTarget<'_>,
 ) -> anyhow::Result<ProjectEnvKeyIdentityOutcome> {
     anyhow::ensure!(!project_env_key.is_empty(), "project must not be empty");
     let mut outcome = ProjectEnvKeyIdentityOutcome::default();
-    let app_schema_present: bool = client
-        .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
-        .await
-        .context("probe the platform schema")?
-        .get(0);
+    let app_schema_present: bool =
+        sqlx::query("SELECT to_regclass('platform.\"user\"') IS NOT NULL")
+            .fetch_one(&mut *client)
+            .await
+            .context("probe the platform schema")?
+            .get(0);
 
     // Every relation app-schema.sql creates has a stamp trigger, so the
     // record-history function has to exist before the file runs. The catalog
     // composition carries it, and this same reconcile installs that. A project
     // whose catalog predates record-history reaches here without it, and the
     // failure is clearer here than inside a CREATE TRIGGER.
-    let stamp_function_present: bool = client
-        .query_one(
-            "SELECT EXISTS ( SELECT FROM pg_proc AS p \
+    let stamp_function_present: bool = sqlx::query(
+        "SELECT EXISTS ( SELECT FROM pg_proc AS p \
                JOIN pg_namespace AS n ON n.oid = p.pronamespace \
               WHERE n.nspname = 'wamn_history' AND p.proname = 'stamp_row' )",
-            &[],
-        )
-        .await
-        .context("probe the record-history stamp function")?
-        .get(0);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .context("probe the record-history stamp function")?
+    .get(0);
 
     let missing_platform: Vec<PlatformComponent> = if app_schema_present {
-        let present: BTreeSet<String> = client
-            .query(
-                "SELECT id::text FROM platform.\"user\" WHERE type = 'platform'",
-                &[],
-            )
-            .await
-            .context("read the project's platform rows")?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect();
+        let present: BTreeSet<String> =
+            sqlx::query("SELECT id::text FROM platform.\"user\" WHERE type = 'platform'")
+                .fetch_all(&mut *client)
+                .await
+                .context("read the project's platform rows")?
+                .into_iter()
+                .map(|row| row.get::<String, _>(0))
+                .collect();
         PlatformComponent::ALL
             .into_iter()
             .filter(|component| !present.contains(&component.principal_id().to_string()))
@@ -566,14 +557,14 @@ async fn converge_project_env_key_identity(
 
     let (present_users, present_user_type): (BTreeSet<String>, BTreeSet<String>) =
         if app_schema_present {
-            client
-                .query("SELECT id::text, type = 'user' FROM platform.\"user\"", &[])
+            sqlx::query("SELECT id::text, type = 'user' FROM platform.\"user\"")
+                .fetch_all(&mut *client)
                 .await
                 .context("read the project's user rows")?
                 .into_iter()
                 .fold(Default::default(), |(mut all, mut users), row| {
                     let id: String = row.get(0);
-                    if row.get::<_, bool>(1) {
+                    if row.get::<bool, _>(1) {
                         users.insert(id.clone());
                     }
                     all.insert(id);
@@ -604,17 +595,17 @@ async fn converge_project_env_key_identity(
     outcome.user_rows_written = missing_users.len();
     outcome.user_rows_removed = stale_users.len();
     let present_admins: BTreeSet<String> = if app_schema_present {
-        client
-            .query(
-                "SELECT user_id::text FROM platform.user_role \
+        sqlx::query(
+            "SELECT user_id::text FROM platform.user_role \
                   WHERE role_name = $1",
-                &[&wamn_identity_protocol::ADMIN_ROLE],
-            )
-            .await
-            .context("read the project's admin rows")?
-            .into_iter()
-            .map(|row| row.get(0))
-            .collect()
+        )
+        .bind(wamn_identity_protocol::ADMIN_ROLE)
+        .fetch_all(&mut *client)
+        .await
+        .context("read the project's admin rows")?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect()
     } else {
         BTreeSet::new()
     };
@@ -655,27 +646,27 @@ async fn converge_project_env_key_identity(
     let platform_rows =
         platform_principals_sql(platform_domain).map_err(|source| anyhow::anyhow!("{source}"))?;
 
-    let transaction = client
-        .transaction()
+    let mut transaction = client
+        .begin()
         .await
         .context("open the project identity transaction")?;
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     if !app_schema_present {
-        let owner: String = transaction
-            .query_one(
-                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
-                &[],
-            )
-            .await?
-            .get(0);
-        transaction
-            .batch_execute(&format!(
-                "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
-                postgres_protocol::escape::escape_identifier(&owner)
-            ))
-            .await
-            .context("install deploy/sql/app-schema.sql")?;
-        wamn_package_control::schema_baseline::record_project(&transaction)
+        let owner: String = sqlx::query(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+        )
+        .fetch_one(&mut *transaction)
+        .await?
+        .get(0);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
+            postgres_protocol::escape::escape_identifier(&owner)
+        )))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)
+        .context("install deploy/sql/app-schema.sql")?;
+        wamn_package_control::schema_baseline::record_project(&mut transaction)
             .await
             .context("record the project schema baseline")?;
         if let Some(pending) = crate::provision_project_env::registry::pending_database(
@@ -687,17 +678,15 @@ async fn converge_project_env_key_identity(
             let identity = pending["initialization_identity"]
                 .as_str()
                 .context("reset initialization identity")?;
-            transaction.execute(
-                "UPDATE platform.schema_baseline SET installed_at=$1::text::timestamptz WHERE singleton",
-                &[&identity],
-            ).await?;
+            sqlx::query("UPDATE platform.schema_baseline SET installed_at=$1::text::timestamptz WHERE singleton").bind(identity).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
         }
     }
     // Every write below stamps `wamn:provisioning`, and its own row stamps
     // itself, because the bind comes first and lasts for this transaction.
-    transaction
-        .batch_execute(&platform_rows)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(platform_rows.clone()))
+        .execute(&mut *transaction)
         .await
+        .map(drop)
         .context("write the project's platform principal rows")?;
     if !missing_services.is_empty()
         || !missing_users.is_empty()
@@ -706,16 +695,17 @@ async fn converge_project_env_key_identity(
         || !stale_admins.is_empty()
         || !source.admins.is_subset(&present_admins)
     {
-        transaction
-            .batch_execute(&bind_platform_principal_sql(
-                PlatformComponent::Provisioning,
-            ))
-            .await
-            .context("bind wamn:provisioning for the service and user rows")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        )))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)
+        .context("bind wamn:provisioning for the service and user rows")?;
         for service in &missing_services {
             let principal_id: wamn_identity_protocol::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
-                &transaction,
+                &mut transaction,
                 project_env_key,
                 wamn_platform_identity::application::ApplicationUser {
                     principal_id: &principal_id,
@@ -734,7 +724,7 @@ async fn converge_project_env_key_identity(
             let principal = id.parse()?;
             wamn_platform_identity::application::project_authority(
                 system,
-                &transaction,
+                &mut transaction,
                 target,
                 &principal,
                 &mut drops,
@@ -760,7 +750,7 @@ async fn converge_project_env_key_identity(
 /// supplies the source identity
 /// (docs/architecture/overview.md#environment-lifecycle).
 pub(crate) async fn converge_environment_policy(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     schema: &BareSchemaName,
     project_env_key: &str,
     environment: &str,
@@ -768,24 +758,16 @@ pub(crate) async fn converge_environment_policy(
     apply: bool,
 ) -> anyhow::Result<bool> {
     anyhow::ensure!(!project_env_key.is_empty(), "project must not be empty");
-    let table_present: bool = client
-        .query_one(
-            "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
-            &[&schema.as_str()],
-        )
+    let table_present: bool = sqlx::query("SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL").bind(schema.as_str()).fetch_one(&mut *client)
         .await
         .context("observe project-local environment policy relation")?
         .get(0);
     let source_carriers_present: bool = if table_present {
-        client
-            .query_one(
-                "SELECT count(*) = 2 FROM pg_catalog.pg_attribute AS attribute \
+        sqlx::query("SELECT count(*) = 2 FROM pg_catalog.pg_attribute AS attribute \
                   WHERE attribute.attrelid = \
                           pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) \
                     AND attribute.attname IN ('source_policy_org', 'source_policy_hash') \
-                    AND attribute.attnum > 0 AND NOT attribute.attisdropped",
-                &[&schema.as_str()],
-            )
+                    AND attribute.attnum > 0 AND NOT attribute.attisdropped").bind(schema.as_str()).fetch_one(&mut *client)
             .await
             .context("observe project-local environment policy source carriers")?
             .get(0)
@@ -793,25 +775,23 @@ pub(crate) async fn converge_environment_policy(
         false
     };
     let current = if source_carriers_present {
-        client
-            .query_opt(
-                &format!(
-                    "SELECT expected_environment, \
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT expected_environment, \
                             source_policy_org, source_policy_hash \
                        FROM {}.environment_policies WHERE project_env_key = $1",
-                    schema.quoted()
-                ),
-                &[&project_env_key],
+            schema.quoted()
+        )))
+        .bind(project_env_key)
+        .fetch_optional(&mut *client)
+        .await
+        .context("observe project-local environment policy")?
+        .map(|row| {
+            (
+                row.get::<String, _>(0),
+                row.get::<Option<String>, _>(1),
+                row.get::<Option<String>, _>(2),
             )
-            .await
-            .context("observe project-local environment policy")?
-            .map(|row| {
-                (
-                    row.get::<_, String>(0),
-                    row.get::<_, Option<String>>(1),
-                    row.get::<_, Option<String>>(2),
-                )
-            })
+        })
     } else {
         None
     };
@@ -828,16 +808,15 @@ pub(crate) async fn converge_environment_policy(
             table_present && source_carriers_present,
             "run-plane reconciliation did not create the environment policy source carriers"
         );
-        let transaction = client.transaction().await?;
-        transaction
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                PlatformComponent::Provisioning,
-            ))
-            .await?;
-        transaction
-            .execute(
-                &format!(
-                    "INSERT INTO {}.environment_policies \
+        let mut transaction = client.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning),
+        ))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {}.environment_policies \
                        (project_env_key, expected_environment, \
                         source_policy_org, source_policy_hash) \
                      VALUES ($1, $2, $3, $4) \
@@ -851,17 +830,16 @@ pub(crate) async fn converge_environment_policy(
                            IS DISTINCT FROM \
                            (EXCLUDED.expected_environment, \
                             EXCLUDED.source_policy_org, EXCLUDED.source_policy_hash)",
-                    schema.quoted()
-                ),
-                &[
-                    &project_env_key,
-                    &environment,
-                    &source.source_policy_org.as_ref(),
-                    &source.source_policy_hash.as_ref(),
-                ],
-            )
-            .await
-            .context("converge project-local environment policy")?;
+            schema.quoted()
+        )))
+        .bind(project_env_key)
+        .bind(environment)
+        .bind(source.source_policy_org.as_ref())
+        .bind(source.source_policy_hash.as_ref())
+        .execute(&mut *transaction)
+        .await
+        .map(|result| result.rows_affected())
+        .context("converge project-local environment policy")?;
         transaction.commit().await?;
     }
     Ok(changed)
@@ -872,18 +850,17 @@ pub(crate) async fn converge_environment_policy(
 /// Returns the plan (for reporting / condition assertions). Shared by the CLI verb
 /// and the live acceptance test so both exercise one code path.
 pub async fn reconcile(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     schema: &BareSchemaName,
     apply: bool,
 ) -> anyhow::Result<RunPlanePlan> {
-    let bypasses_forced_rls: bool = client
-        .query_one(
-            "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER",
-            &[],
-        )
-        .await
-        .context("verify reconcile admin bypasses forced RLS")?
-        .get(0);
+    let bypasses_forced_rls: bool = sqlx::query(
+        "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER",
+    )
+    .fetch_one(&mut *client)
+    .await
+    .context("verify reconcile admin bypasses forced RLS")?
+    .get(0);
     anyhow::ensure!(
         bypasses_forced_rls,
         "reconcile-run-plane requires SUPERUSER or BYPASSRLS; a plain schema owner cannot completely observe forced-RLS rows"
@@ -893,67 +870,82 @@ pub async fn reconcile(
     let plan = plan_run_plane(schema, &obs);
     if apply {
         ensure_runtime_roles(client).await?;
-        let owner: String = client
-            .query_one(
-                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
-                &[],
-            )
-            .await?
-            .get(0);
-        client
-            .batch_execute(&format!(
-                "SET ROLE {}",
-                postgres_protocol::escape::escape_identifier(&owner)
-            ))
-            .await?;
+        let owner: String = sqlx::query(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+        )
+        .fetch_one(&mut *client)
+        .await?
+        .get(0);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET ROLE {}",
+            postgres_protocol::escape::escape_identifier(&owner)
+        )))
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
         for action in &plan.actions {
-            client
-                .batch_execute(&action.sql)
+            sqlx::raw_sql(sqlx::AssertSqlSafe(action.sql.clone()))
+                .execute(&mut *client)
                 .await
+                .map(drop)
                 .with_context(|| format!("apply {:?} {}", action.type_, action.target))?;
         }
-        client.batch_execute("RESET ROLE").await?;
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut *client)
+            .await
+            .map(drop)?;
     }
     Ok(plan)
 }
 
-pub async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+pub async fn ensure_runtime_roles(client: &mut sqlx::PgConnection) -> anyhow::Result<()> {
     for family in [
         wamn_control_provision::WorkloadRoleFamily::Retention,
         wamn_control_provision::WorkloadRoleFamily::AuditRetention,
     ] {
-        client
-            .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
-                family,
-            ))
-            .await?;
-    }
-    client
-        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
-        .await?;
-    client
-        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(family),
+        ))
+        .execute(&mut *client)
         .await
-        .context("ensure wamn_app role")?;
+        .map(drop)?;
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_platform_group_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .context("ensure wamn_app role")?;
     Ok(())
 }
 
 /// Read the database facts that the planner uses.
 async fn observe(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
     let mut obs = RunPlaneObservation {
-        app_run_queue_authority: client
-            .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
-            .await
-            .context("read guest run-queue authority")?
-            .get(0),
+        app_run_queue_authority: sqlx::query(sqlx::AssertSqlSafe(
+            (select_app_run_queue_authority_sql()).to_string(),
+        ))
+        .bind(schema.as_str())
+        .fetch_one(&mut *client)
+        .await
+        .context("read guest run-queue authority")?
+        .get(0),
         ..Default::default()
     };
     let capture_privileges_sql = select_run_capture_privileges_sql();
-    let capture_privileges = client
-        .query_one(&capture_privileges_sql, &[&schema.as_str()])
+    let capture_privileges = sqlx::query(sqlx::AssertSqlSafe(capture_privileges_sql.clone()))
+        .bind(schema.as_str())
+        .fetch_one(&mut *client)
         .await
         .context("read guest run-capture privileges")?;
     obs.app_run_capture_privileges = (
@@ -961,55 +953,64 @@ async fn observe(
         capture_privileges.get(1),
         capture_privileges.get(2),
     );
-    for row in client
-        .query(select_authoring_table_privileges_sql(), &[&schema.as_str()])
-        .await
-        .context("read authoring table privileges")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_authoring_table_privileges_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read authoring table privileges")?
     {
         obs.authoring_table_privileges
             .entry((row.get(0), row.get(1), row.get(2)))
             .or_default()
             .insert(row.get(3));
     }
-    for row in client
-        .query(
-            select_authoring_effective_table_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective authoring table privileges")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_authoring_effective_table_privileges_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read effective authoring table privileges")?
     {
         obs.authoring_effective_table_privileges
             .entry((row.get(0), row.get(1), row.get(2)))
             .or_default()
             .insert(row.get(3));
     }
-    for row in client
-        .query(
-            select_authoring_effective_column_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective authoring column privileges")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_authoring_effective_column_privileges_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read effective authoring column privileges")?
     {
         obs.authoring_effective_column_privileges
             .entry((row.get(0), row.get(1), row.get(2)))
             .or_default()
             .insert(row.get(3));
     }
-    for row in client
-        .query(select_authoring_table_owners_sql(), &[&schema.as_str()])
-        .await
-        .context("read authoring table owners")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_authoring_table_owners_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read authoring table owners")?
     {
         obs.authoring_table_owners
             .insert((row.get(0), row.get(1)), row.get(2));
     }
 
-    for row in client
-        .query(select_schema_columns_sql(), &[&schema.as_str()])
-        .await
-        .context("read schema tables/columns")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_schema_columns_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read schema tables/columns")?
     {
         let table: String = row.get(0);
         let column: String = row.get(1);
@@ -1025,33 +1026,33 @@ async fn observe(
             .insert((table.clone(), column.clone()), row.get(4));
         obs.tables.entry(table).or_default().insert(column);
     }
-    if let Some(row) = client
-        .query_opt(
-            select_environment_policy_row_security_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read environment-policy row-security flags")?
+    if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(
+        (select_environment_policy_row_security_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_optional(&mut *client)
+    .await
+    .context("read environment-policy row-security flags")?
     {
         let mut row_security = RowSecurityObservation {
             enabled: row.get(0),
             forced: row.get(1),
             ..Default::default()
         };
-        for row in client
-            .query(
-                select_environment_policy_policies_sql(),
-                &[&schema.as_str()],
-            )
-            .await
-            .context("read environment-policy row-security policies")?
+        for row in sqlx::query(sqlx::AssertSqlSafe(
+            (select_environment_policy_policies_sql()).to_string(),
+        ))
+        .bind(schema.as_str())
+        .fetch_all(&mut *client)
+        .await
+        .context("read environment-policy row-security policies")?
         {
             row_security.policies.insert(
                 row.get(0),
                 RowPolicyObservation {
                     command: row.get(1),
                     permissive: row.get(2),
-                    roles: row.get::<_, Vec<String>>(3).into_iter().collect(),
+                    roles: row.get::<Vec<String>, _>(3).into_iter().collect(),
                     using_expression: row.get(4),
                     check_expression: row.get(5),
                 },
@@ -1059,44 +1060,61 @@ async fn observe(
         }
         obs.environment_policy_row_security = Some(row_security);
     }
-    for row in client
-        .query(select_schema_indexes_sql(), &[&schema.as_str()])
-        .await
-        .context("read schema indexes")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_schema_indexes_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read schema indexes")?
     {
         obs.indexes.insert(row.get(0), row.get(1));
     }
-    for row in client
-        .query(select_schema_checks_sql(), &[&schema.as_str()])
-        .await
-        .context("read schema check constraints")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_schema_checks_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read schema check constraints")?
     {
         obs.checks.insert((row.get(0), row.get(1)), row.get(2));
     }
-    for row in client
-        .query(select_schema_triggers_sql(), &[&schema.as_str()])
-        .await
-        .context("read schema triggers")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_schema_triggers_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read schema triggers")?
     {
         obs.triggers.insert((row.get(0), row.get(1)), row.get(2));
     }
-    for row in client
-        .query(select_run_plane_helper_functions_sql(), &[&schema.as_str()])
-        .await
-        .context("read run-plane helper functions")?
+    for row in sqlx::query(sqlx::AssertSqlSafe(
+        (select_run_plane_helper_functions_sql()).to_string(),
+    ))
+    .bind(schema.as_str())
+    .fetch_all(&mut *client)
+    .await
+    .context("read run-plane helper functions")?
     {
         obs.helper_functions.insert(row.get(0), row.get(1));
     }
-    obs.catalog_schema_present = client
-        .query_one(catalog_schema_present_sql(), &[])
-        .await
-        .context("probe catalog schema")?
-        .get(0);
+    obs.catalog_schema_present = sqlx::query(sqlx::AssertSqlSafe(
+        (catalog_schema_present_sql()).to_string(),
+    ))
+    .fetch_one(&mut *client)
+    .await
+    .context("probe catalog schema")?
+    .get(0);
     if obs.catalog_schema_present {
-        for row in client
-            .query(select_schema_columns_sql(), &[&"catalog"])
-            .await
-            .context("read catalog tables")?
+        for row in sqlx::query(sqlx::AssertSqlSafe(
+            (select_schema_columns_sql()).to_string(),
+        ))
+        .bind("catalog")
+        .fetch_all(&mut *client)
+        .await
+        .context("read catalog tables")?
         {
             let table: String = row.get(0);
             obs.catalog_tables.insert(table.clone());

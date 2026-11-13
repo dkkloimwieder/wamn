@@ -9,6 +9,7 @@
 //! running whose release has no live pod is stranded: the verb names each run
 //! and its digest and stops. Nothing fails a stranded run on its own.
 
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub use plan::{describe, largest_grace, settled};
 
@@ -143,22 +144,21 @@ pub async fn stranded(
 ) -> anyhow::Result<Vec<Stranded>> {
     let live: Vec<String> = live.keys().cloned().collect();
     let mut client = super::analyse::connect_project(project_url).await?;
-    let transaction = client
-        .transaction()
+    let mut transaction = client
+        .begin()
         .await
         .context("begin the stranded-run read")?;
-    transaction
-        .query_one(
-            "SELECT set_config('app.project_env_key', $1, true)",
-            &[&project_env_key],
-        )
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await
         .context("bind the project identity")?;
-    let stranded = transaction
-        .query(
-            STRANDED_SQL,
-            &[&project_env_key, &environment, &live, &applications],
-        )
+    let stranded = sqlx::query(STRANDED_SQL)
+        .bind(project_env_key)
+        .bind(environment)
+        .bind(&live)
+        .bind(applications)
+        .fetch_all(&mut *transaction)
         .await
         .context("read the runs pinned to a release with no live pod")?
         .into_iter()

@@ -17,9 +17,9 @@
 //! model's `UQ` on the insert that renders it. The set refuses a `per=`
 //! counter, whose values are mappings that never change.
 
-use deadpool_postgres::Object;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
+use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
 use super::super::write_log::OpaqueBegun;
@@ -268,7 +268,7 @@ impl WamnPostgres {
                 .ok_or_else(|| failed(set, request_id, context, None));
         }
         let outcome = transaction
-            .with_host_connection(|connection| async move {
+            .with_host_connection(|mut connection| async move {
                 let result = set_counter(connection.connection(), set, request_id).await;
                 (connection, result)
             })
@@ -294,18 +294,24 @@ impl WamnPostgres {
 
 /// Set the counter under its row lock. The caller rolls back a refusal.
 async fn set_counter(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     set: &CounterSet,
     request_id: &str,
-) -> Result<Result<(), CounterSetError>, tokio_postgres::Error> {
+) -> Result<Result<(), CounterSetError>, sqlx::Error> {
     let refused = |refusal| refused(set, request_id, refusal);
-    let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
-    let row = connection
-        .query_one(&statement, &[&set.application, &set.sequence])
+    let statement = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(SEQUENCE_SQL),
+    )
+    .await?;
+    let row = sqlx::query(statement.sql().clone())
+        .bind(&set.application)
+        .bind(&set.sequence)
+        .fetch_one(&mut *connection)
         .await?;
     let (Some(sequence), Some(pattern)) = (
-        row.get::<_, Option<String>>(0),
-        row.get::<_, Option<String>>(1),
+        row.get::<Option<String>, _>(0),
+        row.get::<Option<String>, _>(1),
     ) else {
         return Ok(Err(refused(CounterSetRefusal::SequenceNotFound)));
     };
@@ -334,10 +340,16 @@ async fn set_counter(
         Policy::Always | Policy::Reset(_) => {}
     }
 
-    let write = connection.prepare_cached(SET_SQL).await?;
-    connection
-        .execute(&write, &[&sequence, &set.counter, &set.key, &set.value])
-        .await?;
+    let write =
+        sqlx::Executor::prepare(&mut *connection, sqlx::SqlSafeStr::into_sql_str(SET_SQL)).await?;
+    sqlx::query(write.sql().clone())
+        .bind(&sequence)
+        .bind(&set.counter)
+        .bind(&set.key)
+        .bind(set.value)
+        .execute(&mut *connection)
+        .await
+        .map(|result| result.rows_affected())?;
 
     Ok(Ok(()))
 }

@@ -48,7 +48,7 @@ spec:
     size: 10Gi
   postgresql:
     pg_hba:
-      - host all all all scram-sha-256
+      - hostssl all all all scram-sha-256
     parameters:
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
@@ -58,3 +58,5 @@ spec:
     initdb:
       database: wamn_system
       owner: wamn_system
+      postInitSQL:
+        - ALTER ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS

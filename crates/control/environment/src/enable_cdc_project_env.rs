@@ -1,41 +1,6 @@
-//! The `enable-cdc-project-env` subcommand (wamn-l5i9.9, D19 v3 §4): overlay
-//! CDC **capture** onto an ALREADY-provisioned project-env. CDC is opt-in and
-//! may be enabled long after provisioning, so it is its own overlay rather than
-//! a `provision-project-env` flag.
-//!
-//! Provisioning creates the declared broker objects. The runbook applies the
-//! emitted PostgreSQL and Kubernetes files in this order, then records the CDC
-//! reader with [`record_event_reader`]:
-//!
-//! 1. apply the emitted **replication-role SQL** to the target cluster's
-//!    superuser (any database — roles are cluster-global);
-//! 2. apply the emitted **CDC SQL** connected to the PROJECT-ENV database
-//!    (publications and logical slots are database-bound): the failover-enabled
-//!    slot first, then the schema guard, decode maps, and role grants. The slot
-//!    pins WAL from CDC-enable, bounded by `max_slot_wal_keep_size`;
-//! 3. `kubectl apply -f` the emitted **replication-credential Secret**.
-//!
-//! This command also creates the declared source and advisory streams and
-//! materializer consumers with explicit event provisioning credentials.
-//! Existing broker objects must match the fields their declarations own.
-//!
-//! What this tool does directly (given `--system-database-url`): derive the
-//! target cluster from the org's placement and the recorded project-env policy.
-//! [`record_event_reader`] records the
-//! `registry.event_readers` registration (as the `wamn_system` owner) once the
-//! files are applied. The registration's project-env FK makes the overlay
-//! ordering structural: an unprovisioned env is rejected.
-//!
-//! One shared name serves the publication, the slot, and the role
-//! (`wamn_cdc_<org>__<project>__<env>__<instance>` — underscored, a slot admits only
-//! `[a-z0-9_]`); the Secret keeps the hyphenated convention
-//! (`wamn-cdc-<org>--<project>--<env>`). The replication credential is its own
-//! R8b tier — distinct from the `wamn_app` query credential and the dispatch
-//! role. NOTE Postgres `REPLICATION` is cluster-wide: on a shared pool,
-//! input-side isolation rests on handing each reader only its own
-//! slot/publication/credentials. Separate environment streams and broker
-//! credentials limit event access. Regulated tiers use dedicated clusters.
+//! Provision capture with one CNPG-managed replication login and native credentials.
 
+use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::cdc_sql_bundle;
 
@@ -44,11 +9,10 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::Value;
-use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
-    cdc_object_name, compose_url, project_env_cdc_secret_name, project_env_database_name,
-    render_project_env_cdc_secret_manifest, sql, validate_project_env_cdc,
+    cdc_object_name, project_env_cdc_secret_name, project_env_database_name, sql,
+    validate_project_env_cdc,
 };
 use wamn_registry::Triple;
 
@@ -117,9 +81,6 @@ pub struct EnableCdcProjectEnvRequest {
     /// Native NATS pull consumer configurations as JSON.
     pub consumer_config: Vec<String>,
 
-    /// Write the replication-role SQL here.
-    pub emit_role_sql: Option<PathBuf>,
-
     /// Write the CDC SQL here.
     pub emit_cdc_sql: Option<PathBuf>,
 
@@ -139,7 +100,6 @@ pub struct EnableCdcProjectEnvOutcome {
     pub cluster: String,
     pub stream: String,
     pub secret_name: String,
-    pub role_sql: String,
     pub cdc_sql: String,
     /// The CNPG `Publication` CR, which the operator turns into the publication.
     pub publication: Value,
@@ -212,17 +172,10 @@ pub async fn enable_cdc_project_env(
     let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let cdc_name = cdc_object_name(&args.org, &args.project, &args.env, &instance);
     let secret_name = project_env_cdc_secret_name(&args.org, &args.project, &args.env);
-    let db_host = crate::provision_project_env::database_host(
+    let _db_host = crate::provision_project_env::database_host(
         args.db_host.as_deref(),
         &cluster,
         &args.cluster_namespace,
-    );
-    let cdc_url = compose_url(
-        &cdc_name,
-        &args.replication_password,
-        &db_host,
-        args.db_port,
-        &db_name,
     );
 
     let broker = async_nats::jetstream::new(
@@ -241,7 +194,7 @@ pub async fn enable_cdc_project_env(
     .await?;
 
     // Render the artifacts the runbook applies.
-    let role_sql = sql::ensure_replication_role_sql(&cdc_name, &args.replication_password);
+
     let cdc_sql = cdc_sql_bundle(&args.schemas, &cdc_name, &db_name);
     let publication = wamn_control_provision::database::render_project_env_publication(
         &triple,
@@ -251,10 +204,53 @@ pub async fn enable_cdc_project_env(
         &cdc_name,
         &args.schemas,
     );
-    let secret_doc =
-        render_project_env_cdc_secret_manifest(&triple, &instance, &args.namespace, &cdc_url);
+    let secret_doc = serde_json::to_value(wamn_kubernetes::secret::Secret::basic_auth(
+        &args.org,
+        &secret_name,
+        &cdc_name,
+        &args.replication_password,
+    ))?;
 
-    write_output(args.emit_role_sql.as_deref(), &role_sql)?;
+    anyhow::ensure!(
+        args.namespace == args.org && args.cluster_namespace == args.org,
+        "database resources must share the org namespace"
+    );
+    let kubeconfig = std::env::var_os("KUBECONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let native_secret = wamn_kubernetes::secret::Secret::basic_auth(
+        &args.org,
+        &secret_name,
+        &cdc_name,
+        &args.replication_password,
+    );
+    wamn_kubernetes::secret::update(&kubeconfig, "", &args.org, &secret_name, |secret| {
+        if secret.metadata.resource_version.is_none() {
+            *secret = native_secret.clone();
+        } else {
+            anyhow::ensure!(
+                secret.data == native_secret.data,
+                "replication credential differs from its native Secret"
+            );
+        }
+        anyhow::ensure!(
+            secret.content_type == "kubernetes.io/basic-auth",
+            "old database Secret shape refused"
+        );
+        Ok(())
+    })
+    .await?;
+    crate::provision_project_env::workload::reconcile(
+        &kubeconfig,
+        "",
+        &args.org,
+        &cluster,
+        &wamn_control_provision::connection::managed_replication_role(
+            cdc_name.clone(),
+            secret_name.clone(),
+        ),
+    )
+    .await?;
     write_output(args.emit_cdc_sql.as_deref(), &cdc_sql)?;
     write_output(
         args.emit_publication.as_deref(),
@@ -271,7 +267,6 @@ pub async fn enable_cdc_project_env(
         cluster,
         stream,
         secret_name,
-        role_sql,
         cdc_sql,
         publication,
         secret: secret_doc,
@@ -285,19 +280,22 @@ pub async fn apply_cdc_sql(
     cdc_name: &str,
     database: &str,
 ) -> anyhow::Result<()> {
-    let client = wamn_package_control::database::connect(admin_database_url).await?;
-    let connected: String = client
-        .query_one("SELECT current_database()", &[])
+    let mut client = wamn_postgres::connect(admin_database_url).await?;
+    let connected: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut client)
         .await?
         .get(0);
     anyhow::ensure!(
         connected == database,
         "CDC SQL targets a different database"
     );
-    client
-        .batch_execute(&cdc_sql_bundle(schemas, cdc_name, database))
-        .await
-        .context("restore CDC slot, maps and grants")
+    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_sql_bundle(
+        schemas, cdc_name, database,
+    )))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .context("restore CDC slot, maps and grants")
 }
 
 /// Record the CDC reader registration of `triple` in the registry
@@ -327,28 +325,12 @@ pub async fn record_event_reader(
     let env = triple.env.as_str();
     let stream = wamn_event_wire::stream_name(&triple.org, &triple.project, env);
     let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect")?;
-    let conn_task = tokio::spawn(conn);
+
     let result = async {
-        client
-            .execute(
-                wamn_registry::sql::upsert_event_reader_sql(),
-                &[
-                    &triple.org,
-                    &triple.project,
-                    &env,
-                    &cdc_name,
-                    &cdc_name,
-                    &stream,
-                    &secret_name,
-                    &secret_namespace,
-                    &true,
-                    &schemas,
-                ],
-            )
-            .await
+        sqlx::query(sqlx::AssertSqlSafe((wamn_registry::sql::upsert_event_reader_sql()).to_string())).bind(&triple.org).bind(&triple.project).bind(env).bind(cdc_name).bind(cdc_name).bind(&stream).bind(&secret_name).bind(secret_namespace).bind(true).bind(&schemas).execute(&mut client).await.map(|result| result.rows_affected())
             .context(
                 "upsert registry.event_readers row (is the project-env provisioned? \
                  enable-cdc-project-env overlays an existing env — run provision-project-env first)",
@@ -357,20 +339,23 @@ pub async fn record_event_reader(
     }
     .await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
 /// Stop this environment's CDC publication before acquiring reset exclusion.
 /// A reader tests this registration while holding the shared lifecycle key.
 pub async fn pause_event_reader(system_url: &str, triple: &Triple) -> anyhow::Result<()> {
-    let mut client = wamn_package_control::database::connect(system_url).await?;
-    let tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
-    tx.execute(
+    let mut client = wamn_postgres::connect(system_url).await?;
+    let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
+    sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER,
-        &[&triple.org, &triple.project, &triple.env.as_str()],
     )
-    .await?;
+    .bind(&triple.org)
+    .bind(&triple.project)
+    .bind(triple.env.as_str())
+    .execute(&mut *tx)
+    .await
+    .map(|result| result.rows_affected())?;
     tx.commit().await?;
     Ok(())
 }
@@ -384,7 +369,7 @@ pub fn reader_deployment(
     duplicate_window_secs: u64,
 ) -> serde_json::Value {
     use serde_json::json;
-    use wamn_control_provision::WorkloadRoleFamily;
+
     let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
     let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
@@ -394,13 +379,13 @@ pub fn reader_deployment(
         "metadata":{"name":name,"namespace":namespace,"annotations":{"wamn.environment":triple.to_string()}},
         "spec":{"replicas":1,"strategy":{"type":"Recreate"},"selector":{"matchLabels":labels},
             "template":{"metadata":{"labels":labels},"spec":{
-                "automountServiceAccountToken":false,
+                "automountServiceAccountToken":true,"serviceAccountName":wamn_registry::service_account_name(&triple.org,&triple.project,&triple.env),
                 "containers":[{"name":"reader","image":image,"command":["/usr/local/bin/wamn-cdc-reader"],
                     "args":["--org",triple.org,"--project",triple.project,"--env",triple.env,
                         "--stream-replicas",replicas.to_string(),"--dup-window-secs",duplicate_window_secs.to_string()],
                     "env":[
-                        {"name":"WAMN_SYSTEM_URL","valueFrom":{"secretKeyRef":{"name":wamn_control_provision::workload_secret_name(WorkloadRoleFamily::RegistryReader,&triple.org,&triple.project,&triple.env),"key":"url"}}},
-                        {"name":"WAMN_CDC_URL","valueFrom":{"secretKeyRef":{"name":name,"key":"url"}}},
+                        {"name":"WAMN_SYSTEM_URL","valueFrom":{"configMapKeyRef":{"name":wamn_control_provision::project_env_secret_name(&triple.org,&triple.project,&triple.env),"key":"registry-reader.json"}}},
+                        {"name":"WAMN_CDC_URL","valueFrom":{"configMapKeyRef":{"name":name,"key":"connection.json"}}},
                         {"name":"WAMN_NATS_URL","value":crate::platform::identity::NATS_URL},
                         {"name":"WAMN_NATS_TLS_CA","value":"/etc/wamn/nats/ca.crt"},
                         {"name":"WAMN_NATS_TLS_CERT","value":"/etc/wamn/nats/tls.crt"},

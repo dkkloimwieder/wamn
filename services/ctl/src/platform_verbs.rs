@@ -161,12 +161,15 @@ pub async fn run_system_schema(
     };
     writeln!(output, "system SQL image: {}", args.image)?;
     output.flush()?;
-    let (mut client, connection) = tokio_postgres::connect(&args.system_url, tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(&args.system_url)
         .await
         .context("connect to the system SQL database")?;
-    let connection = tokio::spawn(connection);
+
     let result = async {
-        client.batch_execute("SET ROLE wamn_system").await?;
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         let sources = platform_migrations::embedded_sources(MigrationDatabase::System);
         platform_migrations::run(
             &mut client,
@@ -181,8 +184,7 @@ pub async fn run_system_schema(
     }
     .await;
     drop(client);
-    let driven = connection.await.context("join the system SQL connection")?;
-    result.and(driven.context("drive the system SQL connection"))
+    result
 }
 
 #[derive(Debug, Args)]

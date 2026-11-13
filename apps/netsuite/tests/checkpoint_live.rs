@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::json;
+use sqlx::Row as _;
 use wamn_engine::artifact_source::LocalComponentSource;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
@@ -29,10 +30,9 @@ pub async fn invoke(
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (admin, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    let guest_url = super::consumer_live::install(&admin, &database, roots, manifest).await?;
+    let mut admin = wamn_postgres::connect(database.url()).await?;
+
+    let guest_url = super::consumer_live::install(&mut admin, &database, roots, manifest).await?;
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
@@ -109,7 +109,8 @@ pub async fn invoke(
     // admitted at one due moment. Its run executes as the `workflow` user with
     // its execution role, which holds exactly the operation of the graph that
     // needs a grant: the consumer command of another package of the release.
-    let workflow_host = super::consumer_live::workflow_host(&admin, &database, manifest).await?;
+    let workflow_host =
+        super::consumer_live::workflow_host(&mut admin, &database, manifest).await?;
     // The application `erp` holds the three packages of the release. Its name
     // is no package (docs/architecture/execution.md#workflows).
     let run = super::consumer_live::schedule_run(
@@ -128,7 +129,7 @@ pub async fn invoke(
     // keeps.
     super::consumer_live::execution_role(&database, "netsuite-pull-without-record", &[]).await?;
     let caller =
-        super::consumer_live::run_caller(&admin, &workflow_host, &run, "netsuite-pull").await?;
+        super::consumer_live::run_caller(&mut admin, &workflow_host, &run, "netsuite-pull").await?;
     // The router's test before the `record` node: the node's registered
     // operation against the grants the run's role holds now. A role without
     // the consumer command refuses the node.
@@ -228,13 +229,11 @@ pub async fn invoke(
             result.map_err(|error| anyhow::anyhow!("checkpoint write failed: {error:?}"))?;
         let payload: serde_json::Value = serde_json::from_str(&emission.payload)?;
         assert_eq!(payload[0]["value"]["due"], stored, "{payload}");
-        let checkpoint: serde_json::Value = admin
-            .query_one(
-                "SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'",
-                &[],
-            )
-            .await?
-            .get(0);
+        let checkpoint: serde_json::Value =
+            sqlx::query("SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'")
+                .fetch_one(&mut admin)
+                .await?
+                .get(0);
         assert_eq!(checkpoint, json!(stored));
     }
     application.workload.unbind_all_plugins().await?;

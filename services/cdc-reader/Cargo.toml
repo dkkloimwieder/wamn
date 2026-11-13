@@ -6,11 +6,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+url.workspace = true
+tempfile.workspace = true
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["time", "io-util", "net", "rt-multi-thread", "macros", "signal", "sync"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -40,5 +43,6 @@ wamn-control-provision = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true }
 wamn-test-postgres = { workspace = true }

@@ -4,11 +4,13 @@
 //! Job error output (wamn-gts3b) stays covered in platform/invite.rs by
 //! a_passing_invite_logs_only_its_result and a_failed_invite_logs_the_verb_error.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{Client, NoTls};
+
 use wamn_broker::Publisher;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_control_provision::sql;
@@ -37,12 +39,8 @@ const PACKAGE: &str = "wamn_inventory";
 const SCHEMA: &str = "inventory";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move {
-        connection
-            .await
-            .expect("drive the install database connection");
-    });
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -97,21 +95,20 @@ fn org_request(system_url: &str) -> ProvisionOrgRequest {
     }
 }
 
-async fn bootstrap(admin: &Client, url: &str) -> anyhow::Result<String> {
+async fn bootstrap(admin: &mut Client, url: &str) -> anyhow::Result<String> {
     // CloudNativePG bootstraps the system owner and database before the Jobs.
-    admin.batch_execute(
-        "CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-    ).await?;
-    admin
-        .batch_execute(&sql::create_database_named_sql("wamn_system"))
-        .await?;
-    admin.batch_execute(
-        "ALTER DATABASE wamn_system OWNER TO wamn_system; GRANT CONNECT ON DATABASE wamn_system TO wamn_system",
-    ).await?;
+    sqlx::raw_sql("CREATE ROLE wamn_system NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS").execute(&mut *admin).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::create_database_named_sql("wamn_system")).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql("ALTER DATABASE wamn_system OWNER TO wamn_system; GRANT CONNECT ON DATABASE wamn_system TO wamn_system").execute(&mut *admin).await.map(drop)?;
     database_url(url, "wamn_system")
 }
 
-async fn step_4_7_provision(system_url: &str, work: &Path) -> anyhow::Result<String> {
+async fn step_4_7_provision(system_url: &str, _work: &Path) -> anyhow::Result<String> {
     // The Job authenticates as postgres. provision-system installs as wamn_system.
     provision_system(&ProvisionSystemRequest {
         system_database_url: system_url.into(),
@@ -124,13 +121,9 @@ async fn step_4_7_provision(system_url: &str, work: &Path) -> anyhow::Result<Str
         .context("4.7 provision-org --admin owner as wamn_system")?;
     let endpoint = url::Url::parse(system_url)?;
     wamn_environment_control::identity_issuer::provision_identity_issuer(
-        wamn_environment_control::identity_issuer::IdentityIssuerRequest {
+        &wamn_environment_control::identity_issuer::IdentityIssuerRequest {
             issuer: "https://identity.example.test".into(),
             system_database_url: system_url.into(),
-            prepare_generation: Some(wamn_control_provision::CredentialGeneration::A),
-            retire_generation: None,
-            abort_generation: None,
-            emit_secret: Some(work.join("issuer.json")),
             db_host: Some(endpoint.host_str().unwrap().into()),
             db_port: endpoint.port().unwrap(),
             namespace: "identity".into(),
@@ -139,18 +132,10 @@ async fn step_4_7_provision(system_url: &str, work: &Path) -> anyhow::Result<Str
     )
     .await
     .context("4.7 provision-identity-issuer as postgres")?;
-    let path = work.join("apply.json");
-    wamn_environment_control::provision_system::emit_apply_credential(
-        system_url,
-        endpoint.host_str().unwrap(),
-        endpoint.port().unwrap(),
-        &path,
-    )
-    .await?;
-    wamn_environment_control::provision_project_env::secret_value(&path, "url")
+    Ok(system_url.to_owned())
 }
 
-async fn provision_project(system_url: &str, admin: &Client) -> anyhow::Result<String> {
+async fn provision_project(system_url: &str, admin: &mut Client) -> anyhow::Result<String> {
     let outcome = provision_project_env(&ProvisionProjectEnvRequest {
         changes: Publisher::default(),
         org: ORG.into(),
@@ -174,21 +159,33 @@ async fn provision_project(system_url: &str, admin: &Client) -> anyhow::Result<S
         emit_operator_pat_secret: None,
     })
     .await?;
-    admin.batch_execute(&outcome.role_sql).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&outcome.role_sql).to_string()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     // The Database resource makes CNPG perform these two operations.
-    admin
-        .batch_execute(&sql::create_database_named_sql(&outcome.database))
-        .await?;
-    admin
-        .batch_execute(&sql::set_database_owner_sql(&outcome.database))
-        .await?;
-    admin.batch_execute(&outcome.privilege_sql).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::create_database_named_sql(&outcome.database)).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::set_database_owner_sql(&outcome.database)).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&outcome.privilege_sql).to_string()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     Ok(outcome.database)
 }
 
 async fn step_4_11_env_apply_reads_schema_baseline(
     platform: &Platform,
-    admin: &Client,
+    admin: &mut Client,
     system_url: &str,
 ) -> anyhow::Result<()> {
     ensure_project_database(platform, &document(), &[], admin, system_url)
@@ -228,28 +225,28 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
     })
     .await
     .context("4.13 package Job applies the package as postgres")?;
-    let client = connect(project_url).await?;
+    let mut client = connect(project_url).await?;
     // Reuse the package fixture and the production builders used by provision/tests/cdc.rs.
     // Derive access evidence from the installed fixture, excluding the two control maps.
-    let fields = client
-        .query(
-            "SELECT c.relname::text, array_agg(a.attname::text ORDER BY a.attnum) \
+    let fields = sqlx::query(
+        "SELECT c.relname::text, array_agg(a.attname::text ORDER BY a.attnum) \
          FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
          JOIN pg_attribute a ON a.attrelid=c.oid \
          WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped \
          AND c.relname NOT IN ('wamn_entities','wamn_cdc_exclusions') GROUP BY c.relname",
-            &[&SCHEMA],
+    )
+    .bind(&SCHEMA)
+    .fetch_all(&mut client)
+    .await?
+    .into_iter()
+    .map(|row| {
+        wamn_compiler::DataAccessRelationFields::new(
+            SCHEMA,
+            row.get::<String, _>(0),
+            row.get::<Vec<String>, _>(1),
         )
-        .await?
-        .into_iter()
-        .map(|row| {
-            wamn_compiler::DataAccessRelationFields::new(
-                SCHEMA,
-                row.get::<_, String>(0),
-                row.get::<_, Vec<String>>(1),
-            )
-        })
-        .collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
     let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
         &fields,
         &std::fs::read(package.path.join("wamn.json"))?,
@@ -273,7 +270,7 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
 
 async fn step_4_17_env_apply_run_plane_and_package_job_maps(
     platform: &Platform,
-    admin: &Client,
+    admin: &mut Client,
     system_url: &str,
     project_apply: &str,
     package: &PackageRoot,
@@ -283,51 +280,56 @@ async fn step_4_17_env_apply_run_plane_and_package_job_maps(
     ensure_project_database(platform, &document(), &[manifest], admin, system_url)
         .await
         .context("4.17 env_apply_run_plane as the project database owner")?;
-    let client = connect(project_apply).await?;
-    client.batch_execute("SET ROLE wamn_db_owner").await?;
-    let role = client.query_one(
-        "SELECT session_user::text, current_user::text, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user",
-        &[],
-    ).await?;
+    let mut client = connect(project_apply).await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    let role = sqlx::query("SELECT session_user::text, current_user::text, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user").fetch_one(&mut client).await?;
     ensure!(
-        role.get::<_, String>(0) == "wamn_apply"
-            && role.get::<_, String>(1) == "wamn_db_owner"
-            && !role.get::<_, bool>(2),
+        role.get::<String, _>(0) == "wamn_apply"
+            && role.get::<String, _>(1) == "wamn_db_owner"
+            && !role.get::<bool, _>(2),
         "4.17 expand must use the restricted login and owner role"
     );
-    let owners = client
-        .query(
-            "SELECT nspname::text, pg_get_userbyid(nspowner)::text FROM pg_namespace \
+    let owners = sqlx::query(
+        "SELECT nspname::text, pg_get_userbyid(nspowner)::text FROM pg_namespace \
              WHERE nspname IN ('wamn_authority', 'wamn_run') ORDER BY nspname",
-            &[],
-        )
-        .await?;
+    )
+    .fetch_all(&mut client)
+    .await?;
     ensure!(
         owners.len() == 2
             && owners
                 .iter()
-                .all(|row| row.get::<_, String>(1) == "wamn_db_owner"),
+                .all(|row| row.get::<String, _>(1) == "wamn_db_owner"),
         "4.17 env_apply_run_plane must keep wamn_authority and wamn_run under the database owner"
     );
     let cdc = "install_sequence_cdc";
-    admin
-        .batch_execute(&sql::ensure_replication_role_sql(cdc, "cdc-test-password"))
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::replication_login_sql(cdc, "cdc-test-password"))
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     // The existing CDC case covers both creation orders and repeated repairs.
     // Here the real package Job created both maps before this restricted expand.
-    client
-        .batch_execute(&sql::grant_replication_access_sql(database, cdc, SCHEMA))
-        .await
-        .context("4.17 env_apply_grants_maps_created_by_step_4_13_package_job")?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_replication_access_sql(database, cdc, SCHEMA)).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .context("4.17 env_apply_grants_maps_created_by_step_4_13_package_job")?;
     for table in ["wamn_entities", "wamn_cdc_exclusions"] {
         ensure!(
-            client
-                .query_one(
-                    "SELECT has_table_privilege($1, $2, 'SELECT')",
-                    &[&cdc, &format!("{SCHEMA}.{table}")]
-                )
+            sqlx::query("SELECT has_table_privilege($1, $2, 'SELECT')")
+                .bind(&cdc)
+                .bind(&format!("{SCHEMA}.{table}"))
+                .fetch_one(&mut client)
                 .await?
-                .get::<_, bool>(0),
+                .get::<bool, _>(0),
             "4.17 CDC reader cannot read {table}"
         );
     }
@@ -362,13 +364,12 @@ async fn release_cache(
             .to_string(),
     )
     .await?;
-    let client = connect(project_url).await?;
-    client.batch_execute("SET ROLE wamn_db_owner").await?;
-    let bytes: Vec<u8> = client
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
-            &[&project_env_key, &digest.as_str()],
-        )
+    let mut client = connect(project_url).await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&project_env_key).bind(&digest.as_str()).fetch_one(&mut client)
         .await?
         .get(0);
     ensure!(
@@ -380,23 +381,23 @@ async fn release_cache(
 
 #[tokio::test]
 async fn install_sequence_4_7_through_4_19_1_with_job_roles() -> anyhow::Result<()> {
-    let database = locked_database::database(wamn_test_postgres::database);
-    let admin = connect(&database).await?;
-    let system_url = bootstrap(&admin, &database).await?;
+    let mut database = locked_database::database(wamn_test_postgres::database);
+    let mut admin = connect(&mut database).await?;
+    let system_url = bootstrap(&mut admin, &mut database).await?;
     let work = ScratchRoot::create()?;
     let apply_url = step_4_7_provision(&system_url, work.path()).await?;
-    let database_name = provision_project(&apply_url, &admin)
+    let database_name = provision_project(&apply_url, &mut admin)
         .await
         .context("4.11 record and bootstrap the project database")?;
     let platform = platform(&apply_url);
-    step_4_11_env_apply_reads_schema_baseline(&platform, &admin, &system_url).await?;
+    step_4_11_env_apply_reads_schema_baseline(&platform, &mut admin, &system_url).await?;
     let project_admin = database_url(&system_url, &database_name)?;
     let project_apply = database_url(&apply_url, &database_name)?;
     let package = package_fixture(work.path())?;
     step_4_13_package_job(&project_admin, &package).await?;
     step_4_17_env_apply_run_plane_and_package_job_maps(
         &platform,
-        &admin,
+        &mut admin,
         &system_url,
         &project_apply,
         &package,
@@ -425,18 +426,24 @@ async fn local_base_grants_run_plane_and_release_cache_as_database_owner() -> an
     // The separate server keeps env apply's cluster-wide grant from hiding a local-minimum defect.
     let mut server = wamn_test_postgres::start(&[])?;
     let database = server.create_database("local_base_grants")?;
-    let client = connect(database.url()).await?;
-    client
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await?;
-    client
-        .batch_execute(&sql::set_database_owner_sql("local_base_grants"))
-        .await?;
-    wamn_dev_control::dev::environment::install_journey_platform_base_grants(&client, DOMAIN)
+    let mut client = connect(database.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::set_database_owner_sql("local_base_grants")).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
+    wamn_dev_control::dev::environment::install_journey_platform_base_grants(&mut client, DOMAIN)
         .await
         .context("local_base_grants installs the platform schema as the database owner")?;
     reconcile_run_plane::reconcile(
-        &client,
+        &mut client,
         &wamn_schema_control::BareSchemaName::new("wamn_run")?,
         true,
     )

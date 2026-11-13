@@ -2,6 +2,7 @@ use http_route::{
     AdapterLimits, Backend, BodyReadError, BodyReader, DeliveryReport, DeliveryRequest, Header,
     ProviderError, RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
+use sqlx::Connection as _;
 
 use super::*;
 
@@ -47,23 +48,21 @@ impl Fixture {
         self.credentials
             .put("webhook", secret, &["host-project"])
             .await;
-        self.credentials
-            .admin
-            .batch_execute("SET ROLE wamn_system")
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut self.credentials.admin)
             .await
+            .map(drop)
             .unwrap();
-        let principal: String = self.credentials.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
-        self.credentials
-            .admin
-            .batch_execute("RESET ROLE")
+        let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut self.credentials.admin).await.unwrap().get(0);
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut self.credentials.admin)
             .await
+            .map(drop)
             .unwrap();
-        let (client, driver) = tokio_postgres::connect(self.database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        tokio::spawn(driver);
-        client.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)", &[&principal]).await.unwrap();
-        client.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING", &[&principal]).await.unwrap();
+        let mut client = wamn_postgres::connect(self.database.url()).await.unwrap();
+
+        sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING").bind(&principal).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
         let base = crate::plugins::wamn_postgres::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
@@ -80,11 +79,10 @@ impl Fixture {
         let postgres = Arc::new(crate::plugins::wamn_postgres::WamnPostgres::with_provider(
             Arc::new(crate::plugins::wamn_postgres::StaticCredentialProvider::new(projects, None)),
         ));
-        let (identity, driver) =
-            tokio_postgres::connect(self.credentials.database.url(), tokio_postgres::NoTls)
-                .await
-                .unwrap();
-        tokio::spawn(driver);
+        let identity = wamn_postgres::pool(self.credentials.database.url(), 4)
+            .await
+            .unwrap();
+
         let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
             Arc::clone(&self.memory),
             self.changes.clone(),
@@ -94,11 +92,9 @@ impl Fixture {
             project,
             "dev",
         ));
-        let authentication = Arc::new(
-            RouteAuthentication::new(Arc::new(identity), postgres, "acme", project, "unused")
-                .await
-                .unwrap(),
-        );
+        let authentication = Arc::new(RouteAuthentication::new(
+            identity, postgres, "acme", project, "unused",
+        ));
         Arc::new(
             PlatformRouteAuthenticator::default()
                 .with_authentication(authentication)
@@ -345,9 +341,13 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );
     let _lock = wamn_test_postgres::lock();
-    let (_server, client) = nats().await;
+    let (_server, mut client) = nats().await;
     let mut fixture = Fixture::new().await;
-    fixture.changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&fixture.memory));
+    fixture.changes = replicate(
+        &mut client,
+        Some(PROJECT_ENV_KEY),
+        Arc::clone(&fixture.memory),
+    );
     until("the connection watch runs", || fixture.memory.watched()).await;
     let routing = fixture.valid_plugin().await;
     let signature = signed(BODY);
@@ -357,13 +357,8 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
         .await
         .unwrap()
         .unwrap();
-    let connection = fixture
-        .credentials
-        .admin
-        .query_one(
-            "SELECT id FROM registry.connection WHERE project='host-project'",
-            &[],
-        )
+    let connection = sqlx::query("SELECT id FROM registry.connection WHERE project='host-project'")
+        .fetch_one(&mut fixture.credentials.admin)
         .await
         .unwrap()
         .get(0);
@@ -374,31 +369,34 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     assert_eq!(old.service_principal_id.to_string(), caller.principal_id());
 
     // A repeated request needs neither Postgres connection reads nor the store.
-    fixture.credentials.admin.batch_execute(
-        "REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader",
-    ).await.unwrap();
+    sqlx::raw_sql("REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
     let repeated = routing
         .authenticate_request_for_test("orders", &headers, BODY)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(repeated.principal_id(), caller.principal_id());
-    fixture.credentials.admin.batch_execute(
-        "GRANT EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) TO wamn_conn_reader",
-    ).await.unwrap();
+    sqlx::raw_sql("GRANT EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) TO wamn_conn_reader").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
 
-    let tx = fixture.credentials.admin.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    let mut tx = fixture.credentials.admin.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
     let mut drops = ConnectionDrops::default();
     administration::execute_with_store(
-        &tx,
+        &mut tx,
         "acme",
         "connection.set_credential",
         &json!({
@@ -462,35 +460,35 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     )
     .with_authenticator(Arc::<PlatformRouteAuthenticator>::clone(&authenticator));
     let pat = routing_policy(json!({"modes":["pat"]})).with_authenticator(authenticator);
-    let principal: String = fixture.credentials.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
-    fixture
-        .credentials
-        .admin
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
+    let principal: String = sqlx::query("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'").fetch_one(&mut fixture.credentials.admin).await.unwrap().get(0);
+    sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(drop)
         .unwrap();
-    fixture
-        .credentials
-        .admin
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
-    fixture.credentials.admin.execute("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid,'acme','host-project','admin')", &[&principal]).await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut fixture.credentials.admin)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::query("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid,'acme','host-project','admin')").bind(&principal).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     let token = wamn_platform_identity::issue_pat(
-        &fixture.credentials.admin,
+        &mut fixture.credentials.admin,
         &principal.parse().unwrap(),
         "connection fixture",
         std::time::Duration::from_secs(3600),
     )
     .await
     .unwrap();
-    fixture
-        .credentials
-        .admin
-        .batch_execute("COMMIT")
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(drop)
         .unwrap();
     let signature_header = signed(BODY);
     let bearer = format!("Bearer {}", token.token());
@@ -514,23 +512,20 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
         "UPDATE registry.integration SET status='disabled' WHERE project='host-project' AND name='webhook'",
         "UPDATE registry.connection SET status='disabled' WHERE project='host-project'",
     ] {
-        fixture
-            .credentials
-            .admin
-            .batch_execute("SET ROLE wamn_system")
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut fixture.credentials.admin)
             .await
+            .map(drop)
             .unwrap();
-        fixture
-            .credentials
-            .admin
-            .batch_execute(disable)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((disable).to_string()))
+            .execute(&mut fixture.credentials.admin)
             .await
+            .map(drop)
             .unwrap();
-        fixture
-            .credentials
-            .admin
-            .batch_execute("RESET ROLE")
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut fixture.credentials.admin)
             .await
+            .map(drop)
             .unwrap();
         for (routing, headers) in [
             (&signature, signature_headers.as_slice()),
@@ -545,6 +540,6 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
                 401
             );
         }
-        fixture.credentials.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='active' WHERE project='host-project'; UPDATE registry.connection SET status='active' WHERE project='host-project'; RESET ROLE").await.unwrap();
+        sqlx::raw_sql("SET ROLE wamn_system; UPDATE registry.integration SET status='active' WHERE project='host-project'; UPDATE registry.connection SET status='active' WHERE project='host-project'; RESET ROLE").execute(&mut fixture.credentials.admin).await.map(drop).unwrap();
     }
 }

@@ -9,10 +9,9 @@ use anyhow::Context as _;
 use wamn_broker::auth_changes::AuthDrops;
 
 use super::{
-    Client, Duration, IdentityErrorType, NoTls, PatClient, Path, PathBuf, Principal,
-    PrincipalStatus, PrincipalType, Triple, Value, assign_project_role, authenticate_pat,
-    create_service, json, operator_subject, provisioning_transaction, resolve_subject, revoke_pat,
-    write_secret_json,
+    Client, Duration, IdentityErrorType, PatClient, Path, PathBuf, Principal, PrincipalStatus,
+    PrincipalType, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
+    operator_subject, provisioning_transaction, resolve_subject, revoke_pat, write_secret_json,
 };
 
 /// One PAT `Secret` that provisioning issued and wrote.
@@ -42,10 +41,10 @@ pub(super) async fn issue_pat_secrets(
     operator_path: Option<&Path>,
     changes: &Publisher,
 ) -> anyhow::Result<Vec<IssuedPatSecret>> {
-    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect for PAT issuance")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
         let mut issued = Vec::new();
         if let Some(path) = management_author_path {
@@ -80,7 +79,6 @@ pub(super) async fn issue_pat_secrets(
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result
 }
 
@@ -124,8 +122,8 @@ pub async fn mint_pat(
         principal.status() == PrincipalStatus::Active,
         "service principal {subject:?} is disabled"
     );
-    let transaction = provisioning_transaction(client).await?;
-    let drops = assign_pat_role(&transaction, &principal, triple, purpose).await?;
+    let mut transaction = provisioning_transaction(client).await?;
+    let drops = assign_pat_role(&mut transaction, &principal, triple, purpose).await?;
     transaction
         .commit()
         .await
@@ -136,7 +134,7 @@ pub async fn mint_pat(
         .issue(principal.id(), purpose.purpose, PAT_TTL)
         .await
         .with_context(|| format!("issue {} PAT", purpose.purpose))?;
-    let authenticated = authenticate_pat(&*client, &issued.token)
+    let authenticated = authenticate_pat(&mut *client, &issued.token)
         .await
         .with_context(|| format!("authenticate newly issued {} PAT", purpose.purpose))?
         .with_context(|| format!("newly issued {} PAT did not authenticate", purpose.purpose))?;
@@ -150,7 +148,7 @@ pub async fn mint_pat(
 }
 
 pub async fn assign_pat_role(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     principal: &Principal,
     triple: &Triple,
     purpose: PatPurpose,
@@ -183,10 +181,10 @@ pub async fn mint_management_author_pat(
     let pat_client = PatClient::new(issuer)?;
     super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
     super::read_project_env_instance(system_url, triple).await?;
-    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect for PAT issuance")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
         let (_, pat) =
             mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR, changes).await?;
@@ -194,7 +192,6 @@ pub async fn mint_management_author_pat(
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result
 }
 
@@ -214,16 +211,16 @@ async fn resolve_or_create_service_drops(
     subject: &str,
     display_name: &str,
 ) -> anyhow::Result<(Principal, AuthDrops)> {
-    if let Some(principal) = resolve_subject(&*client, PrincipalType::Service, subject)
+    if let Some(principal) = resolve_subject(&mut *client, PrincipalType::Service, subject)
         .await
         .context("resolve service principal")?
     {
         return Ok((principal, AuthDrops::default()));
     }
 
-    let transaction = provisioning_transaction(client).await?;
+    let mut transaction = provisioning_transaction(client).await?;
     let mut drops = AuthDrops::default();
-    match create_service(&transaction, subject, display_name, &mut drops).await {
+    match create_service(&mut transaction, subject, display_name, &mut drops).await {
         Ok(principal) => {
             transaction
                 .commit()
@@ -236,7 +233,7 @@ async fn resolve_or_create_service_drops(
                 .rollback()
                 .await
                 .context("roll back conflicting service principal")?;
-            resolve_subject(&*client, PrincipalType::Service, subject)
+            resolve_subject(&mut *client, PrincipalType::Service, subject)
                 .await
                 .context("resolve concurrently created service principal")?
                 .context("service principal conflict was not resolvable")
@@ -251,14 +248,14 @@ pub async fn revoke_provisioning_pat(
     prefix: &str,
     changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
-    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
+    let mut client = wamn_postgres::connect(system_url)
         .await
         .context("system db connect for PAT revocation")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
-        let transaction = provisioning_transaction(&mut client).await?;
+        let mut transaction = provisioning_transaction(&mut client).await?;
         let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-        revoke_pat(&transaction, prefix, &mut drops)
+        revoke_pat(&mut transaction, prefix, &mut drops)
             .await
             .context("revoke PAT by prefix")?;
         transaction
@@ -270,7 +267,6 @@ pub async fn revoke_provisioning_pat(
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result
 }
 

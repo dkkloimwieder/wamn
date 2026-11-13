@@ -454,13 +454,13 @@ mod tests {
         let connection = facts.env_connections().await.unwrap().connections["store"];
         let other = other.with_connection_authority(facts, connection);
         container.put("item", vec![1]).await.unwrap();
-        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").await.unwrap();
+        sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
         assert!(matches!(
             container.get("item").await,
             Err(StoreError::Refused { .. })
         ));
         other.put("item", vec![2]).await.unwrap();
-        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").await.unwrap();
+        sqlx::raw_sql("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
         assert!(matches!(
             other.get("item").await,
             Err(StoreError::Refused { .. })

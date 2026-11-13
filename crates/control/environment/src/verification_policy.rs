@@ -1,7 +1,6 @@
 //! Project authoritative environment policies into verification databases.
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 use wamn_release_control::verification_policy::read_authoritative_environment_policy;
 use wamn_schema_control::BareSchemaName;
 
@@ -50,10 +49,10 @@ pub async fn project_environment_policy(
     let source =
         read_authoritative_environment_policy(system_database_url, source_policy_org, environment)
             .await?;
-    let (mut target, connection) = tokio_postgres::connect(verification_database_url, NoTls)
+    let mut target = wamn_postgres::connect(verification_database_url)
         .await
         .context("connect to the verification policy target")?;
-    let connection_task = tokio::spawn(connection);
+
     let changed = crate::reconcile_run_plane::converge_environment_policy(
         &mut target,
         run_schema,
@@ -64,10 +63,6 @@ pub async fn project_environment_policy(
     )
     .await;
     drop(target);
-    let driven = connection_task
-        .await
-        .context("join verification policy target")?;
-    driven.context("drive verification policy target")?;
     let changed = changed?;
     Ok(EnvironmentPolicyProjection {
         changed,

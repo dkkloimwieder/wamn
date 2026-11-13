@@ -1,5 +1,6 @@
 //! One deployed system and selected-project SQL case, with application isolation.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -167,29 +168,28 @@ async fn database_state(journey: &Journey<'_>) -> anyhow::Result<Value> {
 }
 
 async fn relations(
-    databases: &[tokio_postgres::Client; 3],
+    databases: &mut [sqlx::PgConnection; 3],
 ) -> anyhow::Result<[BTreeSet<String>; 3]> {
     let mut sets = std::array::from_fn(|_| BTreeSet::new());
-    for (database, set) in databases.iter().zip(&mut sets) {
-        *set = database
-            .query(
-                "SELECT format('%I.%I', n.nspname, c.relname)
+    for (database, set) in databases.iter_mut().zip(&mut sets) {
+        *set = sqlx::query(
+            "SELECT format('%I.%I', n.nspname, c.relname)
                  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE c.relkind IN ('r', 'p', 'v', 'm')
                    AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
                    AND c.relname <> 'schema_migration'",
-                &[],
-            )
-            .await?
-            .into_iter()
-            .map(|row| row.get(0))
-            .collect();
+        )
+        .fetch_all(&mut *database)
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
     }
     Ok(sets)
 }
 
 async fn database_effect(
-    databases: &[tokio_postgres::Client; 3],
+    databases: &mut [sqlx::PgConnection; 3],
     before: &[BTreeSet<String>; 3],
     applied: usize,
 ) -> anyhow::Result<()> {
@@ -208,19 +208,19 @@ async fn database_effect(
             added.next().is_none() && before.is_subset(after),
             "SQL apply must add exactly one table in database {index}: {before:?} -> {after:?}"
         );
-        let database = &databases[index];
+        let database = &mut databases[index];
         ensure!(
-            database
-                .query_one(
-                    "SELECT relkind IN ('r', 'p') FROM pg_class WHERE oid = $1::text::regclass",
-                    &[table],
-                )
-                .await?
-                .get::<_, bool>(0),
+            sqlx::query(
+                "SELECT relkind IN ('r', 'p') FROM pg_class WHERE oid = $1::text::regclass"
+            )
+            .bind(table)
+            .fetch_one(&mut *database)
+            .await?
+            .get::<bool, _>(0),
             "SQL apply created {table}, which is not a table"
         );
-        let count: i64 = database
-            .query_one(&format!("SELECT count(*) FROM {table}"), &[])
+        let count: i64 = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+            .fetch_one(&mut *database)
             .await?
             .get(0);
         ensure!(
@@ -298,21 +298,21 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         before.push(applications(environment).await?);
     }
 
-    let system_database =
-        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
-            .await?;
-    system_database
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
-    let databases = [
+    let mut system_database =
+        wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system_database)
+        .await
+        .map(drop)?;
+    let mut databases = [
         system_database,
         super::observer(journey).await?,
         super::observer(&other).await?,
     ];
     let baseline = database_state(journey).await?;
     let isolated = database_state(&other).await?;
-    let system = schema(journey, "system-before", "diff", "system", chart).await?;
-    let pending_system = files(&system, "pending")?;
+    let mut system = schema(journey, "system-before", "diff", "system", chart).await?;
+    let pending_system = files(&mut system, "pending")?;
     ensure!(
         pending_system.len() == 1,
         "prepare exactly one pending system file"
@@ -321,9 +321,9 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         database_state(journey).await? == baseline && database_state(&other).await? == isolated,
         "system diff changed recorded SQL state"
     );
-    let relations_before = relations(&databases).await?;
+    let relations_before = relations(&mut databases).await?;
     schema(journey, "system-apply", "apply", "system", chart).await?;
-    database_effect(&databases, &relations_before, 0).await?;
+    database_effect(&mut databases, &relations_before, 0).await?;
     let system_after = schema(journey, "system-after", "diff", "system", chart).await?;
     ensure!(
         files(&system_after, "pending")?.is_empty()
@@ -343,9 +343,9 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         database_state(journey).await? == baseline && database_state(&other).await? == isolated,
         "project diff changed recorded SQL state"
     );
-    let relations_before = relations(&databases).await?;
+    let relations_before = relations(&mut databases).await?;
     schema(journey, "project-apply", "apply", "project", chart).await?;
-    database_effect(&databases, &relations_before, 1).await?;
+    database_effect(&mut databases, &relations_before, 1).await?;
     let project_after = schema(journey, "project-after", "diff", "project", chart).await?;
     ensure!(
         files(&project_after, "pending")?.is_empty()

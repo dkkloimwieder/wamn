@@ -41,7 +41,6 @@
 //! databases derives the same key and collides on a single role name.
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use wamn_run_state::CredentialGeneration;
 
 use crate::APP_ROLE;
 use crate::DB_OWNER_ROLE;
@@ -71,25 +70,17 @@ pub fn project_key(project_env_key: &str, database: &str) -> String {
 
 /// The anchored pattern that recovers a project key from a guest login name.
 ///
-/// Every part is read from the SAME constants [`workload_generation_role`]
-/// composes a role name from — the family's generation prefix, the digest
-/// width, and the closed generation suffixes — so the naming decision on
+/// Every part is read from the SAME constants [`workload_login`]
+/// composes a role name from: the family's prefix and the digest
+/// width. This ensures so the naming decision on
 /// `wamn-0h0g.22.6.4` cannot move the mint without moving this pattern with it.
 ///
 /// Anchored at both ends: an unanchored pattern would match a crafted role name
 /// that merely CONTAINS a victim's key.
 ///
-/// [`workload_generation_role`]: crate::workload_role::workload_generation_role
+/// [`workload_login`]: crate::workload_role::workload_login
 pub fn current_project_key_pattern() -> String {
-    let generations: String = [CredentialGeneration::A, CredentialGeneration::B]
-        .iter()
-        .map(|generation| generation.as_str())
-        .collect();
-    format!(
-        "^{prefix}_([0-9a-f]{{{width}}})_[{generations}]$",
-        prefix = WorkloadRoleFamily::App.generation_prefix(),
-        width = IDENTITY_HASH_HEX_LEN,
-    )
+    format!("^(?:wamn_app|wamn_query)_([0-9a-f]{{{IDENTITY_HASH_HEX_LEN}}})$")
 }
 
 /// Owner the bootstrap rendering gives the schema and both functions.
@@ -223,12 +214,10 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_project_key_pattern, project_key};
+    use super::project_key;
     use crate::workload_role::{
-        IDENTITY_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-        workload_role_identity_hash,
+        WorkloadRoleFamily, WorkloadRoleIdentity, workload_role_identity_hash,
     };
-    use wamn_run_state::CredentialGeneration;
 
     const DATABASE: &str = "wamn-db-acme--dev--billing";
 
@@ -281,42 +270,11 @@ mod tests {
         );
     }
 
-    /// The session side assumes a role name shaped exactly as the mint composes
-    /// it. This asserts the shape against a role the mint ACTUALLY produced, so
-    /// a change to either half shows up here rather than as a silent refusal of
-    /// every guest read.
-    #[test]
-    fn the_minted_role_carries_exactly_the_key_the_pattern_captures() {
-        let head = format!("{}_", WorkloadRoleFamily::App.generation_prefix());
-        let key = project_key("acme", DATABASE);
-        for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-            let role = workload_generation_role(
-                WorkloadRoleFamily::App,
-                WorkloadRoleIdentity::ProjectEnvKey {
-                    project_env_key: "acme",
-                    database: DATABASE,
-                },
-                generation,
-            )
-            .expect("App takes a project identity");
-            let rest = role
-                .strip_prefix(&head)
-                .expect("the mint composes from the family generation prefix");
-            let (captured, suffix) = rest.split_at(IDENTITY_HASH_HEX_LEN);
-            assert_eq!(captured, key, "the role carries the project key verbatim");
-            assert_eq!(suffix, format!("_{}", generation.as_str()));
-        }
-        assert!(
-            current_project_key_pattern().starts_with(&format!("^{head}(")),
-            "the pattern's literal head is the mint's prefix"
-        );
-    }
-
     /// A prefix carrying a regex metacharacter would turn the anchored pattern
     /// into a wildcard, and a wildcard here is a cross-project read.
     #[test]
-    fn the_generation_prefix_carries_no_regex_metacharacter() {
-        let prefix = WorkloadRoleFamily::App.generation_prefix();
+    fn the_login_prefix_carries_no_regex_metacharacter() {
+        let prefix = WorkloadRoleFamily::App.login_prefix();
         assert!(
             prefix
                 .chars()

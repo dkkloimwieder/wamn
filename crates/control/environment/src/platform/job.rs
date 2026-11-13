@@ -2,15 +2,13 @@
 
 use std::path::Path;
 
-use anyhow::Context as _;
 use serde_json::Value;
 use wamn_kubernetes::job::{container, manifest, run};
-use wamn_kubernetes::kubectl;
 use wamn_package_control::migrations::{MigrationResolution, Resolution};
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
-use super::bootstrap::{self, SecretData};
+use super::bootstrap::{self};
 
 /// Run one system SQL action through the existing bounded Job lifecycle.
 pub async fn system_schema(
@@ -20,18 +18,9 @@ pub async fn system_schema(
     apply: bool,
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<String> {
-    let superuser: SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        "wamn-pg-superuser",
-    )
-    .await?
-    .context("missing Secret platform/wamn-pg-superuser")?;
     let mut job = system_schema_job(chart.image("ctl")?, apply, resolution);
-    let admin = bootstrap::administrator(&mut job, &superuser)?;
-    run(target, directory, &mut job, &mut [admin]).await
+    bootstrap::administrator(&mut job, &target.namespace)?;
+    run(target, directory, &mut job, &mut []).await
 }
 
 fn system_schema_job(image: &str, apply: bool, resolution: Option<&MigrationResolution>) -> Value {

@@ -11,6 +11,7 @@
 //! page of a query, the ceiling, and each target filter mode, the search and
 //! the band.
 
+use sqlx::{Connection as _, Row as _};
 #[path = "../../../services/ctl/src/read_query.rs"]
 mod read_query;
 
@@ -639,14 +640,11 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
-    let (database, connection) =
-        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
+    let mut database = wamn_postgres::connect(project.url()).await?;
+
     // The seed states each creation time, which the stamp trigger would
     // replace, so it runs without triggers.
-    database
-        .batch_execute(
-            "BEGIN; SET LOCAL session_replication_role = replica; \
+    sqlx::raw_sql("BEGIN; SET LOCAL session_replication_role = replica; \
              INSERT INTO inventory.widget_maker (name, created_at) VALUES \
                ('Acme Old', now() - interval '40 days'), \
                ('Acme New', now() - interval '1 day'), \
@@ -654,9 +652,7 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
              INSERT INTO inventory.widget (code, note, maker_id) VALUES \
                ('priority', 'N-1', (SELECT id FROM inventory.widget_maker WHERE name = 'Acme New')), \
                ('standard', 'M-2', NULL); \
-             COMMIT"
-        )
-        .await
+             COMMIT").execute(&mut database).await.map(drop)
         .map_err(|error| anyhow::anyhow!("insert the makers and widgets: {error:?}"))?;
     let makers = "/widget_maker/query";
     let widgets = "/widget/query";
@@ -713,7 +709,6 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
     }
 
     drop(database);
-    connection.await??;
     application.shutdown().await?;
     Ok(())
 }
@@ -735,12 +730,9 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
-        let (database, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        database
-            .batch_execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
-            .await?;
+        let mut database = wamn_postgres::connect(project.url()).await?;
+
+        sqlx::raw_sql("CREATE EXTENSION IF NOT EXISTS pg_stat_statements").execute(&mut database).await.map(drop)?;
         let created = paths
             .route(
                 "/widget/create",
@@ -764,21 +756,16 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
             ("/widget/query", &query, REQUESTS),
             ("/widget_maker/list", &projection, REQUESTS),
         ] {
-            database
-                .query_one("SELECT pg_stat_statements_reset()", &[])
+            sqlx::query("SELECT pg_stat_statements_reset()").fetch_one(&mut database)
                 .await?;
             for _ in 0..REQUESTS {
                 value(&paths.route(path, body).await?)?;
             }
             // Exclude this observer's superuser session, but count every guest SQL call.
-            let statements = database
-                .query(
-                    "SELECT query, calls FROM pg_stat_statements \
+            let statements = sqlx::query("SELECT query, calls FROM pg_stat_statements \
                  WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
                  AND userid <> (SELECT oid FROM pg_roles WHERE rolname = current_user) \
-                 ORDER BY query",
-                    &[],
-                )
+                 ORDER BY query").fetch_all(&mut database)
                 .await?;
             let mut calls = 0;
             let mut wal = 0;
@@ -807,7 +794,6 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
             );
         }
         drop(database);
-        connection.await??;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1086,15 +1072,12 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         // CURSOR EXPIRED. Every entry so far is older than the retention, and
         // a real pruning run removes them. One newer entry stays, so the first
         // cursor is older than the oldest entry kept.
-        let (mut database, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        database
-            .execute(
-                "UPDATE inventory.widget_history SET changed_at = now() - interval '31 days'",
-                &[],
-            )
-            .await?;
+        let mut database = wamn_postgres::connect(project.url()).await?;
+
+        sqlx::query("UPDATE inventory.widget_history SET changed_at = now() - interval '31 days'")
+            .execute(&mut database)
+            .await
+            .map(|result| result.rows_affected())?;
         create_widget(&paths, "priority", "after").await?;
         let pruned = wamn_environment_control::prune_record_history::prune(&mut database).await?;
         anyhow::ensure!(
@@ -1111,7 +1094,6 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             &json!({}),
         )?;
         drop(database);
-        connection.await??;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1165,15 +1147,15 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
-        let (mut writer, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        writer.batch_execute("SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), false), set_config('app.operation', 'admin:screen-feed', false);
+        let mut writer = wamn_postgres::connect(project.url()).await?;
+
+        sqlx::raw_sql("SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), false), set_config('app.operation', 'admin:screen-feed', false);
             INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000001', 'order one'), ('00000000-0000-4000-8000-000000000002', 'order two');
             INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000011', 'item one'), ('00000000-0000-4000-8000-000000000012', 'item two');
             INSERT INTO inventory.feed_line(id, order_id, item_id, label) VALUES
             ('00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011', 'line one'),
             ('00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011', 'line two'),
-            ('00000000-0000-4000-8000-000000000023', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000012', 'line three');").await?;
+            ('00000000-0000-4000-8000-000000000023', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000012', 'line three');").execute(&mut writer).await.map(drop)?;
         let one = "00000000-0000-4000-8000-000000000021";
         let two = "00000000-0000-4000-8000-000000000022";
         let three = "00000000-0000-4000-8000-000000000023";
@@ -1188,7 +1170,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
             anyhow::ensure!(row["row_version"].as_str() == Some(snapshot_version.as_str()), "snapshot version: {row}");
         }
         screen_ids(&screen_changes(&paths, &cursor, None).await?, &[], false)?;
-        writer.batch_execute("UPDATE inventory.feed_line SET enabled = false").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_line SET enabled = false").execute(&mut writer).await.map(drop)?;
         for (index, id) in [one, two, three].into_iter().enumerate() {
             let response = paths.route("/feed_line/screen", &json!([{"feed": {"cursor": cursor, "limit": 1}}])).await?;
             let changes = value(&response)?;
@@ -1197,7 +1179,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
             anyhow::ensure!(changes["complete"] == (index == 2), "root key page: {changes}");
             cursor = changes["next_cursor"].as_str().unwrap().to_owned();
         }
-        writer.batch_execute("UPDATE inventory.feed_line SET enabled = true").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_line SET enabled = true").execute(&mut writer).await.map(drop)?;
         let refilled = paths.route("/feed_line/screen", &json!([{}])).await?;
         cursor = value(&refilled)?["cursor"].as_str().unwrap().to_owned();
         for (sql, ids, field, label) in [
@@ -1205,34 +1187,34 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
             ("UPDATE inventory.feed_order SET label = 'new order' WHERE label = 'order one'", vec![one, two], "order_label", "new order"),
             ("UPDATE inventory.feed_item SET label = 'new item' WHERE label = 'item one'", vec![one, two], "item_label", "new item"),
         ] {
-            writer.batch_execute(sql).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string())).execute(&mut writer).await.map(drop)?;
             let changes = screen_changes(&paths, &cursor, None).await?;
             screen_ids(&changes, &ids, false)?;
             for row in changes["rows"].as_array().unwrap() { anyhow::ensure!(row["data"][field] == label, "new joined data: {row}"); }
             cursor = changes["next_cursor"].as_str().unwrap().to_owned();
         }
-        writer.batch_execute("BEGIN;
+        sqlx::raw_sql("BEGIN;
             INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000003', 'inserted order');
             INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000013', 'inserted item');
             INSERT INTO inventory.feed_line(id, order_id, item_id, label) VALUES ('00000000-0000-4000-8000-000000000024', '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000013', 'inserted line');
-            COMMIT;").await?;
+            COMMIT;").execute(&mut writer).await.map(drop)?;
         let inserted = screen_changes(&paths, &cursor, None).await?;
         screen_ids(&inserted, &[four], false)?;
         anyhow::ensure!(inserted["rows"][0]["data"]["order_label"] == "inserted order" && inserted["rows"][0]["data"]["item_label"] == "inserted item", "{inserted}");
         cursor = inserted["next_cursor"].as_str().unwrap().to_owned();
         let targeted = paths.route("/feed_line/screen", &json!([{"order_id": old_order}])).await?;
         let targeted_cursor = value(&targeted)?["cursor"].as_str().context("targeted cursor")?;
-        writer.batch_execute("UPDATE inventory.feed_line SET order_id = '00000000-0000-4000-8000-000000000002' WHERE label = 'new line'").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_line SET order_id = '00000000-0000-4000-8000-000000000002' WHERE label = 'new line'").execute(&mut writer).await.map(drop)?;
         let moved = screen_changes(&paths, &cursor, None).await?;
         screen_ids(&moved, &[one], false)?;
         anyhow::ensure!(moved["rows"][0]["data"]["order_label"] == "order two", "{moved}");
         screen_ids(&screen_changes(&paths, targeted_cursor, Some(old_order)).await?, &[one], true)?;
         cursor = moved["next_cursor"].as_str().unwrap().to_owned();
-        writer.batch_execute("UPDATE inventory.feed_line SET enabled = false WHERE label = 'line two'").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_line SET enabled = false WHERE label = 'line two'").execute(&mut writer).await.map(drop)?;
         let filtered = screen_changes(&paths, &cursor, None).await?;
         screen_ids(&filtered, &[two], true)?;
         cursor = filtered["next_cursor"].as_str().unwrap().to_owned();
-        writer.batch_execute("UPDATE inventory.feed_line SET enabled = true WHERE label = 'line two'").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_line SET enabled = true WHERE label = 'line two'").execute(&mut writer).await.map(drop)?;
         let returned = screen_changes(&paths, &cursor, None).await?;
         screen_ids(&returned, &[two], false)?;
         cursor = returned["next_cursor"].as_str().unwrap().to_owned();
@@ -1241,7 +1223,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
             ("DELETE FROM inventory.feed_order WHERE label = 'new order'", vec![two]),
             ("DELETE FROM inventory.feed_item WHERE label = 'item two'", vec![three]),
         ] {
-            writer.batch_execute(sql).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string())).execute(&mut writer).await.map(drop)?;
             let changes = screen_changes(&paths, &cursor, None).await?;
             screen_ids(&changes, &ids, true)?;
             cursor = changes["next_cursor"].as_str().unwrap().to_owned();
@@ -1256,14 +1238,13 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
         anyhow::ensure!(status == 304 && body.is_empty(), "unchanged feed: {status} {body}");
         let empty = paths.route("/feed_line/screen", &json!([{"order_id": MISSING}])).await?;
         anyhow::ensure!(value(&empty)?["item"] == json!([]) && value(&empty)?["cursor"].is_string(), "empty snapshot: {empty}");
-        writer.batch_execute("UPDATE inventory.feed_item SET label = 'pruned' WHERE label = 'new item'; UPDATE inventory.feed_item_history SET changed_at = now() - interval '31 days'").await?;
-        writer.batch_execute("INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000014', 'retained')").await?;
+        sqlx::raw_sql("UPDATE inventory.feed_item SET label = 'pruned' WHERE label = 'new item'; UPDATE inventory.feed_item_history SET changed_at = now() - interval '31 days'").execute(&mut writer).await.map(drop)?;
+        sqlx::raw_sql("INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000014', 'retained')").execute(&mut writer).await.map(drop)?;
         let pruned = wamn_environment_control::prune_record_history::prune(&mut writer).await?;
         anyhow::ensure!(pruned.iter().any(|history| history.history == "feed_item_history" && history.removed > 0), "joined history pruning: {pruned:?}");
         let expired = paths.route("/feed_line/screen", &json!([{"feed": {"cursor": cursor}}])).await?;
         refused(&expired, "cursor_expired", &json!({}))?;
         drop(writer);
-        connection.await??;
         Ok::<_, anyhow::Error>(())
     }.await;
     application.shutdown().await?;
@@ -1285,14 +1266,11 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
         let (standard, version) = create_widget(&paths, "standard", "before").await?;
-        let (mut writer, writer_connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
+        let mut writer = wamn_postgres::connect(project.url())
                 .await
                 .context("connect the feed writer")?;
-        let writer_connection = tokio::spawn(writer_connection);
-        writer
-            .batch_execute(
-                "BEGIN;
+
+        sqlx::raw_sql("BEGIN;
                  SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
                         set_config('app.operation', 'admin:feed-reader', true);
                  INSERT INTO platform.role (name)
@@ -1301,49 +1279,36 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                      SELECT 'reader', 'platform-fixture:widget/query'
                      FROM platform.user_role WHERE role_name = 'admin';
                  UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
-                 COMMIT;",
-            )
-            .await
+                 COMMIT;").execute(&mut writer).await.map(drop)
             .context("grant the list permission and move the caller to reader")?;
         let list = paths.route("/widget/query", &json!([{}])).await?;
         let cursor = value(&list)?["cursor"].as_str().context("a list cursor")?;
-        let (mut holder, holder_connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
+        let mut holder = wamn_postgres::connect(project.url())
                 .await
                 .context("connect the held writer")?;
-        let holder_connection = tokio::spawn(holder_connection);
+
         let stamp = "SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'reader'), true),
                             set_config('app.operation', 'admin:feed-write', true)";
-        let held = holder.transaction().await.context("begin the held transaction")?;
-        held.batch_execute(stamp).await.context("stamp the held transaction")?;
-        let held_row = held
-            .query_one(
-                "UPDATE inventory.widget SET note = 'held', edit_version = edit_version + 1
+        let mut held = holder.begin().await.context("begin the held transaction")?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((stamp).to_string())).execute(&mut *held).await.map(drop).context("stamp the held transaction")?;
+        let held_row = sqlx::query("UPDATE inventory.widget SET note = 'held', edit_version = edit_version + 1
                  WHERE code = 'standard' RETURNING id::text, edit_version,
-                 pg_current_xact_id()::text::int8",
-                &[],
-            )
+                 pg_current_xact_id()::text::int8").fetch_one(&mut *held)
             .await
             .context("update the held standard row")?;
         let xmin: i64 = held_row.get(2);
-        let held_version = i64::from(held_row.get::<_, i32>(1));
+        let held_version = i64::from(held_row.get::<i32, _>(1));
         anyhow::ensure!(held_version == version + 1, "the held row advances its version");
-        let mut expected = BTreeMap::from([(held_row.get::<_, String>(0), (held_version, false))]);
+        let mut expected = BTreeMap::from([(held_row.get::<String, _>(0), (held_version, false))]);
         let mut live_id = String::new();
         for version in 1_i32..=200 {
-            let transaction = writer.transaction().await.with_context(|| format!("begin priority transaction {version}"))?;
-            transaction.batch_execute(stamp).await.with_context(|| format!("stamp priority transaction {version}"))?;
-            let deleted = transaction
-                .execute("DELETE FROM inventory.widget WHERE code = 'priority'", &[])
-                .await
+            let mut transaction = writer.begin().await.with_context(|| format!("begin priority transaction {version}"))?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe((stamp).to_string())).execute(&mut *transaction).await.map(drop).with_context(|| format!("stamp priority transaction {version}"))?;
+            let deleted = sqlx::query("DELETE FROM inventory.widget WHERE code = 'priority'").execute(&mut *transaction).await.map(|result| result.rows_affected())
                 .with_context(|| format!("delete the prior priority row in transaction {version}"))?;
             anyhow::ensure!(deleted == u64::from(version > 1), "delete the previous id once");
-            let row = transaction
-                .query_one(
-                    "INSERT INTO inventory.widget (code, note, edit_version)
-                     VALUES ('priority', 'visible', $1) RETURNING id::text",
-                    &[&version],
-                )
+            let row = sqlx::query("INSERT INTO inventory.widget (code, note, edit_version)
+                     VALUES ('priority', 'visible', $1) RETURNING id::text").bind(&version).fetch_one(&mut *transaction)
                 .await
                 .with_context(|| format!("insert the priority row in transaction {version}"))?;
             live_id = row.get(0);
@@ -1353,8 +1318,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
             );
             transaction.commit().await.with_context(|| format!("commit priority transaction {version}"))?;
         }
-        let snapshot_xmin: i64 = writer
-            .query_one("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8", &[])
+        let snapshot_xmin: i64 = sqlx::query("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8").fetch_one(&mut writer)
             .await
             .context("read xmin while the standard row stays uncommitted")?
             .get(0);
@@ -1376,11 +1340,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
         );
         for row in first["rows"].as_array().context("feed rows")? {
             let id = row["id"].as_str().context("a change id")?;
-            let transaction: i64 = writer
-                .query_one(
-                    "SELECT max(transaction_id) FROM inventory.widget_history WHERE row_key->>'id' = $1",
-                    &[&id],
-                )
+            let transaction: i64 = sqlx::query("SELECT max(transaction_id) FROM inventory.widget_history WHERE row_key->>'id' = $1").bind(&id).fetch_one(&mut writer)
                 .await
                 .with_context(|| format!("read the history transaction of {id}"))?
                 .get(0);
@@ -1439,8 +1399,6 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
         anyhow::ensure!(applied.len() == 201, "every written id arrives: {}", applied.len());
         drop(holder);
         drop(writer);
-        holder_connection.await.context("join the held connection")?.context("close the held connection")?;
-        writer_connection.await.context("join the feed writer connection")?.context("close the feed writer connection")?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1465,20 +1423,15 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
-        let (database, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        database
-            .batch_execute(
-                "BEGIN;
+        let mut database = wamn_postgres::connect(project.url()).await?;
+
+        sqlx::raw_sql("BEGIN;
                  SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
                         set_config('app.operation', 'admin:feed-reader', true);
                  INSERT INTO platform.role (name)
                      SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
                  UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
-                 COMMIT;",
-            )
-            .await
+                 COMMIT;").execute(&mut database).await.map(drop)
             .context("move the caller to a role with no permission")?;
         let path = format!("{ROUTE_PREFIX}/widget/query");
         let (list, list_body) = paths.get(&path, &json!([{}])).await?;
@@ -1490,7 +1443,6 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
             "the list and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
         );
         drop(database);
-        connection.await??;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1515,20 +1467,15 @@ async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
-        let (database, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        database
-            .batch_execute(
-                "BEGIN;
+        let mut database = wamn_postgres::connect(project.url()).await?;
+
+        sqlx::raw_sql("BEGIN;
                  SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
                         set_config('app.operation', 'admin:feed-reader', true);
                  INSERT INTO platform.role (name)
                      SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
                  UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
-                 COMMIT;",
-            )
-            .await
+                 COMMIT;").execute(&mut database).await.map(drop)
             .context("move the caller to a role with no permission")?;
         let path = format!("{ROUTE_PREFIX}/feed_line/screen");
         let (list, list_body) = paths.get(&path, &json!([{}])).await?;
@@ -1540,7 +1487,6 @@ async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::
             "the authored read and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
         );
         drop(database);
-        connection.await??;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1551,8 +1497,8 @@ async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::
 /// Local assembly does not run env apply, so install its sequence defaults
 /// under the administration role that owns configuration writes.
 fn seed_number_sequences(database: &wamn_test_postgres::Database) -> anyhow::Result<()> {
-    use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity};
-    let role = wamn_control_provision::workload_generation_role(
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity};
+    let role = wamn_control_provision::workload_login(
         WorkloadRoleFamily::Administration,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
@@ -1560,14 +1506,11 @@ fn seed_number_sequences(database: &wamn_test_postgres::Database) -> anyhow::Res
             environment: "dev",
             database: database.name(),
         },
-        CredentialGeneration::A,
     )?;
     let caller = database
         .execute(&["SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'"])?;
     database.execute(&[
-        &wamn_control_provision::sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::Administration, database.name(), &role, "numbering-fixture", "2100-01-01T00:00:00Z",
-        ),
+        &wamn_control_provision::test_database::login_sql(WorkloadRoleFamily::Administration, database.name(), &role, "numbering-fixture"),
         &format!("SET ROLE \"{role}\"; BEGIN; SET LOCAL app.user_id = '{}'; SET LOCAL app.operation = 'admin:seed-numbering';
             INSERT INTO platform.number_sequence (application, name, pattern) VALUES
             ('orders', 'label', 'L-{{seq:n}}'),
@@ -1698,17 +1641,16 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
 
 /// The generated integer operations use decimal strings across the HTTP and WIT boundaries.
 async fn integer_identity_operations(paths: &Paths, database_url: &str) -> anyhow::Result<()> {
-    let (database, connection) =
-        tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
+    let mut database = wamn_postgres::connect(database_url).await?;
+
     // Custom sequence options are outside the introspected schema contract.
     // Seed the next generated value without changing that schema.
-    database.query_one(
+    sqlx::query(
         "SELECT setval(pg_get_serial_sequence('inventory.counter', 'id'), 9007199254740993, false)",
-        &[],
-    ).await?;
+    )
+    .fetch_one(&mut database)
+    .await?;
     drop(database);
-    connection.await??;
 
     let mut ids = Vec::new();
     for (index, expected) in ["9007199254740993", "9007199254740994"]

@@ -1,5 +1,6 @@
 //! Command coverage with recorded cluster tools and real Helm rendering.
 
+use sqlx::{Connection as _, Row as _};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -186,12 +187,10 @@ if tool == 'kubectl':
             print(json.dumps({'apiVersion':'v1', 'kind':'ConfigMap', 'data':state['configmaps'][resource]}))
             sys.exit(0)
         if args[1].startswith(('secret/', 'configmap/')):
-            data = {key: 'fixture' for key in ['url', 'ca.crt', 'tls.crt', 'tls.key',
+            data = {key: 'fixture' for key in ['username', 'ca.crt', 'tls.crt', 'tls.key',
                 'key', 'api-key', '.dockerconfigjson', 'target.json', 'password']}
             if resource == 'platform/secret/wamn-pg-superuser' and 'database' in state:
                 data['password'] = state['database']['password']
-            if resource in state.get('credentials', {}):
-                data['url'] = state['credentials'][resource]
             if args[1].startswith('secret/'):
                 data = {key: base64.b64encode(value.encode()).decode() for key, value in data.items()}
             print(json.dumps({'apiVersion':'v1',
@@ -604,41 +603,51 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
     let fixture = Fixture::new()?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("wamn_system")?;
-    let (system, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    system
-        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
-        .await?;
-    wamn_environment_control::provision_system::install_control_store(&system).await?;
-    system
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql(
-                "dep5", "fixture", "dev",
-            ),
-        )
-        .await?;
+    let mut system = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql("CREATE ROLE wamn_system NOLOGIN NOINHERIT")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    wamn_environment_control::provision_system::install_control_store(&mut system).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            "dep5", "fixture", "dev",
+        ))
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)?;
     let name =
         wamn_control_provision::project_env_database_name("dep5", "fixture", "dev", "aaaaaaa1");
-    system
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
             postgres_protocol::escape::escape_identifier(&name)
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)?;
     let project = postgres.database(&name)?;
-    let (client, project_connection) =
-        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let project_connection = tokio::spawn(project_connection);
-    wamn_environment_control::reconcile_run_plane::ensure_runtime_roles(&client).await?;
-    client.batch_execute("SET ROLE wamn_db_owner").await?;
-    client
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    client
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await?;
-    wamn_package_control::schema_baseline::record_project(&client).await?;
+    let mut client = wamn_postgres::connect(project.url()).await?;
+
+    wamn_environment_control::reconcile_run_plane::ensure_runtime_roles(&mut client).await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    wamn_package_control::schema_baseline::record_project(&mut client).await?;
     let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#;
     let document = EnvironmentDocument::from_json(text.as_bytes())?;
     // The deployed environment ConfigMap is the document authority.
@@ -740,9 +749,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         assert!(after["objects"].as_object().unwrap().is_empty());
     }
     drop(client);
-    project_connection.await??;
     drop(system);
-    connection.await??;
     Ok(())
 }
 
@@ -949,13 +956,16 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
     let fixture = Fixture::new()?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("wamn_system")?;
-    let (mut client, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    client.batch_execute("CREATE ROLE wamn_system").await?;
-    client
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await?;
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql("CREATE ROLE wamn_system")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .execute(&mut client)
+        .await
+        .map(drop)?;
     let issuer = "https://identity.identity.svc.cluster.local";
     let key = publish_session_key(&mut client, issuer).await?;
     activate_session_key(&mut client, issuer, &key.kid).await?;
@@ -963,7 +973,10 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
     let versions = "SELECT jsonb_build_array( \
         (SELECT jsonb_agg(xmin::text ORDER BY kid) FROM identity.session_keys), \
         (SELECT jsonb_agg(xmin::text ORDER BY issuer) FROM identity.session_signing_state))";
-    let before: Value = client.query_one(versions, &[]).await?.get(0);
+    let before: Value = sqlx::query(sqlx::AssertSqlSafe((versions).to_string()))
+        .fetch_one(&mut client)
+        .await?
+        .get(0);
     let mut state = fixture.state(&UpgradeTarget::Identity)?;
     let binaries = std::env::var_os("WAMN_POSTGRES_BIN_DIR").map_or_else(
         || PathBuf::from("/usr/lib/postgresql/18/bin"),
@@ -977,10 +990,11 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let transaction = client.transaction().await?;
-    transaction
-        .batch_execute("LOCK TABLE identity.session_keys IN ACCESS EXCLUSIVE MODE")
-        .await?;
+    let mut transaction = client.begin().await?;
+    sqlx::raw_sql("LOCK TABLE identity.session_keys IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *transaction)
+        .await
+        .map(drop)?;
     // The transport forwards the SQL that require_keys sends, without a test copy or timeout override.
     let (output, calls, after) = fixture.run(Some("identity"), &state)?;
     let error = String::from_utf8(output.stderr)?;
@@ -998,7 +1012,10 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
     assert_eq!(after, state);
     transaction.rollback().await?;
     assert_eq!(
-        client.query_one(versions, &[]).await?.get::<_, Value>(0),
+        sqlx::query(sqlx::AssertSqlSafe((versions).to_string()))
+            .fetch_one(&mut client)
+            .await?
+            .get::<Value, _>(0),
         before
     );
     let (output, _, _) = fixture.run(Some("identity"), &state)?;
@@ -1008,7 +1025,10 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        client.query_one(versions, &[]).await?.get::<_, Value>(0),
+        sqlx::query(sqlx::AssertSqlSafe((versions).to_string()))
+            .fetch_one(&mut client)
+            .await?
+            .get::<Value, _>(0),
         before
     );
     Ok(())
@@ -1244,111 +1264,6 @@ fn platform_release_reads_accept_pinned_helm_flags() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn identity_signing_exec_transports_the_query_with_pinned_kubectl() -> anyhow::Result<()> {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-    let fixture = Fixture::new()?;
-    let state = fixture.state(&UpgradeTarget::Identity)?;
-    let (_, calls, _) = fixture.run(Some("identity"), &state)?;
-    let call = calls
-        .iter()
-        .find(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
-        .unwrap();
-    let mut args: Vec<_> = call["args"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|arg| arg.as_str().unwrap().to_owned())
-        .collect();
-    let version = Command::new("kubectl")
-        .args(["version", "--client", "-o", "json"])
-        .output()?;
-    assert!(version.status.success());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&version.stdout)?["clientVersion"]["gitVersion"],
-        "v1.36.2"
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let address = listener.local_addr()?;
-    let server = tokio::spawn(async move {
-        loop {
-            let (mut socket, _) = listener.accept().await?;
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                let byte = socket.read_u8().await?;
-                request.push(byte);
-            }
-            let request = String::from_utf8(request)?;
-            let path = request.split_whitespace().nth(1).unwrap();
-            let exec = path.contains("/exec?");
-            let (status, body) = if exec {
-                (
-                    "403 Forbidden",
-                    json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"Forbidden", "message":"read-only boundary probe", "code":403}),
-                )
-            } else {
-                let body = match path.split('?').next().unwrap() {
-                    "/api" => json!({"apiVersion":"v1", "kind":"APIVersions", "versions":["v1"]}),
-                    "/apis" => json!({"apiVersion":"v1", "kind":"APIGroupList", "groups":[]}),
-                    "/api/v1" => {
-                        json!({"apiVersion":"v1", "kind":"APIResourceList", "groupVersion":"v1", "resources":[
-                        {"name":"pods", "singularName":"pod", "namespaced":true, "kind":"Pod", "verbs":["get"]},
-                        {"name":"pods/exec", "namespaced":true, "kind":"PodExecOptions", "verbs":["create", "get"]}]})
-                    }
-                    _ => {
-                        json!({"apiVersion":"v1", "kind":"Pod", "metadata":{"name":"wamn-pg-1", "namespace":"platform"}, "spec":{"containers":[{"name":"postgres", "image":"postgres:18"}]}, "status":{"phase":"Running"}})
-                    }
-                };
-                ("200 OK", body)
-            };
-            let body = serde_json::to_vec(&body)?;
-            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await?;
-            socket.write_all(&body).await?;
-            if exec {
-                return Ok::<_, anyhow::Error>(path.to_owned());
-            }
-        }
-    });
-    let kubeconfig = fixture.bin.join("probe-kubeconfig");
-    std::fs::write(
-        &kubeconfig,
-        format!(
-            "apiVersion: v1\nkind: Config\nclusters:\n- name: probe\n  cluster:\n    server: http://{address}\ncontexts:\n- name: probe\n  context:\n    cluster: probe\n    namespace: platform\ncurrent-context: probe\n"
-        ),
-    )?;
-    args[1] = kubeconfig.to_str().unwrap().into();
-    args[3] = "probe".into();
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        tokio::process::Command::new("kubectl")
-            .arg("--cache-dir")
-            .arg(fixture.bin.join("kubectl-cache"))
-            .args(&args)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await??;
-    assert!(!output.status.success());
-    let path = tokio::time::timeout(std::time::Duration::from_secs(1), server)
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "exec endpoint was not reached: {error}; {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-        })???;
-    let request = url::Url::parse(&format!("http://{address}{path}"))?;
-    let transported: Vec<_> = request
-        .query_pairs()
-        .filter(|(key, _)| key == "command")
-        .map(|(_, value)| value.into_owned())
-        .collect();
-    let separator = args.iter().position(|arg| arg == "--").unwrap();
-    assert_eq!(transported, args[separator + 1..]);
-    Ok(())
-}
-
 #[test]
 fn platform_host_updates_refuse_invalid_groups_without_mutation() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;
@@ -1471,11 +1386,6 @@ fn platform_installation_reports_the_supplied_charts() -> anyhow::Result<()> {
 
 #[test]
 fn platform_reapply_initializes_only_without_the_org_control_release() -> anyhow::Result<()> {
-    use wamn_control_provision::identity_issuer::identity_issuer_generation_role;
-    use wamn_control_provision::{
-        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-    };
-
     let fixture = Fixture::new()?;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let service = prepared_chart(&repository)?;
@@ -1500,22 +1410,6 @@ fn platform_reapply_initializes_only_without_the_org_control_release() -> anyhow
             state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
         } else {
             state["owners"].as_object_mut().unwrap().remove(&control);
-            let control_role = workload_generation_role(
-                WorkloadRoleFamily::Control,
-                WorkloadRoleIdentity::Org {
-                    org: &fixture.document.org,
-                    database: "wamn_system",
-                },
-                CredentialGeneration::A,
-            )?;
-            let identity_role = identity_issuer_generation_role(
-                "https://identity.identity.svc.cluster.local",
-                CredentialGeneration::A,
-            )?;
-            state["credentials"] = json!({
-                format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
-                "identity/secret/wamn-identity-db": format!("postgresql://{identity_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
-            });
         }
         // Stop after both services apply, before edge readiness and the HTTP probe.
         state["stop_release"] = "hosts/wamn-edge".into();
@@ -1995,27 +1889,6 @@ fn platform_deploy_cleans_only_successful_unmounted_work_directories() -> anyhow
         state["reapply"] = true.into();
         state["org"] = fixture.document.org.as_str().into();
         if fresh {
-            use wamn_control_provision::{
-                CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity,
-                workload_generation_role,
-            };
-            let control = workload_generation_role(
-                WorkloadRoleFamily::Control,
-                WorkloadRoleIdentity::Org {
-                    org: &fixture.document.org,
-                    database: "wamn_system",
-                },
-                CredentialGeneration::A,
-            )?;
-            let identity =
-                wamn_control_provision::identity_issuer::identity_issuer_generation_role(
-                    "https://identity.identity.svc.cluster.local",
-                    CredentialGeneration::A,
-                )?;
-            state["credentials"] = json!({
-                format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
-                "identity/secret/wamn-identity-db": format!("postgresql://{identity}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
-            });
             state["cluster"] = "".into();
             state["owners"] = json!({});
         } else if provider == Provider::Kind {

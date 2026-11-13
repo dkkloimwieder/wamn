@@ -1,5 +1,7 @@
 //! Real signed sessions and authorized PostgreSQL permissions drive native nested dispatch.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 use std::sync::{Arc, mpsc};
@@ -7,14 +9,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use tokio::time::{Instant, timeout};
-use tokio_postgres::{Client, NoTls};
+
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
 use wamn_catalog::{
     ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
 };
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::component_admission::{
     ComponentAdmissionErrorType, ComponentAdmissionRequest, validate_component_admission,
 };
@@ -57,104 +57,117 @@ const TEST_NAME: &str = "native_authenticated_call_graph_grant";
 const REUSE_WINDOW_SECONDS: i32 = 600;
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { connection.await.expect("owned fixture database connection") });
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
 async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
-    let admin = connect(admin_url).await?;
-    let version: i32 = admin
-        .query_one("SHOW server_version_num", &[])
+    let mut admin = connect(admin_url).await?;
+    let version: i32 = sqlx::query("SHOW server_version_num")
+        .fetch_one(&mut admin)
         .await?
-        .get::<_, String>(0)
+        .get::<String, _>(0)
         .parse()?;
     anyhow::ensure!(
         version >= 180_000,
         "native authenticated test requires PostgreSQL 18"
     );
-    let occupied: bool = admin.query_one(
-        "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
-         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))",
-        &[],
-    ).await?.get(0);
+    let occupied: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
+         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))").fetch_one(&mut admin).await?.get(0);
     anyhow::ensure!(
         !occupied,
         "refuse populated PostgreSQL: arm only this test's fresh disposable server"
     );
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
-            database: &database,
+            database: &mut database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(
-            "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
           \
-         CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
-        )
-        .await?;
-    admin
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(include_str!(concat!(
+         CREATE SCHEMA wamn_run AUTHORIZATION postgres;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../deploy/sql/app-schema.sql"
         )))
-        .await?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+        .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::HttpAdmitter,
-            &database,
+            &mut database,
             &generation,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     // The fixture writes as its test principal, whose row stamps itself.
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:seed-native-policy-fixture', false)",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'fixture@example.invalid')",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await?;
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
     for role in ["native-parent", "native-child"] {
-        admin
-            .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
-            .await?;
-        admin
-            .execute(
-                "INSERT INTO platform.permission (role_name, permission) \
-             VALUES ($1, regexp_replace($2, '@[^@]*$', ''))",
-                &[&role, &ROOT],
-            )
-            .await?;
-    }
-    admin
-        .execute(
+        sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+            .bind(&role)
+            .execute(&mut admin)
+            .await
+            .map(|result| result.rows_affected())?;
+        sqlx::query(
             "INSERT INTO platform.permission (role_name, permission) \
-             VALUES ('native-child', regexp_replace($1, '@[^@]*$', ''))",
-            &[&CHILD],
+             VALUES ($1, regexp_replace($2, '@[^@]*$', ''))",
         )
-        .await?;
+        .bind(&role)
+        .bind(&ROOT)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    }
+    sqlx::query(
+        "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ('native-child', regexp_replace($1, '@[^@]*$', ''))",
+    )
+    .bind(&CHILD)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
     let mut authorized_url = url::Url::parse(admin_url)?;
     authorized_url
         .set_username(&generation)
@@ -162,21 +175,20 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
     authorized_url
         .set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
-    let authorized = connect(authorized_url.as_str()).await?;
-    let identity = authorized
-        .query_one(
-            "SELECT session_user::text, rolsuper, rolbypassrls, \
+    let mut authorized = connect(authorized_url.as_str()).await?;
+    let identity = sqlx::query(
+        "SELECT session_user::text, rolsuper, rolbypassrls, \
          pg_has_role(current_user, 'wamn_http_admitter', 'USAGE'), \
          has_table_privilege(current_user, 'platform.permission', 'UPDATE') \
          FROM pg_roles WHERE rolname = current_user",
-            &[],
-        )
-        .await?;
-    assert_eq!(identity.get::<_, String>(0), generation);
-    assert!(!identity.get::<_, bool>(1) && !identity.get::<_, bool>(2));
-    assert!(identity.get::<_, bool>(3));
+    )
+    .fetch_one(&mut authorized)
+    .await?;
+    assert_eq!(identity.get::<String, _>(0), generation);
+    assert!(!identity.get::<bool, _>(1) && !identity.get::<bool, _>(2));
+    assert!(identity.get::<bool, _>(3));
     assert!(
-        !identity.get::<_, bool>(4),
+        !identity.get::<bool, _>(4),
         "permission reader cannot change grants"
     );
     drop(authorized);
@@ -200,11 +212,12 @@ async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPos
 
 pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     project_env_key_postgres(admin_url).await?;
-    let admin = connect(admin_url).await?;
+    let mut admin = connect(admin_url).await?;
     let principals = wamn_control_provision::platform_principals_sql("platform.example.invalid")?;
-    admin
-        .batch_execute(&format!("BEGIN; {principals} COMMIT;"))
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {principals} COMMIT;")))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
     let (postgres, _) = warm_postgres(admin_url, &[]).await?;
     Ok(postgres)
 }
@@ -214,39 +227,44 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let server = Server::start().await;
     let (keys, _) = server.cache();
     let verifier = SessionVerifier::new(keys, ORG, AUDIENCE)?;
-    let admin = connect(admin_url).await?;
+    let mut admin = connect(admin_url).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
     let second = "00000000-0000-4000-8000-0000000000b2";
-    session_fixture::install_authority(&admin, PROJECT, ENVIRONMENT, AUDIENCE, &[&first, second])
-        .await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:seed-session-authority',false)",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await?;
+    session_fixture::install_authority(
+        &mut admin,
+        PROJECT,
+        ENVIRONMENT,
+        AUDIENCE,
+        &[&first, second],
+    )
+    .await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:seed-session-authority',false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for (principal, email) in [
         (&*first, "alice@example.test"),
         (second, "bob@example.test"),
     ] {
-        admin
-            .execute(
-                "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2)",
-                &[&principal, &email],
-            )
-            .await?;
+        sqlx::query(
+            "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2)",
+        )
+        .bind(&principal)
+        .bind(&email)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
         for role in ["native-parent", "native-child"] {
-            admin
-                .execute(
-                    "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)",
-                    &[&principal, &role],
-                )
-                .await?;
+            sqlx::query(
+                "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)",
+            )
+            .bind(&principal)
+            .bind(&role)
+            .execute(&mut admin)
+            .await
+            .map(|result| result.rows_affected())?;
         }
     }
     let authentication = Arc::new(SessionRouteAuthentication::new(
         verifier,
-        Arc::new(admin),
+        wamn_postgres::pool(admin_url, 4).await?,
         postgres,
         PROJECT,
     ));
@@ -644,15 +662,17 @@ fn native_member_statement_instances() {
         let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
             .await
             .expect("member SQL credentials");
-        let admin = connect(database.url()).await.expect("admin connection");
-        admin
-            .batch_execute(
-                "CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
+        let mut admin = connect(database.url()).await.expect("admin connection");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
                      CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
-                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app",
-            )
-            .await
-            .expect("member table");
+                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app")
+                .to_string(),
+        ))
+        .execute(&mut admin)
+        .await
+        .map(drop)
+        .expect("member table");
         let fixture = Fixture::build_with_reuse(
             Case::MemberInstances,
             false,
@@ -662,16 +682,13 @@ fn native_member_statement_instances() {
             Some(postgres),
         )
         .await;
-        let rows = async || {
-            admin
-                .query(
-                    "SELECT value FROM native_member.native_policy_members ORDER BY value",
-                    &[],
-                )
+        let mut rows = async || {
+            sqlx::query("SELECT value FROM native_member.native_policy_members ORDER BY value")
+                .fetch_all(&mut admin)
                 .await
                 .expect("read member rows")
                 .iter()
-                .map(|row| row.get::<_, String>(0))
+                .map(|row| row.get::<String, _>(0))
                 .collect::<Vec<_>>()
         };
         let component_id = fixture
@@ -685,7 +702,7 @@ fn native_member_statement_instances() {
             let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
             request.input = input.into();
             request.facts.caller = Some(caller.clone());
-            let transaction = fixture
+            let mut transaction = fixture
                 .policy
                 .admit_and_open_transaction(&component_id, ROOT, &request.facts)
                 .await
@@ -693,7 +710,7 @@ fn native_member_statement_instances() {
                 .expect("the root's declared host transaction begins");
             request.facts = fixture
                 .policy
-                .transaction_facts(&request.facts, &transaction);
+                .transaction_facts(&request.facts, &mut transaction);
             let result = invoke_native(&fixture.target().await, request)
                 .await
                 .expect("the composed root dispatches");
@@ -765,15 +782,17 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
             let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
                 .await
                 .expect("member SQL credentials");
-            let admin = connect(database.url()).await.expect("admin connection");
-            admin
-                .batch_execute(
-                    "CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
+            let mut admin = connect(database.url()).await.expect("admin connection");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                ("CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
                      CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
-                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app",
-                )
-                .await
-                .expect("member table");
+                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app")
+                    .to_string(),
+            ))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .expect("member table");
             let fixture = Fixture::build_with_reuse(
                 Case::SqlFreeRoot,
                 false,
@@ -799,16 +818,13 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 "the released root operation holds no statement: nothing is folded"
             );
             assert!(fixture.root.operations[ROOT].host_transaction);
-            let rows = async || {
-                admin
-                    .query(
-                        "SELECT value FROM native_member.native_policy_members ORDER BY value",
-                        &[],
-                    )
+            let mut rows = async || {
+                sqlx::query("SELECT value FROM native_member.native_policy_members ORDER BY value")
+                    .fetch_all(&mut admin)
                     .await
                     .expect("read member rows")
                     .iter()
-                    .map(|row| row.get::<_, String>(0))
+                    .map(|row| row.get::<String, _>(0))
                     .collect::<Vec<_>>()
             };
             let component_id = fixture
@@ -822,7 +838,7 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
                 request.input = input.into();
                 request.facts.caller = Some(caller.clone());
-                let transaction = fixture
+                let mut transaction = fixture
                     .policy
                     .admit_and_open_transaction(&component_id, ROOT, &request.facts)
                     .await
@@ -832,7 +848,7 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                     );
                 request.facts = fixture
                     .policy
-                    .transaction_facts(&request.facts, &transaction);
+                    .transaction_facts(&request.facts, &mut transaction);
                 let result = invoke_native(&fixture.target().await, request)
                     .await
                     .expect("the composed root dispatches");
@@ -1093,46 +1109,47 @@ async fn warm_postgres_with_pool(
     principals: &[&str],
     guest_pool_max_size: usize,
 ) -> anyhow::Result<(Arc<WamnPostgres>, Arc<WarmCredentials>)> {
-    let admin = connect(admin_url).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    let mut database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
-    let role = workload_generation_role(
+    let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
-            database: &database,
+            database: &mut database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
-            &database,
+            &mut database,
             &role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
-    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for principal in principals {
-        admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $1 || '@example.invalid')", &[principal]).await?;
+        sqlx::query("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $1 || '@example.invalid')").bind(principal).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&role)
         .map_err(|()| anyhow::anyhow!("guest username"))?;
     url.set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("guest password"))?;
-    let http_role = workload_generation_role(
+    let http_role = workload_login(
         WorkloadRoleFamily::HttpAdmitter,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
-            database: &database,
+            database: &mut database,
         },
-        CredentialGeneration::A,
     )?;
     let mut http_url = url.clone();
     http_url
@@ -1203,8 +1220,8 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             let (postgres, _) = warm_postgres(database.url(), &[])
                 .await
                 .expect("project guest generation");
-            let admin = connect(database.url()).await.expect("admin");
-            admin.batch_execute("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").await.expect("owned rollback marker");
+            let mut admin = connect(database.url()).await.expect("admin");
+            sqlx::raw_sql("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").execute(&mut admin).await.map(drop).expect("owned rollback marker");
             postgres
                 .bind_session_identity(
                     "retained-transaction",
@@ -1233,7 +1250,7 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
                 .dispatch(LeaveTransaction(transaction))
                 .await
                 .expect("native warm resource table");
-            let active: bool = admin.query_one("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1 AND state='idle in transaction')", &[&pid]).await.expect("transaction state").get(0);
+            let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1 AND state='idle in transaction')").bind(&pid).fetch_one(&mut admin).await.expect("transaction state").get(0);
             assert!(active, "the retained transaction is open before retirement");
             invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
                 .await
@@ -1241,14 +1258,13 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
                 .expect("emission");
             timeout(CLEANUP, async {
                 loop {
-                    let alive: bool = admin
-                        .query_one(
-                            "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1)",
-                            &[&pid],
-                        )
-                        .await
-                        .expect("backend state")
-                        .get(0);
+                    let alive: bool =
+                        sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid=$1)")
+                            .bind(&pid)
+                            .fetch_one(&mut admin)
+                            .await
+                            .expect("backend state")
+                            .get(0);
                     if !alive {
                         break;
                     }
@@ -1257,8 +1273,8 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             })
             .await
             .expect("retirement destroys the session rather than repooling its transaction");
-            let rows: i64 = admin
-                .query_one("SELECT count(*) FROM public.warm_retirement", &[])
+            let rows: i64 = sqlx::query("SELECT count(*) FROM public.warm_retirement")
+                .fetch_one(&mut admin)
                 .await
                 .expect("rollback result")
                 .get(0);
@@ -1287,33 +1303,34 @@ async fn pat_caller(
     use wamn_runtime::plugins::route_authentication::RouteAuthentication;
 
     let system_database = wamn_control_provision::test_database::system();
-    let system = connect(system_database.url()).await?;
-    system
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+    let mut system = connect(system_database.url()).await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
-        .await?;
-    system.execute("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')", &[&ORG]).await?;
-    system
-        .execute(
-            "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",
-            &[&ORG, &PROJECT],
-        )
-        .await?;
+        .execute(&mut system)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')").bind(&ORG).execute(&mut system).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, $2)")
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut system)
+        .await
+        .map(|result| result.rows_affected())?;
     let principal = create_service(
-        &system,
+        &mut system,
         "warm-test",
         "Warm test caller",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
-    system.execute("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')", &[&ORG, &ENVIRONMENT]).await?;
-    system.execute("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,$2,$3,'warm-test','a1b2c3d4')", &[&ORG, &PROJECT, &ENVIRONMENT]).await?;
+    sqlx::query("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')").bind(&ORG).bind(&ENVIRONMENT).execute(&mut system).await.map(|result| result.rows_affected())?;
+    sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,$2,$3,'warm-test','a1b2c3d4')").bind(&ORG).bind(&PROJECT).bind(&ENVIRONMENT).execute(&mut system).await.map(|result| result.rows_affected())?;
     assign_project_role(
-        &system,
+        &mut system,
         principal.id(),
         ORG,
         PROJECT,
@@ -1322,17 +1339,23 @@ async fn pat_caller(
     )
     .await?;
     let token = issue_pat(
-        &system,
+        &mut system,
         principal.id(),
         "warm test",
         Duration::from_secs(600),
     )
     .await?;
-    let admin = connect(admin_url).await?;
-    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')", &[&principal.id().to_string().as_str()]).await?;
-    admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().to_string().as_str()]).await?;
-    let reader_role = workload_generation_role(
+    let mut admin = connect(admin_url).await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)").bind(&FIXTURE_PRINCIPAL).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','warm-pat@example.invalid')").bind(&principal.id().to_string().as_str()).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')",
+    )
+    .bind(&principal.id().to_string().as_str())
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    let reader_role = workload_login(
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleIdentity::Control {
             org: ORG,
@@ -1340,17 +1363,19 @@ async fn pat_caller(
             environment: ENVIRONMENT,
             database: system_database.name(),
         },
-        CredentialGeneration::A,
     )?;
-    system
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::IdentityReader,
             system_database.name(),
             &reader_role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)?;
     let mut reader_url = url::Url::parse(system_database.url())?;
     reader_url
         .set_username(&reader_role)
@@ -1358,7 +1383,7 @@ async fn pat_caller(
     reader_url
         .set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("identity reader password"))?;
-    let reader = connect(reader_url.as_str()).await?;
+    let reader = wamn_postgres::pool(reader_url.as_str(), 4).await?;
     let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
     let mut manifest = serde_json::to_value(release.manifest())?;
     manifest["routes"] =
@@ -1376,8 +1401,7 @@ async fn pat_caller(
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(
-                RouteAuthentication::new(Arc::new(reader), postgres, ORG, PROJECT, "warm-test")
-                    .await?,
+                RouteAuthentication::new(reader, postgres, ORG, PROJECT, "warm-test"),
             )),
         ));
     routing

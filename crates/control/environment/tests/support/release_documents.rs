@@ -1,5 +1,6 @@
 //! Canonical release documents shared by type and render-only cases.
 
+use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 use wamn_environment_control::environment::{
     self,
@@ -541,6 +542,7 @@ pub mod workflow {
     use super::{ORG, PLATFORM_DOMAIN, POLICY, PROJECT};
     use anyhow::Context as _;
     use serde_json::{Value, json};
+    use sqlx::{Connection as _, Row as _};
     use std::collections::BTreeMap;
     use std::path::Path;
     use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
@@ -592,14 +594,10 @@ pub mod workflow {
         }
     }
 
-    pub async fn connect_owned(
-        url: &str,
-    ) -> anyhow::Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>)> {
-        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-        let task = tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        Ok((client, task))
+    pub async fn connect_owned(url: &str) -> anyhow::Result<sqlx::PgConnection> {
+        let client = wamn_postgres::connect(url).await?;
+
+        Ok(client)
     }
 
     /// Admit a manual fixture run through the application host route.
@@ -611,20 +609,27 @@ pub mod workflow {
         input: &Value,
         key: &str,
     ) -> anyhow::Result<String> {
-        let (project, task) = connect_owned(environment.project_url).await?;
+        let mut project = connect_owned(environment.project_url).await?;
+        let mut observer = connect_owned(environment.project_url).await?;
         let result = wamn_test_postgres::run_result::require_success(
             work,
             "start_workflow",
-            &project,
-            start_workflow_inner(&project, environment, application, workflow_id, input, key),
+            &mut observer,
+            start_workflow_inner(
+                &mut project,
+                environment,
+                application,
+                workflow_id,
+                input,
+                key,
+            ),
         )
         .await;
-        task.abort();
         result
     }
 
     async fn start_workflow_inner(
-        project: &tokio_postgres::Client,
+        project: &mut sqlx::PgConnection,
         environment: &WorkflowEnvironment<'_>,
         application: &str,
         workflow_id: &str,
@@ -639,24 +644,20 @@ pub mod workflow {
             AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
         };
 
-        project
-            .execute(
-                "SELECT set_config('app.user_id', $1, false), \
+        sqlx::query(
+            "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_identity_protocol::PlatformComponent::Provisioning
-                    .principal_id()
-                    .to_string()],
-            )
-            .await?;
-        project.execute(
-        "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&ENABLER],
-    ).await?;
-        let bytes: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
-            &[&environment.project_env_key, &environment.digest],
         )
+        .bind(
+            &wamn_identity_protocol::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .execute(&mut *project)
+        .await
+        .map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING").bind(&ENABLER).execute(&mut *project).await.map(|result| result.rows_affected())?;
+        let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
         .await?
         .get(0);
         let release = Arc::new(
@@ -753,20 +754,27 @@ pub mod workflow {
         input: &Value,
         key: &str,
     ) -> anyhow::Result<String> {
-        let (project, task) = connect_owned(environment.project_url).await?;
+        let mut project = connect_owned(environment.project_url).await?;
+        let mut observer = connect_owned(environment.project_url).await?;
         let result = wamn_test_postgres::run_result::require_success(
             work,
             "admit_workflow",
-            &project,
-            admit_workflow_inner(&project, environment, application, workflow_id, input, key),
+            &mut observer,
+            admit_workflow_inner(
+                &mut project,
+                environment,
+                application,
+                workflow_id,
+                input,
+                key,
+            ),
         )
         .await;
-        task.abort();
         result
     }
 
     async fn admit_workflow_inner(
-        project: &tokio_postgres::Client,
+        project: &mut sqlx::PgConnection,
         environment: &WorkflowEnvironment<'_>,
         application: &str,
         workflow_id: &str,
@@ -778,11 +786,7 @@ pub mod workflow {
             WamnPostgresConfig,
         };
 
-        let bytes: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
-            &[&environment.project_env_key, &environment.digest],
-        )
+        let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2").bind(&environment.project_env_key).bind(&environment.digest).fetch_one(&mut *project)
         .await?
         .get(0);
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
@@ -896,51 +900,59 @@ pub mod workflow {
         events: Option<&wamn_broker::EventBroker>,
     ) -> anyhow::Result<()> {
         let project_env_key = environment.project_env_key;
-        let (mut project, project_task) = connect_owned(environment.project_url).await?;
-        project
-            .execute(
-                "SELECT set_config('app.user_id', $1, false), \
+        let mut project = connect_owned(environment.project_url).await?;
+        sqlx::query(
+            "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_identity_protocol::PlatformComponent::Provisioning
-                    .principal_id()
-                    .to_string()],
-            )
-            .await?;
-        project
-            .execute(
-                "INSERT INTO platform.\"user\" (id, type, email) \
+        )
+        .bind(
+            &wamn_identity_protocol::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
+        sqlx::query(
+            "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', $2) ON CONFLICT (id) DO NOTHING",
-                &[&ENABLER, &format!("schedule-enabler@{PLATFORM_DOMAIN}")],
-            )
-            .await?;
-        project
-            .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
-            .await?;
+        )
+        .bind(&ENABLER)
+        .bind(&format!("schedule-enabler@{PLATFORM_DOMAIN}"))
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+            .bind(&role)
+            .execute(&mut project)
+            .await
+            .map(|result| result.rows_affected())?;
         for operation in operations {
-            project
-                .execute(
-                    "INSERT INTO platform.permission (role_name, permission) \
+            sqlx::query(
+                "INSERT INTO platform.permission (role_name, permission) \
                  VALUES ($1, $2)",
-                    &[&role, operation],
-                )
-                .await?;
+            )
+            .bind(&role)
+            .bind(operation)
+            .execute(&mut project)
+            .await
+            .map(|result| result.rows_affected())?;
         }
         for user in [
             format!("schedule-enabler@{PLATFORM_DOMAIN}"),
             format!("workflow@{PLATFORM_DOMAIN}"),
         ] {
             async {
-                let tx = project.transaction().await?;
-                let user_id: String = tx
-                    .query_one(
-                        "SELECT id::text FROM platform.\"user\" WHERE email=$1",
-                        &[&user],
-                    )
-                    .await?
-                    .get(0);
+                let mut tx = project.begin().await?;
+                let user_id: String =
+                    sqlx::query("SELECT id::text FROM platform.\"user\" WHERE email=$1")
+                        .bind(&user)
+                        .fetch_one(&mut *tx)
+                        .await?
+                        .get(0);
                 let mut drops = wamn_broker::auth_changes::AuthDrops::default();
                 let outcome = wamn_platform_identity::application::mutate_grant(
-                    &tx,
+                    &mut tx,
                     project_env_key,
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
@@ -984,7 +996,6 @@ pub mod workflow {
             events,
         )
         .await?;
-        project_task.abort();
         Ok(())
     }
 
@@ -995,7 +1006,7 @@ pub mod workflow {
         application: &str,
         workflow_id: &str,
     ) -> anyhow::Result<()> {
-        let (mut project, project_task) = connect_owned(environment.project_url).await?;
+        let mut project = connect_owned(environment.project_url).await?;
         disable_workflow(
             environment.system_url,
             environment.target,
@@ -1003,7 +1014,6 @@ pub mod workflow {
             &environment.version(application, workflow_id),
         )
         .await?;
-        project_task.abort();
         Ok(())
     }
 

@@ -52,21 +52,24 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
         delivery,
         first,
         ..
-    } = &host;
+    } = &mut host;
     // The admin also holds project-admin, so its own admin row stays.
-    admin
-        .execute(
-            "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
-            &[&first.as_str(), &ORG, &PROJECT],
-        )
-        .await?;
+    sqlx::query(
+        "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+    )
+    .bind(&first.as_str())
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
 
     let engine = Arc::new(build_engine(&[])?);
     let flow_http = Component::new(
         engine.inner(),
         wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
     )?;
-    let (endpoint, task) = serve(
+    let (endpoint, _task) = serve(
         engine,
         flow_http,
         Arc::clone(routing),
@@ -92,7 +95,6 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
         ],
     )
     .await?;
-    task.abort();
     host.server.stop().await;
     Ok(())
 }
@@ -135,18 +137,17 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_client")?;
     let admin_url = test_database.url();
-    let admin = control_fixture::connect(admin_url).await?;
-    let control_url = control_fixture::install(&admin, admin_url).await?;
+    let mut admin = control_fixture::connect(admin_url).await?;
+    let control_url = control_fixture::install(&mut admin, admin_url).await?;
     let audience = wamn_platform_identity::control::control_audience(ORG)?;
 
     // The users and their grants, written as provisioning, and one password
     // login of each admin for the control audience.
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut ids = Vec::new();
     for (email, name) in [
         ("boss@example.test", "Boss"),
@@ -155,7 +156,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         ("dan@example.test", "Dan"),
     ] {
         ids.push(
-            create_or_reuse_user(&admin, email, name)
+            create_or_reuse_user(&mut admin, email, name)
                 .await?
                 .principal_id,
         );
@@ -179,21 +180,16 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         (&ann, MemberGrants::default()),
     ];
     for (principal, grants) in &grants {
-        invite_member(&admin, principal, ORG, grants).await?;
+        invite_member(&mut admin, principal, ORG, grants).await?;
     }
     for principal in [&boss, &cat] {
-        admin
-            .execute(
-                "INSERT INTO identity.password_logins \
+        sqlx::query("INSERT INTO identity.password_logins \
                    (id, principal_id, issuer, audience, authenticated_at, expires_at, renewal_expires_at) \
                  VALUES ($1::text::uuid, $1::text::uuid, $2, $3, now(), now() + interval '8 hours', \
-                   now() + interval '30 minutes')",
-                &[&principal.to_string().as_str(), &ISSUER, &audience],
-            )
-            .await?;
+                   now() + interval '30 minutes')").bind(&principal.to_string().as_str()).bind(&ISSUER).bind(&audience).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }
 
-    let control = Arc::new(control_fixture::connect(&control_url).await?);
+    let control = wamn_postgres::pool(&control_url, 4).await?;
     let writer = Arc::new(tokio::sync::Mutex::new(
         control_fixture::connect(&control_url).await?,
     ));
@@ -208,7 +204,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
             .with_authenticator(Arc::new(ControlRouteAuthenticator::new(
                 verifier,
-                Arc::clone(&control),
+                control.clone(),
             ))),
     );
     let delivery = Arc::new(HostRouteDelivery::new(
@@ -230,7 +226,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         engine.inner(),
         wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
     )?;
-    let (endpoint, task) = serve(
+    let (endpoint, _task) = serve(
         engine,
         flow_http,
         routing,
@@ -271,7 +267,6 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         ],
     )
     .await?;
-    task.abort();
     server.stop().await;
     Ok(())
 }

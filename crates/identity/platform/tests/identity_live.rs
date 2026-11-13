@@ -1,16 +1,16 @@
 //! Real-PostgreSQL test for the platform identity core.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
-use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
-    IdentityErrorType, PreparedIdentityReads, Principal, PrincipalStatus, PrincipalType,
-    assign_project_role, create_service, create_user, disable_principal,
-    grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
-    resolve_principal, resolve_subject, revoke_project_env_membership,
+    IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
+    create_service, create_user, disable_principal, grant_project_env_membership,
+    has_project_env_membership, issue_pat, project_roles, resolve_principal, resolve_subject,
+    revoke_project_env_membership,
 };
 
 #[tokio::test]
@@ -20,60 +20,59 @@ async fn platform_identity_round_trip_on_postgres() {
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
 
-    let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(&url)
         .await
         .expect("connect platform identity test database");
-    let connection_task = tokio::spawn(async move {
-        connection
-            .await
-            .expect("drive platform identity test database");
-    });
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS identity CASCADE; \
              DROP SCHEMA IF EXISTS provisioning CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-             THEN CREATE ROLE wamn_system; END IF; END $$;",
-        )
+             THEN CREATE ROLE wamn_system; END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("prepare empty platform schemas");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut client)
         .await
-        .expect("prepare empty platform schemas");
-    client
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("apply the system schema composition");
-    identity_relations_carry_stamps(&client).await;
-    let provisioning = provisioning_principal_is_seeded(&client).await;
-    unbound_identity_writes_refuse(&client).await;
+    identity_relations_carry_stamps(&mut client).await;
+    let provisioning = provisioning_principal_is_seeded(&mut client).await;
+    unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning.to_string().as_str()],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&provisioning.to_string().as_str())
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .expect("bind wamn:provisioning for the fixture session");
 
-    client
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('demo', 'pooled', 'wamn-pg'); \
-             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');",
-        )
-        .await
-        .expect("seed registered project");
-    platform_principal_constraint_refuses_other_rows(&client).await;
+             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("seed registered project");
+    platform_principal_constraint_refuses_other_rows(&mut client).await;
 
     let user = create_user(
-        &client,
+        &mut client,
         "Author@Example.com",
         "author@example.com",
         "Widget Author",
     )
     .await
     .expect("create user principal");
-    wamn_platform_identity::org::activate_org_membership(&client, user.id(), "demo")
+    wamn_platform_identity::org::activate_org_membership(&mut client, user.id(), "demo")
         .await
         .expect("active org membership fixture");
     assert_eq!(user.principal_type(), PrincipalType::User);
@@ -81,7 +80,7 @@ async fn platform_identity_round_trip_on_postgres() {
     assert_eq!(user.status(), PrincipalStatus::Active);
 
     let duplicate = create_user(
-        &client,
+        &mut client,
         "author@example.com",
         "author@example.com",
         "Duplicate",
@@ -90,10 +89,10 @@ async fn platform_identity_round_trip_on_postgres() {
     .expect_err("duplicate user identity must fail");
     assert_eq!(duplicate.error_type(), IdentityErrorType::Conflict);
 
-    one_address_admits_one_user(&client).await;
+    one_address_admits_one_user(&mut client).await;
 
     let service = create_service(
-        &client,
+        &mut client,
         "agent-ci",
         "CI Agent",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -102,7 +101,7 @@ async fn platform_identity_round_trip_on_postgres() {
     .expect("create service principal");
     assert_eq!(service.principal_type(), PrincipalType::Service);
     let duplicate_service = create_service(
-        &client,
+        &mut client,
         "agent-ci",
         "Second CI Agent",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
@@ -111,14 +110,14 @@ async fn platform_identity_round_trip_on_postgres() {
     .expect_err("one subject admits one service");
     assert_eq!(duplicate_service.error_type(), IdentityErrorType::Conflict);
     assert!(
-        resolve_subject(&client, PrincipalType::Service, "agent-ci")
+        resolve_subject(&mut client, PrincipalType::Service, "agent-ci")
             .await
             .expect("resolve service")
             .is_some()
     );
 
     assign_project_role(
-        &client,
+        &mut client,
         user.id(),
         "demo",
         "widgets",
@@ -128,7 +127,7 @@ async fn platform_identity_round_trip_on_postgres() {
     .await
     .expect("assign author role");
     assign_project_role(
-        &client,
+        &mut client,
         user.id(),
         "demo",
         "widgets",
@@ -137,7 +136,7 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect("assign promoter role");
-    let roles = project_roles(&client, user.id(), "demo", "widgets")
+    let roles = project_roles(&mut client, user.id(), "demo", "widgets")
         .await
         .expect("read project roles");
     assert_eq!(
@@ -147,35 +146,33 @@ async fn platform_identity_round_trip_on_postgres() {
             .collect::<Vec<_>>(),
         ["project-author", "project-promoter"]
     );
-    let stamps = client
-        .query_one(
-            "SELECT count(*) FROM identity.principals p \
+    let stamps = sqlx::query(
+        "SELECT count(*) FROM identity.principals p \
              JOIN identity.project_roles r ON r.principal_id = p.id \
              WHERE p.id = $1::text::uuid \
                AND p.created_by = $2::text::uuid AND p.updated_by = $2::text::uuid \
                AND r.created_by = $2::text::uuid AND r.updated_by = $2::text::uuid",
-            &[
-                &user.id().to_string().as_str(),
-                &provisioning.to_string().as_str(),
-            ],
-        )
-        .await
-        .expect("read principal and role stamps");
+    )
+    .bind(&user.id().to_string().as_str())
+    .bind(&provisioning.to_string().as_str())
+    .fetch_one(&mut client)
+    .await
+    .expect("read principal and role stamps");
     assert_eq!(
-        stamps.get::<_, i64>(0),
+        stamps.get::<i64, _>(0),
         2,
         "the principal and both roles stamp wamn:provisioning"
     );
 
-    project_environment_membership_round_trip(&client, &user, &service).await;
-    project_delete_removes_its_roles_and_memberships(&client, &user).await;
+    project_environment_membership_round_trip(&mut client, &user, &service).await;
+    project_delete_removes_its_roles_and_memberships(&mut client, &user).await;
 
-    let disabled = disable_principal(&client, user.id(), &mut AuthDrops::default())
+    let disabled = disable_principal(&mut client, user.id(), &mut AuthDrops::default())
         .await
         .expect("disable user");
     assert_eq!(disabled.status(), PrincipalStatus::Disabled);
     assert_eq!(
-        resolve_principal(&client, user.id())
+        resolve_principal(&mut client, user.id())
             .await
             .expect("resolve disabled user")
             .expect("disabled user remains stored")
@@ -183,25 +180,24 @@ async fn platform_identity_round_trip_on_postgres() {
         PrincipalStatus::Disabled
     );
 
-    client
-        .batch_execute(
-            "DROP SCHEMA identity CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA identity CASCADE; \
              DROP SCHEMA provisioning CASCADE; \
-             DROP SCHEMA registry CASCADE;",
-        )
-        .await
-        .expect("remove platform identity test schemas");
+             DROP SCHEMA registry CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("remove platform identity test schemas");
     drop(client);
-    connection_task
-        .await
-        .expect("join database connection task");
 }
 
 /// Two spellings of one address are one address (`wamn-0h0g.9.18`).
 /// `require_email` folds the case in full, and `UNIQUE (email)` then
 /// refuses the second user. The two users carry different subjects, so only
 /// the email constraint can refuse the second one.
-async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
+async fn one_address_admits_one_user(client: &mut sqlx::PgConnection) {
     let first = create_user(
         client,
         "case-fold-first",
@@ -210,14 +206,13 @@ async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
     )
     .await
     .expect("create the first user of the address");
-    let stored: String = client
-        .query_one(
-            "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-            &[&first.id().to_string().as_str()],
-        )
-        .await
-        .expect("read the stored email")
-        .get(0);
+    let stored: String =
+        sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
+            .bind(&first.id().to_string().as_str())
+            .fetch_one(&mut *client)
+            .await
+            .expect("read the stored email")
+            .get(0);
     assert_eq!(
         stored, "case.fold@example.invalid",
         "the stored address is folded in full"
@@ -236,7 +231,7 @@ async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
 /// A project delete takes the project's roles and environment memberships with
 /// it, and leaves every other project's rows in place.
 async fn project_delete_removes_its_roles_and_memberships(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     user: &Principal,
 ) {
     assign_project_role(
@@ -252,40 +247,37 @@ async fn project_delete_removes_its_roles_and_memberships(
     grant_project_env_membership(client, user.id(), "demo", "inventory", "dev")
         .await
         .expect("grant a membership on the project to delete");
-    let rows = |project: &'static str| async move {
-        client
-            .query_one(
-                "SELECT (SELECT count(*) FROM identity.project_roles \
+    async fn rows(client: &mut sqlx::PgConnection, project: &str) -> (i64, i64) {
+        sqlx::query(
+            "SELECT (SELECT count(*) FROM identity.project_roles \
                          WHERE org = 'demo' AND project = $1), \
                         (SELECT count(*) FROM identity.project_env_memberships \
                          WHERE org = 'demo' AND project = $1)",
-                &[&project],
-            )
-            .await
-            .map(|row| (row.get::<_, i64>(0), row.get::<_, i64>(1)))
-            .expect("count project roles and memberships")
-    };
-    let widgets = rows("widgets").await;
-    assert_eq!(rows("inventory").await, (1, 1));
-    client
-        .execute(
-            "DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'",
-            &[],
         )
+        .bind(&project)
+        .fetch_one(&mut *client)
         .await
+        .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))
+        .expect("count project roles and memberships")
+    }
+    let widgets = rows(client, "widgets").await;
+    assert_eq!(rows(client, "inventory").await, (1, 1));
+    sqlx::query("DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'")
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
         .expect("delete the project");
-    assert_eq!(rows("inventory").await, (0, 0));
-    assert_eq!(rows("widgets").await, widgets);
+    assert_eq!(rows(client, "inventory").await, (0, 0));
+    assert_eq!(rows(client, "widgets").await, widgets);
 }
 
 async fn project_environment_membership_round_trip(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     user: &Principal,
     service: &Principal,
 ) {
-    client
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('other', 'pooled', 'wamn-pg'); \
              INSERT INTO registry.projects (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \
@@ -299,13 +291,13 @@ async fn project_environment_membership_round_trip(
              INSERT INTO registry.environment_projects \
                (org, env, project, secret_name, instance_suffix) \
              SELECT p.org, e.env, p.id, 'membership-test-secret', 'a1b2c3d4' \
-             FROM registry.projects p JOIN registry.environments e ON p.org = e.org;",
-        )
-        .await
-        .expect("seed distinct registered project-environments");
-    let reads = PreparedIdentityReads::prepare(client)
-        .await
-        .expect("prepare the identity query");
+             FROM registry.projects p JOIN registry.environments e ON p.org = e.org;")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("seed distinct registered project-environments");
     assert!(
         issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
             .await
@@ -320,16 +312,9 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("issue the service route PAT");
     assert!(
-        route_principal_id(
-            &reads,
-            client,
-            service_token.token(),
-            "demo",
-            "widgets",
-            "dev"
-        )
-        .await
-        .is_none(),
+        route_principal_id(client, service_token.token(), "demo", "widgets", "dev")
+            .await
+            .is_none(),
         "a PAT without project authority passed"
     );
     let other_user = create_user(
@@ -357,25 +342,23 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("grant user membership idempotently");
     }
-    let stored = client
-        .query_one(
-            "SELECT principal_id::text, count(*) OVER () \
+    let stored = sqlx::query(
+        "SELECT principal_id::text, count(*) OVER () \
              FROM identity.project_env_memberships",
-            &[],
-        )
-        .await
-        .expect("read the stored grant");
-    assert_eq!(stored.get::<_, String>(0), user.id().to_string().as_str());
-    assert_eq!(stored.get::<_, i64>(1), 1);
-    let stamped: bool = client
-        .query_one(
-            "SELECT created_by = updated_by AND created_by = current_setting('app.user_id')::uuid \
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the stored grant");
+    assert_eq!(stored.get::<String, _>(0), user.id().to_string().as_str());
+    assert_eq!(stored.get::<i64, _>(1), 1);
+    let stamped: bool = sqlx::query(
+        "SELECT created_by = updated_by AND created_by = current_setting('app.user_id')::uuid \
              FROM identity.project_env_memberships",
-            &[],
-        )
-        .await
-        .expect("read the grant stamps")
-        .get(0);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the grant stamps")
+    .get(0);
     assert!(
         stamped,
         "the grant stamps the bound wamn:provisioning actor"
@@ -396,15 +379,7 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("assign the service operator role");
     assert_eq!(
-        route_principal_id(
-            &reads,
-            client,
-            service_token.token(),
-            "demo",
-            "widgets",
-            "dev"
-        )
-        .await,
+        route_principal_id(client, service_token.token(), "demo", "widgets", "dev").await,
         Some(service.id().to_string()),
         "a service needs its role, not a user membership"
     );
@@ -440,18 +415,22 @@ async fn project_environment_membership_round_trip(
             .error_type(),
         IdentityErrorType::NotFound
     );
-    let service_insert = client
-        .execute(
-            "INSERT INTO identity.project_env_memberships \
+    let service_insert = sqlx::query(
+        "INSERT INTO identity.project_env_memberships \
              (principal_id, principal_type, org, project, env) \
              VALUES ($1::text::uuid, 'service', 'demo', 'widgets', 'dev')",
-            &[&service.id().to_string().as_str()],
-        )
-        .await
-        .expect_err("direct SQL cannot bypass the user-only constraint");
+    )
+    .bind(&service.id().to_string().as_str())
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_err("direct SQL cannot bypass the user-only constraint");
     assert_eq!(
-        service_insert.code(),
-        Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
+        service_insert
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("23514")
     );
     assert_eq!(
         grant_project_env_membership(client, user.id(), "demo", "widgets", "missing")
@@ -507,16 +486,18 @@ async fn project_environment_membership_round_trip(
     grant_project_env_membership(client, user.id(), "demo", "widgets", "dev")
         .await
         .expect("grant before environment replacement");
-    client
-        .batch_execute(
-            "DELETE FROM registry.environment_projects \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DELETE FROM registry.environment_projects \
              WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
              INSERT INTO registry.environment_projects \
                (org, env, project, secret_name, instance_suffix) \
-             VALUES ('demo', 'dev', 'widgets', 'replacement-secret', 'e5f6g7h8');",
-        )
-        .await
-        .expect("replace the provisioned environment");
+             VALUES ('demo', 'dev', 'widgets', 'replacement-secret', 'e5f6g7h8');")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("replace the provisioned environment");
     assert!(
         !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
@@ -527,12 +508,11 @@ async fn project_environment_membership_round_trip(
     grant_project_env_membership(client, other_user.id(), "demo", "widgets", "dev")
         .await
         .expect("grant another user before deletion");
-    client
-        .execute(
-            "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&other_user.id().to_string().as_str()],
-        )
+    sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
+        .bind(&other_user.id().to_string().as_str())
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .expect("delete a principal with no PAT audit records");
     assert!(
         !has_project_env_membership(client, other_user.id(), "demo", "widgets", "dev")
@@ -543,7 +523,7 @@ async fn project_environment_membership_round_trip(
 
 /// Each identity authority relation carries the four stamp columns as NOT NULL
 /// with no default, and one static stamp trigger.
-async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
+async fn identity_relations_carry_stamps(client: &mut sqlx::PgConnection) {
     const RELATIONS: [&str; 13] = [
         "org_memberships",
         "org_roles",
@@ -559,30 +539,29 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
         "session_keys",
         "session_signing_state",
     ];
-    let columns = client
-        .query(
-            "SELECT table_name::text, column_name::text, data_type::text, is_nullable::text, \
+    let columns = sqlx::query(
+        "SELECT table_name::text, column_name::text, data_type::text, is_nullable::text, \
                     column_default IS NULL \
              FROM information_schema.columns \
              WHERE table_schema = 'identity' \
                AND column_name IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
              ORDER BY table_name, column_name",
-            &[],
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read the identity stamp columns")
+    .iter()
+    .map(|row| {
+        format!(
+            "{}.{} {} nullable={} no_default={}",
+            row.get::<String, _>(0),
+            row.get::<String, _>(1),
+            row.get::<String, _>(2),
+            row.get::<String, _>(3),
+            row.get::<bool, _>(4),
         )
-        .await
-        .expect("read the identity stamp columns")
-        .iter()
-        .map(|row| {
-            format!(
-                "{}.{} {} nullable={} no_default={}",
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, String>(2),
-                row.get::<_, String>(3),
-                row.get::<_, bool>(4),
-            )
-        })
-        .collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
     // A credential row never changes, so it records only its creation.
     let expected_columns = [
         "credential.created_at timestamp with time zone nullable=NO no_default=true".to_owned(),
@@ -605,22 +584,21 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
     .collect::<Vec<_>>();
     assert_eq!(columns, expected_columns);
 
-    let triggers = client
-        .query(
-            "SELECT pg_catalog.pg_get_triggerdef(t.oid) \
+    let triggers = sqlx::query(
+        "SELECT pg_catalog.pg_get_triggerdef(t.oid) \
              FROM pg_catalog.pg_trigger t \
              JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = 'identity' AND NOT t.tgisinternal \
                AND t.tgname = 'wamn_record_history_stamp' \
              ORDER BY c.relname, t.tgname",
-            &[],
-        )
-        .await
-        .expect("read the identity triggers")
-        .iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>();
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read the identity triggers")
+    .iter()
+    .map(|row| row.get::<String, _>(0))
+    .collect::<Vec<_>>();
     let expected_triggers = [
         "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT ON identity.credential \
          FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by')"
@@ -640,28 +618,28 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
 
 /// The system schema seeds the wamn:provisioning row with the derived id, and
 /// the row stamps itself.
-async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> PrincipalId {
+async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> PrincipalId {
     let component = PlatformComponent::Provisioning;
     let id: PrincipalId = component
         .principal_id()
         .to_string()
         .parse()
         .expect("a derived id is a principal id");
-    let row = client
-        .query_one(
-            "SELECT subject, display_name, created_by::text, updated_by::text, \
+    let row = sqlx::query(
+        "SELECT subject, display_name, created_by::text, updated_by::text, \
                     (SELECT count(*) FROM identity.principals) \
              FROM identity.principals WHERE id = $1::text::uuid",
-            &[&id.to_string().as_str()],
-        )
-        .await
-        .expect("read the seeded wamn:provisioning row");
-    assert_eq!(row.get::<_, String>(0), component.principal_name());
-    assert_eq!(row.get::<_, String>(1), component.principal_name());
-    assert_eq!(row.get::<_, String>(2), id.to_string().as_str());
-    assert_eq!(row.get::<_, String>(3), id.to_string().as_str());
+    )
+    .bind(&id.to_string().as_str())
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the seeded wamn:provisioning row");
+    assert_eq!(row.get::<String, _>(0), component.principal_name());
+    assert_eq!(row.get::<String, _>(1), component.principal_name());
+    assert_eq!(row.get::<String, _>(2), id.to_string().as_str());
+    assert_eq!(row.get::<String, _>(3), id.to_string().as_str());
     assert_eq!(
-        row.get::<_, i64>(4),
+        row.get::<i64, _>(4),
         1,
         "only the wamn:provisioning row is seeded"
     );
@@ -676,7 +654,7 @@ async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> Pr
 /// A write to an identity authority relation with no bound actor raises
 /// SQLSTATE 55000 with the message actor-required. The stamp trigger runs
 /// before every constraint, so the rows need no valid references.
-async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
+async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
     const PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
     for statement in [
         "INSERT INTO identity.principals (type, subject, display_name) \
@@ -699,19 +677,23 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
         ),
         "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
     ] {
-        let error = client
-            .execute(statement.as_str(), &[])
+        let error = sqlx::query(sqlx::AssertSqlSafe((statement.as_str()).to_string()))
+            .execute(&mut *client)
             .await
+            .map(|result| result.rows_affected())
             .expect_err("a write with no bound actor must refuse");
         assert_eq!(
-            error.code(),
-            Some(&SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE),
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("55000"),
             "{statement}"
         );
         assert_eq!(
             error
-                .as_db_error()
-                .map(tokio_postgres::error::DbError::message),
+                .as_database_error()
+                .map(sqlx::error::DatabaseError::message),
             Some("actor-required"),
             "{statement}"
         );
@@ -725,7 +707,7 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
 /// The last two rows pin `principals_email_check` instead (`wamn-0h0g.9.18`):
 /// a user needs an email, and no other type carries one. Every other row here
 /// gets a valid email, so it still fails on the platform test alone.
-async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgres::Client) {
+async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgConnection) {
     const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
     const ADDRESS: Option<&str> = Some("refused@example.invalid");
     let provisioning = PlatformComponent::Provisioning;
@@ -771,33 +753,45 @@ async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgre
         ("user", OTHER.to_owned(), "mailless", None, "Mailless"),
         ("service", OTHER.to_owned(), "mailed", ADDRESS, "Mailed"),
     ] {
-        let error = client
-            .execute(
-                "INSERT INTO identity.principals (id, type, subject, email, display_name) \
+        let error = sqlx::query(
+            "INSERT INTO identity.principals (id, type, subject, email, display_name) \
                  VALUES ($1::text::uuid, $2, $3, $4, $5)",
-                &[&id, &type_, &subject, &email, &display_name],
-            )
-            .await
-            .expect_err("the principal CHECKs must refuse this row");
+        )
+        .bind(&id)
+        .bind(&type_)
+        .bind(&subject)
+        .bind(&email)
+        .bind(&display_name)
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect_err("the principal CHECKs must refuse this row");
         assert_eq!(
-            error.code(),
-            Some(&SqlState::CHECK_VIOLATION),
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23514"),
             "{type_} {id} {subject} {display_name}"
         );
     }
 }
 
 async fn route_principal_id(
-    reads: &PreparedIdentityReads,
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     token: &str,
     org: &str,
     project: &str,
     _env: &str,
 ) -> Option<String> {
-    reads
-        .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
-        .await
-        .expect("read route PAT and target in one statement")
-        .map(|authenticated| authenticated.principal().id().to_string())
+    wamn_platform_identity::authenticate_route_pat(
+        client,
+        token,
+        org,
+        project,
+        &["operator", "admin"],
+    )
+    .await
+    .expect("read route PAT and target in one statement")
+    .map(|authenticated| authenticated.principal().id().to_string())
 }

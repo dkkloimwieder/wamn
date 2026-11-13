@@ -1,5 +1,6 @@
 //! Production route authentication and shared test-document tests.
 
+use sqlx::{Connection as _, Row as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,13 +8,12 @@ use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_identity_protocol::ADMIN_ROLE;
 
 use anyhow::Context as _;
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
+use wamn_control_provision::WorkloadRoleFamily;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
-use wamn_environment_control::provision_project_env::{self, secret_value};
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
@@ -28,8 +28,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 
 use crate::fixture_membership::{self, MembershipRequest};
 use wamn_dev_control::dev::environment::{
-    ENVIRONMENT, JourneyTarget, ORG, PROJECT, PROJECT_ENV_KEY, connect, generation_args,
-    provision_route, reset_control_store,
+    ENVIRONMENT, JourneyTarget, ORG, PROJECT, PROJECT_ENV_KEY, connect, provision_route,
+    reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -60,21 +60,20 @@ enum Refusal {
     Permission(Box<str>),
 }
 
-async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
+async fn reset_and_install_control(admin: &mut Client) -> anyhow::Result<()> {
     reset_control_store(admin).await?;
     // The fixture writes the policies, principals and tokens as wamn:provisioning.
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
+        .execute(&mut *admin)
         .await
+        .map(|result| result.rows_affected())
         .context("bind wamn:provisioning for the fixture session")?;
-    admin
-        .batch_execute(
-            r#"RESET ROLE;
+    sqlx::raw_sql(r#"RESET ROLE;
                SET ROLE wamn_system;
                INSERT INTO registry.orgs (id, placement_type, pool_cluster)
                VALUES ('acme', 'pooled', 'route-auth-pg18');
@@ -83,9 +82,7 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
                VALUES
                  ('acme', 'dev', '"own"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'),
                  ('acme', 'prod', '"own"'::jsonb, 2, 1, '1Gi', '1', '1Gi', 'postgres:18');
-               RESET ROLE;"#,
-        )
-        .await
+               RESET ROLE;"#).execute(&mut *admin).await.map(drop)
         .context("seed the auth-only test's declared environment policies")?;
     Ok(())
 }
@@ -94,26 +91,30 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
 /// does, and grant its authored role through the application mutation owner.
 async fn grant_service_operator(
     system_url: &str,
-    project: &Client,
+    project: &mut Client,
     _project_url: &str,
     subject: &str,
 ) -> anyhow::Result<()> {
-    let (system, system_task) = connect(system_url).await?;
-    let principal = resolve_subject(system.as_ref(), PrincipalType::Service, subject)
+    let mut system = connect(system_url).await?;
+    let principal = resolve_subject(&mut system, PrincipalType::Service, subject)
         .await
         .context("resolve the operator service")?
         .context("the operator service is absent")?;
-    system_task.abort();
     let email = format!("{subject}@example.invalid");
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'service', $2)",
-            &[&principal.id().to_string().as_str(), &email],
-        )
+    )
+    .bind(&principal.id().to_string().as_str())
+    .bind(&email)
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())
+    .context("write the operator service's user row")?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *project)
         .await
-        .context("write the operator service's user row")?;
-    project.batch_execute("BEGIN").await?;
+        .map(drop)?;
     let outcome = wamn_platform_identity::application::mutate_grant(
         project,
         PROJECT_ENV_KEY,
@@ -126,7 +127,10 @@ async fn grant_service_operator(
         &mut AuthDrops::default(),
     )
     .await?;
-    project.batch_execute("COMMIT").await?;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *project)
+        .await
+        .map(drop)?;
     anyhow::ensure!(outcome.changed, "the first grant wrote no row");
     Ok(())
 }
@@ -135,66 +139,75 @@ fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/route_auth_package")
 }
 
-async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<String>> {
-    Ok(project
-        .query(
-            "SELECT role_name || ':' || permission || ':' || xmin::text FROM platform.permission \
+async fn permission_write_identity(project: &mut Client) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query(
+        "SELECT role_name || ':' || permission || ':' || xmin::text FROM platform.permission \
              ORDER BY role_name, permission COLLATE \"C\"",
-            &[],
-        )
-        .await
-        .context("read permission write identities")?
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect())
+    )
+    .fetch_all(&mut *project)
+    .await
+    .context("read permission write identities")?
+    .into_iter()
+    .map(|row| row.get::<String, _>(0))
+    .collect())
 }
 
-async fn install_project_and_reconcile(project: &Client, project_url: &str) -> anyhow::Result<()> {
-    project
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+async fn install_project_and_reconcile(
+    project: &mut Client,
+    project_url: &str,
+) -> anyhow::Result<()> {
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut *project)
         .await
+        .map(drop)
         .context("install catalog schema")?;
-    project
-        .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
+    sqlx::raw_sql(include_str!("../../../deploy/sql/app-schema.sql"))
+        .execute(&mut *project)
         .await
+        .map(drop)
         .context("install application authorization schema")?;
-    project
-        .batch_execute("CREATE SCHEMA wamn_run AUTHORIZATION postgres")
+    sqlx::raw_sql("CREATE SCHEMA wamn_run AUTHORIZATION postgres")
+        .execute(&mut *project)
         .await
+        .map(drop)
         .context("create the empty run-plane revoke target")?;
     // The fixture writes as its test principal, whose row stamps itself. Both
     // bindings stay on this session for the later role and permission changes.
-    project
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:route-authentication-fixture', false)",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await
-        .context("bind the fixture test principal")?;
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())
+    .context("bind the fixture test principal")?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'fixture@example.invalid')",
-            &[&FIXTURE_PRINCIPAL],
-        )
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())
+    .context("seed the fixture test principal")?;
+    sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+        .bind(&ITEM_READER)
+        .execute(&mut *project)
         .await
-        .context("seed the fixture test principal")?;
-    project
-        .execute(
-            "INSERT INTO platform.role (name) VALUES ($1)",
-            &[&ITEM_READER],
-        )
-        .await
+        .map(|result| result.rows_affected())
         .context("seed the authored role")?;
-    project
-        .execute(
-            "INSERT INTO platform.permission (role_name, permission) \
+    sqlx::query(
+        "INSERT INTO platform.permission (role_name, permission) \
              VALUES ($1, $2), ($1, $3)",
-            &[&ITEM_READER, &OPERATION_REFERENCE, &UNSERVED],
-        )
-        .await
-        .context("seed the authored role's references")?;
+    )
+    .bind(&ITEM_READER)
+    .bind(&OPERATION_REFERENCE)
+    .bind(&UNSERVED)
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())
+    .context("seed the authored role's references")?;
 
     let scratch = ScratchRoot::create()?;
     let package = scratch.path().join("package");
@@ -229,12 +242,12 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     apply_package::apply_package(args())
         .await
         .context("apply the route-authentication fixture package")?;
-    let roles = project
-        .query("SELECT name FROM platform.role ORDER BY name", &[])
+    let roles = sqlx::query("SELECT name FROM platform.role ORDER BY name")
+        .fetch_all(&mut *project)
         .await
         .context("read the roles")?
         .into_iter()
-        .map(|row| row.get::<_, String>(0))
+        .map(|row| row.get::<String, _>(0))
         .collect::<Vec<_>>();
     assert_eq!(
         roles,
@@ -327,7 +340,7 @@ fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<Wamn
 }
 
 async fn routing(
-    identity_reader: Arc<Client>,
+    identity_reader: sqlx::PgPool,
     postgres: Arc<WamnPostgres>,
     loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<FlowHttpRouting> {
@@ -341,8 +354,7 @@ async fn routing(
                         ORG,
                         PROJECT,
                         operator_subject(ORG, PROJECT, ENVIRONMENT)?,
-                    )
-                    .await?,
+                    ),
                 )),
             )),
     )
@@ -365,7 +377,7 @@ async fn invoke(
 }
 
 async fn issue_targeted_token(
-    admin: &Client,
+    admin: &mut Client,
     project: &str,
     environment: &str,
 ) -> anyhow::Result<String> {
@@ -398,7 +410,7 @@ async fn issue_targeted_token(
 }
 
 async fn issue_pat_for_subject(
-    admin: &Client,
+    admin: &mut Client,
     subject: &str,
     label: &str,
 ) -> anyhow::Result<(String, String)> {
@@ -429,9 +441,8 @@ async fn password_session(
     roles: &[&str],
 ) -> anyhow::Result<String> {
     use wamn_platform_identity::{password, password_login};
-    let (mut client, connection) =
-        tokio_postgres::connect(admin_url, tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
+    let mut client = wamn_postgres::connect(admin_url).await?;
+
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning
         .principal_id()
         .to_string()
@@ -447,13 +458,13 @@ async fn password_session(
         secret()?,
     )
     .await?;
-    let tx = client.transaction().await?;
-    assert!(password_login::lock_principal(&tx, principal).await?);
-    let authenticated = password::authenticate_password(&tx, &work, email, secret()?)
+    let mut tx = client.begin().await?;
+    assert!(password_login::lock_principal(&mut tx, principal).await?);
+    let authenticated = password::authenticate_password(&mut tx, &work, email, secret()?)
         .await?
         .context("password login refused")?;
     let renewal = password_login::create_login(
-        &tx,
+        &mut tx,
         authenticated.principal().id(),
         session_fixture::ISSUER,
         audience,
@@ -476,11 +487,11 @@ async fn password_session(
 }
 
 async fn assert_user_environment_membership(
-    admin: &Client,
+    admin: &mut Client,
     admin_url: &str,
     identity_url: &str,
-    project: &Client,
-    identity_reader: Arc<Client>,
+    project: &mut Client,
+    identity_reader: sqlx::PgPool,
     postgres: Arc<WamnPostgres>,
     loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<()> {
@@ -499,10 +510,7 @@ async fn assert_user_environment_membership(
     )
     .await?;
     let server = session_fixture::Server::start().await;
-    let suffix: String = admin.query_one(
-        "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
-        &[&ORG, &PROJECT, &ENVIRONMENT],
-    ).await?.get(0);
+    let suffix: String = sqlx::query("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3").bind(&ORG).bind(&PROJECT).bind(&ENVIRONMENT).fetch_one(&mut *admin).await?.get(0);
     let audience = wamn_control_provision::session_target::session_audience(
         &wamn_registry::Triple {
             org: ORG.into(),
@@ -542,88 +550,92 @@ async fn assert_user_environment_membership(
         principal_id: principal_id.to_owned(),
         system_database_url: admin_url.to_owned(),
     };
-    admin.batch_execute(
-        "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
+    sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
          VALUES ('other-org', 'pooled', 'route-auth-pg18'); \
          INSERT INTO registry.projects (org, id) \
          VALUES ('other-org', 'receiving'), ('acme', 'other'); \
          INSERT INTO registry.env_policies \
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
          VALUES ('other-org', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','prod','prod'),('other-org','dev','dev'),('acme','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,secret_namespace,instance_suffix) VALUES ('acme','receiving','prod','membership-prod','wamn-system','member01'),('other-org','receiving','dev','membership-other','wamn-system','member02'),('acme','other','dev','membership-project','wamn-system','member03');"
-    ).await?;
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','prod','prod'),('other-org','dev','dev'),('acme','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,secret_namespace,instance_suffix) VALUES ('acme','receiving','prod','membership-prod','wamn-system','member01'),('other-org','receiving','dev','membership-other','wamn-system','member02'),('acme','other','dev','membership-project','wamn-system','member03');").execute(&mut *admin).await.map(drop)?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
          VALUES ($1::text::uuid, 'user', 'member@example.test'), \
                 ($2::text::uuid, 'user', 'other@example.test')",
-            &[
-                &user.id().to_string().as_str(),
-                &other.id().to_string().as_str(),
-            ],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.role (name) VALUES ('user-reader'), ('user-extra')",
-            &[],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.user_role (user_id, role_name) \
+    )
+    .bind(&user.id().to_string().as_str())
+    .bind(&other.id().to_string().as_str())
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.role (name) VALUES ('user-reader'), ('user-extra')")
+        .execute(&mut *project)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.user_role (user_id, role_name) \
          VALUES ($1::text::uuid, 'user-reader'), ($1::text::uuid, 'user-extra')",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.permission (role_name, permission) \
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.permission (role_name, permission) \
          VALUES ('user-reader', $1), ('user-extra', 'route-auth-fixture:item/extra')",
-            &[&OPERATION_REFERENCE],
-        )
-        .await?;
+    )
+    .bind(&OPERATION_REFERENCE)
+    .execute(&mut *project)
+    .await
+    .map(|result| result.rows_affected())?;
     // The same principal and role in another environment hold a different grant.
     let other_database = wamn_test_postgres::database();
-    let (other_project, other_connection) = connect(other_database.url()).await?;
-    other_project
-        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
-        .await?;
+    let mut other_project = connect(other_database.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::ensure_app_acl_role_sql()).to_string(),
+    ))
+    .execute(&mut other_project)
+    .await
+    .map(drop)?;
     wamn_dev_control::dev::environment::install_journey_platform_base_grants(
-        &other_project,
+        &mut other_project,
         "example.test",
     )
     .await?;
-    other_project
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:other-environment-fixture', false)",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
-    other_project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut other_project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'member@example.test')",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
-    other_project
-        .batch_execute(
-            "INSERT INTO platform.role (name) VALUES ('user-reader'); \
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut other_project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO platform.role (name) VALUES ('user-reader'); \
              INSERT INTO platform.permission (role_name, permission) \
-             VALUES ('user-reader', 'route-auth-fixture:item/other-project')",
-        )
-        .await?;
-    other_project
-        .execute(
-            "INSERT INTO platform.user_role (user_id, role_name) \
+             VALUES ('user-reader', 'route-auth-fixture:item/other-project')")
+            .to_string(),
+    ))
+    .execute(&mut other_project)
+    .await
+    .map(drop)?;
+    sqlx::query(
+        "INSERT INTO platform.user_role (user_id, role_name) \
              VALUES ($1::text::uuid, 'user-reader')",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut other_project)
+    .await
+    .map(|result| result.rows_affected())?;
     drop(other_project);
-    other_connection.await?;
     // A project-wide role and another environment's membership cannot authorize this route.
     wamn_platform_identity::org::activate_org_membership(admin, user.id(), ORG).await?;
     assign_project_role(
@@ -697,19 +709,17 @@ async fn assert_user_environment_membership(
             .await?;
     }
     assert_eq!(
-        admin
-            .query_one(
-                "SELECT count(*) FROM identity.project_env_memberships \
-         WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4",
-                &[
-                    &user.id().to_string().as_str(),
-                    &ORG,
-                    &PROJECT,
-                    &ENVIRONMENT
-                ],
-            )
-            .await?
-            .get::<_, i64>(0),
+        sqlx::query(
+            "SELECT count(*) FROM identity.project_env_memberships \
+         WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4"
+        )
+        .bind(&user.id().to_string().as_str())
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .bind(&ENVIRONMENT)
+        .fetch_one(&mut *admin)
+        .await?
+        .get::<i64, _>(0),
         1
     );
     invoke(
@@ -755,10 +765,7 @@ async fn assert_user_environment_membership(
         Err(Refusal::Permission(OPERATION.into())),
         "membership alone cannot supply another user's permissions"
     );
-    project.execute(
-        "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid AND role_name = 'user-reader'",
-        &[&user.id().to_string().as_str()],
-    ).await?;
+    sqlx::query("DELETE FROM platform.user_role WHERE user_id = $1::text::uuid AND role_name = 'user-reader'").bind(&user.id().to_string().as_str()).execute(&mut *project).await.map(|result| result.rows_affected())?;
     assert_eq!(
         invoke(
             route_auth,
@@ -770,16 +777,12 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone()),
         "role removal must affect the next request"
     );
-    project.execute(
-        "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'user-reader')",
-        &[&user.id().to_string().as_str()],
-    ).await?;
-    project
-        .execute(
-            "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = $1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
+    sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'user-reader')").bind(&user.id().to_string().as_str()).execute(&mut *project).await.map(|result| result.rows_affected())?;
+    sqlx::query("UPDATE platform.\"user\" SET status = 'disabled' WHERE id = $1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut *project)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         invoke(
             route_auth,
@@ -790,12 +793,11 @@ async fn assert_user_environment_membership(
         .await,
         Err(unauthorized.clone())
     );
-    project
-        .execute(
-            "UPDATE platform.\"user\" SET status = 'active' WHERE id = $1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
-        .await?;
+    sqlx::query("UPDATE platform.\"user\" SET status = 'active' WHERE id = $1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut *project)
+        .await
+        .map(|result| result.rows_affected())?;
     invoke(
         route_auth,
         loaded_release,
@@ -910,83 +912,78 @@ async fn production_operator_authentication(root: &Path) {
         .url()
         .to_owned();
 
-    let (admin, admin_task) = connect(&admin_url).await.expect("connect admin");
-    let version: i32 = admin
-        .query_one("SHOW server_version_num", &[])
+    let mut admin = connect(&admin_url).await.expect("connect admin");
+    let version: i32 = sqlx::query("SHOW server_version_num")
+        .fetch_one(&mut admin)
         .await
         .expect("read PostgreSQL version")
-        .get::<_, String>(0)
+        .get::<String, _>(0)
         .parse()
         .expect("parse PostgreSQL version");
     assert!(
         version >= 180_000,
         "the condition requires PostgreSQL 18 or newer"
     );
-    reset_and_install_control(&admin)
+    reset_and_install_control(&mut admin)
         .await
         .expect("install the control plane");
-    let route = provision_route(&JourneyTarget::receiving(), &admin_url, &admin, root, None)
-        .await
-        .expect("mint the production operator service");
+    let route = provision_route(
+        &JourneyTarget::receiving(),
+        &admin_url,
+        &mut admin,
+        root,
+        None,
+    )
+    .await
+    .expect("mint the production operator service");
     assert_eq!(
         route.principal_subject,
         operator_subject(ORG, PROJECT, ENVIRONMENT).expect("derive expected route subject")
     );
 
-    let (project, project_task) = connect(&route.database_url)
+    let mut project = connect(&route.database_url)
         .await
         .expect("connect project database");
-    install_project_and_reconcile(&project, &route.database_url)
+    install_project_and_reconcile(&mut project, &route.database_url)
         .await
         .expect("install and reconcile the route-authentication fixture");
     grant_service_operator(
         &admin_url,
-        &project,
+        &mut project,
         &route.database_url,
         &route.principal_subject,
     )
     .await
     .expect("grant the authored role to the operator service");
 
-    let identity_secret = root.join("identity-reader.json");
-    provision_project_env::run_workload_action(&generation_args(
-        &JourneyTarget::receiving(),
-        WorkloadRoleFamily::IdentityReader,
-        &admin_url,
-        None,
-        &identity_secret,
-    ))
-    .await
-    .expect("prepare the production identity-reader generation");
-    let http_secret = root.join("http-admitter.json");
-    provision_project_env::run_workload_action(&generation_args(
-        &JourneyTarget::receiving(),
-        WorkloadRoleFamily::HttpAdmitter,
+    let identity_url = wamn_test_infrastructure::credentials::database_login(
         &admin_url,
         Some(&route.database_url),
-        &http_secret,
-    ))
-    .await
-    .expect("prepare the production callable-HTTP generation");
-
-    let identity_url = secret_value(&identity_secret, "url").expect("read identity-reader URL");
-    parse_system_reader_url(
-        SystemReader::Identity,
-        &identity_url,
         ORG,
         PROJECT,
         ENVIRONMENT,
+        WorkloadRoleFamily::IdentityReader,
     )
-    .expect("the identity-reader Secret passes its consumer's exact target condition");
-    let (identity_reader, identity_task) = connect(&identity_url)
+    .await
+    .expect("identity reader login");
+    let identity_reader = wamn_postgres::pool(&identity_url, 4)
         .await
-        .expect("connect exact identity-reader generation");
-    let http_url = secret_value(&http_secret, "url").expect("read callable-HTTP URL");
+        .expect("identity reader pool");
+    let http_url = wamn_test_infrastructure::credentials::database_login(
+        &admin_url,
+        Some(&route.database_url),
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        WorkloadRoleFamily::HttpAdmitter,
+    )
+    .await
+    .expect("HTTP login");
     let loaded_release = load_serving_release().expect("load the canonical serving release");
     let postgres = project_postgres(AuthorityClass::CallableHttp, &http_url)
         .expect("build project-specific callable-HTTP provider");
     let route_auth = routing(
-        Arc::clone(&identity_reader),
+        identity_reader.clone(),
         Arc::clone(&postgres),
         Arc::clone(&loaded_release),
     )
@@ -994,11 +991,11 @@ async fn production_operator_authentication(root: &Path) {
     .expect("build route authentication");
 
     assert_user_environment_membership(
-        &admin,
+        &mut admin,
         &admin_url,
         &identity_url,
-        &project,
-        Arc::clone(&identity_reader),
+        &mut project,
+        identity_reader.clone(),
         Arc::clone(&postgres),
         Arc::clone(&loaded_release),
     )
@@ -1018,18 +1015,19 @@ async fn production_operator_authentication(root: &Path) {
     assert_eq!(router_admissions, 1);
 
     let forged = format!("Bearer {}", flip_last_hex_digit(&route.token));
-    let expired = issue_pat_for_subject(&admin, &route.principal_subject, "expired")
+    let expired = issue_pat_for_subject(&mut admin, &route.principal_subject, "expired")
         .await
         .expect("mint expiring PAT");
-    admin
-        .execute(
-            "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
+    sqlx::query(
+        "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
              WHERE token_prefix = $1",
-            &[&expired.1],
-        )
-        .await
-        .expect("expire PAT in the server clock");
-    let revoked = issue_pat_for_subject(&admin, &route.principal_subject, "revoked")
+    )
+    .bind(&expired.1)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("expire PAT in the server clock");
+    let revoked = issue_pat_for_subject(&mut admin, &route.principal_subject, "revoked")
         .await
         .expect("mint revocable PAT");
     assert!(
@@ -1042,20 +1040,20 @@ async fn production_operator_authentication(root: &Path) {
             .expect("authenticate service before PAT revocation")
             .is_some()
     );
-    revoke_pat(admin.as_ref(), &revoked.1, &mut AuthDrops::default())
+    revoke_pat(&mut admin, &revoked.1, &mut AuthDrops::default())
         .await
         .expect("revoke PAT");
-    admin
-        .execute(
-            "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            &[&ORG, &OTHER_PROJECT],
-        )
+    sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(&ORG)
+        .bind(&OTHER_PROJECT)
+        .execute(&mut admin)
         .await
+        .map(|result| result.rows_affected())
         .expect("seed wrong-project role target");
-    let wrong_project = issue_targeted_token(&admin, OTHER_PROJECT, ENVIRONMENT)
+    let wrong_project = issue_targeted_token(&mut admin, OTHER_PROJECT, ENVIRONMENT)
         .await
         .expect("mint wrong-project PAT");
-    let wrong_environment = issue_targeted_token(&admin, PROJECT, OTHER_ENVIRONMENT)
+    let wrong_environment = issue_targeted_token(&mut admin, PROJECT, OTHER_ENVIRONMENT)
         .await
         .expect("mint wrong-environment PAT");
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
@@ -1086,27 +1084,22 @@ async fn production_operator_authentication(root: &Path) {
         assert_eq!(router_admissions, 1, "{label} reached router admission");
     }
 
-    let principal = resolve_subject(
-        admin.as_ref(),
-        PrincipalType::Service,
-        &route.principal_subject,
-    )
-    .await
-    .expect("resolve the operator service")
-    .expect("the operator service remains stored");
-    admin
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
-             AND org = $2 AND project = $3 AND role = $4",
-            &[
-                &principal.id().to_string().as_str(),
-                &ORG,
-                &PROJECT,
-                &ADMIN_ROLE,
-            ],
-        )
+    let principal = resolve_subject(&mut admin, PrincipalType::Service, &route.principal_subject)
         .await
-        .expect("remove the admin project role");
+        .expect("resolve the operator service")
+        .expect("the operator service remains stored");
+    sqlx::query(
+        "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
+             AND org = $2 AND project = $3 AND role = $4",
+    )
+    .bind(&principal.id().to_string().as_str())
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&ADMIN_ROLE)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("remove the admin project role");
     assert_eq!(
         invoke(
             &route_auth,
@@ -1126,7 +1119,7 @@ async fn production_operator_authentication(root: &Path) {
         (ORG, PROJECT, "operator"),
     ] {
         assign_project_role(
-            admin.as_ref(),
+            &mut admin,
             principal.id(),
             org,
             project,
@@ -1148,7 +1141,7 @@ async fn production_operator_authentication(root: &Path) {
         );
     }
     assign_project_role(
-        admin.as_ref(),
+        &mut admin,
         principal.id(),
         ORG,
         PROJECT,
@@ -1167,7 +1160,7 @@ async fn production_operator_authentication(root: &Path) {
     .await
     .expect("the admin project role passes the identity condition");
     assert_eq!(admin_admissions, 1);
-    disable_principal(admin.as_ref(), principal.id(), &mut AuthDrops::default())
+    disable_principal(&mut admin, principal.id(), &mut AuthDrops::default())
         .await
         .expect("disable the configured service principal");
     assert_eq!(
@@ -1181,10 +1174,7 @@ async fn production_operator_authentication(root: &Path) {
         Err(unauthorized.clone()),
         "a disabled service passed with a valid PAT and project role"
     );
-    admin.execute(
-        "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
-        &[&principal.id().to_string().as_str()],
-    ).await.expect("restore the service principal for permission tests");
+    sqlx::query("UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid").bind(&principal.id().to_string().as_str()).execute(&mut admin).await.map(|result| result.rows_affected()).expect("restore the service principal for permission tests");
 
     // An operator revokes a credential that is IN USE. The case above revokes
     // before the first request, which every read path refuses by arriving at a
@@ -1192,7 +1182,7 @@ async fn production_operator_authentication(root: &Path) {
     // identity.pats keeps passing. It is the sibling of the permission case
     // below, and the assertion an authorization cache breaks first
     // (wamn-0h0g.17.21).
-    let in_use = issue_pat_for_subject(&admin, &route.principal_subject, "revoked in use")
+    let in_use = issue_pat_for_subject(&mut admin, &route.principal_subject, "revoked in use")
         .await
         .expect("mint a PAT to revoke after it authenticates");
     let in_use_authorization = format!("Bearer {}", in_use.0);
@@ -1210,7 +1200,7 @@ async fn production_operator_authentication(root: &Path) {
         postgres.auth_cache().pat(&in_use.0).is_none(),
         "the host without an auth bucket keeps no PAT approval"
     );
-    revoke_pat(admin.as_ref(), &in_use.1, &mut AuthDrops::default())
+    revoke_pat(&mut admin, &in_use.1, &mut AuthDrops::default())
         .await
         .expect("revoke the PAT that just authenticated");
     assert_eq!(
@@ -1229,14 +1219,16 @@ async fn production_operator_authentication(root: &Path) {
         "the revoked PAT reached router admission"
     );
 
-    project
-        .execute(
-            "DELETE FROM platform.permission \
+    sqlx::query(
+        "DELETE FROM platform.permission \
              WHERE role_name = $1 AND permission = $2",
-            &[&ITEM_READER, &OPERATION_REFERENCE],
-        )
-        .await
-        .expect("remove the operation grant");
+    )
+    .bind(&ITEM_READER)
+    .bind(&OPERATION_REFERENCE)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("remove the operation grant");
     assert_eq!(
         invoke(
             &route_auth,
@@ -1254,7 +1246,7 @@ async fn production_operator_authentication(root: &Path) {
     );
 
     let permission_backend_unavailable = routing(
-        Arc::clone(&identity_reader),
+        identity_reader.clone(),
         project_postgres(
             AuthorityClass::ExecutorPlatform,
             "postgresql://unused.invalid/unused",
@@ -1279,9 +1271,6 @@ async fn production_operator_authentication(root: &Path) {
         router_admissions, 1,
         "permission outage reached router admission"
     );
-
-    identity_task.abort();
-    let _ = identity_task.await;
     assert_eq!(
         invoke(
             &route_auth,
@@ -1300,6 +1289,4 @@ async fn production_operator_authentication(root: &Path) {
 
     assert_eq!(route.token_prefix.len(), 16);
     drop(project);
-    project_task.abort();
-    admin_task.abort();
 }

@@ -29,15 +29,13 @@
 //! it ages beyond the configured window.
 
 use anyhow::{Context as _, bail};
-use tokio_postgres::NoTls;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-};
+use sqlx::{Connection as _, Row as _};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 
 /// Inputs of one terminal run history prune.
 #[derive(Debug)]
 pub struct PruneRunHistoryRequest {
-    /// Postgres URL for this project's `wamn_run_retention` credential generation
+    /// Postgres URL for this project's `wamn_run_retention` login
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
     /// run delete. The verb refuses any other identity.
     pub database_url: String,
@@ -86,12 +84,12 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         bail!("the project must be non-empty (it is the project the delete is bound to)");
     }
 
-    let (mut client, conn) = tokio_postgres::connect(&request.database_url, NoTls)
+    let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("retention credential connect")?;
-    let conn_task = tokio::spawn(conn);
+
     let result = async {
-        verify_retention_identity(&client, &request.project_env_key()).await?;
+        verify_retention_identity(&mut client, &request.project_env_key()).await?;
         prune(
             &mut client,
             &request.schema,
@@ -103,11 +101,10 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
     }
     .await;
     drop(client);
-    let _ = conn_task.await;
     result
 }
 
-/// Refuse unless the connected role is one of the two credential generations
+/// Refuse unless the connected role is the logins
 /// this exact `(project, database)` pair mints (`wamn-0h0g.12.69`).
 ///
 /// # This is the negative-negative guard, and it has to be here
@@ -115,15 +112,15 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// The statement below cannot enforce it. `wamn_run.runs` FORCEs row-level
 /// security whose only arm a platform-grain family matches is
 /// `TO wamn_platform USING (true)`, so a retention credential's rows are not
-/// narrowed by the server at all — measured on PostgreSQL 18.6, a generation
-/// minted for one project deletes another project's terminal runs, and their queue
+/// narrowed by the server at all — measured on PostgreSQL 18.6, a login
+/// created for one project deletes another project's terminal runs, and their queue
 /// rows cascade with them. PostgreSQL privileges are relation- and
 /// column-shaped, never row-shaped, so the grant set cannot express it either.
 ///
-/// What the server DOES supply is an unforgeable identity: the generation login
+/// What the server DOES supply is an unforgeable identity: the login
 /// name carries the 160-bit target digest of `(project, database)` under the
 /// retention family's own domain, and `current_user` cannot be rewritten by a
-/// session. Deriving the expected names from the environment coordinate and `current_database()`
+/// session. Deriving the expected name from the environment coordinate and `current_database()`
 /// and comparing turns a free CLI argument into an identity the credential has to
 /// back. A missing, foreign or mismatched project therefore ERRORS here, instead
 /// of reaching a predicate that matches nothing and reporting `pruned 0 terminal
@@ -133,16 +130,14 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// of the URL: the URL is operator input, and testing a digest against the same
 /// input that chose it establishes nothing.
 async fn verify_retention_identity(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
 ) -> anyhow::Result<()> {
-    let row = client
-        .query_one(
-            "SELECT current_user::text AS role, current_database()::text AS database",
-            &[],
-        )
-        .await
-        .context("read connected retention identity")?;
+    let row =
+        sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")
+            .fetch_one(&mut *client)
+            .await
+            .context("read connected retention identity")?;
     let role: String = row.get("role");
     let database: String = row.get("database");
 
@@ -150,19 +145,14 @@ async fn verify_retention_identity(
         project_env_key,
         database: &database,
     };
-    let mut expected = Vec::new();
-    for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-        expected.push(
-            workload_generation_role(WorkloadRoleFamily::Retention, target, generation)
-                .context("derive the expected retention generation identity")?,
-        );
-    }
-    if expected.contains(&role) {
+    let expected = workload_login(WorkloadRoleFamily::Retention, target)
+        .context("derive the expected retention identity")?;
+    if expected == role {
         return Ok(());
     }
     bail!(
         "refusing to prune: connected as {role:?} in database {database:?}, which is not a \
-         run-retention credential generation for project_env_key {project_env_key:?} (expected one of {expected:?}). \
+         run-retention login for project_env_key {project_env_key:?} (expected {expected:?}). \
          Pruning under any other identity either carries authority this verb does not need or \
          would delete nothing and report success."
     )
@@ -181,7 +171,7 @@ async fn verify_retention_identity(
 /// referential-integrity trigger consults neither the deleter's grants nor that
 /// relation's own `app.project_env_key` policy.
 pub async fn prune(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     schema: &str,
     project_env_key: &str,
     retention_days: u32,
@@ -189,23 +179,31 @@ pub async fn prune(
 ) -> anyhow::Result<u64> {
     // Bound as a parameter (set_config), never interpolated into SQL.
     // Session-level (`false`) so the transaction below inherits it.
-    client
-        .execute("SELECT set_config('search_path', $1, false)", &[&schema])
+    sqlx::query("SELECT set_config('search_path', $1, false)")
+        .bind(schema)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .context("set search_path")?;
 
     let days = i64::from(retention_days);
     let sql = wamn_run_state::sql::prune_terminal_runs_sql();
     if apply {
-        client
-            .execute(&sql, &[&project_env_key, &days])
+        sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(project_env_key)
+            .bind(days)
+            .execute(&mut *client)
             .await
+            .map(|result| result.rows_affected())
             .context("prune terminal runs")
     } else {
-        let tx = client.transaction().await.context("begin dry-run tx")?;
-        let n = tx
-            .execute(&sql, &[&project_env_key, &days])
+        let mut tx = client.begin().await.context("begin dry-run tx")?;
+        let n = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(project_env_key)
+            .bind(days)
+            .execute(&mut *tx)
             .await
+            .map(|result| result.rows_affected())
             .context("prune terminal runs (dry-run)")?;
         tx.rollback().await.context("roll back dry-run")?;
         Ok(n)
@@ -213,57 +211,4 @@ pub async fn prune(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The two identities the verb accepts are the A/B generations of ONE
-    /// `(project, database)` target, and another project's digest differs — which
-    /// is the whole basis of the refusal, since a login name cannot be made to
-    /// name a project it was not minted for.
-    #[test]
-    fn the_expected_retention_identities_are_the_two_generations_of_one_target() {
-        let target = WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "acme-prod",
-            database: "wamn-db-acme--billing--dev--ab12cd",
-        };
-        let a = workload_generation_role(
-            WorkloadRoleFamily::Retention,
-            target,
-            CredentialGeneration::A,
-        )
-        .expect("retention is a project-targeted family");
-        let b = workload_generation_role(
-            WorkloadRoleFamily::Retention,
-            target,
-            CredentialGeneration::B,
-        )
-        .expect("retention is a project-targeted family");
-        assert!(a.starts_with("wamn_run_retention_"), "{a}");
-        assert!(a.ends_with("_a"), "{a}");
-        assert!(b.ends_with("_b"), "{b}");
-        assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
-        let other = workload_generation_role(
-            WorkloadRoleFamily::Retention,
-            WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: "other-project",
-                database: "wamn-db-acme--billing--dev--ab12cd",
-            },
-            CredentialGeneration::A,
-        )
-        .expect("retention is a project-targeted family");
-        assert_ne!(a, other);
-        // The same project in a DIFFERENT database is a different credential too:
-        // the digest frames both fields, so a retention Secret cannot be moved
-        // between project-env databases.
-        let elsewhere = workload_generation_role(
-            WorkloadRoleFamily::Retention,
-            WorkloadRoleIdentity::ProjectEnvKey {
-                project_env_key: "acme-prod",
-                database: "wamn-db-acme--billing--prod--ef34ab",
-            },
-            CredentialGeneration::A,
-        )
-        .expect("retention is a project-targeted family");
-        assert_ne!(a, elsewhere);
-    }
-}
+mod tests {}

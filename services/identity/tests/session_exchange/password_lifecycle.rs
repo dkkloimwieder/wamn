@@ -2,18 +2,19 @@
 
 use super::*;
 use sha2::{Digest as _, Sha256};
+use sqlx::{Connection as _, Row as _, Statement as _};
 use wamn_platform_identity::password::{
     Password, enroll_password, issue_invitation, password_work,
 };
 
 const EMAIL: &str = "renewal-alice@example.invalid";
 
-async fn enroll(fixture: &Fixture, email: &str, password: &str) -> Principal {
-    let user = create_user(&fixture.system.client, email, email, "Renewal user")
+async fn enroll(fixture: &mut Fixture, email: &str, password: &str) -> Principal {
+    let user = create_user(&mut fixture.system.client, email, email, "Renewal user")
         .await
         .expect_redacted("user");
-    seed_user(&fixture.environments[0].client, &user, "receiver").await;
-    grant(&fixture.system.client, &user, "demo", "dev").await;
+    seed_user(&mut fixture.environments[0].client, &user, "receiver").await;
+    grant(&mut fixture.system.client, &user, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
         .to_string()
@@ -89,7 +90,7 @@ async fn body(response: reqwest::Response) -> Value {
     result
 }
 async fn login(https: &Https, fixture: &Fixture) -> Value {
-    discovery_window(fixture).await;
+    discovery_window(&fixture.observations).await;
     body(
         post(
             https,
@@ -103,9 +104,12 @@ async fn login(https: &Https, fixture: &Fixture) -> Value {
     .await
 }
 async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
-    let jwks = wamn_platform_identity::session_keys::session_jwks(&fixture.system.client, ISSUER)
-        .await
-        .expect_redacted("JWKS");
+    let jwks = wamn_platform_identity::session_keys::session_jwks(
+        &mut *fixture.observations.acquire().await.unwrap(),
+        ISSUER,
+    )
+    .await
+    .expect_redacted("JWKS");
     let token = body["access_token"].as_str().expect_redacted("token");
     let kid = jsonwebtoken::decode_header(token)
         .expect_redacted("kid")
@@ -132,7 +136,7 @@ async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
 
 async fn active(fixture: &Fixture, body: &Value) -> bool {
     wamn_platform_identity::session_token::session_is_active(
-        &fixture.system.client,
+        &mut *fixture.observations.acquire().await.unwrap(),
         &claims(fixture, body).await,
         "widgets",
         "dev",
@@ -147,8 +151,8 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("owned system database");
-    let fixture = setup(db.url()).await;
-    let user = enroll(&fixture, EMAIL, PASSWORD).await;
+    let mut fixture = setup(db.url()).await;
+    let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
     let verified = claims(&fixture, &first).await;
@@ -215,7 +219,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .unwrap();
     assert_failure(wrong, 401, "{\"error\":\"unauthorized\"}").await;
     revoke_project_env_membership(
-        &fixture.system.client,
+        &mut fixture.system.client,
         user.id(),
         "demo",
         "widgets",
@@ -232,14 +236,12 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    grant(&fixture.system.client, &user, "demo", "dev").await;
-    fixture.environments[0]
-        .client
-        .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
+    grant(&mut fixture.system.client, &user, "demo", "dev").await;
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
@@ -249,21 +251,17 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.environments[0]
-        .client
-        .execute(
-            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
-    fixture.environments[0]
-        .client
-        .execute(
-            "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
+    sqlx::query("DELETE FROM platform.user_role WHERE user_id=$1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
@@ -273,15 +271,15 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.environments[0]
-        .client
-        .execute(
-            "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'receiver')",
-            &[&user.id().to_string().as_str()],
-        )
-        .await
-        .unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    sqlx::query(
+        "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'receiver')",
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut fixture.environments[0].client)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -290,7 +288,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     let active = body(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -345,7 +343,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     let near_expiry = login(&https, &fixture).await;
-    fixture.system.client.execute("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().to_string().as_str()]).await.unwrap();
+    sqlx::query("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL").bind(&user.id().to_string().as_str()).execute(&mut fixture.system.client).await.map(|result| result.rows_affected()).unwrap();
     let bounded = body(
         request(&https, &fixture, "/password/renew", &near_expiry)
             .send()
@@ -355,7 +353,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await;
     assert_eq!(bounded["expires_at"], bounded["login_expires_at"]);
     assert!(claims(&fixture, &bounded).await.exp <= unix_seconds() + 60);
-    fixture.system.client.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid",&[&user.id().to_string().as_str()]).await.unwrap();
+    sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid").bind(&user.id().to_string().as_str()).execute(&mut fixture.system.client).await.map(|result| result.rows_affected()).unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &bounded)
             .send()
@@ -365,20 +363,22 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     assert_eq!(
-        fixture
-            .system
-            .client
-            .query_one("SELECT count(*) FROM identity.password_logins", &[])
+        sqlx::query("SELECT count(*) FROM identity.password_logins")
+            .fetch_one(&mut fixture.system.client)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     let disabled = login(&https, &fixture).await;
     assert!(self::active(&fixture, &disabled).await);
-    disable_principal(&fixture.system.client, user.id(), &mut AuthDrops::default())
-        .await
-        .unwrap();
+    disable_principal(
+        &mut fixture.system.client,
+        user.id(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert!(!self::active(&fixture, &disabled).await);
     assert_eq!(
         request(&https, &fixture, "/password/renew", &disabled)
@@ -403,8 +403,8 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("owned system database");
-    let fixture = setup(db.url()).await;
-    let user = enroll(&fixture, EMAIL, PASSWORD).await;
+    let mut fixture = setup(db.url()).await;
+    let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let audiences = |listed: &Value| -> Vec<Value> {
         listed["environments"]
@@ -413,7 +413,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
             .clone()
     };
     let discover = async |https: &Https| {
-        discovery_window(&fixture).await;
+        discovery_window(&fixture.observations).await;
         let response = post(
             https,
             "/password/environments",
@@ -429,7 +429,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
             .expect_redacted("discovery JSON")
     };
     let control_login = async |https: &Https| {
-        discovery_window(&fixture).await;
+        discovery_window(&fixture.observations).await;
         post(
             https,
             "/password/session",
@@ -454,7 +454,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     .await;
 
     wamn_platform_identity::assign_project_role(
-        &fixture.system.client,
+        &mut fixture.system.client,
         user.id(),
         "demo",
         "widgets",
@@ -470,7 +470,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     // An application shell names its org and project, and is offered the
     // control audience of its org beside the environments (wamn-a40n.11).
     let targeted = async |org: &str| {
-        discovery_window(&fixture).await;
+        discovery_window(&fixture.observations).await;
         let response = post(
             &https,
             "/password/environments",
@@ -496,9 +496,12 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         "a request for another org is not offered this org's control audience"
     );
     let session = body(control_login(&https).await).await;
-    let jwks = wamn_platform_identity::session_keys::session_jwks(&fixture.system.client, ISSUER)
-        .await
-        .expect_redacted("JWKS");
+    let jwks = wamn_platform_identity::session_keys::session_jwks(
+        &mut *fixture.observations.acquire().await.unwrap(),
+        ISSUER,
+    )
+    .await
+    .expect_redacted("JWKS");
     let token = session["access_token"].as_str().expect_redacted("token");
     let kid = jsonwebtoken::decode_header(token)
         .expect_redacted("kid")
@@ -525,9 +528,12 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     assert_eq!(session["sub"], serde_json::to_value(claims.sub).unwrap());
     assert!(claims.roles.is_empty(), "a control session has no roles");
     assert!(
-        wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
-            .await
-            .expect_redacted("control authority")
+        wamn_platform_identity::control::control_session_is_active(
+            &mut fixture.system.client,
+            &claims
+        )
+        .await
+        .expect_redacted("control authority")
     );
 
     let renewed = body(
@@ -541,18 +547,15 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .expect_redacted("control renewal"),
     )
     .await;
-    fixture
-        .system
-        .client
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
+    sqlx::query("DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.system.client)
         .await
+        .map(|result| result.rows_affected())
         .expect_redacted("revoke project-admin");
     assert!(
         !wamn_platform_identity::control::control_session_is_active(
-            &fixture.system.client,
+            &mut fixture.system.client,
             &claims
         )
         .await
@@ -574,16 +577,15 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     .await;
 
     // `org-admin` alone, with no project role, holds the control audience.
-    fixture
-        .system
-        .client
-        .execute(
-            "INSERT INTO identity.org_roles (principal_id, org, role) \
+    sqlx::query(
+        "INSERT INTO identity.org_roles (principal_id, org, role) \
              VALUES ($1::text::uuid, 'demo', 'org-admin')",
-            &[&user.id().to_string().as_str()],
-        )
-        .await
-        .expect_redacted("org-admin");
+    )
+    .bind(&user.id().to_string().as_str())
+    .execute(&mut fixture.system.client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_redacted("org-admin");
     assert!(
         audiences(&discover(&https).await).contains(&json!({"aud": CONTROL, "org": "demo"})),
         "an org-admin is offered the control audience of the org"
@@ -603,22 +605,22 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     .await
     .expect_redacted("signed org-admin control session");
     assert!(
-        wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
-            .await
-            .expect_redacted("control authority")
-    );
-    fixture
-        .system
-        .client
-        .execute(
-            "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
-            &[&user.id().to_string().as_str()],
+        wamn_platform_identity::control::control_session_is_active(
+            &mut fixture.system.client,
+            &claims
         )
         .await
+        .expect_redacted("control authority")
+    );
+    sqlx::query("DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.system.client)
+        .await
+        .map(|result| result.rows_affected())
         .expect_redacted("revoke org-admin");
     assert!(
         !wamn_platform_identity::control::control_session_is_active(
-            &fixture.system.client,
+            &mut fixture.system.client,
             &claims
         )
         .await
@@ -628,14 +630,11 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
 
     // An org member with no grant, as an invitation with no access leaves
     // it, signs in and is offered no environment.
-    fixture
-        .system
-        .client
-        .execute(
-            "DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
-            &[&user.id().to_string().as_str()],
-        )
+    sqlx::query("DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid")
+        .bind(&user.id().to_string().as_str())
+        .execute(&mut fixture.system.client)
         .await
+        .map(|result| result.rows_affected())
         .expect_redacted("remove the memberships");
     assert_eq!(
         discover(&https).await,
@@ -650,30 +649,33 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("owned system database");
-    let fixture = setup(db.url()).await;
-    let user = enroll(&fixture, EMAIL, PASSWORD).await;
+    let mut fixture = setup(db.url()).await;
+    let user = enroll(&mut fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
-    fixture
-        .system
-        .client
-        .batch_execute("BEGIN; SELECT issuer FROM identity.session_signing_state FOR UPDATE")
+    sqlx::raw_sql("BEGIN; SELECT issuer FROM identity.session_signing_state FOR UPDATE")
+        .execute(&mut fixture.system.client)
         .await
+        .map(drop)
         .unwrap();
     let pending = request(&https, &fixture, "/password/renew", &first);
     let renewal = tokio::spawn(async move { pending.send().await });
-    wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
+    wait_for_blocked_issuer(&mut fixture.system.client, &fixture.issuer_role).await;
     let pending = request(&https, &fixture, "/password/logout-all", &first);
     let logout = tokio::spawn(async move { pending.send().await });
     tokio::time::timeout(HANG_GUARD,async{
         loop {
-            fixture.system.client.query_one("SELECT pg_stat_clear_snapshot()",&[]).await.unwrap();
-            let waiting:i64=fixture.system.client.query_one("SELECT count(*) FROM pg_stat_activity WHERE usename=$1 AND cardinality(pg_blocking_pids(pid))>0",&[&fixture.issuer_role]).await.unwrap().get(0);
+            sqlx::query("SELECT pg_stat_clear_snapshot()").fetch_one(&mut fixture.system.client).await.unwrap();
+            let waiting:i64=sqlx::query("SELECT count(*) FROM pg_stat_activity WHERE usename=$1 AND cardinality(pg_blocking_pids(pid))>0").bind(&fixture.issuer_role).fetch_one(&mut fixture.system.client).await.unwrap().get(0);
             if waiting>=2 {break}
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect_redacted("renewal and logout reach their locks");
-    fixture.system.client.batch_execute("COMMIT").await.unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut fixture.system.client)
+        .await
+        .map(drop)
+        .unwrap();
     let replacement = body(renewal.await.unwrap().unwrap()).await;
     // Logout presented the now-consumed credential. Its replay revokes the family.
     assert_eq!(logout.await.unwrap().unwrap().status(), 401);
@@ -701,15 +703,15 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     )
     .await
     .unwrap();
-    discovery_window(&fixture).await;
-    fixture.system.client.batch_execute("BEGIN").await.unwrap();
-    fixture
-        .system
-        .client
-        .query_one(
-            "SELECT id FROM identity.principals WHERE id=$1::text::uuid FOR UPDATE",
-            &[&user.id().to_string().as_str()],
-        )
+    discovery_window(&fixture.observations).await;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut fixture.system.client)
+        .await
+        .map(drop)
+        .unwrap();
+    sqlx::query("SELECT id FROM identity.principals WHERE id=$1::text::uuid FOR UPDATE")
+        .bind(&user.id().to_string().as_str())
+        .fetch_one(&mut fixture.system.client)
         .await
         .unwrap();
     let reset_principal = *user.id();
@@ -724,7 +726,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         )
         .await
     });
-    wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
+    wait_for_blocked_issuer(&mut fixture.system.client, &fixture.issuer_role).await;
     let pending = post(
         &https,
         "/password/session",
@@ -733,8 +735,12 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let old_login = tokio::spawn(async move { pending.send().await });
     let pending_renewal = request(&https, &fixture, "/password/renew", &before_reset);
     let reset_racing_renewal = tokio::spawn(async move { pending_renewal.send().await });
-    wait_for_blocked_issuer(&fixture.system.client, &fixture.issuer_role).await;
-    fixture.system.client.batch_execute("COMMIT").await.unwrap();
+    wait_for_blocked_issuer(&mut fixture.system.client, &fixture.issuer_role).await;
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut fixture.system.client)
+        .await
+        .map(drop)
+        .unwrap();
     reset.await.unwrap().unwrap();
     assert!(!active(&fixture, &before_reset).await);
     assert_eq!(reset_racing_renewal.await.unwrap().unwrap().status(), 401);
@@ -744,7 +750,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
-    assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().to_string().as_str()]).await.unwrap().get::<_,i64>(0),0);
+    assert_eq!(sqlx::query("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL").bind(&user.id().to_string().as_str()).fetch_one(&mut fixture.system.client).await.unwrap().get::<i64, _>(0),0);
     drop(https);
     cleanup(fixture).await;
 }
@@ -856,8 +862,8 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("owned system database");
-    let fixture = setup(db.url()).await;
-    enroll(&fixture, EMAIL, PASSWORD).await;
+    let mut fixture = setup(db.url()).await;
+    enroll(&mut fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let cookie_login = || {
         post(
@@ -869,7 +875,7 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     };
 
     // The bearer carrier, default or explicit, keeps its frozen reply and sets no cookie.
-    discovery_window(&fixture).await;
+    discovery_window(&fixture.observations).await;
     let explicit = post(
         &https,
         "/password/session",
@@ -996,7 +1002,7 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     assert!(!active(&fixture, &json!({"access_token": second[0]})).await);
 
     // Logout by cookie revokes the login and clears all three cookies.
-    discovery_window(&fixture).await;
+    discovery_window(&fixture.observations).await;
     let (_, third) = cookie_body(cookie_login().await.unwrap(), unix_seconds()).await;
     assert!(active(&fixture, &json!({"access_token": third[0]})).await);
     assert_cleared(

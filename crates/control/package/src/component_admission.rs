@@ -42,7 +42,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_schema_control::plan_package_migrations;
 
-mod declared_sql;
+use wamn_component_policy::sql as declared_sql;
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);

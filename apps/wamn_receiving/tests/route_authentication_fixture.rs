@@ -6,8 +6,8 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::Context;
+use sqlx::PgConnection as Client;
 use tokio::process::Command;
-use tokio_postgres::Client;
 use wamn_dev_control::dev::watch::GitSource;
 use wamn_dev_control::git_source::GitSourceState;
 

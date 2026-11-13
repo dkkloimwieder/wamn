@@ -11,6 +11,7 @@
 //!
 //! A workflow run resolves its pinned version on every identity.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
@@ -291,11 +292,12 @@ impl WamnPostgres {
         workflow_id: &str,
     ) -> anyhow::Result<Option<EnabledWorkflow>> {
         self.executor_read(project, project_env_key, async |connection| {
-            let Some(row) = connection
-                .query_opt(
-                    ENABLED_WORKFLOW_SQL,
-                    &[&project_env_key, &environment, &application, &workflow_id],
-                )
+            let Some(row) = sqlx::query(ENABLED_WORKFLOW_SQL)
+                .bind(project_env_key)
+                .bind(environment)
+                .bind(application)
+                .bind(workflow_id)
+                .fetch_optional(&mut *connection)
                 .await
                 .context("read the enabled workflow version")?
             else {
@@ -324,17 +326,13 @@ impl WamnPostgres {
         let local = self.local_application.as_ref();
         let (graph_json, stored_hash, manifest) = self
             .executor_read(project, run.project_env_key, async |connection| {
-                let row = connection
-                    .query_opt(
-                        WORKFLOW_VERSION_SQL,
-                        &[
-                            &run.project_env_key,
-                            &run.environment,
-                            &run.application,
-                            &run.workflow_id,
-                            &version,
-                        ],
-                    )
+                let row = sqlx::query(WORKFLOW_VERSION_SQL)
+                    .bind(run.project_env_key)
+                    .bind(run.environment)
+                    .bind(run.application)
+                    .bind(run.workflow_id)
+                    .bind(version)
+                    .fetch_optional(&mut *connection)
                     .await
                     .context("read the workflow version")?
                     .ok_or_else(|| {
@@ -358,11 +356,10 @@ impl WamnPostgres {
                     );
                     local.manifest.clone()
                 } else {
-                    let bytes: Vec<u8> = connection
-                        .query_opt(
-                            PINNED_RELEASE_SQL,
-                            &[&run.project_env_key, &run.manifest_digest],
-                        )
+                    let bytes: Vec<u8> = sqlx::query(PINNED_RELEASE_SQL)
+                        .bind(run.project_env_key)
+                        .bind(run.manifest_digest)
+                        .fetch_optional(&mut *connection)
                         .await
                         .context("read the pinned release")?
                         .ok_or_else(|| {
@@ -397,15 +394,15 @@ impl WamnPostgres {
         &self,
         project: &str,
         project_env_key: &str,
-        read: impl AsyncFnOnce(&tokio_postgres::Client) -> anyhow::Result<T>,
+        read: impl AsyncFnOnce(&mut sqlx::PgConnection) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 true,
                 project_env_key,
@@ -423,9 +420,14 @@ impl WamnPostgres {
             self.destroy(connection);
             return Err(anyhow::anyhow!(error.to_string()));
         }
-        let result = read(&**connection).await;
+        let result = read(&mut connection).await;
         let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        if connection.batch_execute(end).await.is_err() {
+        if sqlx::raw_sql(sqlx::AssertSqlSafe((end).to_string()))
+            .execute(&mut *connection)
+            .await
+            .map(|_| ())
+            .is_err()
+        {
             self.destroy(connection);
         }
         result

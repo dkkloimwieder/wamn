@@ -1,5 +1,6 @@
 //! Source preparation is isolated and failures leave authored selections unchanged.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -43,14 +44,16 @@ manifest.Package {{
 async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() -> anyhow::Result<()>
 {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-    let database = wamn_test_postgres::database();
-    let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(driver);
-    client
-        .batch_execute(
-            "CREATE TABLE untouched (value text); INSERT INTO untouched VALUES ('retained');",
-        )
-        .await?;
+    let mut database = wamn_test_postgres::database();
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE untouched (value text); INSERT INTO untouched VALUES ('retained');")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
     let auth = scratch.path().join("registry.json");
     std::fs::write(
         &auth,
@@ -140,17 +143,17 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         last_build
     );
     assert_eq!(
-        client
-            .query_one("SELECT value FROM untouched", &[])
+        sqlx::query("SELECT value FROM untouched")
+            .fetch_one(&mut client)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained"
     );
     assert!(
-        client
-            .query_one("SELECT to_regnamespace('appa')::text", &[])
+        sqlx::query("SELECT to_regnamespace('appa')::text")
+            .fetch_one(&mut client)
             .await?
-            .get::<_, Option<String>>(0)
+            .get::<Option<String>, _>(0)
             .is_none()
     );
     Ok(())

@@ -1,5 +1,6 @@
 //! Read-only schema input preparation and one plan for source and published packages.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
@@ -123,15 +124,12 @@ impl State {
 
 /// Read records without provisioning an absent target or writing schema state.
 pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<State> {
-    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
-    let Some(row) = analyse::read_row(&system, document).await? else {
+    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
+    let Some(row) = analyse::read_row(&mut system, document).await? else {
         return Ok(State::default());
     };
     let url = analyse::project_url(platform, document, &row)?;
-    let instance = url::Url::parse(&url)?
-        .path()
-        .trim_start_matches('/')
-        .to_owned();
+    let instance = wamn_postgres::identity(&url)?.1;
     let mut state = State {
         disposable: Some(row.disposable),
         database_instance: Some(instance),
@@ -159,45 +157,33 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
 /// Read the same installed SQL records through a local or deployed connection.
 pub async fn database_state(database_url: &str, project_env_key: &str) -> anyhow::Result<State> {
     let mut client = analyse::connect_project(database_url).await?;
-    let tx = client
-        .build_transaction()
-        .read_only(true)
-        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-        .start()
+    let mut tx = client
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await?;
-    tx.query_one(
-        "SELECT set_config('app.project_env_key', $1, true)",
-        &[&project_env_key],
-    )
-    .await?;
-    let baseline = tx
-        .query_one(
-            "SELECT sha256, installed_at::text, (SELECT oid::text FROM pg_catalog.pg_database WHERE datname=current_database()) FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(project_env_key)
+        .fetch_one(&mut *tx)
+        .await?;
+    let baseline = sqlx::query("SELECT sha256, installed_at::text, (SELECT oid::text FROM pg_catalog.pg_database WHERE datname=current_database()) FROM platform.schema_baseline WHERE singleton").fetch_one(&mut *tx)
         .await?;
     let initialization_identity: String = baseline.get(1);
     let database_instance: String = baseline.get(2);
     let baseline: String = baseline.get(0);
     let mut packages = BTreeMap::new();
     let mut incomplete = BTreeMap::new();
-    for row in tx
-        .query(
-            "SELECT package_id FROM catalog.packages WHERE project_env_key=$1 UNION SELECT package_id FROM catalog.package_migrations WHERE project_env_key=$1",
-            &[&project_env_key],
-        )
+    for row in sqlx::query("SELECT package_id FROM catalog.packages WHERE project_env_key=$1 UNION SELECT package_id FROM catalog.package_migrations WHERE project_env_key=$1").bind(project_env_key).fetch_all(&mut *tx)
         .await?
     {
         let id: String = row.get(0);
-        if let Some(applied) = apply_package::read_applied_package(&tx, project_env_key, &id).await? {
+        if let Some(applied) = apply_package::read_applied_package(&mut tx, project_env_key, &id).await? {
             packages.insert(id, applied);
         } else {
-            let records = apply_package::read_package_migrations(&tx, project_env_key, &id).await?;
+            let records = apply_package::read_package_migrations(&mut tx, project_env_key, &id).await?;
             incomplete.insert(id, records);
         }
     }
     let fingerprint =
-        apply_package::installed_environment_fingerprint(&tx, project_env_key).await?;
+        apply_package::installed_environment_fingerprint(&mut tx, project_env_key).await?;
     tx.commit().await?;
     let mut unknowns = Vec::new();
     for (id, files) in packages
@@ -668,8 +654,8 @@ pub async fn adopt_application(
             selected.insert(id.to_owned(), candidate);
         }
     }
-    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
-    let row = analyse::read_row(&system, document)
+    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
+    let row = analyse::read_row(&mut system, document)
         .await?
         .context("adoption requires an existing database")?;
     let url = analyse::project_url(platform, document, &row)?;
@@ -755,22 +741,21 @@ pub async fn apply(
             })
             .collect::<Vec<_>>(),
     )?;
-    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
-    let row = analyse::read_row(&system, document)
+    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
+    let row = analyse::read_row(&mut system, document)
         .await?
         .context("environment database disappeared")?;
     let url = analyse::project_url(platform, document, &row)?;
     ensure!(
-        url::Url::parse(&url)?.path().trim_start_matches('/')
-            == state.database_instance.as_deref().unwrap_or_default(),
+        wamn_postgres::identity(&url)?.1 == state.database_instance.as_deref().unwrap_or_default(),
         "environment database changed during schema preparation"
     );
     if manifests
         .iter()
         .any(|manifest| !state.packages.contains_key(&manifest.package.id))
     {
-        let admin = wamn_package_control::database::connect(admin_url).await?;
-        super::super::ensure::ensure_package_roles(&admin, &manifests).await?;
+        let mut admin = wamn_postgres::connect(admin_url).await?;
+        super::super::ensure::ensure_package_roles(&mut admin, &manifests).await?;
         let selected = analyse::select_application(document, Some(application))?;
         let release = analyse::pull_release_manifest(
             platform,
@@ -881,7 +866,7 @@ pub async fn status(
     Ok(Status {
         pending_database: if state.disposable.is_some() {
             crate::provision_project_env::registry::pending_database(
-                &wamn_package_control::database::connect(&platform.system_database_url).await?,
+                &mut wamn_postgres::connect(&platform.system_database_url).await?,
                 &document.triple(),
             )
             .await?

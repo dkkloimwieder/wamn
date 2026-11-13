@@ -1,11 +1,12 @@
 //! Fixture authority and committed-state observations for real Receiving commands.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, ensure};
 use serde_json::{Value, json};
-use tokio::task::JoinHandle;
-use tokio_postgres::{Client, NoTls};
+
 use uuid::Uuid;
 
 /// The provisioned test principal that Receiving fixtures write as.
@@ -17,53 +18,47 @@ pub const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 /// The record-history triggers stamp and log each fixture write with this
 /// principal and operation. The first binding in a database creates its user
 /// row, and that row stamps itself.
-pub async fn bind_fixture_principal(client: &Client) -> Result<()> {
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+pub async fn bind_fixture_principal(client: &mut Client) -> Result<()> {
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:seed-receiving-test-fixture', false)",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await
-        .context("bind the fixture test principal")?;
-    client
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .context("bind the fixture test principal")?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'fixture@example.invalid') \
              ON CONFLICT DO NOTHING",
-            &[&FIXTURE_PRINCIPAL],
-        )
-        .await
-        .context("create the fixture test principal")?;
+    )
+    .bind(&FIXTURE_PRINCIPAL)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .context("create the fixture test principal")?;
     Ok(())
 }
 
 #[derive(Debug)]
 pub struct Db {
     pub client: Client,
-    connection: JoinHandle<Result<(), tokio_postgres::Error>>,
-}
-
-impl Drop for Db {
-    fn drop(&mut self) {
-        self.connection.abort();
-    }
 }
 
 pub async fn connect(url: &str) -> Result<Db> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .context("connect Receiving fixture observer")?;
-    let db = Db {
-        client,
-        connection: tokio::spawn(connection),
-    };
-    db.client
-        .batch_execute(
-            "SET statement_timeout = '15s'; SET application_name = 'receiving-history-observer'",
-        )
-        .await
-        .context("bound Receiving fixture observer statements")?;
+    let mut db = Db { client };
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("SET statement_timeout = '15s'; SET application_name = 'receiving-history-observer'")
+            .to_string(),
+    ))
+    .execute(&mut db.client)
+    .await
+    .map(drop)
+    .context("bound Receiving fixture observer statements")?;
     Ok(db)
 }
 
@@ -76,7 +71,7 @@ pub struct Fixture {
     pub key_prefix: String,
 }
 
-pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fixture> {
+pub async fn seed(client: &mut Client, ordered: [u16; 2], status: &str) -> Result<Fixture> {
     ensure!(
         ordered.iter().all(|amount| *amount > 0),
         "fixture orders must be positive"
@@ -96,16 +91,15 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
     // The order references a supplier. A sibling data-modifying CTE cannot
     // satisfy that reference, because every CTE reads one snapshot, so the
     // supplier row is written by its own statement first.
-    client
-        .execute(
-            "INSERT INTO receiving.supplier (id, name) VALUES ($1, $2 || '-supplier')",
-            &[&fixture.supplier_id, &fixture.key_prefix],
-        )
+    sqlx::query("INSERT INTO receiving.supplier (id, name) VALUES ($1, $2 || '-supplier')")
+        .bind(&fixture.supplier_id)
+        .bind(&fixture.key_prefix)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .context("insert the history fixture supplier")?;
-    client
-        .execute(
-            r"WITH item AS (
+    sqlx::query(sqlx::AssertSqlSafe(
+        (r"WITH item AS (
             INSERT INTO receiving.item (id, item_number)
             VALUES ($4, $7 || '-item') RETURNING id
         ), location AS (
@@ -123,22 +117,23 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
         FROM purchase CROSS JOIN item
         UNION ALL
         SELECT $3::uuid, purchase.id, 2, item.id, $10::int4::numeric, 0
-        FROM purchase CROSS JOIN item",
-            &[
-                &fixture.id,
-                &fixture.line_ids[0],
-                &fixture.line_ids[1],
-                &item_id,
-                &fixture.location_id,
-                &fixture.supplier_id,
-                &fixture.key_prefix,
-                &status,
-                &i32::from(ordered[0]),
-                &i32::from(ordered[1]),
-            ],
-        )
-        .await
-        .context("seed distinct Receiving business fixture in one statement")?;
+        FROM purchase CROSS JOIN item")
+            .to_string(),
+    ))
+    .bind(&fixture.id)
+    .bind(&fixture.line_ids[0])
+    .bind(&fixture.line_ids[1])
+    .bind(&item_id)
+    .bind(&fixture.location_id)
+    .bind(&fixture.supplier_id)
+    .bind(&fixture.key_prefix)
+    .bind(&status)
+    .bind(&i32::from(ordered[0]))
+    .bind(&i32::from(ordered[1]))
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .context("seed distinct Receiving business fixture in one statement")?;
     Ok(fixture)
 }
 
@@ -154,10 +149,8 @@ pub struct Snapshot {
     pub receipt_line_count: usize,
 }
 
-pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
-    let value: Value = client
-        .query_one(
-            r"WITH orders AS (
+pub async fn snapshot(client: &mut Client, fixture: &Fixture) -> Result<Snapshot> {
+    let value: Value = sqlx::query(sqlx::AssertSqlSafe((r"WITH orders AS (
             SELECT * FROM receiving.purchase_order WHERE id = $1
         ), lines AS (
             SELECT * FROM receiving.purchase_order_line WHERE purchase_order_id = $1
@@ -185,9 +178,7 @@ pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
                 FROM receipts r), '[]'::jsonb),
             'receipt_lines', COALESCE((SELECT jsonb_agg(to_jsonb(l) || jsonb_build_object(
                 'quantity', l.quantity::text) ORDER BY l.id)
-                FROM receipt_lines l), '[]'::jsonb))",
-            &[&fixture.id, &fixture.key_prefix],
-        )
+                FROM receipt_lines l), '[]'::jsonb))").to_string())).bind(&fixture.id).bind(&fixture.key_prefix).fetch_one(&mut *client)
         .await
         .context("read one committed Receiving business snapshot")?
         .get(0);
@@ -307,7 +298,7 @@ pub(super) fn amount(text: &str) -> Result<u16> {
 }
 
 pub async fn wait_for_blocked(
-    client: &Client,
+    client: &mut Client,
     blocker_pid: i32,
     minimum: usize,
 ) -> Result<Vec<i32>> {
@@ -319,8 +310,7 @@ pub async fn wait_for_blocked(
     // Observe before the default guest statement timeout of five seconds.
     let result = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
-            let rows = client.query(
-                r"WITH RECURSIVE activity AS MATERIALIZED (
+            let rows = sqlx::query(sqlx::AssertSqlSafe((r"WITH RECURSIVE activity AS MATERIALIZED (
                     SELECT a.pid, a.usename, a.wait_event_type, a.wait_event,
                         pg_blocking_pids(a.pid) AS blockers,
                         a.state = 'active' AND a.wait_event_type = 'Lock'
@@ -338,9 +328,7 @@ pub async fn wait_for_blocked(
                 )
                 SELECT a.pid, a.usename, a.wait_event_type, a.wait_event, a.blockers,
                     COALESCE(a.receiving_command, false) AND b.pid IS NOT NULL AS matched
-                FROM activity a LEFT JOIN blocked b ON b.pid = a.pid ORDER BY a.pid",
-                &[&blocker_pid],
-            ).await.context("observe actual Receiving guest lock waits")?;
+                FROM activity a LEFT JOIN blocked b ON b.pid = a.pid ORDER BY a.pid").to_string())).bind(&blocker_pid).fetch_all(&mut *client).await.context("observe actual Receiving guest lock waits")?;
             observed.clear();
             let mut matched = Vec::new();
             for row in rows {
@@ -351,10 +339,10 @@ pub async fn wait_for_blocked(
                 }
                 observed.push(json!({
                     "pid": pid,
-                    "role": row.get::<_, String>("usename"),
-                    "wait_event_type": row.get::<_, Option<String>>("wait_event_type"),
-                    "wait_event": row.get::<_, Option<String>>("wait_event"),
-                    "blockers": row.get::<_, Vec<i32>>("blockers"),
+                    "role": row.get::<String, _>("usename"),
+                    "wait_event_type": row.get::<Option<String>, _>("wait_event_type"),
+                    "wait_event": row.get::<Option<String>, _>("wait_event"),
+                    "blockers": row.get::<Vec<i32>, _>("blockers"),
                     "receiving_command_blocked": is_match,
                 }));
             }

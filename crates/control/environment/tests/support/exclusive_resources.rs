@@ -1,6 +1,7 @@
 //! Exclusive calls through the existing registry, Modbus and application fixtures.
 
 use super::*;
+use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_runtime::auth_cache::test_util::{nats, until};
@@ -14,7 +15,7 @@ struct Host {
 }
 
 struct Fixture {
-    admin: tokio_postgres::Client,
+    admin: sqlx::PgConnection,
     database: wamn_test_postgres::Database,
     project_database: wamn_test_postgres::Database,
     document: EnvironmentDocument,
@@ -37,9 +38,9 @@ impl Fixture {
         let database = wamn_control_provision::test_database::system();
         let project_database = wamn_platform_identity::test_database::project_platform();
         let mut admin = connect(database.url()).await?;
-        admin.batch_execute(&format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"))).await?;
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")))).execute(&mut admin).await.map(drop)?;
         let registry = local_registry::LocalRegistry::start("exclusive-resources");
         registry.ready().await;
         let auth = scratch.path().join("auth.json");
@@ -64,14 +65,16 @@ impl Fixture {
         let store = wamn_test_infrastructure::credentials::MemoryStore::default();
         // Prepare Y as disabled before the scenario starts, without violating uniqueness.
         for name in ["meter", "replacement"] {
-            let tx = admin.transaction().await?;
-            tx.batch_execute(&bind_platform_principal_sql(
-                PlatformComponent::Provisioning,
+            let mut tx = admin.begin().await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
             ))
-            .await?;
-            wamn_test_infrastructure::credentials::define(&tx, "acme", &json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store).await?;
+            .execute(&mut *tx)
+            .await
+            .map(drop)?;
+            wamn_test_infrastructure::credentials::define(&mut tx, "acme", &json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store).await?;
             wamn_platform_identity::connections::administration::execute_with_store(
-                &tx,
+                &mut tx,
                 "acme",
                 "connection.disable",
                 &json!({"project":"one","env":"dev","name":name}).to_string(),
@@ -124,7 +127,7 @@ impl Fixture {
         reader_url.set_username(&login).unwrap();
         reader_url.set_password(Some("fixture")).unwrap();
         let credentials = Arc::new(ConnectionCredentials::from_database(
-            Arc::new(connect(reader_url.as_str()).await?),
+            wamn_postgres::pool(reader_url.as_str(), 4).await?,
             "acme",
         ));
         let postgres = Arc::new(
@@ -169,14 +172,16 @@ impl Fixture {
         operation: &str,
         changes: &Publisher,
     ) -> anyhow::Result<()> {
-        let tx = self.admin.transaction().await?;
-        tx.batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
+        let mut tx = self.admin.begin().await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
         ))
-        .await?;
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
         let mut drops = ConnectionDrops::default();
         wamn_platform_identity::connections::administration::execute_with_store(
-            &tx,
+            &mut tx,
             "acme",
             operation,
             &json!({"project":"one","env":"dev","name":name}).to_string(),
@@ -343,7 +348,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     assert!(!writing.is_finished());
 
     // Y becomes active only after X is disabled. X keeps its in-flight call.
-    let id = fixture.admin.query_one("SELECT c.id FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='meter'", &[]).await?.get(0);
+    let id = sqlx::query("SELECT c.id FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='meter'").fetch_one(&mut fixture.admin).await?.get(0);
     let disabled = Instant::now();
     fixture
         .change("meter", "connection.disable", &changes)

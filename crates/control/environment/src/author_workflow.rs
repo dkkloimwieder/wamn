@@ -23,10 +23,11 @@
 //! before the graph is conditioned. An event trigger names a captured application
 //! model and uses the registration validator for its operations and condition.
 
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 
 use anyhow::Context as _;
-use tokio_postgres::{NoTls, Transaction};
+
 use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workflow_schedule};
 
 use std::path::Path;
@@ -219,14 +220,16 @@ impl AuthorWorkflowRequest<'_> {
 
 /// Read the installed release `manifest_digest` and condition `document` against it.
 pub(crate) async fn condition_against_release(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     application_packages: &std::collections::BTreeSet<String>,
     manifest_digest: &str,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
-    let bytes: Vec<u8> = transaction
-        .query_opt(SELECT_RELEASE_SQL, &[&project_env_key, &manifest_digest])
+    let bytes: Vec<u8> = sqlx::query(SELECT_RELEASE_SQL)
+        .bind(project_env_key)
+        .bind(manifest_digest)
+        .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| storage("read the serving release", error))?
         .ok_or_else(|| {
@@ -260,7 +263,7 @@ pub(crate) async fn condition_against_release(
 
 /// Validate an event trigger against the installed capture maps and the application map.
 pub(crate) async fn validate_event_trigger(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     declared: &wamn_catalog::EnvironmentApplications,
     trigger: WorkflowTrigger<'_>,
 ) -> Result<(), AuthorWorkflowError> {
@@ -284,9 +287,7 @@ pub(crate) async fn validate_event_trigger(
             ),
         ));
     }
-    let schemas = transaction.query(
-        "SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid ORDER BY 1", &[]
-    ).await.map_err(|error| storage("read captured schemas", error))?;
+    let schemas = sqlx::query("SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid ORDER BY 1").fetch_all(&mut **transaction).await.map_err(|error| storage("read captured schemas", error))?;
     let mut models = std::collections::BTreeSet::new();
     for row in schemas {
         let schema: String = row.get(0);
@@ -294,12 +295,14 @@ pub(crate) async fn validate_event_trigger(
             "SELECT m.entity_id FROM {}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE m.package_id = $1 AND n.nspname = $2 AND c.relname = m.table_name",
             postgres_protocol::escape::escape_identifier(&schema)
         );
-        for model in transaction
-            .query(&sql, &[&source_package, &schema])
+        for model in sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(source_package)
+            .bind(&schema)
+            .fetch_all(&mut **transaction)
             .await
             .map_err(|error| storage("read captured model map", error))?
         {
-            models.insert(model.get::<_, String>(0));
+            models.insert(model.get::<String, _>(0));
         }
     }
     let registration = wamn_event_reg::EventRegistration {
@@ -328,11 +331,12 @@ pub(crate) async fn validate_event_trigger(
 
 /// Validate and append one disabled workflow version in the caller's transaction.
 pub async fn author_workflow(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
-    transaction
-        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&request.project_env_key()])
+    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(request.project_env_key())
+        .fetch_one(&mut **transaction)
         .await
         .map_err(|error| storage("bind the authoring project identity", error))?;
     let Some(declared) = request.declared.get(request.application) else {
@@ -394,30 +398,45 @@ pub async fn author_workflow(
         ),
         _ => (None, None, None, None),
     };
-    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 16] = [
-        &request.project_env_key(),
-        &request.environment,
-        &request.application,
-        &document.wiring_id,
-        &version,
-        &graph_json,
-        &stored_hash,
-        &trigger,
-        &execution_type,
-        &execution_role,
-        &request.created_by,
-        &schedule,
-        &source_package,
-        &entity,
-        &ops,
-        &condition,
-    ];
-    transaction
-        .execute(INSERT_WORKFLOW_SQL, &parameters)
+    sqlx::query(INSERT_WORKFLOW_SQL)
+        .bind(request.project_env_key())
+        .bind(request.environment)
+        .bind(request.application)
+        .bind(&document.wiring_id)
+        .bind(version)
+        .bind(&graph_json)
+        .bind(stored_hash)
+        .bind(trigger)
+        .bind(execution_type)
+        .bind(execution_role)
+        .bind(request.created_by)
+        .bind(schedule)
+        .bind(source_package)
+        .bind(entity)
+        .bind(&ops)
+        .bind(condition)
+        .execute(&mut **transaction)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| storage("append the workflow version", error))?;
-    let exact: bool = transaction
-        .query_one(EXACT_WORKFLOW_SQL, &parameters)
+    let exact: bool = sqlx::query(EXACT_WORKFLOW_SQL)
+        .bind(request.project_env_key())
+        .bind(request.environment)
+        .bind(request.application)
+        .bind(&document.wiring_id)
+        .bind(version)
+        .bind(&graph_json)
+        .bind(stored_hash)
+        .bind(trigger)
+        .bind(execution_type)
+        .bind(execution_role)
+        .bind(request.created_by)
+        .bind(schedule)
+        .bind(source_package)
+        .bind(entity)
+        .bind(&ops)
+        .bind(condition)
+        .fetch_one(&mut **transaction)
         .await
         .map_err(|error| storage("verify the stored workflow version", error))?
         .get(0);
@@ -438,28 +457,26 @@ pub async fn author_workflow_in_databases(
     database_url: &str,
     request: &AuthorWorkflowRequest<'_>,
 ) -> anyhow::Result<DefinitionHash> {
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to the project database")?;
-    let connection_task = tokio::spawn(connection);
-    let authored = async {
-        let transaction = client
-            .transaction()
+
+    async {
+        let mut transaction = client
+            .begin()
             .await
             .context("begin the workflow authorship")?;
-        let hash = author_workflow(&transaction, request).await?;
+        let hash = author_workflow(&mut transaction, request).await?;
         transaction
             .commit()
             .await
             .context("commit the workflow authorship")?;
         anyhow::Ok(hash)
     }
-    .await;
-    connection_task.abort();
-    authored
+    .await
 }
 
-fn storage(context: &'static str, error: tokio_postgres::Error) -> AuthorWorkflowError {
+fn storage(context: &'static str, error: sqlx::Error) -> AuthorWorkflowError {
     AuthorWorkflowError::with_source(AuthorWorkflowErrorType::Storage, context, error)
 }
 

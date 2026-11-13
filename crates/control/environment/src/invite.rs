@@ -10,10 +10,10 @@
 //! grant. Identity mails the invitation only when the user has no password
 //! credential.
 
+use sqlx::Row as _;
 use wamn_identity_protocol::PrincipalId;
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
@@ -59,35 +59,35 @@ pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Res
         validate_project_env(&request.org, project, env)
             .with_context(|| format!("invalid --membership {project}/{env}"))?;
     }
-    let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
+    let mut client = wamn_postgres::connect(&request.system_database_url)
         .await
         .context("connect to the system database for the invitation")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut client)
             .await
+            .map(drop)
             .context("SET ROLE wamn_system for the invitation")?;
-        let transaction = provisioning_transaction(&mut client).await?;
-        transaction
-            .query(
-                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_INVITE_INVITE,
-                &[&request.org],
-            )
+        let mut transaction = provisioning_transaction(&mut client).await?;
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_INVITE_INVITE)
+            .bind(&request.org)
+            .fetch_all(&mut *transaction)
             .await
             .context("lock the org for its first admin")?;
-        let has_admin: bool = transaction
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
+        let has_admin: bool = sqlx::query(
+            "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
                  JOIN identity.org_memberships m USING (principal_id, org) \
                  JOIN identity.principals p ON p.id = r.principal_id \
                  WHERE r.org = $1 AND r.role = 'org-admin' AND m.status = 'active' \
                  AND p.status = 'active' AND p.email <> lower(btrim($2)))",
-                &[&request.org, &request.email],
-            )
-            .await
-            .context("read the active org admin")?
-            .get(0);
+        )
+        .bind(&request.org)
+        .bind(&request.email)
+        .fetch_one(&mut *transaction)
+        .await
+        .context("read the active org admin")?
+        .get(0);
         anyhow::ensure!(
             !has_admin,
             "org {} already has an active org admin; use user.invite",
@@ -100,7 +100,7 @@ pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Res
         )
         .await?;
         invite_member(
-            &transaction,
+            &mut transaction,
             &user.principal_id,
             &request.org,
             &request.grants,
@@ -118,7 +118,6 @@ pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Res
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     let user = result?;
     let invitation = if user.enrolled {
         None

@@ -1,5 +1,6 @@
 //! The entry boundary through a hand-written guest and private PostgreSQL.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use wamn_scalar::SqlValueType;
@@ -367,20 +368,15 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
         .unwrap();
 }
 
-async fn connect(database: &wamn_test_postgres::Database) -> tokio_postgres::Client {
-    let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+async fn connect(database: &wamn_test_postgres::Database) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(database.url()).await.unwrap();
+
     client
 }
 
 async fn value(database: &wamn_test_postgres::Database) -> i32 {
-    connect(database)
-        .await
-        .query_one("SELECT value FROM widget", &[])
+    sqlx::query("SELECT value FROM widget")
+        .fetch_one(&mut connect(database).await)
         .await
         .unwrap()
         .get(0)
@@ -492,9 +488,8 @@ async fn reads_authorize_without_a_transaction_and_refuse_begin() {
     for _ in 0..2 {
         run_guest(Arc::clone(&postgres), Arc::clone(&release), 18).await;
     }
-    let count: i64 = connect(&database)
-        .await
-        .query_one("SELECT count(*) FROM platform.write_log", &[])
+    let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
+        .fetch_one(&mut connect(&database).await)
         .await
         .unwrap()
         .get(0);
@@ -556,9 +551,8 @@ async fn rollback_removes_the_claim_and_statement_effects() {
     run_guest(Arc::clone(&postgres), release, 14).await;
     assert_eq!(value(&database).await, 1);
     assert!(postgres.operation_transactions.lock().unwrap().is_empty());
-    let count: i64 = connect(&database)
-        .await
-        .query_one("SELECT count(*) FROM platform.write_log", &[])
+    let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
+        .fetch_one(&mut connect(&database).await)
         .await
         .unwrap()
         .get(0);
@@ -571,9 +565,8 @@ async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key() {
     let (database, postgres, release) = fixture().await;
     run_guest(postgres, release, 15).await;
     assert_eq!(value(&database).await, 2);
-    let result: String = connect(&database)
-        .await
-        .query_one("SELECT result FROM platform.write_log", &[])
+    let result: String = sqlx::query("SELECT result FROM platform.write_log")
+        .fetch_one(&mut connect(&database).await)
         .await
         .unwrap()
         .get(0);
@@ -602,26 +595,22 @@ async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery(
     let (database, postgres, release) = fixture().await;
     run_guest(postgres, release, 8).await;
     assert_eq!(value(&database).await, 3);
-    let client = connect(&database).await;
-    let transactions: i64 = client
-        .query_one(
-            "SELECT count(DISTINCT transaction_id) FROM widget_history",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let mut client = connect(&database).await;
+    let transactions: i64 =
+        sqlx::query("SELECT count(DISTINCT transaction_id) FROM widget_history")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(transactions, 2);
-    let keys: Vec<String> = client
-        .query(
-            "SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key",
-            &[],
-        )
-        .await
-        .unwrap()
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
+    let keys: Vec<String> =
+        sqlx::query("SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key")
+            .fetch_all(&mut client)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
     assert_eq!(keys, ["key", "ney"]);
 }
 
@@ -654,9 +643,8 @@ async fn store_drop_rolls_back_the_statement_and_claim() {
     run_guest(Arc::clone(&postgres), release, 2).await;
     assert_eq!(value(&database).await, 1);
     assert!(postgres.operation_transactions.lock().unwrap().is_empty());
-    let count: i64 = connect(&database)
-        .await
-        .query_one("SELECT count(*) FROM platform.write_log", &[])
+    let count: i64 = sqlx::query("SELECT count(*) FROM platform.write_log")
+        .fetch_one(&mut connect(&database).await)
         .await
         .unwrap()
         .get(0);
@@ -676,49 +664,38 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture().await;
     run_guest(Arc::clone(&postgres), Arc::clone(&release), 4).await;
-    let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let row = client
-        .query_one(
-            "SELECT operation, idempotency_key, request, result FROM platform.write_log",
-            &[],
-        )
-        .await
-        .unwrap();
-    assert_eq!(row.get::<_, String>(0), "base:widget/update");
-    assert_eq!(row.get::<_, String>(1), "key");
-    assert_eq!(row.get::<_, Vec<u8>>(2), [255, 0, 128]);
-    assert_eq!(row.get::<_, String>(3), RESULT);
-    let row = client
-        .query_one(
-            "SELECT operation, changed_by::text, after->>'value' FROM widget_history",
-            &[],
-        )
-        .await
-        .unwrap();
-    assert_eq!(row.get::<_, String>(0), OPERATION);
-    assert_eq!(row.get::<_, String>(1), LIVE_PRINCIPAL);
-    assert_eq!(row.get::<_, String>(2), "2");
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    let row =
+        sqlx::query("SELECT operation, idempotency_key, request, result FROM platform.write_log")
+            .fetch_one(&mut client)
+            .await
+            .unwrap();
+    assert_eq!(row.get::<String, _>(0), "base:widget/update");
+    assert_eq!(row.get::<String, _>(1), "key");
+    assert_eq!(row.get::<Vec<u8>, _>(2), [255, 0, 128]);
+    assert_eq!(row.get::<String, _>(3), RESULT);
+    let row =
+        sqlx::query("SELECT operation, changed_by::text, after->>'value' FROM widget_history")
+            .fetch_one(&mut client)
+            .await
+            .unwrap();
+    assert_eq!(row.get::<String, _>(0), OPERATION);
+    assert_eq!(row.get::<String, _>(1), LIVE_PRINCIPAL);
+    assert_eq!(row.get::<String, _>(2), "2");
     run_guest(Arc::clone(&postgres), Arc::clone(&release), 5).await;
     assert_eq!(value(&database).await, 2);
-    client
-        .execute(
-            "UPDATE platform.write_log SET request = 'different'::bytea",
-            &[],
-        )
+    sqlx::query("UPDATE platform.write_log SET request = 'different'::bytea")
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     run_guest(Arc::clone(&postgres), Arc::clone(&release), 6).await;
-    client
-        .execute(
-            "UPDATE platform.write_log SET request = $1, result = NULL",
-            &[&vec![255_u8, 0, 128]],
-        )
+    sqlx::query("UPDATE platform.write_log SET request = $1, result = NULL")
+        .bind(&vec![255_u8, 0, 128])
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     run_guest(postgres, release, 7).await;
     assert_eq!(value(&database).await, 2);

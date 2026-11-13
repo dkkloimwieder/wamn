@@ -1,5 +1,6 @@
 //! Read platform state from Helm, Kubernetes, endpoints, and PostgreSQL without mutation.
 
+use sqlx::Connection as _;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write;
@@ -999,49 +1000,28 @@ fn secret_bytes(secret: &Value, key: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 async fn database(target: &Target) -> anyhow::Result<Observation> {
-    let Some(credentials) = get(target, "platform", "secret", "wamn-pg-superuser").await? else {
-        return Ok(observation(
-            "platform/Secret/wamn-pg-superuser",
-            Category::Incomplete,
-            "Inspect the CNPG cluster and restore its superuser Secret before reading system initialization",
-        ));
-    };
     let forward =
-        wamn_kubernetes::forward::port_forward(target, "platform", "service/wamn-pg-rw", 5432)
-            .await?;
-    let mut configuration = tokio_postgres::Config::new();
-    configuration
-        .host("127.0.0.1")
-        .port(forward.port)
-        .dbname("wamn_system")
-        .user(std::str::from_utf8(&secret_bytes(
-            &credentials,
-            "username",
-        )?)?)
-        .password(secret_bytes(&credentials, "password")?)
-        .connect_timeout(Duration::from_secs(5))
-        .options("-c default_transaction_read_only=on -c statement_timeout=5000");
-    let (mut client, connection) = configuration.connect(tokio_postgres::NoTls).await?;
+        super::database::forward(target, &target.namespace, "wamn-pg", "wamn_system").await?;
+    let options = wamn_postgres::connect_options(&forward.input)
+        .await?
+        .options([
+            ("default_transaction_read_only", "on"),
+            ("statement_timeout", "5000"),
+        ]);
+    let mut client = wamn_postgres::connect(options).await?;
     // The connection future stays targeted to this observation, including cancellation.
     let read = async {
-        let transaction = client
-            .build_transaction()
-            .read_only(true)
-            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-            .start()
+        let mut transaction = client
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let state = crate::provision_system::system_state(&transaction).await?;
-        let report = wamn_package_control::schema_baseline::observe_system(&transaction).await?;
+        let state = crate::provision_system::system_state(&mut transaction).await?;
+        let report =
+            wamn_package_control::schema_baseline::observe_system(&mut transaction).await?;
         let result = database_state(&state, &report);
         transaction.rollback().await?;
         Ok(result)
     };
-    tokio::pin!(read);
-    tokio::pin!(connection);
-    tokio::select! {
-        result = &mut read => result,
-        _ = &mut connection => anyhow::bail!("database observation connection closed"),
-    }
+    read.await
 }
 
 fn database_state(

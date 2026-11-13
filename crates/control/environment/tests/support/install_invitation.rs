@@ -1,5 +1,6 @@
 //! The two identity replies needed by the database install sequence.
 
+use sqlx::Row as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,9 +13,7 @@ use tokio_rustls::{TlsAcceptor, rustls};
 use wamn_broker::Publisher;
 use wamn_environment_control::invite::{InviteRequest, invite};
 use wamn_environment_control::provision_org::{ProvisionOrgRequest, provision_org};
-use wamn_environment_control::provision_project_env::{
-    OrgWorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, run_org_workload_action,
-};
+
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::org::MemberGrants;
 use wamn_test_infrastructure::nats_tls::Authority;
@@ -30,29 +29,11 @@ pub async fn step_4_19_1_owner_invite(
     provision_org(org)
         .await
         .context("4.19.1 provision-org --admin owner")?;
-    let endpoint = url::Url::parse(system_url)?;
-    run_org_workload_action(&OrgWorkloadActionRequest {
-        org: org_id.clone(),
-        system_database_url: system_url.into(),
-        db_host: Some(endpoint.host_str().unwrap().into()),
-        db_port: endpoint.port().unwrap(),
-        namespace: "hosts".into(),
-        action: WorkloadGenerationAction {
-            family: wamn_control_provision::WorkloadRoleFamily::Control,
-            verb: WorkloadActionVerb::Prepare,
-            generation: wamn_control_provision::CredentialGeneration::A,
-        },
-        secret: Some(work.join("control.json")),
-    })
-    .await
-    .context("4.19.1 provision-org prepares the control credential as postgres")?;
-    let (client, connection) = tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(connection);
-    let principal: String = client
-        .query_one(
-            "SELECT id::text FROM identity.principals WHERE email=$1",
-            &[&owner],
-        )
+    let mut client = wamn_postgres::connect(system_url).await?;
+
+    let principal: String = sqlx::query("SELECT id::text FROM identity.principals WHERE email=$1")
+        .bind(&owner)
+        .fetch_one(&mut client)
         .await?
         .get(0);
     let tls_directory = work.join("invitation-tls");
@@ -181,6 +162,5 @@ pub async fn step_4_19_1_owner_invite(
         "4.19.1 another email bypassed the first-admin guard: {refusal:#}"
     );
     drop(client);
-    driver.await??;
     Ok(())
 }

@@ -38,17 +38,17 @@ pub enum HostRouteHandlers {
         /// The identity reader of `wamn_system` and the org of the host, for
         /// the covering test of an `admin` revoke. A host without an
         /// authenticated route has none.
-        identity: Option<(Arc<tokio_postgres::Client>, String)>,
+        identity: Option<(sqlx::PgPool, String)>,
         /// Publishes each role or permission change.
         changes: Publisher,
     },
     /// The control routes of one org, through its `control` login.
     Control {
         /// The `control` login for reads.
-        control: Arc<tokio_postgres::Client>,
+        control: sqlx::PgPool,
         /// A second `control` login that holds one write transaction at a
         /// time, so a read never runs inside a write.
-        writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
+        writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
         /// The operator client of the identity service, for `user.invite`.
         identity: Option<PatIssuerConfig>,
         /// The mounted Secret `wamn-control-administration-<org>`: one file
@@ -230,18 +230,24 @@ impl HostRouteDelivery {
                 Ok(json!({ "admin": held.admin, "permissions": permissions }))
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
-                let org_admin = is_org_admin(control.as_ref(), &principal, org).await?;
+                let org_admin =
+                    is_org_admin(&mut *control.acquire().await?, &principal, org).await?;
                 let page =
                     control_page(payload, attachment, &principal, org, None, Order::Project)?;
                 let projects = if org_admin {
-                    org_projects_page(control.as_ref(), org, page.after(0), page.read_limit())
-                        .await?
-                        .into_iter()
-                        .map(|entry| entry.name)
-                        .collect()
+                    org_projects_page(
+                        &mut *control.acquire().await?,
+                        org,
+                        page.after(0),
+                        page.read_limit(),
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|entry| entry.name)
+                    .collect()
                 } else {
                     control_projects_page(
-                        control.as_ref(),
+                        &mut *control.acquire().await?,
                         &principal,
                         org,
                         page.after(0),
@@ -257,7 +263,7 @@ impl HostRouteDelivery {
                 for project in projects {
                     let project_admin = org_admin
                         || wamn_platform_identity::control::is_project_admin(
-                            control.as_ref(),
+                            &mut *control.acquire().await?,
                             &principal,
                             org,
                             project.as_str().expect("project name"),
@@ -286,7 +292,7 @@ impl HostRouteDelivery {
                     release: &self.release,
                     identity: identity
                         .as_ref()
-                        .map(|(client, org)| (client.as_ref(), org.as_str())),
+                        .map(|(client, org)| (client, org.as_str())),
                 }
                 .start_workflow(caller, payload)
                 .await
@@ -307,7 +313,7 @@ impl HostRouteDelivery {
                     release: &self.release,
                     identity: identity
                         .as_ref()
-                        .map(|(client, org)| (client.as_ref(), org.as_str())),
+                        .map(|(client, org)| (client, org.as_str())),
                 }
                 .handle(attachment, &principal, request_id, payload)
                 .await

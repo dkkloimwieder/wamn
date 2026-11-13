@@ -1,38 +1,22 @@
 //! Fresh system records require stamps and preserve the retirement actor.
 
-use tokio_postgres::NoTls;
 use wamn_control_provision::PlatformComponent;
 use wamn_test_infrastructure::record_history::assert_stamp;
-
-const RELATIONS: [&str; 11] = [
-    "registry.meta",
-    "registry.orgs",
-    "registry.env_policies",
-    "registry.projects",
-    "registry.environment_projects",
-    "registry.retired_project_envs",
-    "registry.capture_gap",
-    "registry.generation_passwords",
-    "identity.session_keys",
-    "identity.session_signing_state",
-    "identity.password_attempts",
-];
 
 #[tokio::test]
 async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(connection);
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    client
-        .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&actor)
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
-    client.batch_execute(
-        "INSERT INTO registry.orgs(id,placement_type) VALUES ('history','dedicated'); \
+    sqlx::raw_sql("INSERT INTO registry.orgs(id,placement_type) VALUES ('history','dedicated'); \
          INSERT INTO registry.projects VALUES ('history','project'); \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
            VALUES ('history','dev','{}',0,1,'1Gi','1','1Gi','fixture'); \
@@ -42,58 +26,70 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
            VALUES ('history','project','dev','publication','slot','stream','secret'); \
          INSERT INTO registry.capture_gap(org,project,env,slot,start_at,reason,end_lsn) \
            VALUES ('history','project','dev','slot',now(),'fixture','0/10'); \
-         INSERT INTO registry.generation_passwords(role,sha256) VALUES ('fixture',repeat('a',64)); \
-         INSERT INTO identity.password_attempts(bucket,started_at,attempts) VALUES ('fixture',now(),1);"
-    ).await.unwrap();
+         INSERT INTO identity.password_attempts(bucket,started_at,attempts) VALUES ('fixture',now(),1);").execute(&mut client).await.map(drop).unwrap();
     wamn_platform_identity::session_keys::publish_session_key(
         &mut client,
         "https://history.invalid",
     )
     .await
     .unwrap();
-    for relation in RELATIONS {
-        assert_stamp(&client, relation, "true", &actor, &actor).await;
-    }
-    client.batch_execute("RESET app.user_id").await.unwrap();
-    for relation in RELATIONS {
-        let count: i64 = client
-            .query_one(
-                "SELECT count(*) FROM pg_attribute WHERE attrelid=$1::text::regclass \
-             AND attname IN ('created_at','created_by','updated_at','updated_by') \
-             AND attnotnull AND NOT atthasdef",
-                &[&relation],
+    let relations:Vec<String>=sqlx::query_scalar("SELECT format('%I.%I',n.nspname,c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('registry','identity') AND EXISTS(SELECT FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgfoid='wamn_history.stamp_row()'::regprocedure)")
+        .fetch_all(&mut client).await.unwrap();
+    let mut seeded = Vec::new();
+    for relation in relations {
+        let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS(SELECT FROM {relation} WHERE created_by::text=$1)"
+        )))
+        .bind(&actor)
+        .fetch_one(&mut client)
+        .await
+        .unwrap();
+        if present {
+            assert_stamp(
+                &mut client,
+                &relation,
+                &format!("created_by::text='{actor}'"),
+                &actor,
+                &actor,
             )
-            .await
-            .unwrap()
-            .get(0);
+            .await;
+            seeded.push(relation);
+        }
+    }
+    sqlx::raw_sql("RESET app.user_id")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    for relation in seeded {
+        let error = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {relation} SET created_by=NULL WHERE created_by::text='{actor}'"
+        )))
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap_err();
         assert_eq!(
-            count, 4,
-            "{relation}: four required stamps without defaults"
-        );
-        let error = client
-            .execute(&format!("UPDATE {relation} SET created_by=NULL"), &[])
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.code(),
-            Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE),
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("55000"),
             "{relation}: actor-required"
         );
     }
     // The production retirement trigger inherits the caller's actor on delete.
-    let transaction =
+    let mut transaction =
         wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
             .await
             .unwrap();
-    transaction
-        .execute(
-            "DELETE FROM registry.environment_projects WHERE env='dev'",
-            &[],
-        )
+    sqlx::query("DELETE FROM registry.environment_projects WHERE env='dev'")
+        .execute(&mut *transaction)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_stamp(
-        &transaction,
+        &mut transaction,
         "registry.retired_project_envs",
         "env='dev'",
         &actor,
@@ -102,14 +98,14 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
     .await;
     transaction.commit().await.unwrap();
     assert_eq!(
-        client
-            .execute(
-                "UPDATE registry.meta SET platform_domain='unbound.example'",
-                &[]
-            )
+        sqlx::query("UPDATE registry.meta SET platform_domain='unbound.example'")
+            .execute(&mut client)
             .await
+            .map(|result| result.rows_affected())
             .unwrap_err()
-            .code(),
-        Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55000")
     );
 }

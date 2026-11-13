@@ -21,9 +21,10 @@
 //! Disable sets `enabled = false` and nothing else. Queued and running runs
 //! finish under the version they pinned.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 
-use tokio_postgres::{Client, Transaction};
 use wamn_catalog::WiringDocument;
 use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use wamn_registry::Triple;
@@ -201,9 +202,9 @@ pub async fn enable_workflow(
         .map(|application| application.packages.clone())
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.project_env_key()).await?;
+        let mut transaction = begin(project, &workflow.project_env_key()).await?;
         enable_in(
-            &transaction,
+            &mut transaction,
             workflow,
             enabler,
             manifest_digest,
@@ -232,14 +233,17 @@ pub async fn disable_workflow(
     workflow: &WorkflowVersion<'_>,
 ) -> Result<(), WorkflowLifecycleError> {
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.project_env_key()).await?;
-        let changed = transaction
-            .execute(
-                DISABLE_SQL,
-                &key(workflow, &workflow.version()?, &workflow.project_env_key()),
-            )
+        let mut transaction = begin(project, &workflow.project_env_key()).await?;
+        let changed = sqlx::query(DISABLE_SQL)
+            .bind(workflow.project_env_key())
+            .bind(workflow.environment)
+            .bind(workflow.application)
+            .bind(workflow.workflow_id)
+            .bind(workflow.version()?)
+            .execute(&mut *transaction)
             .await
-            .map_err(|error| storage("disable the workflow version", error))?;
+            .map_err(|error| storage("disable the workflow version", error))?
+            .rows_affected();
         if changed == 0 {
             return Err(workflow.not_found());
         }
@@ -276,37 +280,26 @@ async fn under_lock(
 async fn begin<'a>(
     project: &'a mut Client,
     project_env_key: &str,
-) -> Result<Transaction<'a>, WorkflowLifecycleError> {
-    let transaction = project
-        .transaction()
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, WorkflowLifecycleError> {
+    let mut transaction = project
+        .begin()
         .await
         .map_err(|error| storage("begin the workflow transaction", error))?;
-    transaction
-        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
+    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await
         .map_err(|error| storage("bind the workflow project identity", error))?;
     Ok(transaction)
 }
 
-async fn commit(transaction: Transaction<'_>) -> Result<(), WorkflowLifecycleError> {
+async fn commit(
+    transaction: sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), WorkflowLifecycleError> {
     transaction
         .commit()
         .await
         .map_err(|error| storage("commit the workflow transaction", error))
-}
-
-fn key<'a>(
-    workflow: &'a WorkflowVersion<'_>,
-    version: &'a i32,
-    project_env_key: &'a String,
-) -> [&'a (dyn tokio_postgres::types::ToSql + Sync); 5] {
-    [
-        project_env_key,
-        &workflow.environment,
-        &workflow.application,
-        &workflow.workflow_id,
-        version,
-    ]
 }
 
 #[expect(
@@ -314,7 +307,7 @@ fn key<'a>(
     reason = "the enabling transaction uses the locked environment and broker"
 )]
 async fn enable_in(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
     manifest_digest: &str,
@@ -325,9 +318,13 @@ async fn enable_in(
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
     let project_env_key = workflow.project_env_key();
-    let key = key(workflow, &version, &project_env_key);
-    let row = transaction
-        .query_opt(SELECT_VERSION_SQL, &key)
+    let row = sqlx::query(SELECT_VERSION_SQL)
+        .bind(&project_env_key)
+        .bind(workflow.environment)
+        .bind(workflow.application)
+        .bind(workflow.workflow_id)
+        .bind(version)
+        .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| storage("read the workflow version", error))?
         .ok_or_else(|| workflow.not_found())?;
@@ -429,27 +426,37 @@ async fn enable_in(
         None
     };
 
-    transaction
-        .execute(DISABLE_OTHERS_SQL, &key)
+    sqlx::query(DISABLE_OTHERS_SQL)
+        .bind(&project_env_key)
+        .bind(workflow.environment)
+        .bind(workflow.application)
+        .bind(workflow.workflow_id)
+        .bind(version)
+        .execute(&mut **transaction)
         .await
         .map_err(|error| storage("disable the enabled version", error))?;
-    transaction
-        .execute(
-            ENABLE_SQL,
-            &[key[0], key[1], key[2], key[3], key[4], &enable_sequence],
-        )
+    sqlx::query(ENABLE_SQL)
+        .bind(&project_env_key)
+        .bind(workflow.environment)
+        .bind(workflow.application)
+        .bind(workflow.workflow_id)
+        .bind(version)
+        .bind(enable_sequence)
+        .execute(&mut **transaction)
         .await
         .map_err(|error| storage("enable the workflow version", error))?;
     Ok(())
 }
 
 async fn holds_role(
-    transaction: &Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: &str,
     roles: &[&str],
 ) -> Result<bool, WorkflowLifecycleError> {
-    Ok(transaction
-        .query_one(HOLDS_ROLE_SQL, &[&user_id, &roles])
+    Ok(sqlx::query(HOLDS_ROLE_SQL)
+        .bind(user_id)
+        .bind(roles)
+        .fetch_one(&mut **transaction)
         .await
         .map_err(|error| storage("read the role assignments", error))?
         .get(0))
@@ -465,7 +472,7 @@ impl WorkflowLifecycleError {
     }
 }
 
-fn storage(context: &'static str, error: tokio_postgres::Error) -> WorkflowLifecycleError {
+fn storage(context: &'static str, error: sqlx::Error) -> WorkflowLifecycleError {
     WorkflowLifecycleError::with_source(WorkflowLifecycleErrorType::Storage, context, error)
 }
 

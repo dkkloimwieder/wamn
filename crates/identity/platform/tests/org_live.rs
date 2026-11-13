@@ -2,6 +2,7 @@
 //! (docs/architecture/overview.md#organization-membership-and-administration):
 //! Administration is inherited from explicit grants. Invalid targets are refused.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
     IdentityErrorType, create_or_reuse_user,
@@ -31,39 +32,43 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
     // The system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
-    let (client, connection) = tokio_postgres::connect(test_database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(test_database.url())
         .await
         .expect("connect the org grant test database");
-    let connection_task = tokio::spawn(async move {
-        connection.await.expect("drive the org grant test database");
-    });
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; \
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS identity CASCADE; \
              DROP SCHEMA IF EXISTS provisioning CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-             THEN CREATE ROLE wamn_system; END IF; END $$;",
-        )
+             THEN CREATE ROLE wamn_system; END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("prepare empty platform schemas");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut client)
         .await
-        .expect("prepare empty platform schemas");
-    client
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("apply the system schema composition");
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .expect("bind wamn:provisioning for the fixture session");
-    client.batch_execute(SEED_SQL).await.expect("seed the orgs");
-    let ann = create_or_reuse_user(&client, "ann@example.test", "Ann")
+    sqlx::raw_sql(SEED_SQL)
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .expect("seed the orgs");
+    let ann = create_or_reuse_user(&mut client, "ann@example.test", "Ann")
         .await
         .expect("create ann")
         .principal_id;
-    let ben = create_or_reuse_user(&client, "ben@example.test", "Ben")
+    let ben = create_or_reuse_user(&mut client, "ben@example.test", "Ben")
         .await
         .expect("create ben")
         .principal_id;
@@ -72,120 +77,126 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         grant_environment_admin, revoke_environment_admin, revoke_org_admin,
     };
     use wamn_platform_identity::{control::is_project_admin, has_project_env_membership};
-    let refused = grant_org_admin(&client, &ann, "acme").await.unwrap_err();
+    let refused = grant_org_admin(&mut client, &ann, "acme")
+        .await
+        .unwrap_err();
     assert_eq!(refused.error_type(), IdentityErrorType::NotFound);
-    activate_org_membership(&client, &ann, "acme")
+    activate_org_membership(&mut client, &ann, "acme")
         .await
         .unwrap();
-    grant_org_admin(&client, &ann, "acme").await.unwrap();
-    for row in client
-        .query(
-            "SELECT org,env,project FROM registry.environment_projects WHERE org='acme'",
-            &[],
-        )
-        .await
-        .unwrap()
+    grant_org_admin(&mut client, &ann, "acme").await.unwrap();
+    for row in
+        sqlx::query("SELECT org,env,project FROM registry.environment_projects WHERE org='acme'")
+            .fetch_all(&mut client)
+            .await
+            .unwrap()
     {
         let org: String = row.get(0);
         let env: String = row.get(1);
         let project: String = row.get(2);
         assert!(
-            is_project_admin(&client, &ann, &org, &project, Some(&env))
+            is_project_admin(&mut client, &ann, &org, &project, Some(&env))
                 .await
                 .unwrap()
         );
         assert!(
-            has_project_env_membership(&client, &ann, &org, &project, &env)
+            has_project_env_membership(&mut client, &ann, &org, &project, &env)
                 .await
                 .unwrap()
         );
     }
-    assert!(!client.query_one("SELECT EXISTS (SELECT FROM identity.project_roles WHERE principal_id=$1::text::uuid) OR EXISTS (SELECT FROM identity.project_env_memberships WHERE principal_id=$1::text::uuid)",&[&ann.to_string()]).await.unwrap().get::<_,bool>(0));
-    activate_org_membership(&client, &ben, "acme")
+    assert!(!sqlx::query("SELECT EXISTS (SELECT FROM identity.project_roles WHERE principal_id=$1::text::uuid) OR EXISTS (SELECT FROM identity.project_env_memberships WHERE principal_id=$1::text::uuid)").bind(&ann.to_string()).fetch_one(&mut client).await.unwrap().get::<bool, _>(0));
+    activate_org_membership(&mut client, &ben, "acme")
         .await
         .unwrap();
-    grant_environment_admin(&client, &ben, "acme", "dev")
+    grant_environment_admin(&mut client, &ben, "acme", "dev")
         .await
         .unwrap();
     assert!(
-        is_project_admin(&client, &ben, "acme", "shop", Some("dev"))
+        is_project_admin(&mut client, &ben, "acme", "shop", Some("dev"))
             .await
             .unwrap()
     );
     assert!(
-        !is_project_admin(&client, &ben, "acme", "shop", Some("prod"))
+        !is_project_admin(&mut client, &ben, "acme", "shop", Some("prod"))
             .await
             .unwrap()
     );
     assert!(
-        !wamn_platform_identity::control::is_org_admin(&client, &ben, "acme")
+        !wamn_platform_identity::control::is_org_admin(&mut client, &ben, "acme")
             .await
             .unwrap()
     );
     assert!(
-        grant_project_admin(&client, &ben, "acme", "missing")
+        grant_project_admin(&mut client, &ben, "acme", "missing")
             .await
             .is_err()
     );
     assert!(
-        grant_project_admin(&client, &ben, "other", "billing")
+        grant_project_admin(&mut client, &ben, "other", "billing")
             .await
             .is_err()
     );
     assert!(
-        grant_environment_admin(&client, &ben, "other", "dev")
+        grant_environment_admin(&mut client, &ben, "other", "dev")
             .await
             .is_err()
     );
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    revoke_environment_admin(&client, &ben, "acme", "dev", &mut drops)
+    revoke_environment_admin(&mut client, &ben, "acme", "dev", &mut drops)
         .await
         .unwrap();
     assert!(
-        !has_project_env_membership(&client, &ben, "acme", "shop", "dev")
+        !has_project_env_membership(&mut client, &ben, "acme", "shop", "dev")
             .await
             .unwrap()
     );
-    grant_project_admin(&client, &ben, "acme", "billing")
+    grant_project_admin(&mut client, &ben, "acme", "billing")
         .await
         .unwrap();
     assert!(
-        is_project_admin(&client, &ben, "acme", "billing", Some("prod"))
+        is_project_admin(&mut client, &ben, "acme", "billing", Some("prod"))
             .await
             .unwrap()
     );
     assert!(
-        !is_project_admin(&client, &ben, "acme", "shop", Some("dev"))
+        !is_project_admin(&mut client, &ben, "acme", "shop", Some("dev"))
             .await
             .unwrap()
     );
-    client.execute("UPDATE identity.org_memberships SET status='inactive' WHERE principal_id=$1::text::uuid",&[&ben.to_string()]).await.unwrap();
+    sqlx::query(
+        "UPDATE identity.org_memberships SET status='inactive' WHERE principal_id=$1::text::uuid",
+    )
+    .bind(&ben.to_string())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     assert!(
-        !has_project_env_membership(&client, &ben, "acme", "billing", "dev")
+        !has_project_env_membership(&mut client, &ben, "acme", "billing", "dev")
             .await
             .unwrap()
     );
     assert!(
-        grant_project_admin(&client, &ben, "acme", "shop")
+        grant_project_admin(&mut client, &ben, "acme", "shop")
             .await
             .is_err()
     );
-    grant_project_admin(&client, &ann, "acme", "billing")
+    grant_project_admin(&mut client, &ann, "acme", "billing")
         .await
         .unwrap();
-    revoke_org_admin(&client, &ann, "acme", &mut drops)
+    revoke_org_admin(&mut client, &ann, "acme", &mut drops)
         .await
         .unwrap();
     assert!(
-        is_project_admin(&client, &ann, "acme", "billing", Some("dev"))
+        is_project_admin(&mut client, &ann, "acme", "billing", Some("dev"))
             .await
             .unwrap()
     );
     assert!(
-        !is_project_admin(&client, &ann, "acme", "shop", Some("dev"))
+        !is_project_admin(&mut client, &ann, "acme", "shop", Some("dev"))
             .await
             .unwrap()
     );
     drop(client);
-    connection_task.await.unwrap();
 }

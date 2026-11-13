@@ -1,5 +1,6 @@
 //! Atomic admission of every matching event workflow for one delivery.
 
+use sqlx::Row as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_identity_protocol::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_materializer::workflow::{EventTrigger, SourceEvent};
@@ -35,7 +36,7 @@ fn invalid(
     ProductionLeaseError::with_source(ProductionLeaseErrorType::Contract, operation, error)
 }
 
-fn trigger(row: &tokio_postgres::Row) -> Result<EventTrigger, ProductionLeaseError> {
+fn trigger(row: &sqlx::postgres::PgRow) -> Result<EventTrigger, ProductionLeaseError> {
     let ops: String = row.get(4);
     let sequence: i64 = row.get(6);
     Ok(EventTrigger {
@@ -77,18 +78,19 @@ impl WamnPostgres {
         environment: &str,
     ) -> Result<Vec<EventTrigger>, ProductionLeaseError> {
         self.executor_read(project, project_env_key, async |connection| {
-            connection
-                .query(
-                    "SELECT application, workflow_id, source_package, entity, \
+            sqlx::query(
+                "SELECT application, workflow_id, source_package, entity, \
                      array_to_json(ops)::text, condition, enable_sequence \
                      FROM catalog.workflows WHERE project_env_key = $1 AND environment = $2 \
                      AND enabled AND trigger = 'event' ORDER BY application, workflow_id",
-                    &[&project_env_key, &environment],
-                )
-                .await?
-                .iter()
-                .map(|row| trigger(row).map_err(anyhow::Error::from))
-                .collect()
+            )
+            .bind(project_env_key)
+            .bind(environment)
+            .fetch_all(&mut *connection)
+            .await?
+            .iter()
+            .map(|row| trigger(row).map_err(anyhow::Error::from))
+            .collect()
         })
         .await
         .map_err(|error| storage("read enabled event triggers", error))
@@ -104,14 +106,14 @@ impl WamnPostgres {
     ) -> Result<(), ProductionLeaseError> {
         let target = release.target();
         let project_env_key = &target.project_env_key;
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| storage("checkout event admission", error))?;
         let executor = PlatformComponent::Executor.principal_id().to_string();
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 project_env_key,
@@ -130,7 +132,7 @@ impl WamnPostgres {
             return Err(storage("begin event admission", error));
         }
         let result = async {
-            require_executor_authority(&connection).await?;
+            require_executor_authority(&mut connection).await?;
             let source = SourceEvent::decode(admission.envelope.as_bytes())
                 .map_err(|error| invalid("decode event", error))?;
             if admission.sequence == 0
@@ -159,11 +161,11 @@ impl WamnPostgres {
                 .values()
                 .flat_map(|application| application.packages.iter().cloned())
                 .collect();
-            let rows = connection
-                .query(
-                    ENABLED_EVENTS_SQL,
-                    &[project_env_key, &target.environment, &names],
-                )
+            let rows = sqlx::query(ENABLED_EVENTS_SQL)
+                .bind(project_env_key)
+                .bind(&target.environment)
+                .bind(&names)
+                .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| storage("read event workflows", error))?;
             let mut matches = Vec::new();
@@ -180,7 +182,7 @@ impl WamnPostgres {
                 return Ok(());
             }
             let actor = match &source {
-                SourceEvent::Cdc(envelope) => history_actor(&connection, envelope).await?,
+                SourceEvent::Cdc(envelope) => history_actor(&mut connection, envelope).await?,
                 SourceEvent::Derived(_) => None,
             };
             let parent = match &source {
@@ -207,8 +209,11 @@ impl WamnPostgres {
                 let input = input.to_string();
                 // A delivery committed by an earlier host retains its manifest
                 // and node digests, even when this release cannot run its graph.
-                if connection
-                    .query_opt(select_event_run_sql(), &[project_env_key, &key, &input])
+                if sqlx::query(sqlx::AssertSqlSafe((select_event_run_sql()).to_string()))
+                    .bind(project_env_key)
+                    .bind(&key)
+                    .bind(&input)
+                    .fetch_optional(&mut *connection)
                     .await
                     .map_err(|error| storage("read existing event run", error))?
                     .is_some()
@@ -219,7 +224,7 @@ impl WamnPostgres {
                 let graph_json: String = row.get(8);
                 let hash: String = row.get(9);
                 let role = row
-                    .get::<_, Option<String>>(10)
+                    .get::<Option<String>, _>(10)
                     .unwrap_or_else(|| ADMIN_ROLE.to_owned());
                 let graph = super::workflow_resolution::parse_graph(&graph_json)
                     .map_err(|error| invalid("parse event workflow", error))?;
@@ -254,39 +259,41 @@ impl WamnPostgres {
                 )
                 .to_string();
                 let digest = release.release().manifest_digest.as_str();
-                let inserted = connection
-                    .query_opt(
-                        &insert_event_run_sql(),
-                        &[
-                            project_env_key,
-                            &event.application,
-                            &digest,
-                            &target.environment,
-                            &event.workflow_id,
-                            &version,
-                            &hash,
-                            &principal,
-                            &role,
-                            &delivery,
-                            &actor,
-                            &digests,
-                            &key,
-                            &input,
-                            &source_run,
-                            &root_run,
-                            &depth,
-                        ],
-                    )
+                let inserted = sqlx::query(sqlx::AssertSqlSafe(insert_event_run_sql()))
+                    .bind(project_env_key)
+                    .bind(&event.application)
+                    .bind(digest)
+                    .bind(&target.environment)
+                    .bind(&event.workflow_id)
+                    .bind(version)
+                    .bind(&hash)
+                    .bind(&principal)
+                    .bind(&role)
+                    .bind(&delivery)
+                    .bind(&actor)
+                    .bind(&digests)
+                    .bind(&key)
+                    .bind(&input)
+                    .bind(source_run)
+                    .bind(root_run)
+                    .bind(depth)
+                    .fetch_optional(&mut *connection)
                     .await
                     .map_err(|error| storage("insert event run", error))?;
                 if let Some(row) = inserted {
                     let run_id: String = row.get(0);
-                    connection
-                        .execute(insert_run_queue_sql(), &[project_env_key, &run_id])
+                    sqlx::query(sqlx::AssertSqlSafe((insert_run_queue_sql()).to_string()))
+                        .bind(project_env_key)
+                        .bind(&run_id)
+                        .execute(&mut *connection)
                         .await
+                        .map(|result| result.rows_affected())
                         .map_err(|error| storage("queue event run", error))?;
-                } else if connection
-                    .query_opt(select_event_run_sql(), &[project_env_key, &key, &input])
+                } else if sqlx::query(sqlx::AssertSqlSafe((select_event_run_sql()).to_string()))
+                    .bind(project_env_key)
+                    .bind(&key)
+                    .bind(&input)
+                    .fetch_optional(&mut *connection)
                     .await
                     .map_err(|error| storage("read existing event run", error))?
                     .is_none()
@@ -315,10 +322,10 @@ pub struct EventBatchAdmission<'a> {
 }
 
 async fn history_actor(
-    connection: &tokio_postgres::Client,
+    connection: &mut sqlx::PgConnection,
     envelope: &wamn_event_wire::Envelope,
 ) -> Result<Option<String>, ProductionLeaseError> {
-    let schemas = connection.query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' ORDER BY 1", &[]).await
+    let schemas = sqlx::query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' ORDER BY 1").fetch_all(&mut *connection).await
         .map_err(|error| storage("read entity map schemas", error))?;
     for row in schemas {
         let schema: String = row.get(0);
@@ -326,21 +333,25 @@ async fn history_actor(
         let sql = format!(
             "SELECT c.oid, c.relname::text FROM {quoted_schema}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid WHERE m.package_id = $1 AND m.entity_id = $2 AND c.relname = m.table_name AND c.relnamespace = $3::text::regnamespace"
         );
-        let Some(model) = connection
-            .query_opt(&sql, &[&envelope.package_id, &envelope.entity, &schema])
+        let Some(model) = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(&envelope.package_id)
+            .bind(&envelope.entity)
+            .bind(&schema)
+            .fetch_optional(&mut *connection)
             .await
             .map_err(|error| storage("resolve event history model", error))?
         else {
             continue;
         };
-        let oid: u32 = model.get(0);
+        let oid: sqlx::postgres::types::Oid = model.get(0);
         let table: String = model.get(1);
         let history = format!(
             "{quoted_schema}.{}",
             postgres_protocol::escape::escape_identifier(&format!("{table}_history"))
         );
-        let present: bool = connection
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&history])
+        let present: bool = sqlx::query("SELECT to_regclass($1) IS NOT NULL")
+            .bind(&history)
+            .fetch_one(&mut *connection)
             .await
             .map_err(|error| storage("locate event history", error))?
             .get(0);
@@ -363,16 +374,12 @@ async fn history_actor(
         let sql = format!(
             "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by::text FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
         );
-        return connection
-            .query_opt(
-                &sql,
-                &[
-                    &i64::from(envelope.txid),
-                    &envelope.op.as_str(),
-                    &image,
-                    &oid,
-                ],
-            )
+        return sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(i64::from(envelope.txid))
+            .bind(envelope.op.as_str())
+            .bind(&image)
+            .bind(oid)
+            .fetch_optional(&mut *connection)
             .await
             .map(|row| row.and_then(|row| row.get(0)))
             .map_err(|error| storage("read event history actor", error));

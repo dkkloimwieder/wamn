@@ -521,12 +521,12 @@ impl ConnectionHttp {
             .await
             .map_err(|error| {
                 let database_error = error
-                    .downcast_ref::<tokio_postgres::Error>()
-                    .and_then(tokio_postgres::Error::as_db_error);
+                    .downcast_ref::<sqlx::Error>()
+                    .and_then(sqlx::Error::as_database_error);
                 tracing::warn!(
                     error = %error,
-                    sqlstate = database_error.map(|error| error.code().code()),
-                    database_message = database_error.map(tokio_postgres::error::DbError::message),
+                    sqlstate = database_error.and_then(sqlx::error::DatabaseError::code).as_deref(),
+                    database_message = database_error.map(sqlx::error::DatabaseError::message),
                     "trusted HTTP connection authority snapshot failed"
                 );
                 ConnectionError::Transport(AUTHORITY_SNAPSHOT_UNAVAILABLE.to_string())

@@ -2,7 +2,6 @@ use super::{
     Authorities, BTreeSet, EnvironmentDocument, EnvironmentRow, Notice, Observation, Platform,
     Revision, Value,
 };
-use anyhow::Context as _;
 
 pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
     (replicas != Some(1)).then(|| {
@@ -34,17 +33,15 @@ pub(crate) fn project_url(
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
-    let mut url = url::Url::parse(&platform.system_database_url).context("parse the system URL")?;
-    url.set_path(&format!(
-        "/{}",
-        wamn_control_provision::project_env_database_name(
+    wamn_postgres::database_configuration(
+        &platform.system_database_url,
+        &wamn_control_provision::project_env_database_name(
             &document.org,
             &document.project,
             &document.env,
-            &row.instance_suffix
-        )
-    ));
-    Ok(url.to_string())
+            &row.instance_suffix,
+        ),
+    )
 }
 
 /// The newest entry of `helm history` with status `deployed` or `superseded`.

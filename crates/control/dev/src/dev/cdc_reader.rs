@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use tokio::process::{Child, Command};
-use tokio_postgres::NoTls;
 
 use super::config::{CdcReader, DevConfig};
 
@@ -25,25 +24,25 @@ const STARTUP_BUDGET: Duration = Duration::from_secs(60);
 pub(crate) async fn apply_cdc_sql(config: &DevConfig, reader: &CdcReader) -> anyhow::Result<()> {
     let sql = std::fs::read_to_string(&reader.cdc_sql_file)
         .with_context(|| format!("read {}", reader.cdc_sql_file.display()))?;
-    let (client, connection) = tokio_postgres::connect(config.target_database_url(), NoTls)
+    let mut client = wamn_postgres::connect(config.target_database_url())
         .await
         .context("connect to the target for its CDC SQL")?;
-    let driver = tokio::spawn(connection);
+
     // One line is one statement group of the verb's file. Each runs in its own
     // transaction, as `psql` runs the file in the cluster, because a slot
     // cannot be made in a transaction that has written.
     let result = async {
         for line in sql.lines().filter(|line| !line.trim().is_empty()) {
-            client
-                .batch_execute(line)
+            sqlx::raw_sql(sqlx::AssertSqlSafe((line).to_string()))
+                .execute(&mut client)
                 .await
+                .map(drop)
                 .context("apply the CDC SQL to the target")?;
         }
         Ok(())
     }
     .await;
     drop(client);
-    driver.abort();
     result
 }
 

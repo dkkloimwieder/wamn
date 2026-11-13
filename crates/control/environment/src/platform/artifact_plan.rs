@@ -533,7 +533,7 @@ mod tests {
             &document,
             selected.image("identity")?,
         )?;
-        for (target, mut installed) in [
+        for (mut target, mut installed) in [
             (
                 UpgradeTarget::Control,
                 control::release_values(&document, selected.values())?,
@@ -541,7 +541,8 @@ mod tests {
             (UpgradeTarget::Identity, identity["values"].clone()),
         ] {
             installed["platform"] = json!({"chart":"/previous/chart", "retained":"configuration"});
-            let mut values = selected.selection_values(&document, &target, installed.clone())?;
+            let mut values =
+                selected.selection_values(&document, &mut target, installed.clone())?;
             let (name, namespace) = target.owner(&document);
             let entry = match target {
                 UpgradeTarget::Control => json!({
@@ -674,11 +675,11 @@ mod tests {
             let group = installed["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
                 .as_str()
                 .unwrap();
-            let target = UpgradeTarget::Host {
+            let mut target = UpgradeTarget::Host {
                 release: group.into(),
                 group: group.into(),
             };
-            let mut values = selected.selection_values(&cluster, &target, installed.clone())?;
+            let mut values = selected.selection_values(&cluster, &mut target, installed.clone())?;
             let (name, namespace) = target.owner(&cluster);
             let entry = json!({"chart":original.directory(), "version":original.version,
                 "name":name, "namespace":namespace, "values":installed});

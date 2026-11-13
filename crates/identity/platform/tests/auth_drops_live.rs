@@ -3,10 +3,11 @@
 //! real PostgreSQL, and the test tests the drop it records. A new writer
 //! takes an `AuthDrops`, so it does not compile until it joins this list.
 
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 use wamn_broker::Publisher;
 
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use wamn_broker::auth_changes::{AuthChange, AuthDrops};
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
@@ -41,24 +42,24 @@ fn actor() -> PrincipalId {
 }
 
 async fn connect(url: &str, role: Option<&str>) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(async move { connection.await.unwrap() });
+    let mut client = wamn_postgres::connect(url).await.unwrap();
+
     if let Some(role) = role {
-        client
-            .batch_execute(&format!("SET ROLE {role}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {role}")))
+            .execute(&mut client)
             .await
+            .map(drop)
             .unwrap();
     }
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'wamn:provisioning', false)",
-            &[&actor().to_string().as_str()],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&actor().to_string().as_str())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     client
 }
 
@@ -66,8 +67,8 @@ async fn login(
     client: &mut Client,
     principal: &PrincipalId,
 ) -> wamn_platform_identity::password_login::Renewal {
-    let tx = client.transaction().await.unwrap();
-    let issued = create_login(&tx, principal, ISSUER, AUDIENCE)
+    let mut tx = client.begin().await.unwrap();
+    let issued = create_login(&mut tx, principal, ISSUER, AUDIENCE)
         .await
         .unwrap()
         .unwrap();
@@ -88,14 +89,15 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url(), Some("wamn_system")).await;
-    client
-        .batch_execute(&test_database::seed_org_project_env_sql(
-            "acme", "billing", "dev",
-        ))
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&test_database::seed_org_project_env_sql("acme", "billing", "dev")).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     let alice = *create_user(
-        &client,
+        &mut client,
         "alice@example.invalid",
         "alice@example.invalid",
         "Alice",
@@ -105,36 +107,36 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     .id();
 
     // The org writers.
-    activate_org_membership(&client, &alice, "acme")
+    activate_org_membership(&mut client, &alice, "acme")
         .await
         .unwrap();
-    grant_member(&client, &alice, "acme", "billing", "dev")
+    grant_member(&mut client, &alice, "acme", "billing", "dev")
         .await
         .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_member(&client, &alice, "acme", "billing", "dev", &mut drops)
+    revoke_member(&mut client, &alice, "acme", "billing", "dev", &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_member");
 
-    grant_project_admin(&client, &alice, "acme", "billing")
+    grant_project_admin(&mut client, &alice, "acme", "billing")
         .await
         .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_project_admin(&client, &alice, "acme", "billing", &mut drops)
+    revoke_project_admin(&mut client, &alice, "acme", "billing", &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_project_admin");
 
-    grant_org_admin(&client, &alice, "acme").await.unwrap();
+    grant_org_admin(&mut client, &alice, "acme").await.unwrap();
     let mut drops = AuthDrops::default();
-    revoke_org_admin(&client, &alice, "acme", &mut drops)
+    revoke_org_admin(&mut client, &alice, "acme", &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_org_admin");
 
     let mut drops = AuthDrops::default();
-    deactivate_org_membership(&client, &alice, "acme", &mut drops)
+    deactivate_org_membership(&mut client, &alice, "acme", &mut drops)
         .await
         .unwrap();
     assert_eq!(
@@ -143,14 +145,14 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
         "deactivate_org_membership"
     );
 
-    activate_org_membership(&client, &alice, "acme")
+    activate_org_membership(&mut client, &alice, "acme")
         .await
         .unwrap();
-    grant_project_env_membership(&client, &alice, "acme", "billing", "dev")
+    grant_project_env_membership(&mut client, &alice, "acme", "billing", "dev")
         .await
         .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_project_env_membership(&client, &alice, "acme", "billing", "dev", &mut drops)
+    revoke_project_env_membership(&mut client, &alice, "acme", "billing", "dev", &mut drops)
         .await
         .unwrap();
     assert_eq!(
@@ -160,23 +162,28 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     );
 
     // The PAT writer finds the principal from the token prefix.
-    let service = create_service(&client, "api", "API", &mut AuthDrops::default())
+    let service = create_service(&mut client, "api", "API", &mut AuthDrops::default())
         .await
         .unwrap();
-    let issued = issue_pat(&client, service.id(), "laptop", Duration::from_secs(3600))
-        .await
-        .unwrap();
+    let issued = issue_pat(
+        &mut client,
+        service.id(),
+        "laptop",
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
     let mut drops = AuthDrops::default();
-    revoke_pat(&client, issued.record().prefix(), &mut drops)
+    revoke_pat(&mut client, issued.record().prefix(), &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(service.id()), "revoke_pat");
 
     // The login writers find the principal from the renewal secret.
     let first = login(&mut client, &alice).await;
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
-    revoke_login(&tx, ISSUER, AUDIENCE, first.secret(), &mut drops)
+    revoke_login(&mut tx, ISSUER, AUDIENCE, first.secret(), &mut drops)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -184,28 +191,28 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
 
     // A replayed renewal secret revokes its login in both readers of it.
     let second = login(&mut client, &alice).await;
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
-    rotate_login(&tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
+    rotate_login(&mut tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
         .await
         .unwrap()
         .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(changes(&drops), Vec::new(), "a rotation revokes nothing");
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
     assert!(
-        rotate_login(&tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
+        rotate_login(&mut tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
             .await
             .unwrap()
             .is_none()
     );
     tx.commit().await.unwrap();
     assert_eq!(changes(&drops), identity(&alice), "rotate_login replay");
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
     assert!(
-        authenticate_renewal(&tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
+        authenticate_renewal(&mut tx, ISSUER, AUDIENCE, second.secret(), &mut drops)
             .await
             .unwrap()
             .is_none()
@@ -217,9 +224,9 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
         "authenticate_renewal replay"
     );
 
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut drops = AuthDrops::default();
-    revoke_all(&tx, &alice, &mut drops).await.unwrap();
+    revoke_all(&mut tx, &alice, &mut drops).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(changes(&drops), identity(&alice), "revoke_all");
 
@@ -249,7 +256,7 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     assert_eq!(changes(&drops), identity(&alice), "reset_password");
 
     let mut drops = AuthDrops::default();
-    disable_principal(&client, &alice, &mut drops)
+    disable_principal(&mut client, &alice, &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), identity(&alice), "disable_principal");
@@ -258,18 +265,20 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
 #[tokio::test]
 async fn every_application_writer_records_a_drop_of_its_project_env_key_or_principal() {
     let database = wamn_platform_identity::test_database::project_platform();
-    let client = connect(database.url(), None).await;
-    client
-        .batch_execute(&platform_principals_sql("example.invalid").unwrap())
-        .await
-        .unwrap();
+    let mut client = connect(database.url(), None).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&platform_principals_sql("example.invalid").unwrap()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     // The writes stamp wamn:provisioning for the whole session.
-    client
-        .execute(
-            "SELECT set_config('app.operation', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_name()],
-        )
+    sqlx::query("SELECT set_config('app.operation', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_name())
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     let bob: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000001".parse().unwrap();
     let robot: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000002".parse().unwrap();
@@ -287,18 +296,20 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     let project_env_key = vec![AuthChange::ProjectEnvKey("t1".to_owned())];
 
     let mut drops = AuthDrops::default();
-    write_user(&client, "t1", user(&bob), &mut drops)
+    write_user(&mut client, "t1", user(&bob), &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "write_user");
 
     let mut drops = AuthDrops::default();
-    remove_admin(&client, "t1", &bob, &mut drops).await.unwrap();
+    remove_admin(&mut client, "t1", &bob, &mut drops)
+        .await
+        .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "remove_admin");
 
     let mut drops = AuthDrops::default();
     write_service(
-        &client,
+        &mut client,
         "t1",
         ApplicationUser {
             principal_id: &robot,
@@ -312,14 +323,14 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     assert_eq!(changes(&drops), principal(&robot), "write_service");
 
     let mut drops = AuthDrops::default();
-    create_role(&client, "t1", "clerk", &mut drops)
+    create_role(&mut client, "t1", "clerk", &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), project_env_key, "create_role");
 
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
-        &client,
+        &mut client,
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
@@ -335,7 +346,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
 
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
-        &client,
+        &mut client,
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::Permission {
@@ -351,7 +362,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
 
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
-        &client,
+        &mut client,
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
@@ -367,7 +378,7 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
 
     let mut drops = AuthDrops::default();
     wamn_platform_identity::application::mutate_grant(
-        &client,
+        &mut client,
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
@@ -382,17 +393,19 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
     assert_eq!(changes(&drops), principal(&bob), "revoke_user_role");
 
     let mut drops = AuthDrops::default();
-    delete_role(&client, "t1", "clerk", &mut drops)
+    delete_role(&mut client, "t1", "clerk", &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), project_env_key, "delete_role");
 
     let mut drops = AuthDrops::default();
-    remove_user(&client, "t1", &bob, &mut drops).await.unwrap();
+    remove_user(&mut client, "t1", &bob, &mut drops)
+        .await
+        .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "remove_user");
 
     let mut drops = AuthDrops::default();
-    write_environment_status(&client, "t1", EnvironmentStatus::Inactive, &mut drops)
+    write_environment_status(&mut client, "t1", EnvironmentStatus::Inactive, &mut drops)
         .await
         .unwrap();
     assert_eq!(changes(&drops), project_env_key, "write_environment_status");
@@ -417,17 +430,20 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
     let bucket = auth_bucket(&broker).await.unwrap();
     let publisher = Publisher::new(broker);
     let database = wamn_platform_identity::test_database::project_platform();
-    let client = connect(database.url(), None).await;
-    client
-        .batch_execute(&platform_principals_sql("example.invalid").unwrap())
-        .await
-        .unwrap();
+    let mut client = connect(database.url(), None).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&platform_principals_sql("example.invalid").unwrap()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     let bob: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000001".parse().unwrap();
     let robot: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000002".parse().unwrap();
     let mut seed_drops = AuthDrops::default();
     for principal in [&bob, &robot] {
         write_user(
-            &client,
+            &mut client,
             "t1",
             ApplicationUser {
                 principal_id: principal,
@@ -459,13 +475,13 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
         let mut drops = AuthDrops::default();
         match operation {
             "create_role" => {
-                create_role(&client, "t1", "clerk", &mut drops)
+                create_role(&mut client, "t1", "clerk", &mut drops)
                     .await
                     .unwrap();
             }
             "grant_permission" => {
                 wamn_platform_identity::application::mutate_grant(
-                    &client,
+                    &mut client,
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::Permission {
@@ -480,7 +496,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
             }
             "revoke_permission" => {
                 wamn_platform_identity::application::mutate_grant(
-                    &client,
+                    &mut client,
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::Permission {
@@ -495,7 +511,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
             }
             "grant_user_role" => {
                 wamn_platform_identity::application::mutate_grant(
-                    &client,
+                    &mut client,
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
@@ -510,7 +526,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
             }
             "revoke_user_role" => {
                 wamn_platform_identity::application::mutate_grant(
-                    &client,
+                    &mut client,
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
@@ -524,7 +540,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
                 .unwrap();
             }
             "delete_role" => {
-                delete_role(&client, "t1", "clerk", &mut drops)
+                delete_role(&mut client, "t1", "clerk", &mut drops)
                     .await
                     .unwrap();
             }

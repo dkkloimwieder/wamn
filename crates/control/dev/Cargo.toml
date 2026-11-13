@@ -10,6 +10,8 @@ default = []
 test-util = []
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
@@ -27,7 +29,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
 tracing = { workspace = true }
 url = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -53,7 +54,6 @@ wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
 uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }

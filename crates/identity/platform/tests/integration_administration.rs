@@ -1,5 +1,6 @@
 //! Route writes keep private values in the store and generations in their target environment.
 
+use sqlx::{Connection as _, Row as _};
 use std::sync::Mutex;
 
 use serde_json::{Value, json};
@@ -34,22 +35,29 @@ impl Store for RecordingStore {
 }
 
 async fn execute(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     store: &RecordingStore,
     operation: &str,
     request: Value,
 ) -> Value {
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
     let result = administration::execute_with_store(
-        &tx,
+        &mut tx,
         "acme",
         operation,
         &request.to_string(),
@@ -67,31 +75,34 @@ async fn execute(
 async fn write_and_copy_keep_environment_generations_and_credentials_separate() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    tokio::spawn(driver);
-    client
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
-        .await
-        .unwrap();
-    client
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     for env in ["dev", "prod"] {
-        client
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", "app", env,
-                ),
-            )
-            .await
-            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", env))
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
     }
-    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").execute(&mut client).await.map(drop).unwrap();
     let store = RecordingStore::default();
     execute(
         &mut client,
@@ -133,34 +144,36 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate() 
         2,
         "copy must never write a credential"
     );
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    let rows = client.query("SELECT c.env,c.active_generation,g.credential_id::text FROM registry.connection c \
-        JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) ORDER BY c.env", &[]).await.unwrap();
-    assert_eq!(rows[0].get::<_, i64>(1), 2);
-    assert_eq!(rows[1].get::<_, i64>(1), 2);
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    let rows = sqlx::query("SELECT c.env,c.active_generation,g.credential_id::text FROM registry.connection c \
+        JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) ORDER BY c.env").fetch_all(&mut client).await.unwrap();
+    assert_eq!(rows[0].get::<i64, _>(1), 2);
+    assert_eq!(rows[1].get::<i64, _>(1), 2);
     let source: String = rows[0].get(2);
     let target: String = rows[1].get(2);
     assert_ne!(source, target);
-    let credential_ids: Vec<String> = client
-        .query(
-            "SELECT credential_id::text FROM registry.connection_generation \
+    let credential_ids: Vec<String> = sqlx::query(
+        "SELECT credential_id::text FROM registry.connection_generation \
         WHERE connection_id=$1::text::uuid ORDER BY generation",
-            &[&created[1]["id"].as_str().unwrap()],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
+    )
+    .bind(&created[1]["id"].as_str().unwrap())
+    .fetch_all(&mut client)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|row| row.get(0))
+    .collect();
     assert_eq!(credential_ids, vec![target.clone(), target]);
-    let metadata: String = client
-        .query_one(
-            "SELECT jsonb_agg(to_jsonb(k))::text FROM identity.credential k",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let metadata: String =
+        sqlx::query("SELECT jsonb_agg(to_jsonb(k))::text FROM identity.credential k")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     assert!(!metadata.contains("private-dev"));
     assert!(!metadata.contains("private-prod"));
 }
@@ -169,27 +182,32 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate() 
 async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    tokio::spawn(driver);
-    client
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
-        .await
-        .unwrap();
-    client
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
-    client
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
-        )
-        .await
-        .unwrap();
-    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"))
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").execute(&mut client).await.map(drop).unwrap();
     let store = RecordingStore::default();
     execute(&mut client, &store, "integration.write", json!({"project":"app","name":"oauth","integration_type":"http","auth_type":"oauth2_client_credentials"})).await;
     let mut parameters = json!({"primary-authority":"https://example.invalid","tls-verification":"disabled",
@@ -208,11 +226,11 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
         ("connection.write", false),
         ("connection.write", true),
     ] {
-        client.execute("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
-            VALUES($1::text::uuid,'\\x01','\\x02','\\x03','file:test',now()+interval '1 hour',now())", &[&id]).await.unwrap();
-        client.execute("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
+        sqlx::query("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
+            VALUES($1::text::uuid,'\\x01','\\x02','\\x03','file:test',now()+interval '1 hour',now())").bind(&id).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+        sqlx::query("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
             SELECT 'pending',id,active_generation,'\\x04','\\x03','\\x02','file:test',service_principal_id,now()+interval '10 minutes'
-            FROM registry.connection WHERE id=$1::text::uuid", &[&id]).await.unwrap();
+            FROM registry.connection WHERE id=$1::text::uuid").bind(&id).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
         let mut request = json!({"project":"app","env":"dev","name":"oauth"});
         if change_auth {
             parameters["auth"]["client_id"] = "second".into();
@@ -224,10 +242,10 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
         }
         let result = execute(&mut client, &store, operation, request).await;
         assert!(result["active_generation"].as_i64().unwrap() > 1);
-        let counts = client.query_one("SELECT (SELECT count(*) FROM identity.oauth_token),(SELECT count(*) FROM identity.oauth_authorization)", &[]).await.unwrap();
-        assert_eq!(counts.get::<_, i64>(0), 0, "{operation} token invalidation");
+        let counts = sqlx::query("SELECT (SELECT count(*) FROM identity.oauth_token),(SELECT count(*) FROM identity.oauth_authorization)").fetch_one(&mut client).await.unwrap();
+        assert_eq!(counts.get::<i64, _>(0), 0, "{operation} token invalidation");
         assert_eq!(
-            counts.get::<_, i64>(1),
+            counts.get::<i64, _>(1),
             0,
             "{operation} pending authorization invalidation"
         );
@@ -238,27 +256,32 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
 async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    tokio::spawn(driver);
-    client
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
-        .await
-        .unwrap();
-    client
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
-    client
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
-        )
-        .await
-        .unwrap();
-    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"))
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").execute(&mut client).await.map(drop).unwrap();
     let store = RecordingStore::default();
     execute(&mut client, &store, "integration.write", json!({"project":"app","name":"jwt","integration_type":"http","auth_type":"oauth2_client_credentials_jwt"})).await;
     let valid = json!({"project":"app","env":"dev","name":"jwt",
@@ -297,17 +320,24 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
         invalid.push(request);
     }
     for request in invalid {
-        let tx = client.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut tx = client.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
         let result = administration::execute_with_store(
-            &tx,
+            &mut tx,
             "acme",
             "connection.write",
             &request.to_string(),

@@ -7,10 +7,11 @@
 //! execute through a dedicated non-superuser role that owns only the fixture
 //! schema.
 
+use sqlx::PgConnection as Client;
+use sqlx::postgres::PgConnectOptions as Config;
+use sqlx::{Row as _, Statement as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-
-use tokio_postgres::{Client, Config, NoTls};
 
 use wamn_record_history::AUDIT_RETENTION_ROLE;
 
@@ -39,30 +40,30 @@ const ADDITIVE_WIDGET: &str = "00000000-0000-4000-8000-0000000004a1";
 #[tokio::test]
 async fn authored_views_preserve_column_order_types_and_base_tables() {
     let database = wamn_test_postgres::database();
-    let client = connect(database.url().parse().unwrap()).await;
-    client
-        .batch_execute(
-            "CREATE SCHEMA application;
+    let mut client = connect(database.url().parse().unwrap()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE SCHEMA application;
          CREATE TABLE application.item (
              z uuid NOT NULL, a text, b boolean, c integer, d bigint,
              e double precision, f bytea, g numeric, h timestamptz, i jsonb);
          CREATE TABLE application.other (id bigint);
          CREATE VIEW application.item_view AS
-             SELECT item.* FROM application.item AS item CROSS JOIN application.other",
-        )
-        .await
-        .unwrap();
-    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+             SELECT item.* FROM application.item AS item CROSS JOIN application.other")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let catalog = read_catalog(&mut client, &["application"]).await.unwrap();
     let mut json = serde_json::to_value(&catalog).unwrap();
     let view = &catalog.views()[0];
-    let definition: String = client
-        .query_one(
-            "SELECT pg_catalog.pg_get_viewdef('application.item_view'::regclass, false)",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let definition: String =
+        sqlx::query("SELECT pg_catalog.pg_get_viewdef('application.item_view'::regclass, false)")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(view.definition(), definition);
     assert!(!view.has_set_returning_functions());
     for column in view.columns() {
@@ -100,19 +101,21 @@ async fn authored_views_preserve_column_order_types_and_base_tables() {
 #[tokio::test]
 async fn authored_views_follow_nested_views_and_retain_external_base_tables() {
     let database = wamn_test_postgres::database();
-    let client = connect(database.url().parse().unwrap()).await;
-    client
-        .batch_execute(
-            "CREATE SCHEMA application;
+    let mut client = connect(database.url().parse().unwrap()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE SCHEMA application;
          CREATE SCHEMA external;
          CREATE TABLE external.item (id bigint);
          CREATE VIEW application.inner_view AS SELECT count(*) AS total FROM external.item;
          CREATE VIEW application.outer_view AS
-             SELECT a.total FROM application.inner_view a CROSS JOIN application.inner_view b",
-        )
-        .await
-        .unwrap();
-    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+             SELECT a.total FROM application.inner_view a CROSS JOIN application.inner_view b")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let catalog = read_catalog(&mut client, &["application"]).await.unwrap();
     let json = serde_json::to_value(&catalog).unwrap();
     let views = json["views"].as_array().unwrap();
     assert_eq!(views.len(), 2);
@@ -135,11 +138,11 @@ async fn authored_views_follow_nested_views_and_retain_external_base_tables() {
 #[tokio::test]
 async fn authored_views_distinguish_plain_columns_computed_columns_and_row_expansion() {
     let database = wamn_test_postgres::database();
-    let client = connect(database.url().parse().unwrap()).await;
-    client.batch_execute("CREATE SCHEMA application;
+    let mut client = connect(database.url().parse().unwrap()).await;
+    sqlx::raw_sql("CREATE SCHEMA application;
         CREATE TABLE application.item (id bigint);
-        CREATE VIEW application.item_view AS SELECT id, id + 1 AS computed, generate_series(1, 2) AS expanded FROM application.item").await.unwrap();
-    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+        CREATE VIEW application.item_view AS SELECT id, id + 1 AS computed, generate_series(1, 2) AS expanded FROM application.item").execute(&mut client).await.map(drop).unwrap();
+    let catalog = read_catalog(&mut client, &["application"]).await.unwrap();
     let view = &catalog.views()[0];
     assert_eq!(view.columns()[0].origin().unwrap().column, "id");
     assert!(view.columns()[1].origin().is_none());
@@ -150,19 +153,23 @@ async fn authored_views_distinguish_plain_columns_computed_columns_and_row_expan
 #[tokio::test]
 async fn authored_views_refuse_row_security_and_name_the_view_and_base_table() {
     let database = wamn_test_postgres::database();
-    let client = connect(database.url().parse().unwrap()).await;
-    client
-        .batch_execute(
-            "CREATE SCHEMA application;
+    let mut client = connect(database.url().parse().unwrap()).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE SCHEMA application;
          CREATE SCHEMA external;
          CREATE TABLE external.item (id bigint);
          ALTER TABLE external.item ENABLE ROW LEVEL SECURITY;
          CREATE VIEW application.inner_view AS SELECT id FROM external.item;
-         CREATE VIEW application.outer_view AS SELECT id FROM application.inner_view",
-        )
+         CREATE VIEW application.outer_view AS SELECT id FROM application.inner_view")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let error = read_catalog(&mut client, &["application"])
         .await
-        .unwrap();
-    let error = read_catalog(&client, &["application"]).await.unwrap_err();
+        .unwrap_err();
     assert_eq!(
         error.error_type(),
         PostgresIntrospectionErrorType::UnsupportedPolicy
@@ -204,30 +211,34 @@ fn identifier(value: &str) -> String {
 }
 
 async fn connect(config: Config) -> Client {
-    let (client, connection) = config.connect(NoTls).await.expect("connect to PostgreSQL");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+    let client = wamn_postgres::connect(config.clone())
+        .await
+        .expect("connect to PostgreSQL");
+
     client
 }
 
-async fn configure_admin(client: &Client) {
-    client
-        .batch_execute(&format!(
+async fn configure_admin(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET statement_timeout = '{STATEMENT_TIMEOUT}'; \
              SET lock_timeout = '{LOCK_TIMEOUT}'; \
              SET transaction_timeout = '{TRANSACTION_TIMEOUT}'"
         ))
-        .await
-        .expect("bound admin fixture timeouts");
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("bound admin fixture timeouts");
 }
 
-async fn assert_postgres_18(client: &Client) {
-    let version = client
-        .query_one("SELECT current_setting('server_version_num')", &[])
+async fn assert_postgres_18(client: &mut Client) {
+    let version = sqlx::query("SELECT current_setting('server_version_num')")
+        .fetch_one(&mut *client)
         .await
         .expect("read PostgreSQL server version")
-        .get::<_, String>(0)
+        .get::<String, _>(0)
         .parse::<u32>()
         .expect("server_version_num is numeric");
     assert!(
@@ -236,176 +247,205 @@ async fn assert_postgres_18(client: &Client) {
     );
 }
 
-async fn remove_fixture(admin: &Client, fixture: &Fixture) {
-    admin
-        .batch_execute(&format!(
+async fn remove_fixture(admin: &mut Client, fixture: &Fixture) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
             identifier(&fixture.database)
         ))
-        .await
-        .expect("drop fixture database");
-    admin
-        .batch_execute(&format!(
-            "DROP ROLE IF EXISTS {}",
-            identifier(&fixture.role)
-        ))
-        .await
-        .expect("drop fixture migration role");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("drop fixture database");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP ROLE IF EXISTS {}",
+        identifier(&fixture.role)
+    )))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("drop fixture migration role");
 }
 
-async fn create_fixture(admin: &Client, fixture: &Fixture, admin_config: &Config) {
+async fn create_fixture(admin: &mut Client, fixture: &Fixture, admin_config: &Config) {
     remove_fixture(admin, fixture).await;
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOCREATEDB NOCREATEROLE \
              NOINHERIT NOREPLICATION NOBYPASSRLS",
             identifier(&fixture.role),
             fixture.password
         ))
-        .await
-        .expect("create least-privilege migration role");
-    admin
-        .batch_execute(&format!(
-            "CREATE DATABASE {}",
-            identifier(&fixture.database)
-        ))
-        .await
-        .expect("create fixture database");
-    admin
-        .batch_execute(&format!(
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("create least-privilege migration role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE {}",
+        identifier(&fixture.database)
+    )))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("create fixture database");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE ALL ON DATABASE {} FROM PUBLIC; \
              GRANT CONNECT ON DATABASE {} TO {}",
             identifier(&fixture.database),
             identifier(&fixture.database),
             identifier(&fixture.role)
         ))
-        .await
-        .expect("confine fixture database privileges");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("confine fixture database privileges");
 
     let mut target_config = admin_config.clone();
-    target_config.dbname(&fixture.database);
-    let target_admin = connect(target_config).await;
-    configure_admin(&target_admin).await;
-    target_admin
-        .batch_execute(&format!(
+    target_config = target_config.database(&fixture.database);
+    let mut target_admin = connect(target_config).await;
+    configure_admin(&mut target_admin).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE SCHEMA {APPLICATION_SCHEMA} AUTHORIZATION {}; \
              CREATE SCHEMA {CONTROL_SCHEMA}; \
              CREATE TABLE {CONTROL_SCHEMA}.control_only (id bigint); \
              CREATE SCHEMA {FIXTURE_SCHEMA}",
             identifier(&fixture.role)
         ))
-        .await
-        .expect("create owned application schema and unconfigured fixture schemas");
+            .to_string(),
+    ))
+    .execute(&mut target_admin)
+    .await
+    .map(drop)
+    .expect("create owned application schema and unconfigured fixture schemas");
 }
 
 fn target_config(admin_config: &Config, fixture: &Fixture, as_migration_role: bool) -> Config {
     let mut config = admin_config.clone();
-    config.dbname(&fixture.database);
+    config = config.database(&fixture.database);
     if as_migration_role {
-        config.user(&fixture.role);
-        config.password(fixture.password.as_bytes());
+        config = config.username(&fixture.role);
+        config = config.password(&fixture.password);
     }
     config
 }
 
-async fn execute_migration_transaction(client: &Client, sql: &str) {
-    client
-        .batch_execute(&format!(
+async fn execute_migration_transaction(client: &mut Client, sql: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; \
              SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'; \
              SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'; \
              SET LOCAL transaction_timeout = '{TRANSACTION_TIMEOUT}'"
         ))
-        .await
-        .expect("begin bounded migration transaction");
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("begin bounded migration transaction");
 
-    let settings = client
-        .query_one(
-            "SELECT current_setting('statement_timeout'), \
+    let settings = sqlx::query(
+        "SELECT current_setting('statement_timeout'), \
                     current_setting('lock_timeout'), \
                     current_setting('transaction_timeout')",
-            &[],
-        )
-        .await
-        .expect("read migration transaction timeouts");
-    assert_eq!(settings.get::<_, String>(0), STATEMENT_TIMEOUT);
-    assert_eq!(settings.get::<_, String>(1), LOCK_TIMEOUT);
-    assert_eq!(settings.get::<_, String>(2), TRANSACTION_TIMEOUT);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read migration transaction timeouts");
+    assert_eq!(settings.get::<String, _>(0), STATEMENT_TIMEOUT);
+    assert_eq!(settings.get::<String, _>(1), LOCK_TIMEOUT);
+    assert_eq!(settings.get::<String, _>(2), TRANSACTION_TIMEOUT);
 
-    if let Err(error) = client.batch_execute(sql).await {
-        let _ = client.batch_execute("ROLLBACK").await;
+    if let Err(error) = sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string()))
+        .execute(&mut *client)
+        .await
+        .map(drop)
+    {
+        let _ = sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *client)
+            .await
+            .map(drop);
         panic!("apply SQL as migration role: {error}");
     }
-    client
-        .batch_execute("COMMIT")
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("commit migration transaction");
 }
 
-async fn assert_role_boundary(admin: &Client, target_admin: &Client, fixture: &Fixture) {
-    let role = admin
-        .query_one(
-            "SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolreplication, rolbypassrls \
+async fn assert_role_boundary(admin: &mut Client, target_admin: &mut Client, fixture: &Fixture) {
+    let role = sqlx::query(
+        "SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolreplication, rolbypassrls \
                FROM pg_catalog.pg_roles WHERE rolname = $1",
-            &[&fixture.role],
-        )
-        .await
-        .expect("read migration role attributes");
+    )
+    .bind(&fixture.role)
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read migration role attributes");
     for column in 0..6 {
         assert!(
-            !role.get::<_, bool>(column),
+            !role.get::<bool, _>(column),
             "migration role attribute {column} is false"
         );
     }
 
-    let owned_schemas = target_admin
-        .query(
-            "SELECT namespace.nspname::text \
+    let owned_schemas = sqlx::query(
+        "SELECT namespace.nspname::text \
                FROM pg_catalog.pg_namespace AS namespace \
                JOIN pg_catalog.pg_roles AS owner ON owner.oid = namespace.nspowner \
               WHERE owner.rolname = $1 ORDER BY namespace.nspname",
-            &[&fixture.role],
-        )
-        .await
-        .expect("read schemas owned by migration role")
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>();
+    )
+    .bind(&fixture.role)
+    .fetch_all(&mut *target_admin)
+    .await
+    .expect("read schemas owned by migration role")
+    .into_iter()
+    .map(|row| row.get::<String, _>(0))
+    .collect::<Vec<_>>();
     assert_eq!(owned_schemas, [APPLICATION_SCHEMA]);
 
-    let database_privileges = target_admin
-        .query_one(
-            "SELECT has_database_privilege($1, current_database(), 'CONNECT'), \
+    let database_privileges = sqlx::query(
+        "SELECT has_database_privilege($1, current_database(), 'CONNECT'), \
                     has_database_privilege($1, current_database(), 'CREATE'), \
                     has_database_privilege($1, current_database(), 'TEMPORARY')",
-            &[&fixture.role],
-        )
-        .await
-        .expect("read migration role database privileges");
-    assert!(database_privileges.get::<_, bool>(0));
-    assert!(!database_privileges.get::<_, bool>(1));
-    assert!(!database_privileges.get::<_, bool>(2));
+    )
+    .bind(&fixture.role)
+    .fetch_one(&mut *target_admin)
+    .await
+    .expect("read migration role database privileges");
+    assert!(database_privileges.get::<bool, _>(0));
+    assert!(!database_privileges.get::<bool, _>(1));
+    assert!(!database_privileges.get::<bool, _>(2));
 }
 
-async fn server_table_names(client: &Client) -> Vec<(String, String)> {
-    client
-        .query(
-            "SELECT namespace.nspname::text, relation.relname::text \
+async fn server_table_names(client: &mut Client) -> Vec<(String, String)> {
+    sqlx::query(
+        "SELECT namespace.nspname::text, relation.relname::text \
                FROM pg_catalog.pg_class AS relation \
                JOIN pg_catalog.pg_namespace AS namespace \
                  ON namespace.oid = relation.relnamespace \
               WHERE namespace.nspname = ANY($1::text[]) AND relation.relkind = 'r' \
               ORDER BY namespace.nspname, relation.relname",
-            &[&vec![APPLICATION_SCHEMA.to_owned()]],
-        )
-        .await
-        .expect("read server table names")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect()
+    )
+    .bind(&vec![APPLICATION_SCHEMA.to_owned()])
+    .fetch_all(&mut *client)
+    .await
+    .expect("read server table names")
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1)))
+    .collect()
 }
 
-async fn assert_base_ir(client: &Client, admin: &Client) {
+async fn assert_base_ir(client: &mut Client, admin: &mut Client) {
     let first = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
         .expect("introspect the fixture migration");
@@ -432,34 +472,31 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
         "unconfigured control schemas never enter IR"
     );
 
-    let control_exists = admin
-        .query_one(
-            "SELECT to_regclass('wamn_control.control_only') IS NOT NULL",
-            &[],
-        )
+    let control_exists = sqlx::query("SELECT to_regclass('wamn_control.control_only') IS NOT NULL")
+        .fetch_one(&mut *admin)
         .await
         .expect("read control-schema server answer")
-        .get::<_, bool>(0);
+        .get::<bool, _>(0);
     assert!(
         control_exists,
         "control object exists on the server but not in IR"
     );
 
-    let constraint_indexes = client
-        .query(
-            "SELECT backing.relname::text \
+    let constraint_indexes = sqlx::query(
+        "SELECT backing.relname::text \
                FROM pg_catalog.pg_constraint AS constraint_row \
                JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
                JOIN pg_catalog.pg_class AS backing ON backing.oid = constraint_row.conindid \
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
               WHERE namespace.nspname = $1",
-            &[&APPLICATION_SCHEMA],
-        )
-        .await
-        .expect("read constraint-backed indexes")
-        .iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
+    )
+    .bind(&APPLICATION_SCHEMA)
+    .fetch_all(&mut *client)
+    .await
+    .expect("read constraint-backed indexes")
+    .iter()
+    .map(|row| row.get::<String, _>(0))
+    .collect::<BTreeSet<_>>();
     assert!(
         !constraint_indexes.is_empty(),
         "server reports constraint-backed indexes"
@@ -474,13 +511,12 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
 }
 
-async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) {
+async fn assert_control_owned_relations_are_outside_package_ir(client: &mut Client) {
     let before = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
         .expect("read application catalog before host maps");
-    client
-        .batch_execute(
-            "CREATE TABLE inventory.wamn_entities ( \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE inventory.wamn_entities ( \
                relation_oid oid PRIMARY KEY, \
                package_id text NOT NULL, \
                entity_id text NOT NULL, \
@@ -489,10 +525,13 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
                relation_oid oid PRIMARY KEY, \
                package_id text NOT NULL, \
                relation_id text NOT NULL, \
-               table_name text NOT NULL)",
-        )
-        .await
-        .expect("create the exact host-owned relation maps");
+               table_name text NOT NULL)")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("create the exact host-owned relation maps");
 
     let untargeted = read_catalog(client, &[APPLICATION_SCHEMA])
         .await
@@ -521,16 +560,18 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         repeated.canonical_json_bytes()
     );
 
-    client
-        .batch_execute(
-            "DROP TABLE inventory.wamn_cdc_exclusions; \
-             DROP TABLE inventory.wamn_entities",
-        )
-        .await
-        .expect("remove host-owned relation maps");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP TABLE inventory.wamn_cdc_exclusions; \
+             DROP TABLE inventory.wamn_entities")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("remove host-owned relation maps");
 }
 
-async fn add_supported_columns(client: &Client) {
+async fn add_supported_columns(client: &mut Client) {
     execute_migration_transaction(
         client,
         r"
@@ -566,56 +607,57 @@ CREATE TABLE inventory.widget_inspection (
     .await;
 }
 
-async fn assert_additive_columns(client: &Client) {
+async fn assert_additive_columns(client: &mut Client) {
     // The inspection table references one widget, so that widget exists first.
-    client
-        .execute(
-            "INSERT INTO inventory.widget (id, code) \
+    sqlx::query(
+        "INSERT INTO inventory.widget (id, code) \
              VALUES ($1::text::uuid, 'priority')",
-            &[&ADDITIVE_WIDGET],
-        )
-        .await
-        .expect("the referenced widget exists");
+    )
+    .bind(&ADDITIVE_WIDGET)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("the referenced widget exists");
     for (index, quality_status) in ["not_required", "pending", "approved"]
         .into_iter()
         .enumerate()
     {
         let maker_name = format!("quality-status-{index}");
-        client
-            .execute(
-                "INSERT INTO inventory.widget_maker (name, overlay_quality_status) \
-                 VALUES ($1, $2)",
-                &[&maker_name, &quality_status],
-            )
-            .await
-            .unwrap_or_else(|error| {
-                panic!("quality status {quality_status:?} was refused: {error}")
-            });
-    }
-    let invalid_status = client
-        .execute(
+        sqlx::query(
             "INSERT INTO inventory.widget_maker (name, overlay_quality_status) \
-             VALUES ('quality-status-invalid', 'unknown')",
-            &[],
+                 VALUES ($1, $2)",
         )
+        .bind(&maker_name)
+        .bind(&quality_status)
+        .execute(&mut *client)
         .await
-        .expect_err("an undeclared quality status was admitted");
+        .map(|result| result.rows_affected())
+        .unwrap_or_else(|error| panic!("quality status {quality_status:?} was refused: {error}"));
+    }
+    let invalid_status = sqlx::query(
+        "INSERT INTO inventory.widget_maker (name, overlay_quality_status) \
+             VALUES ('quality-status-invalid', 'unknown')",
+    )
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_err("an undeclared quality status was admitted");
     assert_eq!(
         invalid_status
-            .as_db_error()
-            .map(|error| error.code().code()),
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
         Some("23514")
     );
     assert_eq!(
         invalid_status
-            .as_db_error()
+            .as_database_error()
             .and_then(|error| error.constraint()),
         Some("widget_maker_overlay_quality_status_check")
     );
 
-    let server_columns = client
-        .query(
-            "SELECT attribute.attname::text, \
+    let server_columns = sqlx::query(
+        "SELECT attribute.attname::text, \
                     pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
                     attribute.attidentity::text, attribute.attgenerated::text \
                FROM pg_catalog.pg_attribute AS attribute \
@@ -626,22 +668,22 @@ async fn assert_additive_columns(client: &Client) {
                 AND attribute.attname LIKE 'additive_%' \
                 AND attribute.attnum > 0 AND NOT attribute.attisdropped \
               ORDER BY attribute.attname",
-            &[],
-        )
-        .await
-        .expect("read additive columns from pg_catalog")
-        .into_iter()
-        .map(|row| {
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read additive columns from pg_catalog")
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>(0),
             (
-                row.get::<_, String>(0),
-                (
-                    row.get::<_, String>(1),
-                    row.get::<_, String>(2),
-                    row.get::<_, String>(3),
-                ),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+                row.get::<String, _>(1),
+                row.get::<String, _>(2),
+                row.get::<String, _>(3),
+            ),
+        )
+    })
+    .collect::<BTreeMap<_, _>>();
     assert_eq!(
         server_columns.len(),
         12,
@@ -760,9 +802,8 @@ async fn assert_additive_columns(client: &Client) {
         Some(ColumnGeneration::Stored { expression }) if expression.as_ref() == "lower(name)"
     ));
 
-    let identity_sequence = client
-        .query_one(
-            "SELECT count(*) = 1 \
+    let identity_sequence = sqlx::query(
+        "SELECT count(*) = 1 \
                FROM pg_catalog.pg_class AS sequence_relation \
                JOIN pg_catalog.pg_depend AS dependency \
                  ON dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass \
@@ -776,11 +817,11 @@ async fn assert_additive_columns(client: &Client) {
               WHERE sequence_relation.relkind = 'S' \
                 AND table_relation.relname = 'widget_maker' \
                 AND attribute.attname = 'additive_identity'",
-            &[],
-        )
-        .await
-        .expect("read identity sequence dependency from pg_catalog")
-        .get::<_, bool>(0);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read identity sequence dependency from pg_catalog")
+    .get::<bool, _>(0);
     assert!(
         identity_sequence,
         "server identity sequence normalized into its column"
@@ -795,14 +836,14 @@ async fn assert_additive_columns(client: &Client) {
 /// count mismatch rather than as a smaller green matrix.
 #[derive(Debug)]
 struct RefusalMatrix<'a> {
-    admin: &'a Client,
-    reader: &'a Client,
+    admin: &'a mut Client,
+    reader: &'a mut Client,
     ran: usize,
     failures: Vec<String>,
 }
 
 impl<'a> RefusalMatrix<'a> {
-    fn new(admin: &'a Client, reader: &'a Client) -> Self {
+    fn new(admin: &'a mut Client, reader: &'a mut Client) -> Self {
         Self {
             admin,
             reader,
@@ -824,18 +865,27 @@ async fn refusal_case(
     expected: PostgresIntrospectionErrorType,
 ) -> Option<PostgresIntrospectionError> {
     matrix.ran += 1;
-    if let Err(error) = matrix.admin.batch_execute(create_sql).await {
+    if let Err(error) = sqlx::raw_sql(sqlx::AssertSqlSafe((create_sql).to_string()))
+        .execute(&mut *matrix.admin)
+        .await
+        .map(drop)
+    {
         matrix.failures.push(format!(
             "{case}: creating the refusal input failed: {error}"
         ));
         return None;
     }
-    let server_answer = matrix.admin.query_one(server_probe_sql, &[]).await;
-    let reader_answer = read_catalog(matrix.reader, &[APPLICATION_SCHEMA]).await;
-    let cleanup = matrix.admin.batch_execute(cleanup_sql).await;
+    let server_answer = sqlx::query(sqlx::AssertSqlSafe((server_probe_sql).to_string()))
+        .fetch_one(&mut *matrix.admin)
+        .await;
+    let reader_answer = read_catalog(&mut *matrix.reader, &[APPLICATION_SCHEMA]).await;
+    let cleanup = sqlx::raw_sql(sqlx::AssertSqlSafe((cleanup_sql).to_string()))
+        .execute(&mut *matrix.admin)
+        .await
+        .map(drop);
 
     match server_answer {
-        Ok(row) if row.get::<_, bool>(0) => {}
+        Ok(row) if row.get::<bool, _>(0) => {}
         Ok(_) => matrix.failures.push(format!(
             "{case}: the refused object is absent from the server answer"
         )),
@@ -867,7 +917,7 @@ async fn refusal_case(
     }
 }
 
-async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
+async fn assert_refusal_matrix(admin: &mut Client, reader: &mut Client) {
     let matrix = &mut RefusalMatrix::new(admin, reader);
     refusal_case(
         matrix,
@@ -1174,40 +1224,42 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
 
 /// Introspection skips the record history fixtures by name, so the catalog IR
 /// does not carry the history table or either trigger.
-async fn assert_record_history_fixtures_are_skipped(admin: &Client, reader: &Client) {
-    admin
-        .batch_execute(RECORD_HISTORY_SQL)
+async fn assert_record_history_fixtures_are_skipped(admin: &mut Client, reader: &mut Client) {
+    sqlx::raw_sql(RECORD_HISTORY_SQL)
+        .execute(&mut *admin)
         .await
+        .map(drop)
         .expect("install the platform record-history functions");
     let before = read_catalog(reader, &[APPLICATION_SCHEMA])
         .await
         .expect("read the catalog before the record history fixtures");
-    admin
-        .batch_execute(
-            "SELECT wamn_history.create_history_table('inventory', 'widget_maker', false); \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("SELECT wamn_history.create_history_table('inventory', 'widget_maker', false); \
              GRANT SELECT ON inventory.widget_maker_history TO PUBLIC; \
              CREATE TRIGGER wamn_record_history_stamp \
                BEFORE INSERT OR UPDATE ON inventory.widget_maker \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at'); \
              CREATE TRIGGER wamn_record_history_log \
                AFTER INSERT OR UPDATE OR DELETE ON inventory.widget_maker \
-               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
-        )
-        .await
-        .expect("install the record history fixtures");
-    let installed = admin
-        .query_one(
-            "SELECT to_regclass('inventory.widget_maker_history') IS NOT NULL, \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("install the record history fixtures");
+    let installed = sqlx::query(
+        "SELECT to_regclass('inventory.widget_maker_history') IS NOT NULL, \
                     ARRAY(SELECT t.tgname::text FROM pg_catalog.pg_trigger t \
                            WHERE t.tgrelid = 'inventory.widget_maker'::regclass \
                              AND NOT t.tgisinternal ORDER BY t.tgname)",
-            &[],
-        )
-        .await
-        .expect("read the installed record history fixtures");
-    assert!(installed.get::<_, bool>(0), "the history table exists");
+    )
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the installed record history fixtures");
+    assert!(installed.get::<bool, _>(0), "the history table exists");
     assert_eq!(
-        installed.get::<_, Vec<String>>(1),
+        installed.get::<Vec<String>, _>(1),
         ["wamn_record_history_log", "wamn_record_history_stamp"]
     );
 
@@ -1223,13 +1275,17 @@ async fn assert_record_history_fixtures_are_skipped(admin: &Client, reader: &Cli
 
 /// Introspection skips the ACL entries of the platform roles by name. A grant
 /// to any other role still refuses.
-async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, other_role: &str) {
+async fn assert_platform_grants_are_skipped(
+    admin: &mut Client,
+    reader: &mut Client,
+    other_role: &str,
+) {
     let before = read_catalog(reader, &[APPLICATION_SCHEMA])
         .await
         .expect("read the catalog before the platform grants");
     for role in [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE] {
-        admin
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "DO $role$ BEGIN \
                    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN \
                      CREATE ROLE {role} NOLOGIN; \
@@ -1239,20 +1295,24 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
                  GRANT SELECT ON inventory.widget_maker TO {role}; \
                  GRANT SELECT (id) ON inventory.widget TO {role}"
             ))
-            .await
-            .expect("apply the platform grants");
-        let granted = admin
-            .query_one(
-                "SELECT has_schema_privilege($1, 'inventory', 'USAGE'), \
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .expect("apply the platform grants");
+        let granted = sqlx::query(
+            "SELECT has_schema_privilege($1, 'inventory', 'USAGE'), \
                         has_table_privilege($1, 'inventory.widget_maker', 'SELECT'), \
                         has_column_privilege($1, 'inventory.widget', 'id', 'SELECT')",
-                &[&role],
-            )
-            .await
-            .expect("read the platform grants");
+        )
+        .bind(&role)
+        .fetch_one(&mut *admin)
+        .await
+        .expect("read the platform grants");
         for column in 0..3 {
             assert!(
-                granted.get::<_, bool>(column),
+                granted.get::<bool, _>(column),
                 "{role} grant {column} is held"
             );
         }
@@ -1267,10 +1327,10 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
     }
 
     let package_owner = "wamn_package_owner_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    admin.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE {package_owner} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
          GRANT USAGE, CREATE ON SCHEMA inventory TO {package_owner}"
-    )).await.unwrap();
+    ))).execute(&mut *admin).await.map(drop).unwrap();
     assert_eq!(
         read_catalog(reader, &[APPLICATION_SCHEMA])
             .await
@@ -1288,7 +1348,11 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
             format!("REVOKE SELECT ON inventory.widget FROM {package_owner}"),
         ),
     ] {
-        admin.batch_execute(&grant).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((&grant).to_string()))
+            .execute(&mut *admin)
+            .await
+            .map(drop)
+            .unwrap();
         let error = read_catalog(reader, &[APPLICATION_SCHEMA])
             .await
             .unwrap_err();
@@ -1296,31 +1360,47 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
             error.error_type(),
             PostgresIntrospectionErrorType::UnsupportedAcl
         );
-        admin.batch_execute(&revoke).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((&revoke).to_string()))
+            .execute(&mut *admin)
+            .await
+            .map(drop)
+            .unwrap();
     }
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE ALL ON SCHEMA inventory FROM {package_owner}; DROP ROLE {package_owner}"
         ))
-        .await
-        .unwrap();
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .unwrap();
 
     let other_role = identifier(other_role);
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE ROLE {other_role} NOLOGIN; \
              GRANT USAGE ON SCHEMA inventory TO {other_role}"
         ))
-        .await
-        .expect("grant the application schema to another role");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("grant the application schema to another role");
     let refused = read_catalog(reader, &[APPLICATION_SCHEMA]).await;
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE USAGE ON SCHEMA inventory FROM {other_role}; \
              DROP ROLE {other_role}"
         ))
-        .await
-        .expect("remove the other role");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("remove the other role");
     let error = refused.expect_err("a schema grant to another role refuses");
     assert_eq!(
         error.error_type(),
@@ -1334,37 +1414,36 @@ async fn run_acceptance_test(admin_config: Config, fixture: Fixture) {
     let migration_sql = std::fs::read_to_string(&fixture.migration_path)
         .expect("read the fixture migration after policy validation");
 
-    let migration = connect(target_config(&admin_config, &fixture, true)).await;
-    let target_admin = connect(target_config(&admin_config, &fixture, false)).await;
-    configure_admin(&target_admin).await;
-    assert_postgres_18(&migration).await;
-    let identity = migration
-        .query_one(
-            "SELECT current_user::text, rolsuper \
+    let mut migration = connect(target_config(&admin_config, &fixture, true)).await;
+    let mut target_admin = connect(target_config(&admin_config, &fixture, false)).await;
+    configure_admin(&mut target_admin).await;
+    assert_postgres_18(&mut migration).await;
+    let identity = sqlx::query(
+        "SELECT current_user::text, rolsuper \
                FROM pg_catalog.pg_roles WHERE rolname = current_user",
-            &[],
-        )
-        .await
-        .expect("read executing migration identity");
-    assert_eq!(identity.get::<_, String>(0), fixture.role);
-    assert!(!identity.get::<_, bool>(1));
+    )
+    .fetch_one(&mut migration)
+    .await
+    .expect("read executing migration identity");
+    assert_eq!(identity.get::<String, _>(0), fixture.role);
+    assert!(!identity.get::<bool, _>(1));
 
-    execute_migration_transaction(&migration, &migration_sql).await;
+    execute_migration_transaction(&mut migration, &migration_sql).await;
     assert_role_boundary(
-        &connect(admin_config.clone()).await,
-        &target_admin,
+        &mut connect(admin_config.clone()).await,
+        &mut target_admin,
         &fixture,
     )
     .await;
-    assert_base_ir(&migration, &target_admin).await;
-    assert_control_owned_relations_are_outside_package_ir(&migration).await;
-    add_supported_columns(&migration).await;
-    assert_additive_columns(&migration).await;
-    assert_refusal_matrix(&target_admin, &migration).await;
-    assert_record_history_fixtures_are_skipped(&target_admin, &migration).await;
+    assert_base_ir(&mut migration, &mut target_admin).await;
+    assert_control_owned_relations_are_outside_package_ir(&mut migration).await;
+    add_supported_columns(&mut migration).await;
+    assert_additive_columns(&mut migration).await;
+    assert_refusal_matrix(&mut target_admin, &mut migration).await;
+    assert_record_history_fixtures_are_skipped(&mut target_admin, &mut migration).await;
     assert_platform_grants_are_skipped(
-        &target_admin,
-        &migration,
+        &mut target_admin,
+        &mut migration,
         &format!("{}_grantee", fixture.role),
     )
     .await;
@@ -1377,11 +1456,11 @@ async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_object
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
     let admin_config = url.parse::<Config>().expect("parse PostgreSQL admin URL");
-    let admin = connect(admin_config.clone()).await;
-    configure_admin(&admin).await;
-    assert_postgres_18(&admin).await;
+    let mut admin = connect(admin_config.clone()).await;
+    configure_admin(&mut admin).await;
+    assert_postgres_18(&mut admin).await;
     let fixture = Fixture::new();
-    create_fixture(&admin, &fixture, &admin_config).await;
+    create_fixture(&mut admin, &fixture, &admin_config).await;
 
     let database = fixture.database.clone();
     let role = fixture.role.clone();
@@ -1392,18 +1471,19 @@ async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_object
         password: String::new(),
         migration_path: PathBuf::new(),
     };
-    remove_fixture(&admin, &teardown_fixture).await;
+    remove_fixture(&mut admin, &teardown_fixture).await;
 
-    let gone = admin
-        .query_one(
-            "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \
+    let gone = sqlx::query(
+        "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \
                     NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2)",
-            &[&teardown_fixture.database, &teardown_fixture.role],
-        )
-        .await
-        .expect("record clean fixture teardown");
-    assert!(gone.get::<_, bool>(0), "fixture database was removed");
-    assert!(gone.get::<_, bool>(1), "fixture role was removed");
+    )
+    .bind(&teardown_fixture.database)
+    .bind(&teardown_fixture.role)
+    .fetch_one(&mut admin)
+    .await
+    .expect("record clean fixture teardown");
+    assert!(gone.get::<bool, _>(0), "fixture database was removed");
+    assert!(gone.get::<bool, _>(1), "fixture role was removed");
     outcome.expect("live acceptance test scenario completed without panic");
 }
 
@@ -1452,10 +1532,9 @@ impl Fixture {
 /// same auto dependency that blocks `DROP COLUMN` -- so the modelled column set
 /// is compared against the server's own answer and never against a parsed
 /// expression or a hand-typed list (wamn-10yt.54).
-async fn server_exclusion_columns(client: &Client) -> Vec<String> {
-    client
-        .query(
-            "SELECT DISTINCT attribute.attname::text \
+async fn server_exclusion_columns(client: &mut Client) -> Vec<String> {
+    sqlx::query(
+        "SELECT DISTINCT attribute.attname::text \
                FROM pg_catalog.pg_constraint AS constraint_row \
                JOIN pg_catalog.pg_depend AS dependency \
                  ON dependency.deptype = 'a' \
@@ -1471,22 +1550,23 @@ async fn server_exclusion_columns(client: &Client) -> Vec<String> {
                 AND attribute.attnum = dependency.refobjsubid \
               WHERE constraint_row.conname = 'dock_appointment_no_overlap' \
               ORDER BY 1",
-            &[],
-        )
-        .await
-        .expect("read the exclusion dependency columns from the server catalog")
-        .iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect()
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read the exclusion dependency columns from the server catalog")
+    .iter()
+    .map(|row| row.get::<String, _>(0))
+    .collect()
 }
 
 /// Read the exclusion constraint straight from `pg_catalog`, so the modelled
 /// shape is compared against the SERVER's answer rather than against the
 /// migration text that produced it.
-async fn server_exclusion(client: &Client) -> (String, String, Vec<i16>, Vec<String>, Vec<String>) {
-    let row = client
-        .query_one(
-            "SELECT constraint_row.conname::text, \
+async fn server_exclusion(
+    client: &mut Client,
+) -> (String, String, Vec<i16>, Vec<String>, Vec<String>) {
+    let row = sqlx::query(
+        "SELECT constraint_row.conname::text, \
                     method.amname::text, \
                     constraint_row.conkey, \
                     ARRAY( \
@@ -1512,14 +1592,15 @@ async fn server_exclusion(client: &Client) -> (String, String, Vec<i16>, Vec<Str
                JOIN pg_catalog.pg_am AS method ON method.oid = index_relation.relam \
               WHERE namespace.nspname = $1 AND relation.relname = 'dock_appointment' \
                 AND constraint_row.contype = 'x'",
-            &[&APPLICATION_SCHEMA],
-        )
-        .await
-        .expect("read the exclusion constraint from the server catalog");
+    )
+    .bind(&APPLICATION_SCHEMA)
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the exclusion constraint from the server catalog");
     (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
 }
 
-async fn assert_exclusion_is_modelled(client: &Client) {
+async fn assert_exclusion_is_modelled(client: &mut Client) {
     let (name, access_method, column_numbers, operators, key_definitions) =
         server_exclusion(client).await;
     assert_eq!(name, "dock_appointment_no_overlap");
@@ -1634,20 +1715,19 @@ async fn assert_exclusion_is_modelled(client: &Client) {
         "canonical IR carries the frozen exclusion spelling: {json}"
     );
 
-    let supporting_index = client
-        .query_one(
-            "SELECT EXISTS ( \
+    let supporting_index = sqlx::query(
+        "SELECT EXISTS ( \
                  SELECT 1 FROM pg_catalog.pg_index AS catalog_index \
                    JOIN pg_catalog.pg_class AS index_relation \
                      ON index_relation.oid = catalog_index.indexrelid \
                   WHERE catalog_index.indrelid = 'inventory.dock_appointment'::regclass \
                     AND catalog_index.indisexclusion \
                     AND index_relation.relname = 'dock_appointment_no_overlap')",
-            &[],
-        )
-        .await
-        .expect("read the supporting exclusion index from the server")
-        .get::<_, bool>(0);
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the supporting exclusion index from the server")
+    .get::<bool, _>(0);
     assert!(supporting_index, "the server holds a supporting gist index");
     assert!(
         table.indexes().is_empty(),
@@ -1655,28 +1735,32 @@ async fn assert_exclusion_is_modelled(client: &Client) {
     );
 }
 
-async fn assert_exclusion_is_enforced(client: &Client) {
-    client
-        .batch_execute(
-            "INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+async fn assert_exclusion_is_enforced(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
              ('11111111-1111-1111-1111-111111111111', \
-              '2026-01-01T09:00:00Z', '2026-01-01T10:00:00Z')",
-        )
-        .await
-        .expect("the first booking is accepted");
-    let conflict = client
-        .batch_execute(
-            "INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+              '2026-01-01T09:00:00Z', '2026-01-01T10:00:00Z')")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("the first booking is accepted");
+    let conflict = sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO inventory.dock_appointment (dock_id, starts_at, ends_at) VALUES \
              ('11111111-1111-1111-1111-111111111111', \
-              '2026-01-01T09:30:00Z', '2026-01-01T10:30:00Z')",
-        )
-        .await
-        .expect_err("an overlapping booking on the same dock is refused");
+              '2026-01-01T09:30:00Z', '2026-01-01T10:30:00Z')")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect_err("an overlapping booking on the same dock is refused");
     let database_error = conflict
-        .as_db_error()
+        .as_database_error()
         .expect("the refusal comes from the server");
     assert_eq!(
-        database_error.code().code(),
+        database_error.code().as_deref().unwrap(),
         "23P01",
         "the server refuses with exclusion_violation"
     );
@@ -1685,9 +1769,10 @@ async fn assert_exclusion_is_enforced(client: &Client) {
         Some("dock_appointment_no_overlap"),
         "the server names the modelled constraint"
     );
-    client
-        .batch_execute("DELETE FROM inventory.dock_appointment")
+    sqlx::raw_sql("DELETE FROM inventory.dock_appointment")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("remove the booking fixture rows");
 }
 
@@ -1697,10 +1782,9 @@ async fn assert_exclusion_is_enforced(client: &Client) {
 /// convention IS PostgreSQL's own default spelling comes from the server: an
 /// identical unnamed constraint is named by PostgreSQL, and that name is the
 /// one the reader demands.
-async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client) {
-    admin
-        .batch_execute(
-            "CREATE TABLE inventory.dock_reservation ( \
+async fn assert_the_naming_law_binds_column_keys(admin: &mut Client, reader: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE inventory.dock_reservation ( \
                dock_id uuid NOT NULL, \
                carrier_id uuid NOT NULL, \
                CONSTRAINT dock_reservation_dock_id_carrier_id_excl \
@@ -1708,23 +1792,25 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
              CREATE TABLE inventory.dock_reservation_default ( \
                dock_id uuid NOT NULL, \
                carrier_id uuid NOT NULL, \
-               EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
-        )
-        .await
-        .expect("create an authored and an unnamed all-column exclusion");
+               EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("create an authored and an unnamed all-column exclusion");
 
-    let server_default = admin
-        .query_one(
-            "SELECT constraint_row.conname::text \
+    let server_default = sqlx::query(
+        "SELECT constraint_row.conname::text \
                FROM pg_catalog.pg_constraint AS constraint_row \
                JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
               WHERE relation.relname = 'dock_reservation_default' \
                 AND constraint_row.contype = 'x'",
-            &[],
-        )
-        .await
-        .expect("read the name PostgreSQL chose for the unnamed constraint")
-        .get::<_, String>(0);
+    )
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the name PostgreSQL chose for the unnamed constraint")
+    .get::<String, _>(0);
     assert_eq!(
         server_default, "dock_reservation_default_dock_id_carrier_id_excl",
         "the server spells an all-column exclusion {{table}}_{{columns}}_excl"
@@ -1754,13 +1840,15 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
             [constraint_name]
         );
     }
-    admin
-        .batch_execute(
-            "DROP TABLE inventory.dock_reservation_default; \
-             DROP TABLE inventory.dock_reservation",
-        )
-        .await
-        .expect("remove the all-column exclusion tables");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP TABLE inventory.dock_reservation_default; \
+             DROP TABLE inventory.dock_reservation")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("remove the all-column exclusion tables");
 
     // The other direction: the same shape under any other name is refused, and
     // the refusal names the convention the author must use.
@@ -1789,7 +1877,7 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
     );
 }
 
-async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Client) {
+async fn assert_unsupported_exclusion_shapes_refuse(admin: &mut Client, reader: &mut Client) {
     let matrix = &mut RefusalMatrix::new(admin, reader);
     refusal_case(
         matrix,
@@ -1849,15 +1937,16 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
 }
 
 async fn run_exclusion_acceptance_test(admin_config: Config, fixture: Fixture) {
-    let target_admin = connect(target_config(&admin_config, &fixture, false)).await;
-    configure_admin(&target_admin).await;
-    assert_postgres_18(&target_admin).await;
+    let mut target_admin = connect(target_config(&admin_config, &fixture, false)).await;
+    configure_admin(&mut target_admin).await;
+    assert_postgres_18(&mut target_admin).await;
     // The platform installs btree_gist per project-environment database
     // (`wamn_control_provision::sql::PLATFORM_EXTENSIONS`, wamn-yk9l); the
     // fixture stands in for that provisioning step, never for package DDL.
-    target_admin
-        .batch_execute("CREATE EXTENSION btree_gist")
+    sqlx::raw_sql("CREATE EXTENSION btree_gist")
+        .execute(&mut target_admin)
         .await
+        .map(drop)
         .expect("provision the platform-owned gist operator classes");
 
     validate_migration_bytes_for_schemas(
@@ -1868,13 +1957,13 @@ async fn run_exclusion_acceptance_test(admin_config: Config, fixture: Fixture) {
     )
     .expect("Migrate admits a named EXCLUDE USING gist inside CREATE TABLE");
 
-    let migration = connect(target_config(&admin_config, &fixture, true)).await;
-    execute_migration_transaction(&migration, EXCLUSION_MIGRATION_SQL).await;
+    let mut migration = connect(target_config(&admin_config, &fixture, true)).await;
+    execute_migration_transaction(&mut migration, EXCLUSION_MIGRATION_SQL).await;
 
-    assert_exclusion_is_modelled(&migration).await;
-    assert_exclusion_is_enforced(&migration).await;
-    assert_the_naming_law_binds_column_keys(&target_admin, &migration).await;
-    assert_unsupported_exclusion_shapes_refuse(&target_admin, &migration).await;
+    assert_exclusion_is_modelled(&mut migration).await;
+    assert_exclusion_is_enforced(&mut migration).await;
+    assert_the_naming_law_binds_column_keys(&mut target_admin, &mut migration).await;
+    assert_unsupported_exclusion_shapes_refuse(&mut target_admin, &mut migration).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1882,11 +1971,11 @@ async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
     let admin_config = url.parse::<Config>().expect("parse PostgreSQL admin URL");
-    let admin = connect(admin_config.clone()).await;
-    configure_admin(&admin).await;
-    assert_postgres_18(&admin).await;
+    let mut admin = connect(admin_config.clone()).await;
+    configure_admin(&mut admin).await;
+    assert_postgres_18(&mut admin).await;
     let fixture = Fixture::exclusion();
-    create_fixture(&admin, &fixture, &admin_config).await;
+    create_fixture(&mut admin, &fixture, &admin_config).await;
 
     let database = fixture.database.clone();
     let role = fixture.role.clone();
@@ -1897,17 +1986,18 @@ async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
         password: String::new(),
         migration_path: PathBuf::new(),
     };
-    remove_fixture(&admin, &teardown_fixture).await;
+    remove_fixture(&mut admin, &teardown_fixture).await;
 
-    let gone = admin
-        .query_one(
-            "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \
+    let gone = sqlx::query(
+        "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \
                     NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2)",
-            &[&teardown_fixture.database, &teardown_fixture.role],
-        )
-        .await
-        .expect("record clean fixture teardown");
-    assert!(gone.get::<_, bool>(0), "fixture database was removed");
-    assert!(gone.get::<_, bool>(1), "fixture role was removed");
+    )
+    .bind(&teardown_fixture.database)
+    .bind(&teardown_fixture.role)
+    .fetch_one(&mut admin)
+    .await
+    .expect("record clean fixture teardown");
+    assert!(gone.get::<bool, _>(0), "fixture database was removed");
+    assert!(gone.get::<bool, _>(1), "fixture role was removed");
     outcome.expect("exclusion condition scenario completed without panic");
 }

@@ -1,5 +1,6 @@
 //! Receiving business histories over the local runtime and disposable PostgreSQL.
 
+use sqlx::Row as _;
 #[path = "../../../../services/ctl/src/read_query.rs"]
 mod read_query;
 
@@ -46,20 +47,18 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
     let scratch = ScratchRoot::create()?;
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
-        let (client, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        super::bind_fixture_principal(&client).await?;
-        seed_acme_orders(&client).await?;
-        client.batch_execute(
-            "UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1
+        let mut client = wamn_postgres::connect(project.url()).await?;
+
+        super::bind_fixture_principal(&mut client).await?;
+        seed_acme_orders(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1
                 WHERE id = '00000000-0000-0000-0000-000000000721';
              UPDATE receiving.purchase_order SET status = 'cancelled', row_version = row_version + 1
                 WHERE id = '00000000-0000-0000-0000-000000000722';
              INSERT INTO receiving.purchase_order
                 (id, purchase_order_number, supplier_id, status, acme_inspection_required, acme_quality_status)
              VALUES ('00000000-0000-0000-0000-000000000727', 'PO-FEED-EMPTY',
-                '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');"
-        ).await?;
+                '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');").to_string())).execute(&mut client).await.map(drop)?;
         let http = reqwest::Client::new();
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
             let request_element = input.as_object().context("read input is an object")?;
@@ -94,7 +93,7 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
             "00000000-0000-0000-0000-000000000826"].into_iter().collect());
         ensure!(rows.iter().all(|row| row["purchase_order_status"] == "open"));
         let cursor = page["cursor"].as_str().context("open lines cursor")?;
-        client.execute("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1 WHERE id = '00000000-0000-0000-0000-000000000725'", &[]).await?;
+        sqlx::query("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1 WHERE id = '00000000-0000-0000-0000-000000000725'").execute(&mut client).await.map(|result| result.rows_affected())?;
         let changes = read(open_path, json!({"feed": {"cursor": cursor}})).await?;
         let rows = changes["rows"].as_array().context("open lines changes")?;
         ensure!(changes["complete"] == true && rows.len() == 2, "order close did not remove both lines: {changes}");
@@ -104,7 +103,6 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         let page = read(open_path, json!({})).await?;
         ensure!(page["item"].as_array().context("remaining open lines")?.len() == 3);
         drop(client);
-        connection.await??;
         Ok(())
     }.await;
     application.shutdown().await?;
@@ -128,13 +126,10 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
     let scratch = ScratchRoot::create()?;
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
-        let (client, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        super::bind_fixture_principal(&client).await?;
-        client
-            .batch_execute(
-                "INSERT INTO receiving.item (id, item_number) VALUES \
+        let mut client = wamn_postgres::connect(project.url()).await?;
+
+        super::bind_fixture_principal(&mut client).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.item (id, item_number) VALUES \
                    ('00000000-0000-0000-0000-000000000910', 'ITEM-ENTRY-GRANT'); \
                  INSERT INTO receiving.location (id, location_code) VALUES \
                    ('00000000-0000-0000-0000-000000000911', 'ENTRY-GRANT'); \
@@ -151,32 +146,15 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
                  INSERT INTO receiving.purchase_order_line \
                    (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) VALUES \
                    ('00000000-0000-0000-0000-000000000940', '00000000-0000-0000-0000-000000000920', 1, '00000000-0000-0000-0000-000000000910', 1, 0), \
-                   ('00000000-0000-0000-0000-000000000941', '00000000-0000-0000-0000-000000000921', 1, '00000000-0000-0000-0000-000000000910', 1, 0);",
-            )
-            .await?;
+                   ('00000000-0000-0000-0000-000000000941', '00000000-0000-0000-0000-000000000921', 1, '00000000-0000-0000-0000-000000000910', 1, 0);").to_string())).execute(&mut client).await.map(drop)?;
         // The caller keeps its project membership and loses the application
         // role admin for an authored role with one row: Acme's entry.
-        client
-            .execute(
-                "INSERT INTO platform.role (name) VALUES ('receipt-clerk')",
-                &[],
-            )
-            .await?;
-        client
-            .execute(
-                "INSERT INTO platform.permission (role_name, permission) \
-                 VALUES ('receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
-                &[],
-            )
-            .await?;
+        sqlx::query("INSERT INTO platform.role (name) VALUES ('receipt-clerk')").execute(&mut client).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.permission (role_name, permission) \
+                 VALUES ('receipt-clerk', 'client-acme-receiving:acme/record-receipt')").execute(&mut client).await.map(|result| result.rows_affected())?;
         ensure!(
-            client
-                .execute(
-                    "UPDATE platform.user_role SET role_name = 'receipt-clerk' \
-                     WHERE role_name = 'admin'",
-                    &[],
-                )
-                .await?
+            sqlx::query("UPDATE platform.user_role SET role_name = 'receipt-clerk' \
+                     WHERE role_name = 'admin'").execute(&mut client).await.map(|result| result.rows_affected())?
                 == 1,
             "the caller did not hold admin alone"
         );
@@ -236,18 +214,13 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
             "the refusal does not name the base operation: {direct}"
         );
         ensure!(
-            client
-                .query_one(
-                    "SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt \
-                     WHERE purchase_order_id = '00000000-0000-0000-0000-000000000921')",
-                    &[],
-                )
+            sqlx::query("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt \
+                     WHERE purchase_order_id = '00000000-0000-0000-0000-000000000921')").fetch_one(&mut client)
                 .await?
-                .get::<_, bool>(0),
+                .get::<bool, _>(0),
             "the refused call wrote a receipt"
         );
         drop(client);
-        connection.await??;
         Ok(())
     }
     .await;
@@ -274,24 +247,13 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
     let scratch = ScratchRoot::create()?;
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
-        let (client, connection) =
-            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-        let connection = tokio::spawn(connection);
-        super::bind_fixture_principal(&client).await?;
+        let mut client = wamn_postgres::connect(project.url()).await?;
+
+        super::bind_fixture_principal(&mut client).await?;
         let supplier = "00000000-0000-0000-0000-000000000950";
-        client
-            .execute(
-                "INSERT INTO receiving.supplier (id, name) VALUES ($1::text::uuid, 'SUPPLIER-950')",
-                &[&supplier],
-            )
-            .await?;
-        client
-            .execute(
-                "INSERT INTO platform.number_sequence (application, name, pattern) \
-                 VALUES ('receiving', 'purchase_order', 'PO-{seq:po,width=6}')",
-                &[],
-            )
-            .await?;
+        sqlx::query("INSERT INTO receiving.supplier (id, name) VALUES ($1::text::uuid, 'SUPPLIER-950')").bind(&supplier).execute(&mut client).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO platform.number_sequence (application, name, pattern) \
+                 VALUES ('receiving', 'purchase_order', 'PO-{seq:po,width=6}')").execute(&mut client).await.map(|result| result.rows_affected())?;
         let http = reqwest::Client::new();
         let mut numbers = Vec::new();
         for key in ["numbered-1", "numbered-2"] {
@@ -319,28 +281,20 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             numbers == ["PO-000001", "PO-000002"],
             "the creates were numbered {numbers:?}"
         );
-        let caller: String = client
-            .query_one(
-                "SELECT user_id::text FROM platform.user_role \
-                 WHERE role_name = 'admin'",
-                &[],
-            )
+        let caller: String = sqlx::query("SELECT user_id::text FROM platform.user_role \
+                 WHERE role_name = 'admin'").fetch_one(&mut client)
             .await?
             .get(0);
-        let rows = client
-            .query(
-                "SELECT purchase_order_number, created_by::text, updated_by::text \
-                 FROM receiving.purchase_order ORDER BY purchase_order_number",
-                &[],
-            )
+        let rows = sqlx::query("SELECT purchase_order_number, created_by::text, updated_by::text \
+                 FROM receiving.purchase_order ORDER BY purchase_order_number").fetch_all(&mut client)
             .await?;
         let actors = rows
             .iter()
             .map(|row| {
                 (
-                    row.get::<_, String>(0),
-                    row.get::<_, String>(1),
-                    row.get::<_, String>(2),
+                    row.get::<String, _>(0),
+                    row.get::<String, _>(1),
+                    row.get::<String, _>(2),
                 )
             })
             .collect::<Vec<_>>();
@@ -377,13 +331,11 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                 "the route accepted caller-supplied {field}: {status} {body}"
             );
         }
-        let count: i64 = client
-            .query_one("SELECT count(*) FROM receiving.purchase_order", &[])
+        let count: i64 = sqlx::query("SELECT count(*) FROM receiving.purchase_order").fetch_one(&mut client)
             .await?
             .get(0);
         ensure!(count == 2, "a refused create wrote an order");
         drop(client);
-        connection.await??;
         Ok(())
     }
     .await;
@@ -408,14 +360,14 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     for name in ["first", "second"] {
         fs::create_dir(scratch.path().join(name))?;
     }
-    let connect = async |url: &str| -> anyhow::Result<tokio_postgres::Client> {
-        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-        tokio::spawn(connection);
+    let connect = async |url: &str| -> anyhow::Result<sqlx::PgConnection> {
+        let client = wamn_postgres::connect(url).await?;
+
         Ok(client)
     };
-    let release = async |client: &tokio_postgres::Client| -> anyhow::Result<String> {
-        Ok(client
-            .query_one("SELECT manifest_digest FROM catalog.releases", &[])
+    let release = async |client: &mut sqlx::PgConnection| -> anyhow::Result<String> {
+        Ok(sqlx::query("SELECT manifest_digest FROM catalog.releases")
+            .fetch_one(&mut *client)
             .await?
             .get(0))
     };
@@ -442,10 +394,10 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         &scratch.path().join("first"),
     )
     .await?;
-    let first_client = connect(first_project.url()).await?;
+    let mut first_client = connect(first_project.url()).await?;
     let stored = async {
-        super::bind_fixture_principal(&first_client).await?;
-        seed_acme_orders(&first_client).await?;
+        super::bind_fixture_principal(&mut first_client).await?;
+        seed_acme_orders(&mut first_client).await?;
         request_element(&first).await
     }
     .await;
@@ -455,13 +407,14 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         stored[0]["value"]["receipt_id"].is_string(),
         "the first release did not record the receipt: {stored}"
     );
-    let claim = first_client
-        .query_one(
-            "SELECT request, result FROM platform.write_log \
+    let claim = sqlx::query(
+        "SELECT request, result FROM platform.write_log \
              WHERE operation = $1 AND idempotency_key = $2",
-            &[&ACME_OPERATION, &key],
-        )
-        .await?;
+    )
+    .bind(&ACME_OPERATION)
+    .bind(&key)
+    .fetch_one(&mut first_client)
+    .await?;
     let (request, result): (Vec<u8>, Option<String>) = (claim.get(0), claim.get(1));
 
     let (second_system, second_project) = (
@@ -475,19 +428,23 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         &["client-acme-receiving:quality/approve-inspection"],
     )
     .await?;
-    let second_client = connect(second_project.url()).await?;
+    let mut second_client = connect(second_project.url()).await?;
     let replayed = async {
         ensure!(
-            release(&second_client).await? != release(&first_client).await?,
+            release(&mut second_client).await? != release(&mut first_client).await?,
             "the second start serves the first release"
         );
-        second_client
-            .execute(
-                "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
+        sqlx::query(
+            "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
                  VALUES ($1, $2, $3, $4)",
-                &[&ACME_OPERATION, &key, &request, &result],
-            )
-            .await?;
+        )
+        .bind(&ACME_OPERATION)
+        .bind(&key)
+        .bind(&request)
+        .bind(&result)
+        .execute(&mut second_client)
+        .await
+        .map(|result| result.rows_affected())?;
         request_element(&second).await
     }
     .await;
@@ -498,10 +455,10 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         "the replay under the next release did not answer the stored result: {replayed}"
     );
     ensure!(
-        second_client
-            .query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt)", &[])
+        sqlx::query("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt)")
+            .fetch_one(&mut second_client)
             .await?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "the replay under the next release ran again"
     );
     Ok(())
@@ -632,32 +589,31 @@ async fn record(
 
 /// The write-log rows of `key`, as (operation, result).
 async fn claims(
-    project: &tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
     key: &str,
 ) -> anyhow::Result<Vec<(String, Option<String>)>> {
-    Ok(project
-        .query(
-            "SELECT operation, result FROM platform.write_log \
+    Ok(sqlx::query(
+        "SELECT operation, result FROM platform.write_log \
              WHERE idempotency_key = $1 ORDER BY operation",
-            &[&key],
-        )
-        .await?
-        .iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect())
+    )
+    .bind(&key)
+    .fetch_all(&mut *project)
+    .await?
+    .iter()
+    .map(|row| (row.get(0), row.get(1)))
+    .collect())
 }
 
 /// Acme's record_receipt calls Receiving's operation and records the inspection
 /// in the same host transaction, under its own claim
 /// (docs/architecture/data-access.md#inputs-queries-and-transactions).
 async fn acme_inspection(application: &LocalApplication, database_url: &str) -> anyhow::Result<()> {
-    let (project, connection) =
-        tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    super::bind_fixture_principal(&project).await?;
-    seed_acme_orders(&project).await?;
+    let mut project = wamn_postgres::connect(database_url).await?;
+
+    super::bind_fixture_principal(&mut project).await?;
+    seed_acme_orders(&mut project).await?;
     member_instances(
-        &project,
+        &mut project,
         application
             .component_digests
             .get("receiving")
@@ -680,17 +636,13 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
         .as_str()
         .with_context(|| format!("the receipt without inspection failed: {none}"))?;
     ensure!(
-        project
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM receiving.receipt WHERE id = $1::text::uuid) \
-                 AND NOT EXISTS (SELECT 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
-                &[&none_receipt],
-            )
+        sqlx::query("SELECT EXISTS (SELECT 1 FROM receiving.receipt WHERE id = $1::text::uuid) \
+                 AND NOT EXISTS (SELECT 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)").bind(&none_receipt).fetch_one(&mut project)
             .await?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "inspection-not-required did not commit its receipt alone"
     );
-    let none_claims = claims(&project, "part-none").await?;
+    let none_claims = claims(&mut project, "part-none").await?;
     ensure!(
         matches!(
             none_claims.as_slice(),
@@ -713,7 +665,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     let approved_receipt = approved[0]["value"]["receipt_id"]
         .as_str()
         .with_context(|| format!("the approved receipt failed: {approved}"))?;
-    ensure!(project.query_one("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid", &[&approved_receipt]).await?.get::<_, bool>(0), "the approved receipt did not write an approved inspection");
+    ensure!(sqlx::query("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid").bind(&approved_receipt).fetch_one(&mut project).await?.get::<bool, _>(0), "the approved receipt did not write an approved inspection");
     let replay = record(
         application,
         "/acme/acme/record_receipt",
@@ -728,14 +680,10 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
         "a replay through Acme did not answer the stored result: {replay}"
     );
     ensure!(
-        project
-            .query_one(
-                "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000721') \
-                        AND (SELECT count(*) = 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
-                &[&approved_receipt],
-            )
+        sqlx::query("SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000721') \
+                        AND (SELECT count(*) = 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)").bind(&approved_receipt).fetch_one(&mut project)
             .await?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "a replay duplicated receipt or inspection state"
     );
 
@@ -754,9 +702,9 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
             && refused[0]["error"]["detail"]["field"] == "purchase_order_id",
         "an unapproved inspection was not refused: {refused}"
     );
-    ensure!(project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000722') AND (SELECT received_quantity = 0 FROM receiving.purchase_order_line WHERE id = '00000000-0000-0000-0000-000000000822')", &[]).await?.get::<_, bool>(0), "the refused inspection left Receiving's receipt behind");
+    ensure!(sqlx::query("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000722') AND (SELECT received_quantity = 0 FROM receiving.purchase_order_line WHERE id = '00000000-0000-0000-0000-000000000822')").fetch_one(&mut project).await?.get::<bool, _>(0), "the refused inspection left Receiving's receipt behind");
     ensure!(
-        claims(&project, "part-refused").await?.is_empty(),
+        claims(&mut project, "part-refused").await?.is_empty(),
         "the refused request element left a claim"
     );
 
@@ -788,16 +736,12 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
         .as_str()
         .with_context(|| format!("the key reused through Acme did not run: {cross}"))?;
     ensure!(
-        project
-            .query_one(
-                "SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid",
-                &[&cross_receipt],
-            )
+        sqlx::query("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid").bind(&cross_receipt).fetch_one(&mut project)
             .await?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "the key reused through Acme did not run Acme's inspection"
     );
-    let cross_claims = claims(&project, "part-cross").await?;
+    let cross_claims = claims(&mut project, "part-cross").await?;
     ensure!(
         cross_claims
             .iter()
@@ -806,24 +750,21 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
             == [ACME_OPERATION, RECEIVING_OPERATION],
         "one key through two entries is not two claims: {cross_claims:?}"
     );
-    let receipts = project
-        .query_one(
-            "SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000723'",
-            &[],
-        )
+    let receipts = sqlx::query("SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000723'").fetch_one(&mut project)
         .await?
-        .get::<_, i64>(0);
+        .get::<i64, _>(0);
     eprintln!("cross-entry key part-cross: {receipts} receipt rows on its purchase order");
 
     // A key the participant path stored under Receiving's operation is not
     // Acme's claim, so a retry through Acme runs again.
-    project
-        .execute(
-            "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
+    sqlx::query(
+        "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
              VALUES ($1, 'part-era', '\\x01'::bytea, '{\"request_id\":\"part-era\",\"value\":{}}')",
-            &[&RECEIVING_OPERATION],
-        )
-        .await?;
+    )
+    .bind(&RECEIVING_OPERATION)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())?;
     let era = record(
         application,
         "/acme/acme/record_receipt",
@@ -886,30 +827,22 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
         "a reordered retry through Acme did not answer the stored result: {retry}"
     );
     ensure!(
-        project
-            .query_one(
-                "SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000725'",
-                &[],
-            )
+        sqlx::query("SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000725'").fetch_one(&mut project)
             .await?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "a reordered retry wrote a second receipt"
     );
 
     drop(project);
-    connection
-        .await
-        .context("join the Acme database connection")??;
+
     Ok(())
 }
 
 /// The purchase orders of [`acme_inspection`]: 720 needs no inspection, 721
 /// and 723 are approved, 722 is pending, 724 and 725 need none. 723 can take
 /// two receipts.
-async fn seed_acme_orders(project: &tokio_postgres::Client) -> anyhow::Result<()> {
-    project
-        .batch_execute(
-            "INSERT INTO receiving.item (id, item_number) VALUES \
+async fn seed_acme_orders(project: &mut sqlx::PgConnection) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("INSERT INTO receiving.item (id, item_number) VALUES \
                ('00000000-0000-0000-0000-000000000710', 'ITEM-ACME'); \
              INSERT INTO receiving.location (id, location_code) VALUES \
                ('00000000-0000-0000-0000-000000000711', 'ACME'); \
@@ -943,9 +876,7 @@ async fn seed_acme_orders(project: &tokio_postgres::Client) -> anyhow::Result<()
                ('00000000-0000-0000-0000-000000000823', '00000000-0000-0000-0000-000000000723', 1, '00000000-0000-0000-0000-000000000710', 2, 0), \
                ('00000000-0000-0000-0000-000000000824', '00000000-0000-0000-0000-000000000724', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
                ('00000000-0000-0000-0000-000000000825', '00000000-0000-0000-0000-000000000725', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000826', '00000000-0000-0000-0000-000000000725', 2, '00000000-0000-0000-0000-000000000710', 1, 0);",
-        )
-        .await?;
+               ('00000000-0000-0000-0000-000000000826', '00000000-0000-0000-0000-000000000725', 2, '00000000-0000-0000-0000-000000000710', 1, 0);").to_string())).execute(&mut *project).await.map(drop)?;
     Ok(())
 }
 
@@ -955,11 +886,11 @@ async fn seed_acme_orders(project: &tokio_postgres::Client) -> anyhow::Result<()
 /// Receiving statement named through Acme's instance is unknown to it
 /// (docs/architecture/components.md#grouping-and-publication).
 async fn member_instances(
-    project: &tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
     receiving_digest: &str,
 ) -> anyhow::Result<()> {
-    let bytes: Vec<u8> = project
-        .query_one("SELECT canonical_bytes FROM catalog.releases", &[])
+    let bytes: Vec<u8> = sqlx::query("SELECT canonical_bytes FROM catalog.releases")
+        .fetch_one(&mut *project)
         .await?
         .get(0);
     let manifest: Value = serde_json::from_slice(&bytes)?;

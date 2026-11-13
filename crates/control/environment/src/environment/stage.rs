@@ -1,5 +1,6 @@
 //! Application baseline initialization and immutable release caching.
 
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub use plan::{apply_order, sequence_defaults};
 
@@ -11,8 +12,8 @@ use wamn_compiler::manifest::PackageManifest;
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_package_control::database::connect;
 use wamn_package_control::package_artifact::{OpenedPackage, PackageSource, open_package_source};
+use wamn_postgres::connect;
 
 /// Initialize absent package baselines in dependency order, without selecting a release.
 /// Existing baselines keep their SQL records even when the selected version changes.
@@ -187,28 +188,25 @@ pub async fn materialize_application_principals(
         return Ok(());
     }
     let mut system = connect(system_url).await?;
-    let domain: Option<String> = system
-        .query_one(
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
-            &[],
-        )
-        .await?
-        .get(0);
+    let domain: Option<String> =
+        sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY)
+            .fetch_one(&mut system)
+            .await?
+            .get(0);
     let domain =
         domain.context("platform-domain-unset: application principals need the platform domain")?;
     let mut project = super::analyse::connect_project(project_url).await?;
-    let transaction = project.transaction().await?;
-    transaction
-        .query_one(
-            wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-            &[&project_env_key],
-        )
+    let mut transaction = project.begin().await?;
+    sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await?;
-    transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)?;
     let mut drops = AuthDrops::default();
     for package in applications {
         let subject =
@@ -224,23 +222,22 @@ pub async fn materialize_application_principals(
             principal.status() == wamn_platform_identity::PrincipalStatus::Active,
             "application service principal {subject:?} is disabled"
         );
-        let written = transaction
-            .execute(
-                "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+        let written = sqlx::query(
+            "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
-                &[
-                    &principal.id().to_string().as_str(),
-                    &format!("{subject}@{domain}"),
-                    &subject,
-                ],
-            )
-            .await?;
+        )
+        .bind(principal.id().to_string().as_str())
+        .bind(format!("{subject}@{domain}"))
+        .bind(&subject)
+        .execute(&mut *transaction)
+        .await
+        .map(|result| result.rows_affected())?;
         if written != 0 {
             drops.principal(project_env_key, principal.id().to_string().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
         wamn_platform_identity::application::create_role(
-            &transaction,
+            &mut transaction,
             project_env_key,
             &role,
             &mut drops,
@@ -248,8 +245,8 @@ pub async fn materialize_application_principals(
         .await?;
     }
     write_runtime_grants(
-        &system,
-        &transaction,
+        &mut system,
+        &mut transaction,
         project_env_key,
         manifest,
         packages,
@@ -264,8 +261,8 @@ pub async fn materialize_application_principals(
 /// Add the selected application's permissions while retaining grants needed by running code.
 /// Principals and generated roles must already exist. Shared or authored roles refuse.
 pub async fn write_runtime_grants(
-    system: &tokio_postgres::Client,
-    transaction: &tokio_postgres::Transaction<'_>,
+    system: &mut sqlx::PgConnection,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
@@ -293,20 +290,14 @@ pub async fn write_runtime_grants(
             principal.status() == wamn_platform_identity::PrincipalStatus::Active,
             "application principal {subject} is disabled"
         );
-        let active: bool = transaction.query_one(
-            "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service' AND status='active')",
-            &[&principal.id().to_string().as_str()],
-        ).await?.get(0);
+        let active: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service' AND status='active')").bind(principal.id().to_string().as_str()).fetch_one(&mut **transaction).await?.get(0);
         ensure!(
             active,
             "application principal {subject} is absent or inactive in the project; run env initialize"
         );
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        let owned: bool = transaction.query_one(
-            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3::text::uuid) \
-             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2::text::uuid)",
-            &[&role, &principal.id().to_string().as_str(), &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id().to_string()],
-        ).await?.get(0);
+        let owned: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3::text::uuid) \
+             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2::text::uuid)").bind(&role).bind(principal.id().to_string().as_str()).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id().to_string()).fetch_one(&mut **transaction).await?.get(0);
         ensure!(
             owned,
             "application role {role} is missing, authored, or shared; run env initialize or resolve its ownership"
@@ -375,12 +366,12 @@ pub async fn retire(
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let url = super::ensure::project_url(platform, &document.triple()).await?;
     let mut project = super::analyse::connect_project(&url).await?;
-    let cached = project
-        .query(
-            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
-            &[&project_env_key],
-        )
-        .await?;
+    let cached = sqlx::query(
+        "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
+    )
+    .bind(&project_env_key)
+    .fetch_all(&mut project)
+    .await?;
     let mut releases = BTreeMap::new();
     for row in &cached {
         let digest: String = row.get(0);
@@ -397,27 +388,27 @@ pub async fn retire(
             releases.insert(digest, (manifest, packages));
         }
     }
-    let tx = project.transaction().await?;
-    tx.query_one(
-        wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-        &[&project_env_key],
-    )
-    .await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_identity_protocol::PlatformComponent::Provisioning,
+    let mut tx = project.begin().await?;
+    sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+        .bind(&project_env_key)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_identity_protocol::PlatformComponent::Provisioning,
+        ),
     ))
-    .await?;
-    tx.query_one(
-        "SELECT set_config('app.project_env_key', $1, true)",
-        &[&project_env_key],
-    )
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(&project_env_key)
+        .fetch_one(&mut *tx)
+        .await?;
     // A competing preparation must be included before any permission is removed.
-    let now = tx
-        .query(
-            "SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1",
-            &[&project_env_key],
-        )
+    let now = sqlx::query("SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1")
+        .bind(&project_env_key)
+        .fetch_all(&mut *tx)
         .await?;
     let before: BTreeSet<String> = cached.iter().map(|row| row.get(0)).collect();
     let now: BTreeSet<String> = now.iter().map(|row| row.get(0)).collect();
@@ -437,7 +428,7 @@ pub async fn retire(
     );
     let mut connections = wamn_broker::connection_changes::ConnectionDrops::default();
     let retired = super::bindings::contract(
-        &tx,
+        &mut tx,
         &project_env_key,
         application,
         &document.membership(),
@@ -448,23 +439,20 @@ pub async fn retire(
     .await?;
     // Cache retention never selects a release. Keep requirements only for the selection,
     // live hosts, unfinished pins and preparations that still own bindings.
-    let mut needed: BTreeSet<String> = tx.query(
-        "SELECT manifest_digest FROM catalog.release_connection WHERE project_env_key=$1 \
+    let mut needed: BTreeSet<String> = sqlx::query("SELECT manifest_digest FROM catalog.release_connection WHERE project_env_key=$1 \
          UNION SELECT manifest_digest FROM catalog.connection_binding WHERE project_env_key=$1 \
          UNION SELECT manifest_digest FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest IS NOT NULL \
-         AND status NOT IN ('completed','failed','infrastructure-failure')",
-        &[&project_env_key],
-    ).await?.into_iter().map(|row| row.get(0)).collect();
+         AND status NOT IN ('completed','failed','infrastructure-failure')").bind(&project_env_key).fetch_all(&mut *tx).await?.into_iter().map(|row| row.get(0)).collect();
     needed.extend(live.into_keys());
     if let Some(target) = target {
         needed.insert(target.to_owned());
     }
     releases.retain(|digest, _| retired.contains(digest) || needed.contains(digest));
     let mut auth = wamn_broker::auth_changes::AuthDrops::default();
-    let system = connect(&platform.system_database_url).await?;
+    let mut system = connect(&platform.system_database_url).await?;
     retire_runtime_grants(
-        &system,
-        &tx,
+        &mut system,
+        &mut tx,
         &project_env_key,
         &releases,
         &retired,
@@ -481,8 +469,8 @@ pub async fn retire(
 /// Remove generated grants exclusive to retired releases from exclusively owned roles.
 /// Package manifests come from verified artifacts. Uncertain ownership refuses the transaction.
 pub async fn retire_runtime_grants(
-    system: &tokio_postgres::Client,
-    tx: &tokio_postgres::Transaction<'_>,
+    system: &mut sqlx::PgConnection,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     releases: &BTreeMap<String, (wamn_catalog::ServingManifest, Vec<PackageManifest>)>,
     retired: &[String],
@@ -531,11 +519,8 @@ pub async fn retire_runtime_grants(
         )
         .await?
         .context("application principal ownership is unknown; retain old facts")?;
-        let owned: bool = tx.query_one(
-            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$2::text::uuid) \
-             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$3::text::uuid)",
-            &[&role, &actor, &principal.id().to_string().as_str()],
-        ).await?.get(0);
+        let owned: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$2::text::uuid) \
+             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$3::text::uuid)").bind(&role).bind(&actor).bind(principal.id().to_string().as_str()).fetch_one(&mut **tx).await?.get(0);
         ensure!(
             owned,
             "application role {role} has uncertain ownership; retain old facts"
@@ -547,10 +532,7 @@ pub async fn retire_runtime_grants(
             {
                 continue;
             }
-            let generated: bool = tx.query_one(
-                "SELECT EXISTS (SELECT FROM platform.permission WHERE role_name=$1 AND permission=$2 AND created_by=$3::text::uuid AND updated_by=$3::text::uuid)",
-                &[&role, &permission, &actor],
-            ).await?.get(0);
+            let generated: bool = sqlx::query("SELECT EXISTS (SELECT FROM platform.permission WHERE role_name=$1 AND permission=$2 AND created_by=$3::text::uuid AND updated_by=$3::text::uuid)").bind(&role).bind(&permission).bind(&actor).fetch_one(&mut **tx).await?.get(0);
             if generated {
                 wamn_platform_identity::application::mutate_grant(
                     tx,
@@ -588,15 +570,18 @@ pub async fn create_number_sequences(
         return Ok(0);
     }
     let mut project = super::analyse::connect_project(project_url).await?;
-    let transaction = project.transaction().await?;
-    transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    let mut transaction = project.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
             wamn_identity_protocol::PlatformComponent::Provisioning,
-        ))
-        .await
-        .context("bind wamn:provisioning as the actor and operation")?;
+        ),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .context("bind wamn:provisioning as the actor and operation")?;
     let created =
-        wamn_platform_identity::configuration::create_default_sequences(&transaction, defaults)
+        wamn_platform_identity::configuration::create_default_sequences(&mut transaction, defaults)
             .await?;
     transaction.commit().await?;
     Ok(created)
@@ -607,8 +592,8 @@ pub(super) async fn installed(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<String, Installed>> {
-    let system = connect(&platform.system_database_url).await?;
-    let row = analyse::read_row(&system, document)
+    let mut system = connect(&platform.system_database_url).await?;
+    let row = analyse::read_row(&mut system, document)
         .await?
         .context("the environment row is missing after step 4")?;
     Ok(analyse::read_project(
@@ -663,39 +648,38 @@ pub async fn write_release(
         manifest.digest().as_str()
     );
     let mut client = super::analyse::connect_project(project_url).await?;
-    let transaction = client
-        .transaction()
+    let mut transaction = client
+        .begin()
         .await
         .context("begin the release cache write")?;
-    transaction
-        .query_one(
-            "SELECT set_config('app.user_id', $1, true), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, true), \
              set_config('app.operation', 'wamn:provisioning', true)",
-            &[&actor],
-        )
-        .await
-        .context("bind the release publisher and provisioning operation")?;
-    transaction
-        .query_one(
-            "SELECT set_config('app.project_env_key', $1, true)",
-            &[&project_env_key],
-        )
+    )
+    .bind(actor)
+    .fetch_one(&mut *transaction)
+    .await
+    .context("bind the release publisher and provisioning operation")?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await
         .context("bind the project identity")?;
-    transaction
-        .query_one(
-            wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-            &[&project_env_key],
-        )
+    sqlx::query(wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await?;
-    transaction
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&project_env_key, &digest, &bytes],
-        )
-        .await
-        .context("write the release cache row")?;
+    )
+    .bind(project_env_key)
+    .bind(digest)
+    .bind(&bytes)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .context("write the release cache row")?;
     transaction
         .commit()
         .await
@@ -704,6 +688,7 @@ pub async fn write_release(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::Row as _;
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
@@ -749,23 +734,24 @@ mod tests {
         )
         .await
         .unwrap();
-        let client = super::super::analyse::connect_project(database.url())
+        let mut client = super::super::analyse::connect_project(database.url())
             .await
             .unwrap();
-        let stamps = async || {
-            let row = client
-                .query_one(
-                    "SELECT created_by, updated_by, created_at::text, updated_at::text \
+        let mut stamps = async || {
+            let row = sqlx::query(
+                "SELECT created_by, updated_by, created_at::text, updated_at::text \
                  FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
-                    &[&"history", &digest.as_str()],
-                )
-                .await
-                .unwrap();
+            )
+            .bind(&"history")
+            .bind(&digest.as_str())
+            .fetch_one(&mut client)
+            .await
+            .unwrap();
             (
-                row.get::<_, uuid::Uuid>(0),
-                row.get::<_, uuid::Uuid>(1),
-                row.get::<_, String>(2),
-                row.get::<_, String>(3),
+                row.get::<uuid::Uuid, _>(0),
+                row.get::<uuid::Uuid, _>(1),
+                row.get::<String, _>(2),
+                row.get::<String, _>(3),
             )
         };
         let before = stamps().await;

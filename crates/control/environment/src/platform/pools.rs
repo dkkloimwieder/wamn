@@ -287,7 +287,7 @@ mod tests {
     fn wake_sets_each_declared_size_with_the_postgres_pool_first() {
         let (document, mut project) = committed();
         project.node_pools[0].size = 2;
-        let plan = resize_arguments(&document, &project, Direction::Wake).unwrap();
+        let plan = resize_arguments(&document, &mut project, Direction::Wake).unwrap();
         assert_eq!(
             plan,
             [
@@ -300,8 +300,8 @@ mod tests {
 
     #[test]
     fn sleep_sets_every_pool_to_zero() {
-        let (document, project) = committed();
-        let plan = resize_arguments(&document, &project, Direction::Sleep).unwrap();
+        let (document, mut project) = committed();
+        let plan = resize_arguments(&document, &mut project, Direction::Sleep).unwrap();
         assert_eq!(
             plan,
             [
@@ -314,11 +314,11 @@ mod tests {
 
     #[test]
     fn a_kind_document_refuses_both_verbs() {
-        let (mut document, project) = committed();
+        let (mut document, mut project) = committed();
         document.provider = Provider::Kind;
         for direction in [Direction::Wake, Direction::Sleep] {
             assert_eq!(
-                resize_arguments(&document, &project, direction)
+                resize_arguments(&document, &mut project, direction)
                     .unwrap_err()
                     .to_string(),
                 "platform wake and sleep resize GCP node pools, and cluster wamn is a kind cluster"
@@ -331,7 +331,7 @@ mod tests {
         let (document, mut project) = committed();
         project.cluster_name = "other".into();
         assert_eq!(
-            resize_arguments(&document, &project, Direction::Sleep)
+            resize_arguments(&document, &mut project, Direction::Sleep)
                 .unwrap_err()
                 .to_string(),
             "project.k declares cluster other in wamn-dev/us-central1-a, and cluster.k names cluster wamn in wamn-dev/us-central1-a"

@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 
 /// The package id the fixture manifest declares.
 pub const PACKAGE_ID: &str = "platform_fixture";
@@ -157,7 +157,7 @@ fn collect_sql(root: &Path, directory: &Path, sources: &mut Vec<(String, Vec<u8>
 ///
 /// # Errors
 /// Returns the server's error when a statement is refused.
-pub async fn apply_migrations(client: &Client) -> Result<(), tokio_postgres::Error> {
+pub async fn apply_migrations(client: &mut Client) -> Result<(), sqlx::Error> {
     apply(client, &migrations()).await
 }
 
@@ -165,19 +165,22 @@ pub async fn apply_migrations(client: &Client) -> Result<(), tokio_postgres::Err
 ///
 /// # Errors
 /// Returns the server's error when a statement is refused.
-pub async fn apply_overlay_migrations(client: &Client) -> Result<(), tokio_postgres::Error> {
+pub async fn apply_overlay_migrations(client: &mut Client) -> Result<(), sqlx::Error> {
     apply(client, &overlay_migrations()).await
 }
 
-async fn apply(
-    client: &Client,
-    migrations: &[(String, String)],
-) -> Result<(), tokio_postgres::Error> {
-    client
-        .batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {SCHEMA};"))
-        .await?;
+async fn apply(client: &mut Client, migrations: &[(String, String)]) -> Result<(), sqlx::Error> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA IF NOT EXISTS {SCHEMA};"
+    )))
+    .execute(&mut *client)
+    .await
+    .map(drop)?;
     for (_, sql) in migrations {
-        client.batch_execute(sql).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe((sql).clone()))
+            .execute(&mut *client)
+            .await
+            .map(drop)?;
     }
     Ok(())
 }

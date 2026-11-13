@@ -133,6 +133,12 @@ fn refuses_session_writes() {
     assert_refused(
         RefusalType::SessionWrite,
         &[
+            "COMMIT",
+            "ROLLBACK",
+            "BEGIN",
+            "END",
+            "ABORT",
+            "START TRANSACTION",
             "SET app.project_env_key = 'victim'",
             "set local app.project_env_key = 'victim'",
             "SET SESSION app.project_env_key TO 'victim'",

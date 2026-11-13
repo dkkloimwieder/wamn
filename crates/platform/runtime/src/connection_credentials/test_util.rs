@@ -1,43 +1,49 @@
 //! Credential references backed by an in-memory store for runtime tests.
 
 use super::ConnectionCredentials;
+use sqlx::Connection as _;
 use std::sync::Arc;
 use wamn_kubernetes::{Store as _, test_util::MemoryStore};
 
 pub(crate) struct Fixture {
     pub database: wamn_test_postgres::Database,
-    pub admin: tokio_postgres::Client,
+    pub admin: sqlx::PgConnection,
     pub store: Arc<MemoryStore>,
 }
 
 impl Fixture {
     pub async fn new() -> Self {
         let database = wamn_control_provision::test_database::system();
-        let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+        let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut admin)
             .await
+            .map(drop)
             .unwrap();
-        tokio::spawn(driver);
-        admin.batch_execute("SET ROLE wamn_system").await.unwrap();
-        admin
-            .execute(
-                "SELECT set_config('app.user_id', $1, false)",
-                &[&wamn_control_provision::PlatformComponent::Provisioning
+        sqlx::query("SELECT set_config('app.user_id', $1, false)")
+            .bind(
+                &wamn_control_provision::PlatformComponent::Provisioning
                     .principal_id()
-                    .to_string()],
+                    .to_string(),
             )
+            .execute(&mut admin)
             .await
+            .map(|result| result.rows_affected())
             .unwrap();
         for project in ["project-a", "project-b", "host-project", "other-project"] {
-            admin
-                .batch_execute(
-                    &wamn_control_provision::test_database::seed_org_project_env_sql(
-                        "acme", project, "dev",
-                    ),
-                )
-                .await
-                .unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "acme", project, "dev",
+                ))
+                    .to_string(),
+            ))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
         }
-        admin.batch_execute("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").await.unwrap();
+        sqlx::raw_sql("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").execute(&mut admin).await.map(drop).unwrap();
         let store = Arc::new(MemoryStore::default());
         Self {
             database,
@@ -94,14 +100,21 @@ impl Fixture {
         (integration_type, auth_type, parameters): (&str, &str, serde_json::Value),
     ) {
         for project in projects {
-            let tx = self.admin.transaction().await.unwrap();
-            tx.batch_execute("SET LOCAL ROLE wamn_system")
+            let mut tx = self.admin.begin().await.unwrap();
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *tx)
                 .await
+                .map(drop)
                 .unwrap();
-            tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Provisioning,
+                ))
+                    .to_string(),
             ))
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
             let stored = self
                 .store
@@ -112,53 +125,58 @@ impl Fixture {
                 )
                 .await
                 .unwrap();
-            wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&mut tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
             tx.commit().await.unwrap();
         }
     }
 
     pub async fn reader(&self, project: &str) -> ConnectionCredentials {
+        let mut admin = wamn_postgres::connect(self.database.url()).await.unwrap();
         let role = format!("c35_{}_{}", self.database.name(), project.replace('-', "_"));
-        self.admin
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "BEGIN; {} {}",
                 wamn_control_provision::bind_platform_principal_sql(
                     wamn_control_provision::PlatformComponent::Provisioning
                 ),
-                wamn_control_provision::sql::prepare_workload_generation_sql(
+                wamn_control_provision::test_database::login_sql(
                     wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
                     self.database.name(),
                     &role,
-                    "fixture-password",
-                    "2099-01-01T00:00:00Z"
+                    "fixture-password"
                 )
             ))
+                .to_string(),
+        ))
+        .execute(&mut admin)
+        .await
+        .map(drop)
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql())
+                .to_string(),
+        ))
+        .bind(&role)
+        .bind(&wamn_registry::project_env_key("acme", project, "dev"))
+        .bind(&"acme")
+        .bind(&project)
+        .bind(&"dev")
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
+        sqlx::raw_sql("COMMIT")
+            .execute(&mut admin)
             .await
+            .map(drop)
             .unwrap();
-        self.admin
-            .execute(
-                wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql(),
-                &[
-                    &role,
-                    &wamn_registry::project_env_key("acme", project, "dev"),
-                    &"acme",
-                    &project,
-                    &"dev",
-                ],
-            )
-            .await
-            .unwrap();
-        self.admin.batch_execute("COMMIT").await.unwrap();
         let mut url = url::Url::parse(self.database.url()).unwrap();
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
-        let (client, driver) = tokio_postgres::connect(url.as_str(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        tokio::spawn(driver);
-        ConnectionCredentials::from_database(Arc::new(client), "acme")
-            .with_oauth_database_url(url.as_str())
-            .unwrap()
-            .with_store(Arc::<MemoryStore>::clone(&self.store))
+        ConnectionCredentials::from_database(
+            wamn_postgres::pool(url.as_str(), 4).await.unwrap(),
+            "acme",
+        )
+        .with_store(Arc::<MemoryStore>::clone(&self.store))
     }
 }

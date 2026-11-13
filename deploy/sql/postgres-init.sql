@@ -7,7 +7,7 @@
 -- policies key on
 --   wamn_authority.project_key(project_id) = wamn_authority.current_project_key()
 -- so a session that can set its own identity gains nothing: the connected role is
--- the one thing it cannot rewrite. A role outside the guest generation
+-- the one thing it cannot rewrite. A role outside the guest login
 -- convention derives NULL and matches no row, and CHECK (project_id <> '')
 -- forbids a ''-project row, so the minimum is structural rather than conventional.
 --
@@ -27,50 +27,21 @@
 -- that do not both take the lock can each observe the role absent and both
 -- issue `CREATE ROLE`, and the loser gets `duplicate_object`.
 --
--- `wamn-0h0g.12.140`: this is a stable ACL and grant-owner role, never a
--- credential. Guest sessions authenticate as targeted `wamn_app_<target>_[ab]`
--- generations that inherit it. Both a fresh install and a replay over the old
--- shared LOGIN therefore converge to NOLOGIN, PASSWORD NULL and NOINHERIT.
+-- Shared privilege roles never authenticate. Refuse an old login shape.
 DO $app$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN
     CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
       NOINHERIT NOREPLICATION NOBYPASSRLS;
-  ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'
+  ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app'
                 AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
-                     OR rolinherit OR rolreplication OR rolbypassrls
-                     OR rolpassword IS NOT NULL)) THEN
-    ALTER ROLE wamn_app NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+                     OR rolinherit OR rolreplication OR rolbypassrls)) THEN
+    RAISE EXCEPTION 'invalid ACL role wamn_app';
   END IF;
-EXCEPTION WHEN duplicate_object THEN
-  ALTER ROLE wamn_app NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB
-    NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 END $app$;
 
--- psql commits the preceding DO statement before executing this one: NOLOGIN
--- is visible cluster-wide before the scan, so a new shared-role session cannot
--- race the drain. The native timeout bounds each wait; residue is a hard error.
-DO $app_drain$ DECLARE stale_pid integer; BEGIN
-  FOR stale_pid IN
-    SELECT pid FROM pg_catalog.pg_stat_activity
-    WHERE usename = 'wamn_app' AND pid <> pg_backend_pid()
-  LOOP
-    PERFORM pg_catalog.pg_terminate_backend(stale_pid, 5000);
-  END LOOP;
-  PERFORM pg_catalog.pg_stat_clear_snapshot();
-  IF EXISTS (
-    SELECT FROM pg_catalog.pg_stat_activity
-    WHERE usename = 'wamn_app' AND pid <> pg_backend_pid()
-  ) THEN
-    RAISE EXCEPTION USING
-      ERRCODE = '55000',
-      MESSAGE = 'wamn-app-session-drain-incomplete';
-  END IF;
-END $app_drain$;
-
 -- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
--- targeted A/B LOGIN generations, their CONNECT and their Secret are provisioned
+-- targeted logins, their CONNECT and their Secret are provisioned
 -- separately; this local fixture needs only the NOLOGIN grant carrier, so
 -- canonical run-state.sql can be applied against it.
 DO $run_retention$ BEGIN
@@ -108,7 +79,7 @@ END $platform_group$;
 -- Every role below is NOINHERIT, and in PostgreSQL 16+ a role's `rolinherit`
 -- supplies the DEFAULT `INHERIT` option for memberships granted TO it — so a
 -- bare `GRANT wamn_platform TO wamn_run_retention` lands `inherit_option =
--- false`, the two-hop chain (generation login -> ACL role -> wamn_platform)
+-- false`, the two-hop chain (login -> ACL role -> wamn_platform)
 -- dies, and the platform principal reads ZERO ROWS with no error at all.
 -- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
 --
@@ -167,7 +138,7 @@ STABLE
 PARALLEL SAFE
 SET search_path = pg_catalog
 AS $$
-    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
+    SELECT substring(current_user::text from '^(?:wamn_app|wamn_query)_([0-9a-f]{40})$')
 $$;
 ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
 REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;

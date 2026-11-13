@@ -9,7 +9,6 @@ pub(super) mod plan;
 use plan::authoritative_environment_policy;
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 use wamn_control_provision::EnvPolicy;
 
 pub use plan::AuthoritativeEnvironmentPolicy;
@@ -24,12 +23,12 @@ pub async fn read_authoritative_environment_policy(
         "source policy organization must not be empty"
     );
     anyhow::ensure!(!environment.is_empty(), "environment must not be empty");
-    let (source, connection) = tokio_postgres::connect(system_database_url, NoTls)
+    let mut source = wamn_postgres::connect(system_database_url)
         .await
         .context("connect to the authoritative environment-policy store")?;
-    let connection_task = tokio::spawn(connection);
+
     let loaded = async {
-        let policy = crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
+        let policy = crate::env_policies::read_env_policy(&mut source, source_policy_org, environment).await?
         .with_context(|| {
             format!(
                 "environment-policy-source-absent: environment {environment:?} names no policy owned by organization {source_policy_org:?}"
@@ -39,10 +38,7 @@ pub async fn read_authoritative_environment_policy(
     }
     .await;
     drop(source);
-    let driven = connection_task
-        .await
-        .context("join authoritative environment-policy connection")?;
-    driven.context("drive authoritative environment-policy connection")?;
+
     loaded
 }
 

@@ -2,6 +2,7 @@
 //! Helm chart. Arg surface mirrors what the chart's runtime deployment
 //! template renders for `wash host` (charts/runtime-operator).
 
+use sqlx::Row as _;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -12,7 +13,6 @@ use anyhow::Context as _;
 use clap::Args;
 use clap::builder::TypedValueParser as _;
 use opentelemetry::global;
-use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
@@ -28,7 +28,7 @@ mod commands;
 
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
-use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
+use wamn_control_provision::{SystemReader, project_env_database_name, system_reader_login};
 use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -455,41 +455,6 @@ pub struct HostArgs {
     pub allowed_hosts: Vec<String>,
 }
 
-struct SupervisedIdentityConnection {
-    task: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
-}
-
-impl SupervisedIdentityConnection {
-    fn new(task: tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>) -> Self {
-        Self { task }
-    }
-
-    async fn failure(&mut self) -> anyhow::Error {
-        match (&mut self.task).await {
-            Ok(Ok(())) => anyhow::anyhow!("system identity database connection ended"),
-            Ok(Err(error)) => {
-                anyhow::Error::new(error).context("system identity database connection failed")
-            }
-            Err(error) => {
-                anyhow::Error::new(error).context("system identity database connection task failed")
-            }
-        }
-    }
-
-    async fn shutdown(&mut self) {
-        if !self.task.is_finished() {
-            self.task.abort();
-            let _ = (&mut self.task).await;
-        }
-    }
-}
-
-impl Drop for SupervisedIdentityConnection {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
 /// Pull and verify this process's release, or record that it carries none.
 ///
 /// This is the wash host's release load site: the one place in this process
@@ -761,8 +726,18 @@ fn host_credentials(
     event_materializer_url: Option<String>,
     administration_url: Option<String>,
 ) -> ClassCredentials {
-    let credentials = database_url.map_or_else(ClassCredentials::default, |url| {
-        ClassCredentials::every_class(url)
+    let credentials = database_url.map_or_else(ClassCredentials::default, |input| {
+        let config = wamn_postgres::configuration(&input)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        match config {
+            Some(config) if config.get("compiled").is_some() && config.get("dynamic").is_some() => {
+                ClassCredentials::default()
+                    .with_class(AuthorityClass::GuestSql, config["compiled"].to_string())
+                    .with_class(AuthorityClass::DynamicSql, config["dynamic"].to_string())
+            }
+            _ => ClassCredentials::default().with_class(AuthorityClass::GuestSql, input),
+        }
     });
     let credentials = match executor_platform_url {
         Some(platform) => credentials.with_class(AuthorityClass::ExecutorPlatform, platform),
@@ -841,11 +816,9 @@ fn session_verifier(
     let database = project_env_database_name(org, &args.project, environment, suffix);
     // Compare trusted deployment coordinates, not anything carried by a token.
     // Parsing failures never attach the credential-bearing URL to diagnostics.
-    let connection = http_admitter_url
-        .parse::<tokio_postgres::Config>()
-        .map_err(|_| anyhow::anyhow!("session permission reader URL is invalid"))?;
+    let (_, configured_database) = wamn_postgres::identity(http_admitter_url)?;
     anyhow::ensure!(
-        connection.get_dbname() == Some(database.as_str()),
+        configured_database == database,
         "session audience and permission database differ"
     );
     let ca_path = args
@@ -865,22 +838,18 @@ fn session_verifier(
 /// The verifier, the read and write logins and the org of a control host.
 struct ControlConnection {
     verifier: SessionVerifier<IssuerKeys>,
-    client: Arc<tokio_postgres::Client>,
-    writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
+    client: sqlx::PgPool,
+    writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
     url: String,
     org: String,
 }
 
 /// One connection of the `control` login.
-async fn connect_control(url: &str) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+async fn connect_control(url: &str) -> anyhow::Result<sqlx::PgConnection> {
+    let client = wamn_postgres::connect(url)
         .await
         .context("connect the control login")?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::error!(%error, "the control login connection ended");
-        }
-    });
+
     Ok(client)
 }
 
@@ -911,7 +880,7 @@ async fn control_connection(args: &HostArgs) -> anyhow::Result<ControlConnection
         .context("a control host requires WAMN_CONTROL_URL")?;
     Ok(ControlConnection {
         verifier,
-        client: Arc::new(connect_control(&url).await?),
+        client: wamn_postgres::pool(&url, 4).await?,
         writer: Arc::new(tokio::sync::Mutex::new(connect_control(&url).await?)),
         url,
         org: org.to_owned(),
@@ -1172,46 +1141,44 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // it is known, settle every targeted input before opening the identity, NATS,
     // project-database, or ingress sockets. A release-less or anonymous-only
     // host takes the absent arm and acquires no identity-reader connection.
-    let (route_auth_target, identity_reader, mut identity_connection) =
-        if pat_routes || session_routes {
-            let loaded_release = release
-                .as_ref()
-                .expect("an authenticated route was found only inside a loaded release");
-            let org = args
-                .org
-                .as_deref()
-                .filter(|org| !org.is_empty())
-                .context("an authenticated route requires --org/WAMN_ORG")?;
-            let project = (!args.project.is_empty())
-                .then_some(args.project.as_str())
-                .context("an authenticated route requires a nonempty --project/WAMN_PROJECT")?;
-            let system_url = std::env::var("WAMN_SYSTEM_URL")
-                .ok()
-                .filter(|url| !url.is_empty())
-                .context("an authenticated route requires WAMN_SYSTEM_URL")?;
-            http_admitter_url
-                .as_deref()
-                .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-            let subject = operator_subject(org, project, &loaded_release.target().environment)
-                .context("derive the targeted operator subject")?;
-            parse_system_reader_url(
-                SystemReader::Identity,
-                &system_url,
-                org,
-                project,
-                &loaded_release.target().environment,
-            )?;
-            let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
-                .await
-                .context("connect the targeted system identity reader")?;
-            (
-                Some((org.to_owned(), subject)),
-                Some(Arc::new(client)),
-                Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
-            )
-        } else {
-            (None, None, None)
-        };
+    let (route_auth_target, identity_reader) = if pat_routes || session_routes {
+        let loaded_release = release
+            .as_ref()
+            .expect("an authenticated route was found only inside a loaded release");
+        let org = args
+            .org
+            .as_deref()
+            .filter(|org| !org.is_empty())
+            .context("an authenticated route requires --org/WAMN_ORG")?;
+        let project = (!args.project.is_empty())
+            .then_some(args.project.as_str())
+            .context("an authenticated route requires a nonempty --project/WAMN_PROJECT")?;
+        let system_url = std::env::var("WAMN_SYSTEM_URL")
+            .ok()
+            .filter(|url| !url.is_empty())
+            .context("an authenticated route requires WAMN_SYSTEM_URL")?;
+        http_admitter_url
+            .as_deref()
+            .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
+        let subject = operator_subject(org, project, &loaded_release.target().environment)
+            .context("derive the targeted operator subject")?;
+        let (login, database) = wamn_postgres::identity(&system_url)?;
+        anyhow::ensure!(
+            login
+                == system_reader_login(
+                    SystemReader::Identity,
+                    org,
+                    project,
+                    &loaded_release.target().environment,
+                    &database
+                ),
+            "identity reader targets another environment"
+        );
+        let client = wamn_postgres::pool(&system_url, 4).await?;
+        (Some((org.to_owned(), subject)), Some(client))
+    } else {
+        (None, None)
+    };
     let router_owner = args
         .runner
         .clone()
@@ -1360,28 +1327,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let mut file_connection_reader = None;
-    let (credentials, mut credential_connection) = match (&application, &args.connection_store_url)
-    {
+    let credentials = match (&application, &args.connection_store_url) {
         (Some(release), Some(url)) => {
             let org = args.org.as_deref().context("host org is absent")?;
-            parse_system_reader_url(
-                SystemReader::Connection,
-                url,
-                org,
-                &args.project,
-                &release.target().environment,
-            )?;
-            let (client, connection) = tokio_postgres::connect(url, NoTls)
-                .await
-                .context("connect the credential reader")?;
-            let client = Arc::new(client);
-            file_connection_reader = Some(Arc::clone(&client));
-            (
-                ConnectionCredentials::from_database(client, org).with_oauth_database_url(url)?,
-                Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
-            )
+            let (login, database) = wamn_postgres::identity(url)?;
+            anyhow::ensure!(
+                login
+                    == system_reader_login(
+                        SystemReader::Connection,
+                        org,
+                        &args.project,
+                        &release.target().environment,
+                        &database
+                    ),
+                "connection reader targets another environment"
+            );
+            let client = wamn_postgres::pool(url, 4).await?;
+            file_connection_reader = Some(client.clone());
+            ConnectionCredentials::from_database(client, org)
         }
-        _ => (ConnectionCredentials::empty(), None),
+        _ => ConnectionCredentials::empty(),
     };
     let credentials = Arc::new(credentials);
     let resource_leases = Arc::new(
@@ -1573,17 +1538,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .with_signature_authentication(Arc::clone(&facts), args.project.clone());
     let authenticator = match (&route_auth_target, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
-            authenticator.with_authentication(Arc::new(
-                RouteAuthentication::new(
-                    Arc::clone(identity_reader),
-                    Arc::clone(&postgres),
-                    org.clone(),
-                    args.project.clone(),
-                    subject.clone(),
-                )
-                .await
-                .context("prepare the route authentication identity reads")?,
-            ))
+            authenticator.with_authentication(Arc::new(RouteAuthentication::new(
+                identity_reader.clone(),
+                Arc::clone(&postgres),
+                org.clone(),
+                args.project.clone(),
+                subject.clone(),
+            )))
         }
         (None, None) => authenticator,
         _ => unreachable!("route authentication inputs are constructed together"),
@@ -1592,11 +1553,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Some(verifier) => {
             authenticator.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
                 verifier,
-                Arc::clone(
-                    identity_reader
-                        .as_ref()
-                        .expect("authenticated routes have an identity reader"),
-                ),
+                identity_reader
+                    .as_ref()
+                    .expect("authenticated routes have an identity reader")
+                    .clone(),
                 Arc::clone(&postgres),
                 args.project.clone(),
             )))
@@ -1611,7 +1571,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let flow_http = match &control {
         Some(connection) => flow_http.with_authenticator(Arc::new(ControlRouteAuthenticator::new(
             connection.verifier.clone(),
-            Arc::clone(&connection.client),
+            connection.client.clone(),
         ))),
         None if reads_environment_status => flow_http
             .with_authenticator(Arc::new(authenticator))
@@ -1709,7 +1669,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     identity: route_auth_target
                         .as_ref()
                         .zip(identity_reader.as_ref())
-                        .map(|((org, _), client)| (Arc::clone(client), org.clone())),
+                        .map(|((org, _), client)| (client.clone(), org.clone())),
                     changes: auth_changes.clone(),
                 },
                 Some(Arc::new(bridge)),
@@ -1747,7 +1707,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             HostRouteDelivery::new(
                 Arc::clone(root),
                 HostRouteHandlers::Control {
-                    control: Arc::clone(&connection.client),
+                    control: connection.client.clone(),
                     writer: Arc::clone(&connection.writer),
                     identity,
                     administration: args.control_administration_dir.clone(),
@@ -1862,7 +1822,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ));
     }
     if let Some(connection) = &control {
-        let client = Arc::clone(&connection.client);
+        let client = connection.client.clone();
         let org = connection.org.clone();
         let mut stopped = stopping.clone();
         schedule_tasks.spawn(async move {
@@ -1875,7 +1835,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 }
                 tokio::select! {
                     _ = stopped.changed() => return,
-                    result = wamn_execution_host::credential_cleanup::collect(&client, &org) => {
+                    result = async { wamn_execution_host::credential_cleanup::collect(&mut *client.acquire().await?, &org).await } => {
                         if let Err(error) = result { tracing::warn!(%error, "credential collection failed"); }
                     }
                 }
@@ -1898,10 +1858,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 if *stopped.borrow() { return; }
                 let connection = tokio::select! {
                     _ = stopped.changed() => return,
-                    connection = tokio_postgres::connect(&url, NoTls) => connection,
+                    connection = wamn_postgres::pool(&url, 2) => connection,
                 };
                 match connection {
-                    Ok((client, connection)) => {
+                    Ok(client) => {
                         let schedules = wamn_workflow::schedule::PostgresSchedules::new(
                             client,
                             Arc::clone(&schedule_postgres),
@@ -1912,7 +1872,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         let schedule_stopping = stopped.clone();
                         tokio::select! {
                             _ = stopped.changed() => return,
-                            result = connection => tracing::warn!(?result, "workflow schedule database connection stopped"),
                             result = wamn_workflow::schedule::serve(&schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
                         }
                     }
@@ -2181,18 +2140,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let stopped = async {
-            let identity_failure = async {
-                let Some(connection) = identity_connection.as_mut() else {
-                    return std::future::pending::<anyhow::Error>().await;
-                };
-                connection.failure().await
-            };
-            let credential_failure = async {
-                let Some(connection) = credential_connection.as_mut() else {
-                    return std::future::pending::<anyhow::Error>().await;
-                };
-                connection.failure().await
-            };
             let queue_failure = async {
                 let Some(queue) = queue.as_ref() else {
                     return std::future::pending::<anyhow::Error>().await;
@@ -2208,8 +2155,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             tokio::select! {
                 signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
                 _ = sigterm.recv() => Ok(()),
-                error = identity_failure => Err(error),
-                error = credential_failure => Err(error),
                 error = queue_failure => Err(error),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
@@ -2269,16 +2214,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     drop(queue);
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
-    let identity_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
-        if let Some(mut connection) = identity_connection.take() {
-            connection.shutdown().await;
-        }
-        if let Some(mut connection) = credential_connection.take() {
-            connection.shutdown().await;
-        }
-        Ok(())
-    })
-    .await;
     file_tasks.abort_all();
     let file_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         while file_tasks.join_next().await.is_some() {}
@@ -2291,10 +2226,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Ok(())
     })
     .await;
-    result
-        .and(identity_result)
-        .and(file_result)
-        .and(probe_result)
+    result.and(file_result).and(probe_result)
 }
 
 /// Admit events with the startup release until the host stops.
@@ -2991,7 +2923,6 @@ host:
         assert!(!probe.unrecoverable());
         connected.store(true, std::sync::atomic::Ordering::Relaxed);
         assert!(probe.ready());
-        task.abort();
         let _ = task.await;
         assert!(!probe.ready());
         assert!(probe.unrecoverable());
@@ -3313,7 +3244,7 @@ host:
                 AuthorityClass::CallableHttp => ADMITTER,
                 AuthorityClass::EventMaterializer => MATERIALIZER,
                 AuthorityClass::Administration => ADMINISTRATION,
-                AuthorityClass::GuestSql => GUEST,
+                AuthorityClass::GuestSql | AuthorityClass::DynamicSql => GUEST,
             };
             assert_eq!(
                 credentials.url(class),

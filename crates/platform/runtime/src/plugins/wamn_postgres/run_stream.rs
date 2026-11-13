@@ -157,36 +157,34 @@ pub(super) async fn open_stream(
         .checkout_workload(component_id, project, &project_env_key)
         .await
         .map_err(StatementError::Postgres)?;
-    let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
-    let postgres = |error: tokio_postgres::Error| StatementError::Postgres(map_pg_error(&error));
+    let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
+    let postgres = |error: sqlx::Error| StatementError::Postgres(map_pg_error(&error));
     let mut identity = None;
     let mut settings = None;
     let completion = if statement.transactional || role.is_some() {
         identity = Some(
-            plugin
-                .prepare_identity(
-                    connection.connection(),
-                    authority,
-                    plugin.active_read(component_id),
-                    &project_env_key,
-                    schema.as_deref(),
-                    runner.as_deref(),
-                    role.as_deref(),
-                    plugin.user_id_for(component_id).as_deref(),
-                    plugin.operation_for(component_id).as_deref(),
-                    plugin.application_for(component_id).as_deref(),
-                    plugin.current_run_for(component_id).as_ref(),
-                    policy.statement_timeout_ms,
-                )
-                .await
-                .map_err(StatementError::Postgres)?,
+            WamnPostgres::prepare_identity(
+                authority,
+                plugin.active_read(component_id),
+                &project_env_key,
+                schema.as_deref(),
+                runner.as_deref(),
+                role.as_deref(),
+                plugin.user_id_for(component_id).as_deref(),
+                plugin.operation_for(component_id).as_deref(),
+                plugin.application_for(component_id).as_deref(),
+                plugin.current_run_for(component_id).as_ref(),
+                policy.statement_timeout_ms,
+            )
+            .map_err(StatementError::Postgres)?,
         );
         Some(
-            connection
-                .connection()
-                .prepare_cached("COMMIT")
-                .await
-                .map_err(postgres)?,
+            sqlx::Executor::prepare(
+                connection.connection(),
+                sqlx::SqlSafeStr::into_sql_str("COMMIT"),
+            )
+            .await
+            .map_err(postgres)?,
         )
     } else {
         settings = prepare_session_settings(
@@ -201,95 +199,90 @@ pub(super) async fn open_stream(
     };
     let wal_statement = if want_wal {
         Some(
-            connection
-                .connection()
-                .prepare_cached("SELECT pg_current_wal_lsn()::text")
-                .await
-                .map_err(postgres)?,
+            sqlx::Executor::prepare(
+                connection.connection(),
+                sqlx::SqlSafeStr::into_sql_str("SELECT pg_current_wal_lsn()::text"),
+            )
+            .await
+            .map_err(postgres)?,
         )
     } else {
         None
     };
-    // A cold Parse follows identity. COMMIT must wait until Execute was queued,
-    // rather than overtaking a Parse that is still waiting for its description.
-    let (mut queued, completion) = match completion {
-        Some(commit) => {
-            let (queued, ready) = oneshot::channel();
-            (Some(queued), Some((commit, ready)))
-        }
-        None => (None, None),
-    };
     let (opened, started) = oneshot::channel();
     let (rows, batches) = mpsc::channel(1);
     let (outcome, finished) = oneshot::channel();
-    tokio::spawn(async move {
-        let conn = connection.connection();
-        let mut opened = Some(opened);
-        let result = {
+    tokio::spawn(
+        async move {
+            let mut opened = Some(opened);
             let read = async {
-                let read = async {
-                    let bind = async {
-                        if let Some(identity) = identity {
-                            identity.bind(conn).await
-                        } else {
-                            bind_session_settings(conn, &policy, settings.as_ref(), schema, runner).await
-                        }.map_err(StatementError::Postgres)
-                    };
-                    let execute = async {
-                        let prepared = conn.prepare_cached(&statement.exact_sql).await.map_err(postgres)?;
-                        validate_prepared_statement(&statement_path, &statement, &prepared)?;
-                        if !statement.transactional
-                            && let Some(queued) = queued.take()
-                        {
-                            let _ = queued.send(());
-                        }
-                        let stream = conn.query_raw(&prepared, binds.iter().map(PgParam)).await.map_err(postgres)?;
-                        Ok::<_, StatementError>((prepared, stream))
-                    };
-                    let ((), wal_position, (prepared, stream)) = tokio::try_join!(biased; bind, read_wal_position(conn, wal_statement.as_ref()), execute)?;
-                    let columns = columns_of(&prepared);
-                    opened.take().expect("a stream opens once").send(Ok((columns.clone(), wal_position)))
-                        .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
-                    pump(stream, &statement_path, &statement, columns, &rows).await?;
-                    // A writing statement commits only after every row passed its contract.
-                    if let Some(queued) = queued.take() {
-                        let _ = queued.send(());
-                    }
-                    Ok::<_, StatementError>(())
-                };
-                // Receiver ownership also covers cancellation before the first row.
-                // Once the read ends, a pending COMMIT can finish without the reader.
-                tokio::select! {
-                    biased;
-                    result = read => result,
-                    () = rows.closed() => Err(StatementError::Postgres(PgError::ConnectionUnavailable)),
+                let conn = connection.connection();
+                if let Some(identity) = identity {
+                    identity
+                        .bind(conn)
+                        .await
+                        .map_err(StatementError::Postgres)?;
+                } else {
+                    bind_session_settings(conn, &policy, settings.as_ref(), schema, runner)
+                        .await
+                        .map_err(StatementError::Postgres)?;
                 }
-            };
-            let finish = async {
-                if let Some((commit, ready)) = completion {
-                    ready.await.map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
-                    conn.execute(&commit, &[]).await.map_err(postgres)?;
+                let wal_position = read_wal_position(conn, wal_statement.as_ref()).await?;
+                let prepared = sqlx::Executor::prepare(
+                    &mut *conn,
+                    sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(
+                        statement.exact_sql.to_string(),
+                    )),
+                )
+                .await
+                .map_err(postgres)?;
+                validate_prepared_statement(&statement_path, &statement, &prepared)?;
+                let columns = columns_of(&prepared);
+                opened
+                    .take()
+                    .expect("a stream opens once")
+                    .send(Ok((columns.clone(), wal_position)))
+                    .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(statement.exact_sql.to_string()));
+                for bind in &binds {
+                    query = query.bind(PgParam(bind));
+                }
+                pump(
+                    query.fetch(&mut *conn),
+                    &statement_path,
+                    &statement,
+                    columns,
+                    &rows,
+                )
+                .await?;
+                if completion.is_some() {
+                    sqlx::query("COMMIT")
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(postgres)?;
                 }
                 Ok::<_, StatementError>(())
             };
-            tokio::try_join!(biased; read, finish).map(drop)
-        };
-        match result {
-            Ok(()) => {
-                connection.repool();
-                let _ = outcome.send(Ok(()));
-            }
-            Err(error) => {
-                // Destroy the session on cancellation or error. Closing the socket
-                // aborts a query that may still be producing rows on the server.
-                if let Some(opened) = opened {
-                    let _ = opened.send(Err(error));
-                } else {
-                    let _ = outcome.send(Err(error));
+            let result = tokio::select! {
+                result = read => result,
+                () = rows.closed() => Err(StatementError::Postgres(PgError::ConnectionUnavailable)),
+            };
+            match result {
+                Ok(()) => {
+                    connection.repool();
+                    let _ = outcome.send(Ok(()));
+                }
+                Err(error) => {
+                    if let Some(opened) = opened {
+                        let _ = opened.send(Err(error));
+                    } else {
+                        let _ = outcome.send(Err(error));
+                    }
                 }
             }
         }
-    }.instrument(tracing::Span::current()));
+        .instrument(tracing::Span::current()),
+    );
     let (columns, wal_position) = started
         .await
         .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))??;
@@ -303,7 +296,7 @@ pub(super) async fn open_stream(
 
 /// Buffer rows from the one Execute, with backpressure from the guest.
 async fn pump(
-    stream: tokio_postgres::RowStream,
+    stream: impl futures_util::TryStream<Ok = sqlx::postgres::PgRow, Error = sqlx::Error> + Unpin,
     statement_path: &str,
     statement: &VerifiedStatement,
     columns: Vec<Column>,

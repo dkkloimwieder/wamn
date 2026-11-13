@@ -1,5 +1,6 @@
 //! Run one repository test command against a fresh owned PostgreSQL 18 server.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
@@ -70,7 +71,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             ),
         }
     }
-    let database = database.context("--database is required")?;
+    let mut database = database.context("--database is required")?;
     ensure!(!names.is_empty(), "at least one --url-env is required");
     ensure!(
         names.iter().all(|name| !name.is_empty()
@@ -84,7 +85,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     command.args(args);
     // Logical WAL lets a CDC reader stream from the server, as in the cluster.
     let mut server = postgres::start(&[("wal_level", "logical")])?;
-    let owned = server.create_database(&database)?;
+    let owned = server.create_database(&mut database)?;
     let setup = apply_migrations(
         &owned,
         schema.as_deref(),
@@ -162,10 +163,10 @@ async fn apply_migrations(
     directories: &[PathBuf],
     history_manifest: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url())
         .await
         .context("connect to the owned migration database")?;
-    let task = tokio::spawn(connection);
+
     let result = async {
         if let Some(schema) = schema {
             ensure!(
@@ -175,14 +176,15 @@ async fn apply_migrations(
                         .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
                 "the schema must be a lowercase SQL identifier"
             );
-            client
-                .batch_execute(&format!(
-                    "CREATE SCHEMA {schema}; ALTER DATABASE {} SET search_path TO {schema}, public",
-                    url::Url::parse(database.url())?
-                        .path()
-                        .trim_start_matches('/')
-                ))
-                .await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "CREATE SCHEMA {schema}; ALTER DATABASE {} SET search_path TO {schema}, public",
+                url::Url::parse(database.url())?
+                    .path()
+                    .trim_start_matches('/')
+            )))
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         }
         for directory in directories {
             let mut files = std::fs::read_dir(directory)
@@ -196,14 +198,17 @@ async fn apply_migrations(
                 "the migration directory contains no SQL files"
             );
             for file in files {
-                client
-                    .batch_execute(&std::fs::read_to_string(&file)?)
-                    .await
-                    .with_context(|| format!("apply owned migration {}", file.display()))?;
+                sqlx::raw_sql(sqlx::AssertSqlSafe(
+                    (&std::fs::read_to_string(&file)?).to_string(),
+                ))
+                .execute(&mut client)
+                .await
+                .map(drop)
+                .with_context(|| format!("apply owned migration {}", file.display()))?;
             }
         }
         if let Some(path) = history_manifest {
-            create_history_tables(&client, path).await?;
+            create_history_tables(&mut client, path).await?;
         }
         Ok(())
     }
@@ -220,7 +225,7 @@ async fn apply_migrations(
 /// `wamn_app` exists first, because `record-history-app-grants.sql` grants the history read functions to it.
 /// A `wamn.k` path compiles first, so the tables follow the source and not a
 /// committed `generated/wamn.json` that generation has yet to rewrite.
-async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> anyhow::Result<()> {
+async fn create_history_tables(client: &mut sqlx::PgConnection, path: &Path) -> anyhow::Result<()> {
     let bytes = if path.file_name() == Some(std::ffi::OsStr::new(wamn_compiler::AUTHORED_MANIFEST))
     {
         wamn_compiler::compile_manifest(path.parent().unwrap_or(Path::new(".")))?
@@ -237,25 +242,28 @@ async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> 
     if logged.is_empty() {
         return Ok(());
     }
-    client
-        .batch_execute("CREATE ROLE wamn_app NOLOGIN")
+    sqlx::raw_sql("CREATE ROLE wamn_app NOLOGIN NOINHERIT")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("create the application role")?;
-    client
-        .batch_execute(RECORD_HISTORY_SQL)
+    sqlx::raw_sql(RECORD_HISTORY_SQL)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("apply record-history.sql")?;
-    client
-        .batch_execute(RECORD_HISTORY_APP_GRANTS_SQL)
+    sqlx::raw_sql(RECORD_HISTORY_APP_GRANTS_SQL)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
-        client
-            .execute(
-                "SELECT wamn_history.create_history_table($1, $2, false)",
-                &[&model.schema, &model.table],
-            )
+        sqlx::query("SELECT wamn_history.create_history_table($1, $2, false)")
+            .bind(&model.schema)
+            .bind(&model.table)
+            .execute(&mut *client)
             .await
+            .map(|result| result.rows_affected())
             .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }
     Ok(())
@@ -269,11 +277,11 @@ mod tests {
     async fn owned_server_runs_children_with_role_coordinates_and_cleans_up() -> anyhow::Result<()>
     {
         let mut server = postgres::start(&[])?;
-        let database = server.create_database("delivery_test")?;
+        let mut database = server.create_database("delivery_test")?;
         let mut setup = tokio::process::Command::new("sh");
         setup.args(["-c", "/usr/lib/postgresql/18/bin/psql \"$DATABASE_URL\" -XAtq -v ON_ERROR_STOP=1 -c \"CREATE ROLE fixture_reader LOGIN PASSWORD 'fixture-only'\" -c 'GRANT CONNECT ON DATABASE delivery_test TO fixture_reader'"]);
         assert!(
-            run(&mut setup, &database, &["DATABASE_URL".to_owned()])
+            run(&mut setup, &mut database, &["DATABASE_URL".to_owned()])
                 .await?
                 .success()
         );
@@ -288,7 +296,7 @@ mod tests {
         let mut failure = tokio::process::Command::new("sh");
         failure.args(["-c", "exit 17"]);
         assert_eq!(
-            run(&mut failure, &database, &["DATABASE_URL".to_owned()])
+            run(&mut failure, &mut database, &["DATABASE_URL".to_owned()])
                 .await?
                 .code(),
             Some(17)
@@ -307,9 +315,13 @@ mod tests {
             .arg(&child_pid)
             .arg(std::process::id().to_string());
         assert!(
-            run(&mut interrupted, &database, &["DATABASE_URL".to_owned()])
-                .await
-                .is_err()
+            run(
+                &mut interrupted,
+                &mut database,
+                &["DATABASE_URL".to_owned()]
+            )
+            .await
+            .is_err()
         );
         let pid = std::fs::read_to_string(&child_pid)?;
         std::fs::remove_file(child_pid)?;

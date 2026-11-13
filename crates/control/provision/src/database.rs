@@ -1,19 +1,4 @@
-//! Rendering a project-env's CNPG `Database` custom resource (wamn-q3n.7).
-//!
-//! `provision-project-env` creates one per-project-env Postgres database
-//! **declaratively** via CNPG's `Database` CRD (adopted in wamn-q3n.6's
-//! provisioning rework): the operator reconciles the CR into a `CREATE DATABASE
-//! … OWNER …` on the target cluster. The imperative work the CRD does *not* cover
-//! — ensuring the `wamn_db_owner` title role (which the CR's `spec.owner` names,
-//! so it must exist first) and the shared `wamn_app` role, then `ALTER DATABASE
-//! … OWNER TO` / `REVOKE CONNECT` (the [`crate::sql`] builders) — stays a thin
-//! privilege step (topology fact 3).
-//!
-//! Rendered as a `serde_json::Value` (`kubectl apply -f` accepts JSON — the
-//! [`render_project_env_secret_manifest`](crate::secret::render_project_env_secret_manifest) /
-//! [`render_org_cluster_set`](crate::org::render_org_cluster_set) precedent);
-//! the `provision-project-env` driver emits it and the runbook/Job applies it and
-//! waits ready. This crate is pure — no K8s client.
+//! Declarative project databases, publications and basic-auth credential names.
 
 use serde_json::{Value, json};
 use wamn_registry::Triple;

@@ -1,5 +1,6 @@
 //! Independent environment provisioning and absent-application initialization.
 
+use sqlx::Row as _;
 pub mod reset;
 pub mod schema;
 
@@ -11,7 +12,7 @@ use serde_json::Value;
 
 use super::document::{DeclaredRelease, EnvironmentDocument};
 use super::{Platform, analyse, ensure, stage};
-use crate::platform::{bootstrap, identity};
+use crate::platform::identity;
 use wamn_kubernetes::job;
 
 /// Database identities resolved before a Job starts, compared under its own lock.
@@ -24,12 +25,12 @@ pub struct ExpectedDatabase {
 
 impl ExpectedDatabase {
     pub async fn read(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Self> {
-        let client = wamn_package_control::database::connect(&platform.system_database_url).await?;
-        let row = client
-            .query_opt(
-                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ,
-                &[&document.org, &document.project, &document.env],
-            )
+        let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
+        let row = sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ)
+            .bind(&document.org)
+            .bind(&document.project)
+            .bind(&document.env)
+            .fetch_optional(&mut client)
             .await?;
         Ok(match row {
             Some(row) => Self {
@@ -79,7 +80,7 @@ impl ExpectedDatabase {
         }
         if !exclusive {
             crate::provision_project_env::registry::require_connected(
-                lock.client(),
+                &mut *lock.client().await,
                 &document.triple(),
             )
             .await?;
@@ -112,15 +113,16 @@ pub async fn initialize(
     ensure!(refusals.is_empty(), "{}", refusals.join("; "));
     let (packages, _) = analyse::read_release_packages(platform, &manifest).await?;
     let project_url = ensure::project_url(platform, &document.triple()).await?;
-    let database = url::Url::parse(&project_url)?;
-    let admin = wamn_package_control::database::connect(admin_url).await?;
-    admin
-        .batch_execute(&crate::provision_project_env::privilege_sql(
-            database.path().trim_start_matches('/'),
-        ))
-        .await
-        .context("set the database base privileges after CNPG")?;
-    ensure::ensure_project_database(platform, &document, &packages, &admin, admin_url).await?;
+    let database = wamn_postgres::identity(&project_url)?.1;
+    let mut admin = wamn_postgres::connect(admin_url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        crate::provision_project_env::privilege_sql(&database),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .context("set the database base privileges after CNPG")?;
+    ensure::ensure_project_database(platform, &document, &packages, &mut admin, admin_url).await?;
     let drops =
         super::bindings::project_authority(&platform.system_database_url, &project_url, &document)
             .await?;
@@ -225,15 +227,22 @@ pub async fn project_schema(
         resolution,
     } = request;
     let lock = expected.lock(platform, document, true).await?;
-    crate::provision_project_env::require_connected(lock.client(), &document.triple()).await?;
+    crate::provision_project_env::require_connected(&mut *lock.client().await, &document.triple())
+        .await?;
     let url = ensure::project_url(platform, &document.triple()).await?;
-    let mut admin = url::Url::parse(admin_url)?;
-    admin.set_path(url::Url::parse(&url)?.path());
-    let (mut client, connection) =
-        tokio_postgres::connect(admin.as_str(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
+    let database = wamn_postgres::identity(&url)?.1;
+    let mut client = wamn_postgres::connect(
+        wamn_postgres::connect_options(admin_url)
+            .await?
+            .database(&database),
+    )
+    .await?;
+
     let result = async {
-        client.batch_execute("SET ROLE wamn_db_owner").await?;
+        sqlx::raw_sql("SET ROLE wamn_db_owner")
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         crate::platform_migrations::run(
             &mut client,
             crate::platform_migrations::MigrationTarget::Project(&lock),
@@ -246,11 +255,8 @@ pub async fn project_schema(
     }
     .await;
     drop(client);
-    let driven = connection
-        .await
-        .context("join the project SQL connection")?;
     lock.release().await;
-    result.and(driven.context("drive the project SQL connection"))
+    result
 }
 
 /// SQL operations that run in the selected ctl image.
@@ -411,48 +417,37 @@ pub async fn run_deployed(
     }
     files.insert("database.json".into(), serde_json::to_string(&expected)?);
     let mut secrets = Vec::new();
-    let admin: bootstrap::SecretData = wamn_kubernetes::kubectl::get(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.database_namespace,
-        "secret",
-        &format!("{cluster}-superuser"),
+    let host = crate::provision_project_env::database_host(None, cluster, &document.org);
+    let administrator = crate::provision_project_env::workload::configuration(
+        &document.org,
+        cluster,
+        host.to_string(),
+        5432,
+        "wamn_system".into(),
+        "postgres".into(),
+        format!("{cluster}-superuser"),
     )
-    .await?
-    .context("missing CNPG superuser Secret")?;
-    // SQL Jobs use the CNPG Service and PostgreSQL's default port, never a native forward.
-    let host =
-        crate::provision_project_env::database_host(None, cluster, &platform.database_namespace);
-    let mut admin_url = url::Url::parse("postgresql://postgres@localhost/wamn_system")?;
-    admin_url.set_host(Some(&host))?;
-    admin_url
-        .set_password(Some(
-            &bootstrap::secret_text(&admin, "password")?.replace('%', "%25"),
-        ))
-        .map_err(|()| anyhow::anyhow!("encode the administrator password"))?;
-    secrets.push(job::credential(
-        &mut job,
-        &format!("{name}-admin"),
-        "WAMN_SYSTEM_ADMIN_URL",
-        "url",
-        admin_url.as_str(),
-    ));
-    let apply: bootstrap::SecretData = wamn_kubernetes::kubectl::get(
+    .to_json()?;
+    job::environment(&mut job, &[("WAMN_SYSTEM_ADMIN_URL", &administrator)]);
+    job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
+    let apply: Value = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
-        "platform",
-        "secret",
+        &document.org,
+        "configmap",
         "wamn-apply",
     )
     .await?
-    .context("missing Secret platform/wamn-apply")?;
-    secrets.push(job::credential(
+    .context("apply configuration is absent")?;
+    job::environment(
         &mut job,
-        &format!("{name}-apply"),
-        "WAMN_APPLY_DATABASE_URL",
-        "url",
-        &bootstrap::secret_text(&apply, "url")?,
-    ));
+        &[(
+            "WAMN_APPLY_DATABASE_URL",
+            apply["data"]["apply.json"]
+                .as_str()
+                .context("apply connection is absent")?,
+        )],
+    );
     if !matches!(operation, Operation::ProjectSchema { .. }) {
         let release_base = super::runtime::pod_artifact_base(
             platform.insecure_registry,
@@ -541,7 +536,7 @@ pub async fn run_deployed(
         job::secret_output(&mut job);
     }
     let mut target = platform.target.clone();
-    super::DEFAULT_NAMESPACE.clone_into(&mut target.namespace);
+    document.org.clone_into(&mut target.namespace);
     let output = job::run(&target, directory, &mut job, &mut secrets).await?;
     match operation {
         Operation::Provision | Operation::Reset { .. } => {}

@@ -1,10 +1,10 @@
 //! Disposable file metadata and the production administration and guest logins.
 
 use anyhow::Context as _;
-use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
+
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 
 pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c4";
 pub const CONNECTION: &str = "a0000000-0000-4000-8000-000000000041";
@@ -23,8 +23,8 @@ pub struct Fixture {
 }
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, driver) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { driver.await.expect("file fixture database connection") });
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -41,20 +41,24 @@ fn login(url: &str, role: &str) -> anyhow::Result<String> {
 pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database(name)?;
-    let observer = connect(database.url()).await?;
-    observer
-        .batch_execute(
-            "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOBYPASSRLS; \
+    let mut observer = connect(database.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS; \
          \
-         CREATE SCHEMA wamn_run",
-        )
-        .await?;
-    observer
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    observer
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await?;
+         CREATE SCHEMA wamn_run")
+            .to_string(),
+    ))
+    .execute(&mut observer)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut observer)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut observer)
+        .await
+        .map(drop)?;
     let mut logins = Vec::new();
     for (family, target) in [
         (
@@ -74,74 +78,81 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
             },
         ),
     ] {
-        let role = workload_generation_role(family, target, CredentialGeneration::A)?;
-        observer
-            .batch_execute(&sql::prepare_workload_generation_sql(
+        let role = workload_login(family, target)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 family,
                 name,
                 &role,
                 "file-fixture-only",
-                "2099-01-01T00:00:00Z",
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut observer)
+        .await
+        .map(drop)?;
         logins.push(connect(&login(database.url(), &role)?).await?);
     }
-    observer
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE ROLE file_fixture_migrator LOGIN PASSWORD 'file-fixture-only' \
          NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
          GRANT CREATE ON DATABASE \"{name}\" TO file_fixture_migrator; \
          GRANT USAGE ON SCHEMA platform TO file_fixture_migrator; \
          GRANT REFERENCES (id) ON platform.file TO file_fixture_migrator;"
         ))
-        .await?;
-    let migrator = connect(&login(database.url(), "file_fixture_migrator")?).await?;
-    migrator
-        .batch_execute(DOCUMENTS)
+            .to_string(),
+    ))
+    .execute(&mut observer)
+    .await
+    .map(drop)?;
+    let mut migrator = connect(&login(database.url(), "file_fixture_migrator")?).await?;
+    sqlx::raw_sql(DOCUMENTS)
+        .execute(&mut migrator)
         .await
+        .map(drop)
         .context("apply the file fixture migration")?;
-    observer
-        .batch_execute(
-            "REVOKE REFERENCES (id) ON platform.file FROM file_fixture_migrator; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("REVOKE REFERENCES (id) ON platform.file FROM file_fixture_migrator; \
          REVOKE USAGE ON SCHEMA platform FROM file_fixture_migrator; \
          GRANT USAGE ON SCHEMA file_fixture TO wamn_app; \
-         GRANT SELECT, INSERT, UPDATE, DELETE ON file_fixture.document TO wamn_app",
-        )
-        .await?;
-    let guest = logins.pop().expect("guest login");
-    let writer = logins.pop().expect("administration login");
-    for client in [&writer, &guest, &migrator] {
-        let row = client
-            .query_one(
-                "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user",
-                &[],
-            )
-            .await?;
+         GRANT SELECT, INSERT, UPDATE, DELETE ON file_fixture.document TO wamn_app")
+            .to_string(),
+    ))
+    .execute(&mut observer)
+    .await
+    .map(drop)?;
+    let mut guest = logins.pop().expect("guest login");
+    let mut writer = logins.pop().expect("administration login");
+    for client in [&mut writer, &mut guest, &mut migrator] {
+        let row =
+            sqlx::query("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user")
+                .fetch_one(&mut *client)
+                .await?;
         anyhow::ensure!(
-            !row.get::<_, bool>(0) && !row.get::<_, bool>(1),
+            !row.get::<bool, _>(0) && !row.get::<bool, _>(1),
             "targeted fixture login"
         );
     }
-    writer
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                 set_config('app.operation', 'admin:file-fixture', false)",
-            &[&CALLER],
-        )
-        .await?;
-    writer.execute(
-        "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','file@example.test')",
-        &[&CALLER],
-    ).await?;
-    writer
-        .execute(
-            "WITH integration AS (INSERT INTO platform.integration (id,integration_type,name,status) \
+    )
+    .bind(&CALLER)
+    .execute(&mut writer)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','file@example.test')").bind(&CALLER).execute(&mut writer).await.map(|result| result.rows_affected())?;
+    sqlx::query(
+        "WITH integration AS (INSERT INTO platform.integration (id,integration_type,name,status) \
              VALUES ($1::text::uuid,'s3','file-store','active') RETURNING id) \
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              SELECT $1::text::uuid,id,'s3','active' FROM integration",
-            &[&CONNECTION],
-        )
-        .await?;
+    )
+    .bind(&CONNECTION)
+    .execute(&mut writer)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(Fixture {
         observer,
         writer,
@@ -153,16 +164,19 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
 }
 
 /// Seed metadata for schema tests, without asserting that an object was uploaded.
-pub async fn metadata(writer: &Client) -> anyhow::Result<()> {
-    writer
-        .execute(
-            "INSERT INTO platform.file \
+pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO platform.file \
          (id,application,connection_id,name,media_type,size,sha256,blob_key) \
          VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,repeat('0',64), \
                  'dev/_wamn_files/live/' || $1)",
-            &[&FILE, &APPLICATION, &CONNECTION],
-        )
-        .await?;
+    )
+    .bind(&FILE)
+    .bind(&APPLICATION)
+    .bind(&CONNECTION)
+    .execute(&mut *writer)
+    .await
+    .map(|result| result.rows_affected())?;
     Ok(())
 }
 
@@ -176,7 +190,7 @@ pub const MC_IMAGE: &str = "chainguard/minio-client@sha256:8dc1dceb7371c9091b17b
 pub struct Registry {
     pub owner: Client,
     pub control: Client,
-    pub reader: std::sync::Arc<Client>,
+    pub reader: sqlx::PgPool,
     pub unmapped: Client,
     pub unenabled: Client,
     pub org: String,
@@ -197,9 +211,9 @@ impl Registry {
     ) -> anyhow::Result<()> {
         payload["project"] = self.project.clone().into();
         payload["env"] = "dev".into();
-        let tx = self.control.transaction().await?;
+        let mut tx = self.control.begin().await?;
         wamn_platform_identity::connections::administration::execute_with_store(
-            &tx,
+            &mut tx,
             &self.org,
             operation,
             &payload.to_string(),
@@ -217,8 +231,8 @@ impl Registry {
         name: &str,
         parameters: &serde_json::Value,
     ) -> anyhow::Result<()> {
-        let tx = self.control.transaction().await?;
-        wamn_test_infrastructure::credentials::define(&tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
+        let mut tx = self.control.begin().await?;
+        wamn_test_infrastructure::credentials::define(&mut tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -231,13 +245,13 @@ impl Registry {
     }
 }
 
-pub async fn active_file_connections(
-    client: &Client,
+pub async fn active_file_connections<'e>(
+    client: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
     org: &str,
     project: &str,
     connection: Option<&str>,
-) -> anyhow::Result<Vec<tokio_postgres::Row>> {
-    Ok(client.query("SELECT connection_id::text,connection_name,generation,parameters FROM registry.read_file_connection($1,$2,'dev',$3::text::uuid)", &[&org,&project,&connection]).await?)
+) -> anyhow::Result<Vec<sqlx::postgres::PgRow>> {
+    Ok(sqlx::query("SELECT connection_id::text,connection_name,generation,parameters FROM registry.read_file_connection($1,$2,'dev',$3::text::uuid)").bind(&org).bind(&project).bind(&connection).fetch_all(client).await?)
 }
 
 pub async fn registry(
@@ -246,33 +260,46 @@ pub async fn registry(
     definition: serde_json::Value,
 ) -> anyhow::Result<Registry> {
     use std::sync::Arc;
-    use wamn_control_provision::{SystemReader, system_reader_generation_role};
+    use wamn_control_provision::{SystemReader, system_reader_login};
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("file_registry")?;
-    let bootstrap = connect(database.url()).await?;
-    bootstrap
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await?;
+    let mut bootstrap = connect(database.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut bootstrap)
+    .await
+    .map(drop)?;
 
-    bootstrap
-        .batch_execute(
-            "CREATE ROLE wamn_system LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
-         ALTER DATABASE file_registry OWNER TO wamn_system",
-        )
-        .await?;
-    let owner = connect(&login(database.url(), "wamn_system")?).await?;
-    owner
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await?;
-    owner
-        .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
-        .await?;
-    bootstrap
-        .batch_execute(&sql::grant_control_surface_sql())
-        .await?;
-    bootstrap
-        .batch_execute(&sql::grant_connection_reader_surface_sql())
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_system LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
+         ALTER DATABASE file_registry OWNER TO wamn_system")
+            .to_string(),
+    ))
+    .execute(&mut bootstrap)
+    .await
+    .map(drop)?;
+    let mut owner = connect(&login(database.url(), "wamn_system")?).await?;
+    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .execute(&mut owner)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
+        .execute(&mut owner)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_control_surface_sql()).to_string(),
+    ))
+    .execute(&mut bootstrap)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_connection_reader_surface_sql()).to_string(),
+    ))
+    .execute(&mut bootstrap)
+    .await
+    .map(drop)?;
     let principal = wamn_control_provision::PlatformComponent::Provisioning;
     // These clients seed several autocommit transactions. Keep their actor
     // bound for the session, as the administration fixture does.
@@ -282,78 +309,79 @@ pub async fn registry(
         principal.principal_id(),
         principal.principal_name(),
     );
-    owner.batch_execute(&bind_actor).await?;
-    owner
-        .batch_execute("UPDATE registry.meta SET platform_domain='example.invalid'")
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&bind_actor).to_string()))
+        .execute(&mut owner)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql("UPDATE registry.meta SET platform_domain='example.invalid'")
+        .execute(&mut owner)
+        .await
+        .map(drop)?;
     for name in [project, "unenabled"] {
-        owner
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(org, name, "dev"),
-            )
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(org, name, "dev"))
+                .to_string(),
+        ))
+        .execute(&mut owner)
+        .await
+        .map(drop)?;
     }
-    owner.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").await?;
-    bootstrap.batch_execute(
-        "CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
-         GRANT wamn_control TO file_fixture_control",
-    ).await?;
-    let control = connect(&login(database.url(), "file_fixture_control")?).await?;
-    control.batch_execute(&bind_actor).await?;
+    sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").execute(&mut owner).await.map(drop)?;
+    sqlx::raw_sql("CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
+         GRANT wamn_control TO file_fixture_control").execute(&mut bootstrap).await.map(drop)?;
+    let mut control = connect(&login(database.url(), "file_fixture_control")?).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&bind_actor).to_string()))
+        .execute(&mut control)
+        .await
+        .map(drop)?;
     let mut clients = Vec::new();
-    for (target_project, generation, mapped) in [
-        (project, CredentialGeneration::A, true),
-        (project, CredentialGeneration::B, false),
-        ("unenabled", CredentialGeneration::A, true),
-    ] {
-        let role = system_reader_generation_role(
+    for (target_project, mapped) in [(project, true), ("unmapped", false), ("unenabled", true)] {
+        let role = system_reader_login(
             SystemReader::Connection,
             org,
             target_project,
             "dev",
             "file_registry",
-            generation,
         );
-        bootstrap
-            .batch_execute(&sql::prepare_workload_generation_sql(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::ConnectionReader,
                 "file_registry",
                 &role,
                 STORE_PASSWORD,
-                "2099-01-01T00:00:00Z",
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut bootstrap)
+        .await
+        .map(drop)?;
         if mapped {
-            owner
-                .execute(
-                    "INSERT INTO wamn_authority.author_login_projects \
-                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
-                    &[
-                        &role,
-                        &wamn_registry::project_env_key(org, target_project, "dev"),
-                        &org,
-                        &target_project,
-                    ],
-                )
-                .await?;
+            sqlx::query("INSERT INTO wamn_authority.author_login_projects \
+                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')").bind(&role).bind(&wamn_registry::project_env_key(org, target_project, "dev")).bind(&org).bind(&target_project).execute(&mut owner).await.map(|result| result.rows_affected())?;
         }
-        clients.push(connect(&login(database.url(), &role)?).await?);
+        let input = login(database.url(), &role)?;
+        clients.push((connect(&input).await?, input));
     }
-    let unenabled = clients.pop().unwrap();
-    let unmapped = clients.pop().unwrap();
-    let reader = Arc::new(clients.pop().unwrap());
-    for client in [&owner, &control, reader.as_ref(), &unmapped, &unenabled] {
-        let row = client
-            .query_one(
-                "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",
-                &[],
-            )
-            .await?;
+    let (mut unenabled, _) = clients.pop().unwrap();
+    let (mut unmapped, _) = clients.pop().unwrap();
+    let (mut reader, reader_input) = clients.pop().unwrap();
+    for client in [
+        &mut owner,
+        &mut control,
+        &mut reader,
+        &mut unmapped,
+        &mut unenabled,
+    ] {
+        let row =
+            sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
+                .fetch_one(&mut *client)
+                .await?;
         anyhow::ensure!(
-            !row.get::<_, bool>(0) && !row.get::<_, bool>(1),
+            !row.get::<bool, _>(0) && !row.get::<bool, _>(1),
             "file registry uses targeted logins"
         );
     }
+    let reader = wamn_postgres::pool(&reader_input, 4).await?;
     let mut fixture = Registry {
         owner,
         control,
@@ -374,16 +402,12 @@ pub async fn registry(
         if !cdn {
             parameters.as_object_mut().unwrap().remove("cdn_host");
         }
-        let tx = fixture.control.transaction().await?;
-        wamn_test_infrastructure::credentials::define(&tx,org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),fixture.credentials.as_ref()).await?;
+        let mut tx = fixture.control.begin().await?;
+        wamn_test_infrastructure::credentials::define(&mut tx,org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),fixture.credentials.as_ref()).await?;
         tx.commit().await?;
     }
-    let row = fixture
-        .owner
-        .query_one(
-            "SELECT c.id::text,c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND i.name=$2",
-            &[&org, &STORE_NAME, &project],
-        )
+    let row = sqlx::query("SELECT c.id::text,c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND i.name=$2").bind(&org).bind(&STORE_NAME).bind(&project).fetch_one(&mut fixture
+        .owner)
         .await?;
     fixture.connection_id = row.get(0);
     fixture.generation = row.get(1);
@@ -553,40 +577,42 @@ impl Drop for Minio {
 /// Import an aged metadata fixture as a non-superuser table owner.
 /// The stamp trigger is restored in the same transaction. All other tests keep
 /// its normal production authority and exercise the unmodified trigger.
-pub async fn age_metadata(fixture: &Fixture) -> anyhow::Result<()> {
-    fixture.observer.batch_execute(
-        "CREATE ROLE file_aged_owner LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
+pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE file_aged_owner LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
          GRANT wamn_administration TO file_aged_owner; \
-         ALTER TABLE platform.file OWNER TO file_aged_owner",
-    ).await?;
-    let importer = connect(&login(fixture.database.url(), "file_aged_owner")?).await?;
-    let identity = importer
-        .query_one(
-            "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",
-            &[],
-        )
-        .await?;
+         ALTER TABLE platform.file OWNER TO file_aged_owner")
+            .to_string(),
+    ))
+    .execute(&mut fixture.observer)
+    .await
+    .map(drop)?;
+    let mut importer = connect(&login(fixture.database.url(), "file_aged_owner")?).await?;
+    let identity =
+        sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
+            .fetch_one(&mut importer)
+            .await?;
     anyhow::ensure!(
-        !identity.get::<_, bool>(0) && !identity.get::<_, bool>(1),
+        !identity.get::<bool, _>(0) && !identity.get::<bool, _>(1),
         "fixture import uses no superuser"
     );
-    importer.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:aged-file-fixture',false)",&[&CALLER]).await?;
-    importer
-        .batch_execute(
-            "BEGIN; ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:aged-file-fixture',false)").bind(&CALLER).execute(&mut importer).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("BEGIN; ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
          UPDATE platform.file SET created_at=now()-interval '31 days'; \
-         ALTER TABLE platform.file ENABLE TRIGGER wamn_record_history_stamp; COMMIT",
-        )
-        .await?;
-    let enabled: bool = fixture
-        .observer
-        .query_one(
-            "SELECT tgenabled='O' FROM pg_trigger WHERE tgrelid='platform.file'::regclass \
+         ALTER TABLE platform.file ENABLE TRIGGER wamn_record_history_stamp; COMMIT")
+            .to_string(),
+    ))
+    .execute(&mut importer)
+    .await
+    .map(drop)?;
+    let enabled: bool = sqlx::query(
+        "SELECT tgenabled='O' FROM pg_trigger WHERE tgrelid='platform.file'::regclass \
          AND tgname='wamn_record_history_stamp'",
-            &[],
-        )
-        .await?
-        .get(0);
+    )
+    .fetch_one(&mut fixture.observer)
+    .await?
+    .get(0);
     anyhow::ensure!(enabled, "the aged fixture restores the stamp trigger");
     Ok(())
 }

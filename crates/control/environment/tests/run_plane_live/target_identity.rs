@@ -5,13 +5,14 @@ use super::{
     project_env_database_name, project_environment_policy, reconcile_run_plane, recreate_database,
     reset, schema,
 };
+use sqlx::Row as _;
 use wamn_broker::Publisher;
 
-async fn seed_target_guard_registry(su: &Client) {
-    su.batch_execute(
-        "DROP SCHEMA IF EXISTS registry CASCADE; \
+async fn seed_target_guard_registry(su: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
+           THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$; \
          CREATE SCHEMA registry AUTHORIZATION wamn_system; \
          SET ROLE wamn_system; \
          CREATE TABLE registry.environments ( \
@@ -40,19 +41,24 @@ async fn seed_target_guard_registry(su: &Client) {
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) VALUES \
            ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'), \
-           ('acme','prod','\"own\"',1,1,'1Gi','100m','128Mi','postgres','','','off')",
-    )
+           ('acme','prod','\"own\"',1,1,'1Gi','100m','128Mi','postgres','','','off')")
+            .to_string(),
+    ))
+    .execute(&mut *su)
     .await
+    .map(drop)
     .expect("seed target-identity registry fixture");
     // The reconciler reads the deployment platform domain and the project's
     // service principals on every run, including a dry run (`wamn-0h0g.9.15`).
-    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
+    sqlx::raw_sql(SYSTEM_IDENTITY_FIXTURE_SQL)
+        .execute(&mut *su)
         .await
+        .map(drop)
         .expect("seed the target-identity system identity fixture");
 }
 
-async fn target_guard_system_snapshot(su: &Client) -> String {
-    su.query_one(
+async fn target_guard_system_snapshot(su: &mut Client) -> String {
+    sqlx::query(
         "SELECT jsonb_build_object( \
            'policy-columns', COALESCE(( \
              SELECT jsonb_agg(jsonb_build_array( \
@@ -93,16 +99,15 @@ async fn target_guard_system_snapshot(su: &Client) -> String {
                JOIN pg_catalog.pg_roles AS granted ON granted.oid=membership.roleid \
               WHERE member.rolname LIKE 'wamn_%' OR granted.rolname LIKE 'wamn_%'), \
              '[]'::jsonb))::text",
-        &[],
     )
+    .fetch_one(&mut *su)
     .await
     .expect("snapshot registry target and cluster roles")
     .get(0)
 }
 
-async fn target_guard_database_snapshot(su: &Client) -> String {
-    su.query_one(
-        "SELECT jsonb_build_object( \
+async fn target_guard_database_snapshot(su: &mut Client) -> String {
+    sqlx::query("SELECT jsonb_build_object( \
            'database-acl', (SELECT datacl::text FROM pg_catalog.pg_database \
                              WHERE datname=current_database()), \
            'schemas', COALESCE(( \
@@ -126,9 +131,7 @@ async fn target_guard_database_snapshot(su: &Client) -> String {
                               ORDER BY schemaname,tablename,policyname) \
                FROM pg_catalog.pg_policies \
               WHERE schemaname <> 'information_schema' \
-                AND schemaname NOT LIKE 'pg_%'), '[]'::jsonb))::text",
-        &[],
-    )
+                AND schemaname NOT LIKE 'pg_%'), '[]'::jsonb))::text").fetch_one(&mut *su)
     .await
     .expect("snapshot project database target")
     .get(0)
@@ -158,7 +161,7 @@ fn target_guard_args(
 #[tokio::test]
 async fn reconcile_target_identity_guard_live() {
     let system_url = locked_database::database(wamn_test_postgres::database);
-    let system_su = connect(&system_url).await;
+    let mut system_su = connect(&system_url).await;
     let primary_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     let sibling_project_database =
         project_env_database_name(CLI_ORG, "accounts", CLI_ENV, "q80zdw41");
@@ -166,31 +169,35 @@ async fn reconcile_target_identity_guard_live() {
         project_env_database_name(CLI_ORG, CLI_PROJECT, "prod", "p7c4n2v8");
     let unrelated_database = "wamn-run-plane-unrelated";
     for database in [primary_database.as_str(), unrelated_database] {
-        recreate_database(&system_su, database).await;
+        recreate_database(&mut system_su, database).await;
     }
-    seed_target_guard_registry(&system_su).await;
+    seed_target_guard_registry(&mut system_su).await;
 
     let primary_url = database_url(&system_url, &primary_database);
     let unrelated_url = database_url(&system_url, unrelated_database);
-    let primary_su = connect(&primary_url).await;
-    let unrelated_su = connect(&unrelated_url).await;
-    unrelated_su
-        .batch_execute(&format!(
+    let mut primary_su = connect(&primary_url).await;
+    let mut unrelated_su = connect(&unrelated_url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE SCHEMA target_spoof; \
              CREATE FUNCTION target_spoof.current_database() RETURNS name \
                LANGUAGE sql IMMUTABLE AS $$ SELECT '{primary_database}'::name $$"
         ))
-        .await
-        .expect("install a search-path identity-spoof function");
+            .to_string(),
+    ))
+    .execute(&mut unrelated_su)
+    .await
+    .map(drop)
+    .expect("install a search-path identity-spoof function");
     let mut spoofed_unrelated_url =
         url::Url::parse(&unrelated_url).expect("parse unrelated database URL");
     spoofed_unrelated_url
         .query_pairs_mut()
         .append_pair("options", "-csearch_path=target_spoof,pg_catalog");
     let spoofed_unrelated_url = spoofed_unrelated_url.to_string();
-    let system_before = target_guard_system_snapshot(&system_su).await;
-    let primary_before = target_guard_database_snapshot(&primary_su).await;
-    let unrelated_before = target_guard_database_snapshot(&unrelated_su).await;
+    let system_before = target_guard_system_snapshot(&mut system_su).await;
+    let primary_before = target_guard_database_snapshot(&mut primary_su).await;
+    let unrelated_before = target_guard_database_snapshot(&mut unrelated_su).await;
 
     let cases = [
         (
@@ -293,17 +300,17 @@ async fn reconcile_target_identity_guard_live() {
                 );
             }
             assert_eq!(
-                target_guard_system_snapshot(&system_su).await,
+                target_guard_system_snapshot(&mut system_su).await,
                 system_before,
                 "{label} mutated the registry or cluster roles with dry_run={dry_run}"
             );
             assert_eq!(
-                target_guard_database_snapshot(&primary_su).await,
+                target_guard_database_snapshot(&mut primary_su).await,
                 primary_before,
                 "{label} mutated the primary project database with dry_run={dry_run}"
             );
             assert_eq!(
-                target_guard_database_snapshot(&unrelated_su).await,
+                target_guard_database_snapshot(&mut unrelated_su).await,
                 unrelated_before,
                 "{label} mutated the unrelated database with dry_run={dry_run}"
             );
@@ -311,21 +318,23 @@ async fn reconcile_target_identity_guard_live() {
     }
 
     assert!(
-        primary_su
-            .query_one("SELECT to_regnamespace($1) IS NULL", &[&SCHEMA])
+        sqlx::query("SELECT to_regnamespace($1) IS NULL")
+            .bind(&SCHEMA)
+            .fetch_one(&mut primary_su)
             .await
             .expect("probe refused primary schema")
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "wrong-target attempts created the run-plane schema"
     );
-    system_su
-        .batch_execute("ALTER TABLE registry.env_policies OWNER TO wamn_system")
+    sqlx::raw_sql("ALTER TABLE registry.env_policies OWNER TO wamn_system")
+        .execute(&mut system_su)
         .await
+        .map(drop)
         .expect("make the policy fixture readable for the correct-target path");
-    reset(&primary_su).await;
+    reset(&mut primary_su).await;
 
-    let system_before_dry_run = target_guard_system_snapshot(&system_su).await;
-    let primary_before_dry_run = target_guard_database_snapshot(&primary_su).await;
+    let system_before_dry_run = target_guard_system_snapshot(&mut system_su).await;
+    let primary_before_dry_run = target_guard_database_snapshot(&mut primary_su).await;
     reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
@@ -336,12 +345,12 @@ async fn reconcile_target_identity_guard_live() {
     .await
     .expect("correct target dry-run plans without writing");
     assert_eq!(
-        target_guard_system_snapshot(&system_su).await,
+        target_guard_system_snapshot(&mut system_su).await,
         system_before_dry_run,
         "correct-target dry-run changed the system plane"
     );
     assert_eq!(
-        target_guard_database_snapshot(&primary_su).await,
+        target_guard_database_snapshot(&mut primary_su).await,
         primary_before_dry_run,
         "correct-target dry-run changed the project plane"
     );
@@ -356,27 +365,25 @@ async fn reconcile_target_identity_guard_live() {
     .await
     .expect("correct target apply converges the run plane");
     assert!(
-        primary_su
-            .query_one(
-                "SELECT to_regclass($1) IS NOT NULL",
-                &[&format!("{SCHEMA}.runs")],
-            )
+        sqlx::query("SELECT to_regclass($1) IS NOT NULL")
+            .bind(&format!("{SCHEMA}.runs"))
+            .fetch_one(&mut primary_su)
             .await
             .expect("probe converged run plane")
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "correct target did not converge the run plane"
     );
-    let projected_row = primary_su
-        .query_one(
-            &format!(
-                "SELECT expected_environment, \
+    let projected_row = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT expected_environment, \
                         source_policy_org,source_policy_hash \
                    FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--dev--billing'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read converged project-local policy");
+        ))
+            .to_string(),
+    ))
+    .fetch_one(&mut primary_su)
+    .await
+    .expect("read converged project-local policy");
     let expected_source_hash = wamn_digest::canonical_json_sha256(&serde_json::json!({
         "backup-cadence": "",
         "cpu": "100m",
@@ -391,9 +398,9 @@ async fn reconcile_target_identity_guard_live() {
         "wal-retention": "",
     }));
     let projected = (
-        projected_row.get::<_, String>(0),
-        projected_row.get::<_, Option<String>>(1),
-        projected_row.get::<_, Option<String>>(2),
+        projected_row.get::<String, _>(0),
+        projected_row.get::<Option<String>, _>(1),
+        projected_row.get::<Option<String>, _>(2),
     );
     assert_eq!(
         projected,
@@ -417,16 +424,18 @@ async fn reconcile_target_identity_guard_live() {
     assert_eq!(replay.source_policy_org(), CLI_ORG);
     assert_eq!(replay.environment(), CLI_ENV);
     assert_eq!(replay.source_policy_hash(), expected_source_hash);
-    primary_su
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.environment_policies \
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.environment_policies \
                     SET source_policy_hash=$1 WHERE project_env_key='acme--dev--billing'"
-            ),
-            &[&format!("sha256:{}", "0".repeat(64))],
-        )
-        .await
-        .expect("seed a stale projected policy hash");
+        ))
+            .to_string(),
+    ))
+    .bind(&format!("sha256:{}", "0".repeat(64)))
+    .execute(&mut primary_su)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("seed a stale projected policy hash");
     assert!(
         project_environment_policy(
             &system_url,
@@ -455,8 +464,8 @@ async fn reconcile_target_identity_guard_live() {
         .changed(),
         "repaired projection did not converge"
     );
-    let system_converged = target_guard_system_snapshot(&system_su).await;
-    let primary_converged = target_guard_database_snapshot(&primary_su).await;
+    let system_converged = target_guard_system_snapshot(&mut system_su).await;
+    let primary_converged = target_guard_database_snapshot(&mut primary_su).await;
     reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
@@ -467,15 +476,15 @@ async fn reconcile_target_identity_guard_live() {
     .await
     .expect("correct target replay remains converged");
     assert_eq!(
-        target_guard_system_snapshot(&system_su).await,
+        target_guard_system_snapshot(&mut system_su).await,
         system_converged
     );
     assert_eq!(
-        target_guard_database_snapshot(&primary_su).await,
+        target_guard_database_snapshot(&mut primary_su).await,
         primary_converged
     );
     assert_eq!(
-        target_guard_database_snapshot(&unrelated_su).await,
+        target_guard_database_snapshot(&mut unrelated_su).await,
         unrelated_before,
         "correct-target convergence touched the unrelated database"
     );
@@ -483,6 +492,6 @@ async fn reconcile_target_identity_guard_live() {
     drop(primary_su);
     drop(unrelated_su);
     for database in [primary_database.as_str(), unrelated_database] {
-        drop_database(&system_su, database).await;
+        drop_database(&mut system_su, database).await;
     }
 }

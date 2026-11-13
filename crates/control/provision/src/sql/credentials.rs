@@ -20,232 +20,28 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
            ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name \
                          AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
                               OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             {nosuperuser} \
+             RAISE EXCEPTION 'invalid ACL role %', role_name; \
            END IF; \
          END $workload_acl$;",
-        nosuperuser = revoke_superuser_sql("role_name"),
         role_lit = escape_literal(role),
     )
 }
 
-/// `ALTER ROLE … NOSUPERUSER` for the role that the PL/pgSQL expression
-/// `role_expr` names, only when that role is a superuser.
-///
-/// Only a superuser can write the clause, and the provisioner is not one
-/// (`docs/plan/platform-ui.md` §4.10). A role that never was a superuser gets
-/// no clause, so a replay stays idempotent.
-pub(crate) fn revoke_superuser_sql(role_expr: &str) -> String {
+/// Grant database access after CNPG creates this login.
+pub fn grant_workload_login_sql(family: WorkloadRoleFamily, database: &str, role: &str) -> String {
     format!(
-        "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_expr} AND rolsuper) THEN \
-           EXECUTE format('ALTER ROLE %I NOSUPERUSER', {role_expr}); \
-         END IF;"
+        "{} {} GRANT CONNECT ON DATABASE {} TO {};",
+        stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family)),
+        platform_group_membership_sql(family),
+        escape_identifier(database),
+        escape_identifier(role)
     )
 }
 
-/// Prepare one inactive generation for a closed workload family.
-pub fn prepare_workload_generation_sql(
-    family: WorkloadRoleFamily,
-    database: &str,
-    role: &str,
-    password: &str,
-    expires_at: &str,
-) -> String {
-    let role_ident = escape_identifier(role);
-    let role_lit = escape_literal(role);
-    let membership = normalize_workload_generation_membership_sql(family, role, true);
-    let stable_surface =
-        stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family));
+/// Grant the dynamic SQL role reads without inheriting any application writer.
+pub fn grant_dynamic_sql_surface_sql() -> String {
     format!(
-        "{stable_surface} \
-         DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role_ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               INHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $$; \
-         {membership} \
-         ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
-         GRANT CONNECT ON DATABASE {database} TO {role_ident};",
-        stable_surface = stable_surface,
-        password = escape_literal(password),
-        expires_at = escape_literal(expires_at),
-        database = escape_identifier(database),
+        "{} DO $read$ DECLARE target record; BEGIN FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP EXECUTE format('GRANT USAGE ON SCHEMA %I TO wamn_query', target.nspname); EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO wamn_query', target.nspname); END LOOP; END $read$; GRANT EXECUTE ON FUNCTION wamn_authority.project_key(text), wamn_authority.current_project_key() TO wamn_query;",
+        ensure_acl_role_sql("wamn_query")
     )
-}
-
-/// Normalize one existing generation's membership during lifecycle migration.
-///
-/// `active` selects the one exact stable-role edge or no edge.
-pub fn normalize_workload_generation_membership_sql(
-    family: WorkloadRoleFamily,
-    role: &str,
-    active: bool,
-) -> String {
-    let role_ident = escape_identifier(role);
-    let grant = if active {
-        format!(
-            "GRANT {acl_role} TO {role_ident} \
-               WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;",
-            acl_role = escape_identifier(family.acl_role()),
-        )
-    } else {
-        String::new()
-    };
-    format!(
-        "{ensure} \
-         {platform_arm} \
-         REVOKE {acl_role} FROM {role_ident}; \
-         {grant}",
-        ensure = ensure_workload_acl_role_sql(family),
-        platform_arm = platform_group_membership_sql(family),
-        acl_role = escape_identifier(family.acl_role()),
-        grant = grant,
-    )
-}
-
-/// Remove one workload generation's authority before disabling authentication.
-pub fn retire_workload_generation_sql(
-    family: WorkloadRoleFamily,
-    database: &str,
-    role: &str,
-) -> String {
-    retire_acl_generation_sql(family.acl_role(), database, role)
-}
-
-pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &str) -> String {
-    let role_ident = escape_identifier(role);
-    format!(
-        "REVOKE {acl_role} FROM {role_ident}; \
-         REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
-         ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = escape_identifier(acl_role),
-        database = escape_identifier(database),
-    )
-}
-
-/// Terminate sessions only after a workload generation is retired.
-///
-/// Wait at most five seconds per backend, as in [`super::drain_app_role_sessions_sql`].
-/// A zero timeout only acknowledges the signal. Callers must still require the
-/// inactive state to reject termination failures.
-pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
-    let role_lit = escape_literal(role);
-    format!(
-        "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
-           WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
-    )
-}
-
-/// Read one generation or stable ACL role without family-wide cardinality assumptions.
-///
-/// An edge whose member is `wamn_provisioner` is not a member of the role: the
-/// provisioner holds ADMIN OPTION on a stable role that a superuser made, and
-/// `createrole_self_grant` makes it a member of each role it creates (owner
-/// rulings 40 and of 2026-10-03 on `wamn-zua8.3`).
-pub fn workload_generation_state_sql() -> &'static str {
-    "SELECT r.rolcanlogin, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, \
-            r.rolreplication, r.rolbypassrls, \
-            CASE WHEN r.rolvaliduntil IS NULL THEN NULL \
-                 ELSE to_char(r.rolvaliduntil AT TIME ZONE 'UTC', \
-                              'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') END AS valid_until, \
-            COALESCE(isfinite(r.rolvaliduntil), false) AS valid_until_finite, \
-            COALESCE((SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text) \
-                        FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid \
-                       WHERE m.member = r.oid), ARRAY[]::text[]) AS memberships, \
-            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND NOT m.set_option) \
-                        FROM pg_auth_members m WHERE m.member = r.oid), true) \
-              AS membership_options_exact, \
-            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option) \
-                        FROM pg_auth_members m WHERE m.member = r.oid), true) \
-              AS membership_options_migratable, \
-            COALESCE((SELECT array_agg(member.rolname::text ORDER BY member.rolname::text) \
-                        FROM pg_auth_members m JOIN pg_roles member ON member.oid = m.member \
-                       WHERE m.roleid = r.oid AND member.rolname <> 'wamn_provisioner'), \
-                     ARRAY[]::text[]) AS member_roles, \
-            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND NOT m.set_option) \
-                        FROM pg_auth_members m \
-                       WHERE m.roleid = r.oid \
-                         AND pg_get_userbyid(m.member) <> 'wamn_provisioner'), true) \
-              AS member_options_exact, \
-            NOT EXISTS ( \
-              SELECT 1 FROM pg_auth_members child_edge \
-              JOIN pg_roles generation ON generation.oid = child_edge.member \
-              WHERE child_edge.roleid = r.oid AND generation.rolname <> 'wamn_provisioner' AND ( \
-                child_edge.admin_option OR NOT child_edge.inherit_option OR child_edge.set_option \
-                OR NOT generation.rolcanlogin OR generation.rolsuper \
-                OR generation.rolcreatedb OR generation.rolcreaterole \
-                OR NOT generation.rolinherit OR generation.rolreplication \
-                OR generation.rolbypassrls OR generation.rolpassword IS NULL \
-                OR generation.rolvaliduntil IS NULL OR NOT isfinite(generation.rolvaliduntil) \
-                OR (SELECT count(*) FROM pg_auth_members parent_edge \
-                     WHERE parent_edge.member = generation.oid) <> 1 \
-                OR EXISTS (SELECT 1 FROM pg_auth_members parent_edge \
-                            WHERE parent_edge.member = generation.oid \
-                              AND (parent_edge.admin_option \
-                                   OR NOT parent_edge.inherit_option \
-                                   OR parent_edge.set_option)) \
-                OR EXISTS (SELECT 1 FROM pg_auth_members grandchild_edge \
-                            WHERE grandchild_edge.roleid = generation.oid \
-                              AND pg_get_userbyid(grandchild_edge.member) \
-                                  <> 'wamn_provisioner') \
-                OR EXISTS (SELECT 1 FROM pg_shdepend dependency \
-                            WHERE dependency.refclassid = 'pg_authid'::regclass \
-                              AND dependency.refobjid = generation.oid \
-                              AND dependency.deptype = 'o') \
-                OR (SELECT count(*) FROM pg_database direct_database \
-                    CROSS JOIN LATERAL aclexplode(direct_database.datacl) direct_acl \
-                    WHERE direct_acl.grantee = generation.oid) <> 1 \
-                OR EXISTS (SELECT 1 FROM pg_database direct_database \
-                           CROSS JOIN LATERAL aclexplode(direct_database.datacl) direct_acl \
-                           WHERE direct_acl.grantee = generation.oid \
-                             AND (direct_acl.privilege_type <> 'CONNECT' \
-                                  OR direct_acl.is_grantable)))) \
-              AS generation_children_exact, \
-            COALESCE((SELECT array_agg(d.datname::text ORDER BY d.datname::text) \
-                        FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) acl \
-                       WHERE acl.grantee = r.oid AND acl.privilege_type = 'CONNECT'), \
-                     ARRAY[]::text[]) AS connect_databases, \
-            (SELECT count(*)::bigint FROM pg_stat_activity a WHERE a.usename = r.rolname) AS sessions, \
-            (SELECT count(*)::bigint FROM pg_shdepend d \
-              WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid \
-                AND d.deptype = 'o') AS owned_objects \
-       FROM pg_catalog.pg_roles r WHERE r.rolname = $1"
-}
-
-/// Record the SHA-256 of the password that a prepare sets on generation `$1`.
-///
-/// `$2` is the lowercase hex digest. PostgreSQL shows a password only to a
-/// superuser, so the system database keeps this fingerprint instead
-/// (`docs/plan/platform-ui.md` §4.10). The password itself never leaves the
-/// provisioner.
-pub fn record_generation_password_sql() -> &'static str {
-    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_RECORD_GENERATION_PASSWORD_SQL
-}
-
-/// Whether a password fingerprint is recorded for generation `$1`.
-pub fn generation_password_recorded_sql() -> &'static str {
-    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_GENERATION_PASSWORD_RECORDED_SQL
-}
-
-/// [`workload_generation_state_sql`] with a `password_set` column, for a role
-/// whose database is the system database that holds its fingerprint.
-pub fn system_generation_state_sql() -> String {
-    wamn_registry::sql::system_generation_state(workload_generation_state_sql())
-}
-
-/// Remove the password fingerprint of generation `$1` after its retirement
-/// set `PASSWORD NULL`.
-pub fn forget_generation_password_sql() -> &'static str {
-    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_FORGET_GENERATION_PASSWORD_SQL
-}
-
-/// Session-targeted serialization primitive for workload credential mutation.
-///
-/// The generic lifecycle supplies a family-global key because it normalizes
-/// every current member of that family's stable ACL role. Serializing at a
-/// narrower target would let a stale cross-target read regrant a retired member.
-pub fn workload_identity_lock_sql() -> &'static str {
-    "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
 }

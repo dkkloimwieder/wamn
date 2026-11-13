@@ -1,10 +1,10 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::time::Duration;
 use wamn_broker::auth_changes::AuthDrops;
 
-use tokio_postgres::error::SqlState;
-use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wamn_identity_protocol::PrincipalId;
@@ -22,46 +22,44 @@ async fn platform_pat_round_trip_on_postgres() {
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
 
-    let (mut client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(&url)
         .await
         .expect("connect platform identity test database");
-    let connection_task = tokio::spawn(async move {
-        connection
-            .await
-            .expect("drive platform identity test database");
-    });
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS identity CASCADE; \
              DROP SCHEMA IF EXISTS provisioning CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-             THEN CREATE ROLE wamn_system; END IF; END $$;",
-        )
+             THEN CREATE ROLE wamn_system; END IF; END $$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("prepare empty platform schemas");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut client)
         .await
-        .expect("prepare empty platform schemas");
-    client
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("apply the system schema composition");
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
 
     // Issuance binds wamn:provisioning in its own transaction.
-    let transaction = provisioning_transaction(&mut client).await;
+    let mut transaction = provisioning_transaction(&mut client).await;
     let user = create_service(
-        &transaction,
+        &mut transaction,
         "author",
         "Widget Author",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");
-    let issued = issue_pat(&transaction, user.id(), " laptop ", TTL)
+    let issued = issue_pat(&mut transaction, user.id(), " laptop ", TTL)
         .await
         .expect("issue service token from trusted context");
     transaction.commit().await.expect("commit the issuance");
-    let issued_stamps = pat_stamps(&client, issued.record().prefix()).await;
+    let issued_stamps = pat_stamps(&mut client, issued.record().prefix()).await;
     assert_eq!(issued_stamps.created_by, provisioning);
     assert_eq!(issued_stamps.updated_by, provisioning);
     assert_eq!(issued_stamps.created_at, issued_stamps.updated_at);
@@ -74,29 +72,30 @@ async fn platform_pat_round_trip_on_postgres() {
     assert!(issued.record().expires_at() > issued.record().created_at());
 
     // Only a digest and non-secret lookup metadata persist.
-    let stored: (String, String) = client
-        .query_one(
-            "SELECT token_hash, encode(sha256(convert_to($1, 'UTF8')), 'hex') \
+    let stored: (String, String) = sqlx::query(
+        "SELECT token_hash, encode(sha256(convert_to($1, 'UTF8')), 'hex') \
              FROM identity.pats WHERE token_prefix = $2",
-            &[&token, &prefix],
-        )
-        .await
-        .map(|row| (row.get(0), row.get(1)))
-        .expect("read stored token row");
+    )
+    .bind(&token)
+    .bind(&prefix)
+    .fetch_one(&mut client)
+    .await
+    .map(|row| (row.get(0), row.get(1)))
+    .expect("read stored token row");
     assert_eq!(stored.0, stored.1);
     assert_ne!(stored.0, token);
-    let leaked: i64 = client
-        .query_one(
-            "SELECT count(*) FROM identity.pats \
+    let leaked: i64 = sqlx::query(
+        "SELECT count(*) FROM identity.pats \
              WHERE token_hash = $1 OR token_prefix = $1 OR label = $1",
-            &[&token],
-        )
-        .await
-        .expect("scan token columns for plaintext")
-        .get(0);
+    )
+    .bind(&token)
+    .fetch_one(&mut client)
+    .await
+    .expect("scan token columns for plaintext")
+    .get(0);
     assert_eq!(leaked, 0);
 
-    let authenticated = authenticate_pat(&client, &token)
+    let authenticated = authenticate_pat(&mut client, &token)
         .await
         .expect("authenticate token")
         .expect("a valid token must authenticate");
@@ -106,14 +105,14 @@ async fn platform_pat_round_trip_on_postgres() {
     let forged = flip_last_hex_digit(&token);
     assert_ne!(forged, token);
     assert!(
-        authenticate_pat(&client, &forged)
+        authenticate_pat(&mut client, &forged)
             .await
             .expect("reject forged token")
             .is_none()
     );
     let unknown = format!("{PAT_TOKEN_PREFIX}{}_{}", "f".repeat(16), "f".repeat(64));
     assert!(
-        authenticate_pat(&client, &unknown)
+        authenticate_pat(&mut client, &unknown)
             .await
             .expect("reject unknown prefix")
             .is_none()
@@ -125,7 +124,7 @@ async fn platform_pat_round_trip_on_postgres() {
         &token[PAT_TOKEN_PREFIX.len()..],
     ] {
         assert!(
-            authenticate_pat(&client, malformed)
+            authenticate_pat(&mut client, malformed)
                 .await
                 .expect("reject malformed token")
                 .is_none(),
@@ -134,42 +133,49 @@ async fn platform_pat_round_trip_on_postgres() {
     }
 
     // A revocation with no bound actor refuses.
-    let unbound = client
-        .execute(
-            "UPDATE identity.pats SET revoked_at = now() WHERE token_prefix = $1",
-            &[&issued.record().prefix()],
-        )
-        .await
-        .expect_err("a revocation with no bound actor must refuse");
+    let unbound =
+        sqlx::query("UPDATE identity.pats SET revoked_at = now() WHERE token_prefix = $1")
+            .bind(&issued.record().prefix())
+            .execute(&mut client)
+            .await
+            .map(|result| result.rows_affected())
+            .expect_err("a revocation with no bound actor must refuse");
     assert_eq!(
-        unbound.code(),
-        Some(&SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
+        unbound
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("55000")
     );
     assert_eq!(
         unbound
-            .as_db_error()
-            .map(tokio_postgres::error::DbError::message),
+            .as_database_error()
+            .map(sqlx::error::DatabaseError::message),
         Some("actor-required")
     );
     assert_eq!(
-        revoke_pat(&client, issued.record().prefix(), &mut AuthDrops::default())
-            .await
-            .expect_err("the library revocation also needs a bound actor")
-            .error_type(),
+        revoke_pat(
+            &mut client,
+            issued.record().prefix(),
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect_err("the library revocation also needs a bound actor")
+        .error_type(),
         IdentityErrorType::Database
     );
 
     // Revocation is a one-way stamp and repeating it changes nothing. It
     // binds wamn:provisioning in a later transaction and keeps the created pair.
-    let transaction = provisioning_transaction(&mut client).await;
-    let revocable = issue_pat(&transaction, user.id(), "revocable", TTL)
+    let mut transaction = provisioning_transaction(&mut client).await;
+    let revocable = issue_pat(&mut transaction, user.id(), "revocable", TTL)
         .await
         .expect("issue revocable token");
     transaction.commit().await.expect("commit the issuance");
-    let before = pat_stamps(&client, revocable.record().prefix()).await;
-    let transaction = provisioning_transaction(&mut client).await;
+    let before = pat_stamps(&mut client, revocable.record().prefix()).await;
+    let mut transaction = provisioning_transaction(&mut client).await;
     let revoked = revoke_pat(
-        &transaction,
+        &mut transaction,
         revocable.record().prefix(),
         &mut AuthDrops::default(),
     )
@@ -177,7 +183,7 @@ async fn platform_pat_round_trip_on_postgres() {
     .expect("revoke token");
     transaction.commit().await.expect("commit the revocation");
     assert!(revoked.revoked_at().is_some());
-    let after = pat_stamps(&client, revocable.record().prefix()).await;
+    let after = pat_stamps(&mut client, revocable.record().prefix()).await;
     assert_eq!(after.created_at, before.created_at);
     assert_eq!(after.created_by, provisioning);
     assert_eq!(after.updated_by, provisioning);
@@ -187,52 +193,53 @@ async fn platform_pat_round_trip_on_postgres() {
     );
 
     // The rest of the fixture is platform setup, so it writes as wamn:provisioning.
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&provisioning)
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .expect("bind wamn:provisioning for the fixture session");
-    platform_principal_cannot_hold_a_token(&client, &provisioning).await;
-    token_rows_refuse_malformed_values(&client, user.id(), &prefix).await;
+    platform_principal_cannot_hold_a_token(&mut client, &provisioning).await;
+    token_rows_refuse_malformed_values(&mut client, user.id(), &prefix).await;
 
     // An elapsed expiry refuses without any revocation. The stamp trigger keeps
     // created_at, so the fixture moves expires_at to just after it.
-    let expired = issue_pat(&client, user.id(), "expiring", TTL)
+    let expired = issue_pat(&mut client, user.id(), "expiring", TTL)
         .await
         .expect("issue expiring token");
-    client
-        .execute(
-            "UPDATE identity.pats \
+    sqlx::query(
+        "UPDATE identity.pats \
              SET expires_at = created_at + interval '1 microsecond' \
              WHERE token_prefix = $1",
-            &[&expired.record().prefix()],
-        )
-        .await
-        .expect("expire the expiring token");
+    )
+    .bind(&expired.record().prefix())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("expire the expiring token");
     assert!(
-        authenticate_pat(&client, expired.token())
+        authenticate_pat(&mut client, expired.token())
             .await
             .expect("reject expired token")
             .is_none()
     );
     assert!(
-        authenticate_pat(&client, revocable.token())
+        authenticate_pat(&mut client, revocable.token())
             .await
             .expect("reject revoked token")
             .is_none()
     );
-    client
-        .execute(
-            "UPDATE identity.pats SET revoked_at = now() - interval '1 hour' \
+    sqlx::query(
+        "UPDATE identity.pats SET revoked_at = now() - interval '1 hour' \
              WHERE token_prefix = $1",
-            &[&revocable.record().prefix()],
-        )
-        .await
-        .expect("backdate the revocation");
+    )
+    .bind(&revocable.record().prefix())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("backdate the revocation");
     let backdated = revoke_pat(
-        &client,
+        &mut client,
         revocable.record().prefix(),
         &mut AuthDrops::default(),
     )
@@ -241,7 +248,7 @@ async fn platform_pat_round_trip_on_postgres() {
     assert_ne!(backdated.revoked_at(), revoked.revoked_at());
     assert_eq!(
         revoke_pat(
-            &client,
+            &mut client,
             revocable.record().prefix(),
             &mut AuthDrops::default()
         )
@@ -251,7 +258,7 @@ async fn platform_pat_round_trip_on_postgres() {
         backdated.revoked_at()
     );
     assert_eq!(
-        revoke_pat(&client, &"0".repeat(16), &mut AuthDrops::default())
+        revoke_pat(&mut client, &"0".repeat(16), &mut AuthDrops::default())
             .await
             .expect_err("unknown prefix must not revoke")
             .error_type(),
@@ -260,17 +267,17 @@ async fn platform_pat_round_trip_on_postgres() {
 
     // Service principals get tokens through the same trusted-context path.
     let service = create_service(
-        &client,
+        &mut client,
         "agent-ci",
         "CI Agent",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");
-    let service_token = issue_pat(&client, service.id(), "ci", TTL)
+    let service_token = issue_pat(&mut client, service.id(), "ci", TTL)
         .await
         .expect("issue service token");
-    let service_authenticated = authenticate_pat(&client, service_token.token())
+    let service_authenticated = authenticate_pat(&mut client, service_token.token())
         .await
         .expect("authenticate service token")
         .expect("a valid service token must authenticate");
@@ -280,7 +287,7 @@ async fn platform_pat_round_trip_on_postgres() {
     );
 
     // Listing returns the stored metadata, newest first, and no token material.
-    let listed = list_pats(&client, user.id())
+    let listed = list_pats(&mut client, user.id())
         .await
         .expect("list user tokens");
     assert_eq!(
@@ -294,51 +301,51 @@ async fn platform_pat_round_trip_on_postgres() {
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
-    disable_principal(&client, user.id(), &mut AuthDrops::default())
+    disable_principal(&mut client, user.id(), &mut AuthDrops::default())
         .await
         .expect("disable user");
     assert!(
-        authenticate_pat(&client, &token)
+        authenticate_pat(&mut client, &token)
             .await
             .expect("reject token of a disabled principal")
             .is_none()
     );
     assert_eq!(
-        issue_pat(&client, user.id(), "after-disable", TTL)
+        issue_pat(&mut client, user.id(), "after-disable", TTL)
             .await
             .expect_err("disabled principals must not gain tokens")
             .error_type(),
         IdentityErrorType::NotFound
     );
 
-    client
-        .batch_execute(
-            "DROP SCHEMA identity CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA identity CASCADE; \
              DROP SCHEMA provisioning CASCADE; \
-             DROP SCHEMA registry CASCADE;",
-        )
-        .await
-        .expect("remove platform identity test schemas");
+             DROP SCHEMA registry CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("remove platform identity test schemas");
     drop(client);
-    connection_task
-        .await
-        .expect("join database connection task");
 }
 
 /// Forge a token that keeps its lookup prefix but carries a different secret.
 /// Begin a transaction that binds wamn:provisioning, as the identity issuer and
 /// wamn-ctl do.
-async fn provisioning_transaction(client: &mut Client) -> Transaction<'_> {
-    let transaction = client
-        .transaction()
+async fn provisioning_transaction(client: &mut Client) -> sqlx::Transaction<'_, sqlx::Postgres> {
+    let mut transaction = client
+        .begin()
         .await
         .expect("begin a provisioning transaction");
-    transaction
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .expect("bind wamn:provisioning");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .expect("bind wamn:provisioning");
     transaction
 }
 
@@ -350,16 +357,16 @@ struct PatStamps {
     updated_after_created: bool,
 }
 
-async fn pat_stamps(client: &Client, prefix: &str) -> PatStamps {
-    let row = client
-        .query_one(
-            "SELECT created_at::text, created_by::text, updated_at::text, updated_by::text, \
+async fn pat_stamps(client: &mut Client, prefix: &str) -> PatStamps {
+    let row = sqlx::query(
+        "SELECT created_at::text, created_by::text, updated_at::text, updated_by::text, \
                     updated_at > created_at \
              FROM identity.pats WHERE token_prefix = $1",
-            &[&prefix],
-        )
-        .await
-        .expect("read token stamps");
+    )
+    .bind(&prefix)
+    .fetch_one(&mut *client)
+    .await
+    .expect("read token stamps");
     PatStamps {
         created_at: row.get(0),
         created_by: row.get(1),
@@ -371,7 +378,7 @@ async fn pat_stamps(client: &Client, prefix: &str) -> PatStamps {
 
 /// The pats foreign key carries the principal type, so no token names the
 /// platform principal, through the library or through direct SQL.
-async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &str) {
+async fn platform_principal_cannot_hold_a_token(client: &mut Client, provisioning: &str) {
     let principal: PrincipalId = provisioning
         .parse()
         .expect("a derived id is a principal id");
@@ -383,20 +390,31 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
         IdentityErrorType::NotFound
     );
     for (type_, code) in [
-        ("platform", SqlState::CHECK_VIOLATION),
-        ("user", SqlState::CHECK_VIOLATION),
-        ("service", SqlState::FOREIGN_KEY_VIOLATION),
+        ("platform", "23514"),
+        ("user", "23514"),
+        ("service", "23503"),
     ] {
-        let error = client
-            .execute(
-                "INSERT INTO identity.pats \
+        let error = sqlx::query(
+            "INSERT INTO identity.pats \
                    (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                  VALUES ($1::text::uuid, $2, $3, $4, 'platform', now() + interval '1 hour')",
-                &[&provisioning, &type_, &"e".repeat(16), &"e".repeat(64)],
-            )
-            .await
-            .expect_err("direct SQL must not bind a token to the platform principal");
-        assert_eq!(error.code(), Some(&code), "{type_}");
+        )
+        .bind(&provisioning)
+        .bind(&type_)
+        .bind(&"e".repeat(16))
+        .bind(&"e".repeat(64))
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect_err("direct SQL must not bind a token to the platform principal");
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some(code),
+            "{type_}"
+        );
     }
 }
 
@@ -405,7 +423,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
 /// length, or an expiry at its creation. A principal that holds a token cannot
 /// be deleted.
 async fn token_rows_refuse_malformed_values(
-    client: &Client,
+    client: &mut Client,
     principal: &PrincipalId,
     issued_prefix: &str,
 ) {
@@ -416,65 +434,81 @@ async fn token_rows_refuse_malformed_values(
             issued_prefix.to_owned(),
             hash.clone(),
             "now() + interval '1 hour'",
-            SqlState::UNIQUE_VIOLATION,
+            "23505",
         ),
         (
             "uppercase prefix",
             "D".repeat(16),
             hash.clone(),
             "now() + interval '1 hour'",
-            SqlState::CHECK_VIOLATION,
+            "23514",
         ),
         (
             "short prefix",
             "d".repeat(15),
             hash.clone(),
             "now() + interval '1 hour'",
-            SqlState::CHECK_VIOLATION,
+            "23514",
         ),
         (
             "uppercase hash",
             prefix.clone(),
             "D".repeat(64),
             "now() + interval '1 hour'",
-            SqlState::CHECK_VIOLATION,
+            "23514",
         ),
         (
             "short hash",
             prefix.clone(),
             "d".repeat(63),
             "now() + interval '1 hour'",
-            SqlState::CHECK_VIOLATION,
+            "23514",
         ),
         (
             "expiry at creation",
             prefix.clone(),
             hash.clone(),
             "now()",
-            SqlState::CHECK_VIOLATION,
+            "23514",
         ),
     ] {
-        let error = client
-            .execute(
-                &format!(
-                    "INSERT INTO identity.pats \
+        let error = sqlx::query(sqlx::AssertSqlSafe(
+            (&format!(
+                "INSERT INTO identity.pats \
                        (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                      VALUES ($1::text::uuid, 'service', $2, $3, 'malformed', {expiry})"
-                ),
-                &[&principal.to_string().as_str(), &token_prefix, &token_hash],
-            )
-            .await
-            .expect_err("a malformed token row must refuse");
-        assert_eq!(error.code(), Some(&code), "{case}");
-    }
-    let error = client
-        .execute(
-            "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&principal.to_string().as_str()],
-        )
+            ))
+                .to_string(),
+        ))
+        .bind(&principal.to_string().as_str())
+        .bind(&token_prefix)
+        .bind(&token_hash)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
+        .expect_err("a malformed token row must refuse");
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some(code),
+            "{case}"
+        );
+    }
+    let error = sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
+        .bind(&principal.to_string().as_str())
+        .execute(&mut *client)
+        .await
+        .map(|result| result.rows_affected())
         .expect_err("a principal that holds a token must not be deleted");
-    assert_eq!(error.code(), Some(&SqlState::RESTRICT_VIOLATION));
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23001")
+    );
 }
 
 fn flip_last_hex_digit(token: &str) -> String {

@@ -15,7 +15,7 @@ use super::identity;
 // This projection observes installed facts, including granted schemas. It does
 // not admit authoring input or construct a complete authoring catalog identity.
 async fn observe_installed_contract(
-    project: &tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
     required: &Value,
 ) -> anyhow::Result<Value> {
     let mut tables = Vec::new();
@@ -29,15 +29,18 @@ async fn observe_installed_contract(
         let name = table["table"]
             .as_str()
             .context("required table must be a name")?;
-        let rows = project
-            .query(wamn_schema_control::select_schema_columns_sql(), &[&schema])
-            .await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(
+            (wamn_schema_control::select_schema_columns_sql()).to_string(),
+        ))
+        .bind(&schema)
+        .fetch_all(&mut *project)
+        .await?;
         let mut columns = Vec::new();
-        for row in rows.iter().filter(|row| row.get::<_, &str>(0) == name) {
+        for row in rows.iter().filter(|row| row.get::<&str, _>(0) == name) {
             columns.push(json!({
-                "name":row.get::<_, &str>(1),
-                "type":postgres_type(row.get::<_, &str>(4))?.as_str(),
-                "nullable":!row.get::<_, bool>(2),
+                "name":row.get::<&str, _>(1),
+                "type":postgres_type(row.get::<&str, _>(4))?.as_str(),
+                "nullable":!row.get::<bool, _>(2),
             }));
         }
         ensure!(
@@ -54,8 +57,7 @@ async fn observe_installed_contract(
                 .context("required constraint must be a name")?;
             // Ordered key pairs and pg_get_expr(false) match the existing IR
             // representation; rendered pg_get_constraintdef text does not.
-            let row = project.query_opt(
-                "SELECT con.contype::text, \
+            let row = sqlx::query("SELECT con.contype::text, \
                     ARRAY(SELECT att.attname::text FROM unnest(con.conkey) WITH ORDINALITY key(attnum, position) \
                           JOIN pg_catalog.pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = key.attnum \
                           ORDER BY key.position), \
@@ -70,21 +72,19 @@ async fn observe_installed_contract(
                  JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace \
                  LEFT JOIN pg_catalog.pg_class referenced_relation ON referenced_relation.oid = con.confrelid \
                  LEFT JOIN pg_catalog.pg_namespace referenced_namespace ON referenced_namespace.oid = referenced_relation.relnamespace \
-                 WHERE namespace.nspname = $1 AND relation.relname = $2 AND con.conname = $3 AND relation.relkind = 'r'",
-                &[&schema, &name, &constraint_name],
-            ).await?.with_context(|| format!("unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name}"))?;
+                 WHERE namespace.nspname = $1 AND relation.relname = $2 AND con.conname = $3 AND relation.relkind = 'r'").bind(&schema).bind(&name).bind(&constraint_name).fetch_optional(&mut *project).await?.with_context(|| format!("unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name}"))?;
             ensure!(
-                row.get::<_, bool>(8)
-                    && row.get::<_, bool>(9)
-                    && !row.get::<_, bool>(10)
-                    && !row.get::<_, bool>(11),
+                row.get::<bool, _>(8)
+                    && row.get::<bool, _>(9)
+                    && !row.get::<bool, _>(10)
+                    && !row.get::<bool, _>(11),
                 "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} must be enforced, validated, and immediate"
             );
             let local: Vec<String> = row.get(1);
-            let observed = match row.get::<_, &str>(0) {
+            let observed = match row.get::<&str, _>(0) {
                 "p" => Constraint::primary_key(constraint_name, local)?,
                 "u" => Constraint::unique(constraint_name, local)?,
-                "c" => Constraint::check(constraint_name, row.get::<_, String>(7))?,
+                "c" => Constraint::check(constraint_name, row.get::<String, _>(7))?,
                 "f" => {
                     let referenced: Vec<String> = row.get(4);
                     ensure!(
@@ -98,8 +98,8 @@ async fn observe_installed_contract(
                             .zip(referenced)
                             .map(|(local, remote)| ForeignKeyColumn::new(local, remote))
                             .collect(),
-                        row.get::<_, String>(2),
-                        row.get::<_, String>(3),
+                        row.get::<String, _>(2),
+                        row.get::<String, _>(3),
                         foreign_key_action(row.get(5))?,
                         foreign_key_action(row.get(6))?,
                     )?
@@ -232,27 +232,12 @@ fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
 /// postgres.
 async fn production_server() -> anyhow::Result<wamn_test_infrastructure::postgres::OwnedPostgres> {
     let postgres = wamn_test_infrastructure::postgres::start(&[])?;
-    let config: tokio_postgres::Config = postgres.database("postgres")?.url().parse()?;
-    let password = config
-        .get_password()
-        .context("the test server URL carries the superuser password")?;
-    let init = tokio::process::Command::new("/usr/lib/postgresql/18/bin/psql")
-        .env_clear()
-        .env("PGHOST", "127.0.0.1")
-        .env("PGPORT", config.get_ports()[0].to_string())
-        .env("PGUSER", "postgres")
-        .env("PGPASSWORD", std::str::from_utf8(password)?)
-        .env("PGDATABASE", "postgres")
-        .args(["-X", "-q", "-v", "ON_ERROR_STOP=1", "-f"])
-        .arg(super::repository_root()?.join("deploy/sql/postgres-init.sql"))
-        .output()
-        .await
-        .context("run psql for deploy/sql/postgres-init.sql")?;
-    ensure!(
-        init.status.success(),
-        "deploy/sql/postgres-init.sql failed: {}",
-        String::from_utf8_lossy(&init.stderr)
-    );
+    let mut client = wamn_postgres::connect(postgres.database("postgres")?.url()).await?;
+    let sql =
+        std::fs::read_to_string(super::repository_root()?.join("deploy/sql/postgres-init.sql"))?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+        .execute(&mut client)
+        .await?;
     Ok(postgres)
 }
 
@@ -262,27 +247,27 @@ async fn install_fresh(
     server: &mut wamn_test_infrastructure::postgres::OwnedPostgres,
     name: &str,
     packages: &[std::path::PathBuf],
-) -> anyhow::Result<(
-    String,
-    std::sync::Arc<tokio_postgres::Client>,
-    tokio::task::JoinHandle<()>,
-)> {
+) -> anyhow::Result<(String, sqlx::PgConnection)> {
     let url = server.create_database(name)?.url().to_owned();
-    let (project, connection_task) = super::connect(&url).await?;
-    let fresh = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
+    let mut project = super::connect(&url).await?;
+    let fresh = sqlx::query("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL").fetch_one(&mut project).await?;
     ensure!(
-        (180_000..190_000).contains(&fresh.get::<_, i32>(0)) && fresh.get::<_, bool>(2),
+        (180_000..190_000).contains(&fresh.get::<i32, _>(0)) && fresh.get::<bool, _>(2),
         "observer test requires fresh PostgreSQL 18"
     );
-    project
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await?;
-    project
-        .batch_execute(&wamn_control_provision::sql::set_database_owner_sql(
-            fresh.get(1),
-        ))
-        .await?;
-    super::install_journey_platform_base_grants(&project, super::PLATFORM_DOMAIN).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::set_database_owner_sql(fresh.get(1))).to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    super::install_journey_platform_base_grants(&mut project, super::PLATFORM_DOMAIN).await?;
     let roots = packages
         .iter()
         .map(|package| {
@@ -317,5 +302,5 @@ async fn install_fresh(
         },
     )
     .await?;
-    Ok((url, project, connection_task))
+    Ok((url, project))
 }

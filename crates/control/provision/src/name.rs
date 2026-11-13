@@ -1,8 +1,7 @@
-//! Provisioning validation and credential URL composition.
+//! Provisioning validation and database names.
 
 use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
-use std::fmt::Write as _;
 
 /// The shared role of generated application statements.
 pub const APP_ROLE: &str = "wamn_app";
@@ -129,30 +128,6 @@ pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(
         });
     }
     Ok(())
-}
-
-/// Encode credentials and a database name into a Postgres URL.
-pub fn compose_url(user: &str, password: &str, host: &str, port: u16, database: &str) -> String {
-    format!(
-        "postgres://{}:{}@{}:{}/{}",
-        pct(user),
-        pct(password),
-        host,
-        port,
-        pct(database),
-    )
-}
-fn pct(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-            out.push(b as char);
-        } else {
-            out.push('%');
-            write!(out, "{b:02X}").expect("writing to a String cannot fail");
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -648,19 +623,5 @@ mod tests {
         let org_ok = "o".repeat(36);
         assert!(validate_project_env_cdc(&org_ok, "pp", "de").is_ok());
         assert!(cdc_object_name(&org_ok, "pp", "de", INSTANCE).len() <= MAX_DB_NAME_LEN);
-    }
-
-    #[test]
-    fn compose_url_percent_encodes_userinfo() {
-        let u = compose_url("wamn_app", "wamn_app", "wamn-pg-rw", 5432, "wamn-db-acme");
-        assert_eq!(
-            u,
-            "postgres://wamn_app:wamn_app@wamn-pg-rw:5432/wamn-db-acme"
-        );
-        // A password with URL-reserved characters is encoded, not injected.
-        let u = compose_url("wamn_app", "p@ss:w/rd", "h", 5432, "wamn-db-x");
-        assert_eq!(u, "postgres://wamn_app:p%40ss%3Aw%2Frd@h:5432/wamn-db-x");
-        // The hyphenated database name is URL-unreserved (no encoding).
-        assert!(u.ends_with("/wamn-db-x"));
     }
 }

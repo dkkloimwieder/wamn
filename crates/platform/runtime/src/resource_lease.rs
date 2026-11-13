@@ -111,7 +111,7 @@ struct State {
 
 /// One lease owner per host, with a lazy dedicated system database session.
 pub struct ResourceLeases {
-    database: Option<tokio_postgres::Config>,
+    database: Option<String>,
     state: Mutex<State>,
 }
 
@@ -132,9 +132,9 @@ impl Drop for ResourceLeases {
 }
 
 impl ResourceLeases {
-    pub fn new(url: Option<&str>) -> Result<Self, tokio_postgres::Error> {
+    pub fn new(url: Option<&str>) -> anyhow::Result<Self> {
         Ok(Self {
-            database: url.map(str::parse).transpose()?,
+            database: url.map(str::to_owned),
             state: Mutex::new(State {
                 leases: HashMap::new(),
                 revisions: HashMap::new(),
@@ -348,14 +348,12 @@ async fn local_lease(lease: Arc<Lease>) {
     lease.set(RELEASED);
 }
 
-async fn database_session(
-    configuration: tokio_postgres::Config,
-    mut commands: mpsc::UnboundedReceiver<Command>,
-) {
+async fn database_session(configuration: String, mut commands: mpsc::UnboundedReceiver<Command>) {
+    use sqlx::Connection as _;
+
     let mut needed: HashMap<uuid::Uuid, Arc<Lease>> = HashMap::new();
     let mut deferred = None;
     loop {
-        // No session exists here. Releases need no database statement.
         while let Some(command) = deferred.take().or_else(|| commands.try_recv().ok()) {
             match command {
                 Command::Acquire(lease) => {
@@ -379,15 +377,15 @@ async fn database_session(
             continue;
         }
         let opened = tokio::select! {
-            opened = configuration.connect(tokio_postgres::NoTls) => opened,
+            opened = wamn_postgres::connect(&configuration) => opened,
             command = commands.recv() => {
                 let Some(command) = command else { return; };
                 deferred = Some(command);
                 continue;
             }
         };
-        let (client, connection) = match opened {
-            Ok(opened) => opened,
+        let mut client = match opened {
+            Ok(client) => client,
             Err(error) => {
                 tracing::warn!(%error, "resource lease session did not open");
                 tokio::select! {
@@ -400,66 +398,49 @@ async fn database_session(
                 continue;
             }
         };
-        let mut pending = VecDeque::new();
-        let mut driver = tokio::spawn(connection);
-        for lease in needed.values() {
-            if lease.active.load(Ordering::SeqCst) {
-                pending.push_back(Arc::clone(lease));
-            }
-        }
+        let mut pending: VecDeque<_> = needed
+            .values()
+            .filter(|lease| lease.active.load(Ordering::SeqCst))
+            .map(Arc::clone)
+            .collect();
+        let mut poll = tokio::time::interval(ACQUIRE_TURN);
         loop {
             let command = if let Some(command) = deferred.take() {
                 Some(command)
-            } else if let Some(lease) = pending.pop_front() {
-                if !lease.active.load(Ordering::SeqCst) {
-                    continue;
-                }
-                if needed.values().any(|other| {
-                    other.connection != lease.connection
-                        && other.key == lease.key
-                        && other.state.load(Ordering::SeqCst) == HELD
-                }) {
-                    continue;
-                }
-                let key = lease.key.clone();
-                let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 1] = [&key];
-                let acquire = client.query_one(
-                    "SELECT pg_advisory_lock(hashtextextended($1, 0))",
-                    &parameters,
-                );
-                tokio::pin!(acquire);
-                tokio::select! {
-                    result = &mut acquire => {
-                        match result {
-                            Ok(_) => { lease.set(HELD); },
-                            Err(_) => { break; }
-                        }
-                        continue;
-                    },
-                    command = commands.recv() => {
-                        // PostgreSQL executes one statement at a time. Cancel a
-                        // waiting acquire before an unlock can use this session.
-                        match cancel_acquire(&client, &mut acquire).await {
-                            Some(true) => lease.set(HELD),
-                            Some(false) => if lease.active.load(Ordering::SeqCst) { pending.push_back(lease); },
-                            None => { deferred = command; break; }
-                        }
-                        command
-                    },
-                    () = tokio::time::sleep(ACQUIRE_TURN), if !pending.is_empty() => {
-                        match cancel_acquire(&client, &mut acquire).await {
-                            Some(true) => lease.set(HELD),
-                            Some(false) => if lease.active.load(Ordering::SeqCst) { pending.push_back(lease); },
-                            None => break,
-                        }
-                        continue;
-                    },
-                    _ = &mut driver => { break; }
-                }
             } else {
                 tokio::select! {
                     command = commands.recv() => command,
-                    _ = &mut driver => { break; }
+                    _ = poll.tick() => {
+                        // A nonblocking lock needs no cancellation connection. One
+                        // session owns every lock, including across retry turns.
+                        let result = if let Some(lease) = pending.pop_front() {
+                            if !lease.active.load(Ordering::SeqCst) { continue; }
+                            if needed.values().any(|other| other.connection != lease.connection
+                                && other.key == lease.key && other.state.load(Ordering::SeqCst) == HELD) {
+                                continue;
+                            }
+                            let acquired = sqlx::query_scalar::<_, bool>(
+                                "SELECT pg_try_advisory_lock(hashtextextended($1, 0))")
+                                .bind(&lease.key).fetch_one(&mut client);
+                            let result = tokio::select! {
+                                result = tokio::time::timeout(WAIT, acquired) => result.ok().and_then(Result::ok),
+                                command = commands.recv() => { deferred = command; break; }
+                            };
+                            match result {
+                                Some(true) => lease.set(HELD),
+                                Some(false) => pending.push_back(lease),
+                                None => break,
+                            }
+                            Ok(())
+                        } else {
+                            // SQLx drives the socket during a query. Check held
+                            // sessions too, so a disconnect invalidates their leases.
+                            tokio::time::timeout(WAIT, client.ping()).await
+                                .map_err(|_| ()).and_then(|result| result.map_err(|_| ()))
+                        };
+                        if result.is_err() { break; }
+                        continue;
+                    }
                 }
             };
             match command {
@@ -469,11 +450,9 @@ async fn database_session(
                 }
                 Some(Command::Release(lease)) => {
                     if lease.state.load(Ordering::SeqCst) == HELD
-                        && client
-                            .query_one(
-                                "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
-                                &[&lease.key],
-                            )
+                        && sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+                            .bind(&lease.key)
+                            .execute(&mut client)
                             .await
                             .is_err()
                     {
@@ -491,45 +470,21 @@ async fn database_session(
                     }
                 }
                 Some(Command::Stop(done)) => {
-                    drop(client);
-                    driver.abort();
-                    let _ = driver.await;
+                    let _ = client.close().await;
                     let _ = done.send(());
                     return;
                 }
-                None => {
-                    driver.abort();
-                    return;
-                }
+                None => return,
             }
         }
-        // Loss invalidates all held leases before any reconnection attempt.
+        // Closing the session releases its locks before reconnecting.
         for lease in needed.values() {
             if lease.state.load(Ordering::SeqCst) != RELEASED {
                 lease.set(LOST);
             }
         }
-        pending.clear();
         drop(client);
-        driver.abort();
     }
-}
-
-async fn cancel_acquire(
-    client: &tokio_postgres::Client,
-    acquire: impl Future<Output = Result<tokio_postgres::Row, tokio_postgres::Error>>,
-) -> Option<bool> {
-    tokio::time::timeout(Duration::from_secs(1), async {
-        client
-            .cancel_token()
-            .cancel_query(tokio_postgres::NoTls)
-            .await
-            .ok()?;
-        Some(acquire.await.is_ok())
-    })
-    .await
-    .ok()
-    .flatten()
 }
 
 #[cfg(test)]

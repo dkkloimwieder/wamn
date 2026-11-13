@@ -5,11 +5,9 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use tokio_postgres::NoTls;
 use wamn_catalog::{AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute};
 use wamn_control_provision::{
-    CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleIdentity,
-    system_reader_generation_role, workload_generation_role,
+    SystemReader, WorkloadRoleFamily, WorkloadRoleIdentity, system_reader_login, workload_login,
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::engine::build_engine;
@@ -44,7 +42,6 @@ use super::{
 };
 
 const PASSWORD: &str = "local-application-test-only";
-const VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 #[derive(Debug)]
 pub struct LocalPackage<'a> {
@@ -59,41 +56,37 @@ pub(super) async fn assemble(
         wamn_environment_control::environment::document::EnvironmentDocument::compile(
             &input.scratch.join("environment.k"),
         )?;
-    let (system, system_connection) = tokio_postgres::connect(input.system_database_url, NoTls)
+    let mut system = wamn_postgres::connect(input.system_database_url)
         .await
         .context("connect to the disposable identity database")?;
-    let system_task = tokio::spawn(system_connection);
-    wamn_dev_control::dev::environment::reset_control_store(&system).await?;
-    system
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+
+    wamn_dev_control::dev::environment::reset_control_store(&mut system).await?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
-        .await?;
-    system
-        .execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'local-application')",
-            &[&input.org],
-        )
-        .await?;
-    system
-        .execute(
-            "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",
-            &[&input.org, &input.project],
-        )
-        .await?;
+        .execute(&mut system)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'local-application')").bind(input.org).execute(&mut system).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, $2)")
+        .bind(input.org)
+        .bind(input.project)
+        .execute(&mut system)
+        .await
+        .map(|result| result.rows_affected())?;
     let subject = operator_subject(input.org, input.project, input.environment)?;
     let principal = create_service(
-        &system,
+        &mut system,
         &subject,
         "local application operator",
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     assign_project_role(
-        &system,
+        &mut system,
         principal.id(),
         input.org,
         input.project,
@@ -102,7 +95,7 @@ pub(super) async fn assemble(
     )
     .await?;
     let issued = issue_pat(
-        &system,
+        &mut system,
         principal.id(),
         "local application",
         Duration::from_secs(3600),
@@ -110,57 +103,53 @@ pub(super) async fn assemble(
     .await?;
     let bearer = issued.token().to_owned();
 
-    let (project, project_connection) = tokio_postgres::connect(input.database_url, NoTls)
+    let mut project = wamn_postgres::connect(input.database_url)
         .await
         .context("connect to the disposable application database")?;
-    let project_task = tokio::spawn(project_connection);
-    project
-        .batch_execute(&wamn_control_provision::sql::set_database_owner_sql(
-            &system_database_name(input.database_url)?,
-        ))
-        .await?;
-    project
-        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
-        .await
-        .context("create the catalog and application ACL owner roles")?;
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::set_database_owner_sql(&system_database_name(
+            input.database_url,
+        )?),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_app_acl_role_sql(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)
+    .context("create the catalog and application ACL owner roles")?;
     wamn_dev_control::dev::environment::install_journey_platform_base_grants(
-        &project,
+        &mut project,
         "local.invalid",
     )
     .await?;
     let run_schema = wamn_schema_control::BareSchemaName::new("wamn_run")?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&project, &run_schema, true).await?;
-    project
-        .execute(
-            "SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:local-application',false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut project, &run_schema, true)
+        .await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:local-application',false)").bind(wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','local@example.invalid')",
-            &[&principal.id().to_string().as_str()],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING",
-            &[&input.caller_role],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)",
-            &[&principal.id().to_string().as_str(), &input.caller_role],
-        )
-        .await?;
+                .to_string()).execute(&mut project).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','local@example.invalid')").bind(principal.id().to_string().as_str()).execute(&mut project).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(input.caller_role)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)")
+        .bind(principal.id().to_string().as_str())
+        .bind(input.caller_role)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
 
-    let database = input
+    let mut database = input
         .database_url
-        .parse::<tokio_postgres::Config>()?
-        .get_dbname()
+        .parse::<sqlx::postgres::PgConnectOptions>()?
+        .get_database()
         .context("application URL names no database")?
         .to_owned();
     let mut credentials = ClassCredentials::default();
@@ -178,28 +167,23 @@ pub(super) async fn assemble(
         let target = if family == WorkloadRoleFamily::App {
             WorkloadRoleIdentity::ProjectEnvKey {
                 project_env_key: input.project_env_key,
-                database: &database,
+                database: &mut database,
             }
         } else {
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: input.org,
                 project: input.project,
                 environment: input.environment,
-                database: &database,
+                database: &mut database,
             }
         };
-        let role = workload_generation_role(family, target, CredentialGeneration::A)?;
-        project
-            .batch_execute(
-                &wamn_control_provision::sql::prepare_workload_generation_sql(
-                    family,
-                    &database,
-                    &role,
-                    PASSWORD,
-                    VALID_UNTIL,
-                ),
-            )
-            .await?;
+        let role = workload_login(family, target)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::test_database::login_sql(family, &database, &role, PASSWORD),
+        ))
+        .execute(&mut project)
+        .await
+        .map(drop)?;
         credentials = credentials.with_class(class, generation_url(input.database_url, &role)?);
     }
     let engine = Arc::new(build_engine(&[])?);
@@ -325,7 +309,7 @@ pub(super) async fn assemble(
         wamn_engine::release_manifest::ReleaseTarget::new(input.project_env_key, input.environment)
             .with_applications(applications),
     )?);
-    project.execute("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.project_env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    sqlx::query("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(input.project_env_key).bind(release.release().manifest_digest.as_str()).bind(&canonical).execute(&mut project).await.map(|result| result.rows_affected())?;
 
     let project_config = ProjectConfig {
         credentials,
@@ -414,31 +398,30 @@ pub(super) async fn assemble(
         Some(bridge),
     ));
     let system_database = system_database_name(input.system_database_url)?;
-    let identity_role = system_reader_generation_role(
+    let identity_role = system_reader_login(
         SystemReader::Identity,
         input.project_env_key,
         input.project,
         input.environment,
         &system_database,
-        CredentialGeneration::A,
     );
-    system
-        .batch_execute(
-            &wamn_control_provision::sql::prepare_workload_generation_sql(
-                WorkloadRoleFamily::IdentityReader,
-                &system_database,
-                &identity_role,
-                PASSWORD,
-                VALID_UNTIL,
-            ),
-        )
-        .await?;
-    let (reader, reader_connection) = tokio_postgres::connect(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::test_database::login_sql(
+            WorkloadRoleFamily::IdentityReader,
+            &system_database,
+            &identity_role,
+            PASSWORD,
+        ),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)?;
+    let reader = wamn_postgres::pool(
         &generation_url(input.system_database_url, &identity_role)?,
-        NoTls,
+        4,
     )
     .await?;
-    tokio::spawn(reader_connection);
+
     let queue = LocalQueue {
         driver,
         postgres: Arc::clone(&postgres),
@@ -449,13 +432,12 @@ pub(super) async fn assemble(
             Arc::new(
                 PlatformRouteAuthenticator::default().with_authentication(Arc::new(
                     RouteAuthentication::new(
-                        Arc::new(reader),
+                        reader,
                         Arc::clone(&postgres),
                         input.org,
                         input.project,
                         subject,
-                    )
-                    .await?,
+                    ),
                 )),
             ),
         ),
@@ -466,8 +448,6 @@ pub(super) async fn assemble(
         &secret,
         &json!({"stringData":{"token":bearer}}),
     )?;
-    project_task.abort();
-    system_task.abort();
     Ok(PreparedLocalApplication {
         auth_nats,
         runtime: LocalApplicationRuntime {
@@ -536,8 +516,8 @@ fn generation_url(base: &str, role: &str) -> anyhow::Result<String> {
 }
 fn system_database_name(url: &str) -> anyhow::Result<String> {
     Ok(url
-        .parse::<tokio_postgres::Config>()?
-        .get_dbname()
+        .parse::<sqlx::postgres::PgConnectOptions>()?
+        .get_database()
         .context("system URL names no database")?
         .to_owned())
 }

@@ -550,25 +550,42 @@ pub fn environment(
 
 /// Render the credential Secrets from apply's producer list, with disposable URLs.
 pub fn credential_secrets(triple: &wamn_registry::Triple, namespace: &str) -> Vec<Value> {
-    use wamn_control_provision::{
-        WorkloadRoleFamily, WorkloadSecretBody, render_workload_secret_manifest,
-    };
-    wamn_control_provision::host_credentials::HOST_CREDENTIALS
-        .iter()
-        .map(|credential| credential.family)
-        .map(|family| {
-            let body = if family == WorkloadRoleFamily::App {
-                WorkloadSecretBody::ProjectEnvKeyUrl {
-                    project_env_key: "render",
-                    project_key: "render",
-                    url: "postgresql://render:render@database:5432/render",
-                }
-            } else {
-                WorkloadSecretBody::Url("postgresql://render:render@database:5432/render")
-            };
-            render_workload_secret_manifest(family, triple, namespace, body)
-        })
-        .collect()
+    let mut data = serde_json::Map::new();
+    let mut objects = Vec::new();
+    for family in wamn_control_provision::WorkloadRoleFamily::project_env_families() {
+        let name = wamn_control_provision::workload_secret_name(
+            family,
+            &triple.org,
+            &triple.project,
+            &triple.env,
+        );
+        objects.push(
+            serde_json::to_value(wamn_kubernetes::secret::Secret::basic_auth(
+                namespace, &name, "render", "render",
+            ))
+            .unwrap(),
+        );
+        let config = wamn_postgres::ConnectionConfig {
+            host: "database".into(),
+            port: 5432,
+            database: "render".into(),
+            username: "render".into(),
+            credentials: wamn_postgres::SecretRef {
+                namespace: namespace.into(),
+                name,
+            },
+            server_ca: wamn_postgres::SecretRef {
+                namespace: namespace.into(),
+                name: "database-ca".into(),
+            },
+        };
+        data.insert(
+            format!("{}.json", family.component_stem()),
+            config.to_json().unwrap().into(),
+        );
+    }
+    objects.push(serde_json::json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":namespace,"name":wamn_control_provision::project_env_secret_name(&triple.org,&triple.project,&triple.env)},"data":data}));
+    objects
 }
 
 /// Operator prerequisites from `test-support/infrastructure/platform.rs`:

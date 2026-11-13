@@ -1,5 +1,6 @@
 //! Queue-adapter shutdown while production-admitted work executes a native guest.
 
+use sqlx::Row as _;
 use std::time::Duration;
 
 use tokio::time::timeout;
@@ -58,7 +59,7 @@ pub(super) struct Execution<'a> {
 }
 
 pub(super) async fn run(
-    admin: &mut tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     workflows: &super::WorkflowsFixture,
     request: &super::StartInput,
     execution: Execution<'_>,
@@ -119,23 +120,20 @@ pub(super) async fn run(
         Some(super::SERVICE)
     );
     assert!(execution.logging.identity_snapshot(target).is_some());
-    let before = admin
-        .query_one(
-            "SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1",
-            &[&run],
-        )
+    let before = sqlx::query("SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
         .await?;
-    assert_eq!(before.get::<_, String>(0), "running");
+    assert_eq!(before.get::<String, _>(0), "running");
     let generation: i64 = before.get(1);
     let destroyed_connections = execution.postgres.destroyed_connections();
     // Hold the queue row through shutdown so lease renewal must wait on this
     // transaction. Cancellation must destroy its connection, not repool it.
-    admin.batch_execute("BEGIN").await?;
-    admin
-        .query_one(
-            "SELECT run_id FROM wamn_run.run_queue WHERE run_id=$1 FOR UPDATE",
-            &[&run],
-        )
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
+    sqlx::query("SELECT run_id FROM wamn_run.run_queue WHERE run_id=$1 FOR UPDATE")
+        .bind(&run)
+        .fetch_one(&mut *admin)
         .await?;
     stop.send(true)?;
     wamn_engine::lifecycle::bounded_cleanup(
@@ -149,30 +147,29 @@ pub(super) async fn run(
         execution.postgres.destroyed_connections() > destroyed_connections,
         "shutdown must discard the interrupted lease renewal connection"
     );
-    admin.batch_execute("ROLLBACK").await?;
+    sqlx::raw_sql("ROLLBACK")
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     assert!(execution.postgres.invocation(target).is_none());
     assert!(execution.postgres.session_identity(target).is_none());
     assert!(execution.logging.identity_snapshot(target).is_none());
-    let after = admin
-        .query_one(
-            "SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1",
-            &[&run],
-        )
+    let after = sqlx::query("SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1").bind(&run).fetch_one(&mut *admin)
         .await?;
     assert_eq!(
-        after.get::<_, String>(0),
+        after.get::<String, _>(0),
         "running",
         "aborted delivery remains recoverable, never completed"
     );
     assert_eq!(
-        after.get::<_, i64>(1),
+        after.get::<i64, _>(1),
         generation,
         "shutdown never leases again"
     );
-    assert!(after.get::<_, Option<String>>(2).is_none());
+    assert!(after.get::<Option<String>, _>(2).is_none());
     timeout(Duration::from_secs(3), async {
         loop {
-            let expired: bool = admin.query_one("SELECT lease_expires_at <= clock_timestamp() FROM wamn_run.run_queue WHERE run_id=$1", &[&run]).await?.get(0);
+            let expired: bool = sqlx::query("SELECT lease_expires_at <= clock_timestamp() FROM wamn_run.run_queue WHERE run_id=$1").bind(&run).fetch_one(&mut *admin).await?.get(0);
             if expired { return Ok::<_, anyhow::Error>(()); }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

@@ -1,7 +1,8 @@
+use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{GenericClient, Transaction};
+
 use wamn_schema_control::{
     AppliedPackage, MigrationOutcome, MigrationSource, PackageDirectory, RecordedMigration,
 };
@@ -14,16 +15,14 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 /// record match, not evidence that the live database is unchanged. The source
 /// artifact reconstructs this schema even when its application stops running.
 pub(super) async fn record_package_schema(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&str>,
     physical_schema_fingerprint: &str,
 ) -> anyhow::Result<bool> {
     let package_id = coordinate.package_id();
-    Ok(tx
-        .execute(
-            "INSERT INTO catalog.packages \
+    Ok(sqlx::query("INSERT INTO catalog.packages \
          (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) \
          VALUES ($1, $2, $3, $4, $5) \
          ON CONFLICT (project_env_key, package_id) DO UPDATE \
@@ -31,22 +30,13 @@ pub(super) async fn record_package_schema(
              artifact_digest = EXCLUDED.artifact_digest, \
              physical_schema_fingerprint = EXCLUDED.physical_schema_fingerprint \
          WHERE catalog.packages.physical_schema_fingerprint IS DISTINCT FROM \
-               EXCLUDED.physical_schema_fingerprint",
-            &[
-                &project_env_key,
-                &package_id,
-                &coordinate.package_version(),
-                &artifact_digest,
-                &physical_schema_fingerprint,
-            ],
-        )
-        .await
+               EXCLUDED.physical_schema_fingerprint").bind(project_env_key).bind(package_id).bind(coordinate.package_version()).bind(artifact_digest).bind(physical_schema_fingerprint).execute(&mut **tx).await.map(|result| result.rows_affected())
         .context("record completed package schema")?
         != 0)
 }
 
 pub async fn load_applied_package(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
@@ -61,7 +51,7 @@ pub async fn load_applied_package(
 
 /// Observe installed SQL in a read-only transaction without locking a package row.
 pub async fn read_applied_package(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
@@ -75,13 +65,15 @@ pub async fn read_applied_package(
 }
 
 async fn read_package(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     package_id: &str,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
-    let Some(package) = tx
-        .query_opt(query, &[&project_env_key, &package_id])
+    let Some(package) = sqlx::query(sqlx::AssertSqlSafe((query).to_string()))
+        .bind(project_env_key)
+        .bind(package_id)
+        .fetch_optional(&mut **tx)
         .await
         .context("read installed package schema")?
     else {
@@ -89,7 +81,7 @@ async fn read_package(
     };
     let migrations = read_package_migrations(tx, project_env_key, package_id).await?;
     Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
+        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<&str, _>(1))
             .expect("stored package coordinates passed database constraints"),
         artifact_digest: package.get(0),
         baseline_fingerprint: package.get(3),
@@ -100,58 +92,52 @@ async fn read_package(
 
 /// Read committed files even when the first package installation is unfinished.
 pub async fn read_package_migrations(
-    tx: &impl GenericClient,
+    tx: &mut sqlx::PgConnection,
     project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Vec<RecordedMigration>> {
-    Ok(tx
-        .query(
-            wamn_schema_control::sql::select_package_migrations_sql(),
-            &[&project_env_key, &package_id],
-        )
-        .await
-        .context("read immutable package migration prefix")?
-        .into_iter()
-        .map(|row| RecordedMigration {
-            ordinal: u32::try_from(row.get::<_, i32>(0))
-                .expect("package migration ordinals are positive integers"),
-            relative_path: row.get(1),
-            sha256: row.get(2),
-            outcome: match row.get::<_, &str>(3) {
-                "applied" => MigrationOutcome::Applied,
-                "adopted" => MigrationOutcome::Adopted,
-                "started" => MigrationOutcome::Started,
-                value => unreachable!("database constrains migration outcome: {value}"),
-            },
-        })
-        .collect())
+    Ok(sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_schema_control::sql::select_package_migrations_sql()).to_string(),
+    ))
+    .bind(project_env_key)
+    .bind(package_id)
+    .fetch_all(&mut *tx)
+    .await
+    .context("read immutable package migration prefix")?
+    .into_iter()
+    .map(|row| RecordedMigration {
+        ordinal: u32::try_from(row.get::<i32, _>(0))
+            .expect("package migration ordinals are positive integers"),
+        relative_path: row.get(1),
+        sha256: row.get(2),
+        outcome: match row.get::<&str, _>(3) {
+            "applied" => MigrationOutcome::Applied,
+            "adopted" => MigrationOutcome::Adopted,
+            "started" => MigrationOutcome::Started,
+            value => unreachable!("database constrains migration outcome: {value}"),
+        },
+    })
+    .collect())
 }
 
 /// Derive installed SQL identity from this database's project baseline and current package records.
 pub async fn installed_environment_fingerprint(
-    tx: &impl GenericClient,
+    tx: &mut sqlx::PgConnection,
     project_env_key: &str,
 ) -> anyhow::Result<Option<String>> {
-    if tx.query_one(
-        "SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.project_env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.project_env_key=m.project_env_key AND p.package_id=m.package_id)))",
-        &[&project_env_key],
-    ).await.context("read unfinished package SQL")?.get::<_, bool>(0) {
+    if sqlx::query("SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.project_env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.project_env_key=m.project_env_key AND p.package_id=m.package_id)))").bind(project_env_key).fetch_one(&mut *tx).await.context("read unfinished package SQL")?.get::<bool, _>(0) {
         return Ok(None);
     }
-    let project: String = tx
-        .query_one(
-            "SELECT sha256 FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await
-        .context("read the installed project baseline")?
-        .get(0);
-    let rows = tx.query(
-        "SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE project_env_key = $1", &[&project_env_key]
-    ).await.context("read installed package fingerprints")?;
+    let project: String =
+        sqlx::query("SELECT sha256 FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut *tx)
+            .await
+            .context("read the installed project baseline")?
+            .get(0);
+    let rows = sqlx::query("SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE project_env_key = $1").bind(project_env_key).fetch_all(&mut *tx).await.context("read installed package fingerprints")?;
     let packages = rows
         .iter()
-        .map(|row| (row.get::<_, &str>(0), row.get::<_, &str>(1)))
+        .map(|row| (row.get::<&str, _>(0), row.get::<&str, _>(1)))
         .collect();
     Ok(Some(environment_fingerprint(&project, &packages)))
 }

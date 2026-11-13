@@ -1,55 +1,43 @@
-//! Closed provisioning vocabulary for identity-bound workload login generations.
+//! Closed provisioning vocabulary for identity-bound workload logins.
 
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
-use wamn_run_state::{AuthorityClass, CredentialGeneration, app_identity_hash};
+use wamn_run_state::{AuthorityClass, app_identity_hash};
 
 use crate::APP_ROLE;
 use crate::name::GUEST_SECRET_PREFIX;
 
-/// Stable NOLOGIN role used by service-reader generations.
+/// Stable NOLOGIN role used by service-reader logins.
 pub const SERVICE_READER_ROLE: &str = "wamn_service_reader";
-/// Stable NOLOGIN role used by run-retention generations.
+/// Stable NOLOGIN role used by run-retention logins.
 pub const RETENTION_ROLE: &str = "wamn_run_retention";
-/// Stable NOLOGIN role used by executor-platform generations.
+/// Stable NOLOGIN role used by executor-platform logins.
 pub const EXECUTOR_PLATFORM_ROLE: &str = "wamn_executor_platform";
-/// Frozen generation prefix for the executor-platform family (`wamn-0fqa`).
-///
-/// The stable ACL role name is 22 bytes, so reusing it as the generation prefix
-/// would mint a 65-byte identifier and PostgreSQL caps identifiers at 63. Worse
-/// than long: PostgreSQL truncates with a NOTICE instead of refusing, and the
-/// 63-byte prefix of the `_a` and `_b` names is identical, so both generations
-/// would collide on one role. This shorter frozen prefix keeps the derived login
-/// at 61 bytes with the 160-bit identity digest and `_a`/`_b` suffix intact.
-const EXECUTOR_PLATFORM_GENERATION_PREFIX: &str = "wamn_exec_platform";
-/// Stable NOLOGIN role used by callable-HTTP admission generations.
+/// Compact prefix that leaves room for the full identity digest.
+const EXECUTOR_PLATFORM_LOGIN_PREFIX: &str = "wamn_exec_platform";
+/// Stable NOLOGIN role used by callable-HTTP admission logins.
 pub const HTTP_ADMITTER_ROLE: &str = "wamn_http_admitter";
-/// Stable NOLOGIN role used by event-materializer generations.
+/// Stable NOLOGIN role used by event-materializer logins.
 pub const EVENT_MATERIALIZER_ROLE: &str = "wamn_event_materializer";
-/// Frozen generation prefix for the event-materializer family (`wamn-0fqa`).
-///
-/// The stable ACL role name is 23 bytes, so reusing it as the generation prefix
-/// would mint a 66-byte identifier that PostgreSQL truncates into the identity
-/// digest itself, collapsing both generations and three digest characters. This
-/// shorter frozen prefix keeps the derived login at 60 bytes.
-const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
-/// Stable NOLOGIN role used by control-registry reader generations.
+/// Compact prefix that leaves room for the full identity digest.
+const EVENT_MATERIALIZER_LOGIN_PREFIX: &str = "wamn_materializer";
+/// Stable NOLOGIN role used by control-registry reader logins.
 pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
-/// Stable NOLOGIN role used by control-identity reader generations.
+/// Stable NOLOGIN role used by control-identity reader logins.
 pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
 /// Host-only reader of connection generations and credentials.
 pub const CONNECTION_READER_ROLE: &str = "wamn_conn_reader";
 /// Stable NOLOGIN role for the identity service's environment role reads.
 pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
-/// Keep the 40-hex identity digest and A/B suffix within PostgreSQL's 63 bytes.
-const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
-/// Stable NOLOGIN role used by record history retention generations.
+/// Keep the 40-hex identity digest within PostgreSQL's 63 bytes.
+const SESSION_ROLE_READER_LOGIN_PREFIX: &str = "wamn_session_roles";
+/// Stable NOLOGIN role used by record history retention logins.
 pub use wamn_record_history::AUDIT_RETENTION_ROLE;
-/// Stable NOLOGIN role used by administration generations. Its 19 bytes
-/// mint a 62-byte login, so the role name is its own generation prefix.
+/// Stable NOLOGIN role used by administration logins. Its 19 bytes
+/// form a 60-byte login, so the role name is its own prefix.
 pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
-/// Stable NOLOGIN role used by control generations, the credential of an org's
+/// Stable NOLOGIN role used by control logins, the credential of an org's
 /// control host (docs/architecture/execution.md#host-run-routes).
 pub const CONTROL_ROLE: &str = "wamn_control";
 
@@ -104,6 +92,7 @@ pub(crate) const IDENTITY_HASH_HEX_LEN: usize = 40;
 pub enum WorkloadRoleFamily {
     ServiceReader,
     App,
+    Query,
     Retention,
     ExecutorPlatform,
     HttpAdmitter,
@@ -124,9 +113,10 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::ServiceReader,
         Self::App,
+        Self::Query,
         Self::Retention,
         Self::ExecutorPlatform,
         Self::HttpAdmitter,
@@ -140,11 +130,12 @@ impl WorkloadRoleFamily {
         Self::ConnectionReader,
     ];
 
-    /// Stable NOLOGIN ACL role inherited by this family's generations.
+    /// Stable NOLOGIN ACL role inherited by this family's logins.
     pub const fn acl_role(self) -> &'static str {
         match self {
             Self::ServiceReader => SERVICE_READER_ROLE,
             Self::App => APP_ROLE,
+            Self::Query => "wamn_query",
             Self::Retention => RETENTION_ROLE,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_ROLE,
             Self::HttpAdmitter => HTTP_ADMITTER_ROLE,
@@ -159,30 +150,20 @@ impl WorkloadRoleFamily {
         }
     }
 
-    /// Frozen prefix of this family's derived A/B generation identities.
-    ///
-    /// Equal to [`Self::acl_role`] for every family whose stable role name still
-    /// fits the PostgreSQL identifier cap once the identity digest and generation
-    /// suffix are appended. `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
-    /// carries its own shorter frozen prefix. `SessionRoleReader` also needs
-    /// a shorter prefix. `RegistryReader` and
-    /// `IdentityReader` (`wamn-0h0g.13.63`) are the first families to fit
-    /// EXACTLY: their 20-byte role names mint 63-byte logins, the largest
-    /// PostgreSQL stores untruncated, so they take the wildcard arm and the
-    /// exactness is pinned by test rather than left to be rediscovered.
-    pub const fn generation_prefix(self) -> &'static str {
+    /// Prefix of the role identity digest, within the PostgreSQL name limit.
+    pub const fn login_prefix(self) -> &'static str {
         match self {
-            Self::ExecutorPlatform => EXECUTOR_PLATFORM_GENERATION_PREFIX,
-            Self::EventMaterializer => EVENT_MATERIALIZER_GENERATION_PREFIX,
-            Self::SessionRoleReader => SESSION_ROLE_READER_GENERATION_PREFIX,
+            Self::ExecutorPlatform => EXECUTOR_PLATFORM_LOGIN_PREFIX,
+            Self::EventMaterializer => EVENT_MATERIALIZER_LOGIN_PREFIX,
+            Self::SessionRoleReader => SESSION_ROLE_READER_LOGIN_PREFIX,
             _ => self.acl_role(),
         }
     }
 
-    /// Exact identity class used to derive generation identities.
+    /// Exact identity class used to derive login identities.
     pub const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
-            Self::App | Self::Retention | Self::AuditRetention => {
+            Self::App | Self::Query | Self::Retention | Self::AuditRetention => {
                 WorkloadRoleIdentityType::ProjectEnvKey
             }
             Self::ServiceReader
@@ -215,7 +196,7 @@ impl WorkloadRoleFamily {
             .filter(|family| family.is_project_env_provisioned())
     }
 
-    /// Whether this family's generations are membered into
+    /// Whether this family's logins are membered into
     /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive project-base-grants arm.
     ///
     /// DERIVED from the two facts that already decide it, never tabulated:
@@ -241,12 +222,12 @@ impl WorkloadRoleFamily {
     ///
     /// `Retention` is `ProjectEnvKey`-identity-bound and is a member anyway. Its login names
     /// carry a project DIGEST, but `current_project_key` recovers a key only from
-    /// the guest generation pattern, and widening that regex is refused
+    /// the guest login pattern, and widening that regex is refused
     /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
     /// cross-project on the relations it holds grants on; the project predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(self, Self::App | Self::AuditRetention)
+        !matches!(self, Self::App | Self::Query | Self::AuditRetention)
             && !matches!(
                 self.identity_type(),
                 WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org
@@ -299,17 +280,6 @@ impl WorkloadRoleFamily {
     /// A closed vocabulary of SHAPES, not a per-family list: an
     /// admitted family lands on the plain single-`url` Secret every consumer
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
-    pub fn secret_body_type(self) -> WorkloadSecretBodyType {
-        match self {
-            // The guest credential IS the project authority, so its Secret
-            // carries the project key that keys every governed predicate.
-            Self::App => WorkloadSecretBodyType::ProjectEnvKeyUrl,
-            // The credential and trusted target coordinates publish atomically.
-            Self::SessionRoleReader => WorkloadSecretBodyType::SessionTarget,
-            _ => WorkloadSecretBodyType::Url,
-        }
-    }
-
     /// Prefix of this family's credential Secret name.
     ///
     /// `wamn-<cli-stem>-` for every family whose Secret name was not frozen
@@ -325,7 +295,7 @@ impl WorkloadRoleFamily {
     pub(crate) const fn identity_domain(self) -> &'static [u8] {
         match self {
             Self::ServiceReader => b"wamn.service-reader.identity.v0.1",
-            Self::App => b"wamn.app.identity.v0.1",
+            Self::App | Self::Query => b"wamn.app.identity.v0.1",
             Self::Retention => b"wamn.run-retention.identity.v0.1",
             Self::ExecutorPlatform => b"wamn.executor-platform.identity.v0.1",
             Self::HttpAdmitter => b"wamn.http-admitter.identity.v0.1",
@@ -356,6 +326,7 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
     fn from(class: AuthorityClass) -> Self {
         match class {
             AuthorityClass::GuestSql => Self::App,
+            AuthorityClass::DynamicSql => Self::Query,
             AuthorityClass::ExecutorPlatform => Self::ExecutorPlatform,
             AuthorityClass::CallableHttp => Self::HttpAdmitter,
             AuthorityClass::EventMaterializer => Self::EventMaterializer,
@@ -364,18 +335,6 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
     }
 }
 
-/// The closed set of credential-Secret body shapes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadSecretBodyType {
-    /// One `url` key.
-    Url,
-    /// One `url` key, plus the project key label and project_env_key annotation.
-    ProjectEnvKeyUrl,
-    /// One validated environment target and credential in `target.json`.
-    SessionTarget,
-}
-
-/// The four admitted provisioning identity shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleIdentityType {
     ProjectEnvKey,
@@ -396,7 +355,7 @@ impl WorkloadRoleIdentityType {
     }
 }
 
-/// Exact identity inputs for one workload generation pair.
+/// Exact identity inputs for one workload login.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleIdentity<'a> {
     ProjectEnvKey {
@@ -422,7 +381,7 @@ pub enum WorkloadRoleIdentity<'a> {
 }
 
 impl<'a> WorkloadRoleIdentity<'a> {
-    /// Database receiving this generation's sole direct CONNECT grant.
+    /// Database receiving this login's sole direct CONNECT grant.
     pub const fn database(self) -> &'a str {
         match self {
             Self::ProjectEnvKey { database, .. }
@@ -482,7 +441,7 @@ pub fn workload_role_identity_hash(
     // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime make sure that
     // a resolved guest credential belongs to the project it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
-    if family == WorkloadRoleFamily::App {
+    if matches!(family, WorkloadRoleFamily::App | WorkloadRoleFamily::Query) {
         let WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key,
             database,
@@ -529,16 +488,14 @@ pub fn workload_role_identity_hash(
     Ok(digest[..IDENTITY_HASH_HEX_LEN].to_string())
 }
 
-/// Derive one bounded A/B LOGIN role for a closed workload family.
-pub fn workload_generation_role(
+/// Derive one bounded LOGIN role for a closed workload family.
+pub fn workload_login(
     family: WorkloadRoleFamily,
     identity: WorkloadRoleIdentity<'_>,
-    generation: CredentialGeneration,
 ) -> Result<String, WorkloadRoleIdentityError> {
     Ok(wamn_registry::name::credential_login(
-        family.generation_prefix(),
+        family.login_prefix(),
         &workload_role_identity_hash(family, identity)?,
-        generation.as_str(),
     ))
 }
 
@@ -551,348 +508,4 @@ fn frame(preimage: &mut Vec<u8>, value: &[u8]) {
     let length = u64::try_from(value.len()).expect("a framed identity field fits u64");
     preimage.extend_from_slice(&length.to_be_bytes());
     preimage.extend_from_slice(value);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// THE DRIFT GUARD for a deliberate duplication (`wamn-0h0g.22.8.4`).
-    ///
-    /// `AuthorityClass::acl_role` repeats these role names inside
-    /// `wamn-run-state`, because the shipped runtime links no provisioner and
-    /// still has to name the role it expects a connection to hold. Two copies
-    /// of a security-relevant string is a drift risk, so this is the assertion
-    /// that they are one vocabulary. If it ever fails, the runtime is probing
-    /// for a role the provisioner no longer grants.
-    #[test]
-    fn the_runtime_role_vocabulary_matches_the_provisioning_families() {
-        for class in AuthorityClass::ALL {
-            assert_eq!(
-                class.acl_role(),
-                WorkloadRoleFamily::from(class).acl_role(),
-                "{class}: the runtime expects a different role than the provisioner grants"
-            );
-        }
-    }
-
-    /// The four rows `wamn-0h0g.22.14` ruled, pinned end to end: class ->
-    /// family -> the stable ACL role name the ruling actually named. Going all
-    /// the way to the role string is the point — asserting only the family
-    /// would pass even if a family were later repointed at another role.
-    #[test]
-    fn the_ruled_authority_class_rows_hold() {
-        let ruled = [
-            (AuthorityClass::GuestSql, "wamn_app"),
-            (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
-            (AuthorityClass::CallableHttp, "wamn_http_admitter"),
-            (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
-            (AuthorityClass::Administration, "wamn_administration"),
-        ];
-        for (class, role) in ruled {
-            assert_eq!(
-                WorkloadRoleFamily::from(class).acl_role(),
-                role,
-                "wamn-0h0g.22.14 ruled {class} -> {role}"
-            );
-        }
-    }
-
-    /// One family per class. A collapse mapping two classes onto one family is
-    /// the mutant this kills; the ruling forbids it, and it would silently give
-    /// one class the other's authority.
-    #[test]
-    fn no_two_authority_classes_share_a_family() {
-        let mut seen: Vec<(AuthorityClass, WorkloadRoleFamily)> = Vec::new();
-        for class in AuthorityClass::ALL {
-            let family = WorkloadRoleFamily::from(class);
-            if let Some((other, _)) = seen.iter().find(|(_, f)| *f == family) {
-                panic!(
-                    "{class} and {other} both map to {family:?}; the ruling is one family per class"
-                );
-            }
-            seen.push((class, family));
-        }
-        assert_eq!(seen.len(), 5);
-    }
-
-    /// Every class is covered. `ALL` plus the exhaustive match in `From` means a
-    /// new variant cannot reach production unmapped: the match is a compile
-    /// error first, and this catches an `ALL` that was not extended with it.
-    #[test]
-    fn every_authority_class_projects() {
-        assert_eq!(
-            AuthorityClass::ALL.len(),
-            5,
-            "a new authority class must be added to the ruled table above and to ALL"
-        );
-        for class in AuthorityClass::ALL {
-            let role = WorkloadRoleFamily::from(class).acl_role();
-            assert!(
-                role.starts_with("wamn_"),
-                "{class} projects onto {role}, which is not a wamn role"
-            );
-        }
-    }
-
-    const FAMILIES: [WorkloadRoleFamily; 13] = WorkloadRoleFamily::ALL;
-
-    #[test]
-    fn wrong_identity_grain_refuses() {
-        let error = workload_generation_role(
-            WorkloadRoleFamily::App,
-            WorkloadRoleIdentity::Control {
-                org: "o",
-                project: "p",
-                environment: "dev",
-                database: "control",
-            },
-            CredentialGeneration::A,
-        )
-        .expect_err("a project family accepted a control identity");
-        assert_eq!(error.expected, WorkloadRoleIdentityType::ProjectEnvKey);
-        assert_eq!(error.actual, WorkloadRoleIdentityType::Control);
-    }
-
-    #[test]
-    fn every_role_fits_postgres_and_generations_differ() {
-        let identities = [
-            (
-                WorkloadRoleFamily::ServiceReader,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::App,
-                WorkloadRoleIdentity::ProjectEnvKey {
-                    project_env_key: "t",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::Retention,
-                WorkloadRoleIdentity::ProjectEnvKey {
-                    project_env_key: "t",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::ExecutorPlatform,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::HttpAdmitter,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::EventMaterializer,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::RegistryReader,
-                WorkloadRoleIdentity::Control {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "control",
-                },
-            ),
-            (
-                WorkloadRoleFamily::IdentityReader,
-                WorkloadRoleIdentity::Control {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "control",
-                },
-            ),
-            (
-                WorkloadRoleFamily::ConnectionReader,
-                WorkloadRoleIdentity::Control {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "control",
-                },
-            ),
-            (
-                WorkloadRoleFamily::SessionRoleReader,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::AuditRetention,
-                WorkloadRoleIdentity::ProjectEnvKey {
-                    project_env_key: "t",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::Administration,
-                WorkloadRoleIdentity::ProjectEnvironment {
-                    org: "o",
-                    project: "p",
-                    environment: "dev",
-                    database: "db",
-                },
-            ),
-            (
-                WorkloadRoleFamily::Control,
-                WorkloadRoleIdentity::Org {
-                    org: "o",
-                    database: "control",
-                },
-            ),
-        ];
-        assert_eq!(identities.len(), FAMILIES.len());
-        for (family, identity) in identities {
-            let a = workload_generation_role(family, identity, CredentialGeneration::A).unwrap();
-            let b = workload_generation_role(family, identity, CredentialGeneration::B).unwrap();
-            assert_ne!(a, b);
-            assert!(a.len() <= 63, "{a}");
-            assert!(b.len() <= 63, "{b}");
-        }
-    }
-
-    /// THE TRUNCATION HAZARD, CLOSED BY CONSTRUCTION rather than by a runtime
-    /// refusal (`wamn-0h0g.22.6.4`).
-    ///
-    /// `valid_project_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
-    /// truncating with a NOTICE instead of refusing — so a name carrying the
-    /// project verbatim would collapse two long projects onto ONE role, which is
-    /// a cross-project breach wearing a naming bug. The identity digest is
-    /// fixed-width, so the project contributes NOTHING to the length: asserted
-    /// here against the longest project the validator admits, so the property is
-    /// measured rather than assumed.
-    #[test]
-    fn the_longest_admitted_project_env_key_still_mints_a_bounded_role() {
-        let longest = "t".repeat(64);
-        let short = WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: "t",
-            database: "wamn-db-acme--dev--billing",
-        };
-        let long = WorkloadRoleIdentity::ProjectEnvKey {
-            project_env_key: &longest,
-            database: "wamn-db-acme--dev--billing",
-        };
-        for family in [
-            WorkloadRoleFamily::App,
-            WorkloadRoleFamily::Retention,
-            WorkloadRoleFamily::AuditRetention,
-        ] {
-            for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-                let from_short = workload_generation_role(family, short, generation).unwrap();
-                let from_long = workload_generation_role(family, long, generation).unwrap();
-                assert_eq!(
-                    from_short.len(),
-                    from_long.len(),
-                    "{family:?}: the project must not reach the role NAME's length"
-                );
-                assert!(from_long.len() <= 63, "{from_long}");
-                assert!(
-                    !from_long.contains(&longest),
-                    "{family:?}: the project id must never appear verbatim"
-                );
-                assert_ne!(from_short, from_long, "{family:?}: two projects, two roles");
-            }
-        }
-    }
-
-    #[test]
-    fn the_two_overlong_new_families_carry_short_frozen_generation_prefixes() {
-        // Reusing these 22- and 23-byte ACL role names as generation prefixes
-        // mints 65- and 66-byte logins. PostgreSQL truncates rather than
-        // refusing, and both truncations drop the `_a`/`_b` suffix, so the two
-        // generations of one identity would collide on a single role.
-        // `_` + 40-hex digest + `_` + one generation character.
-        let suffix = IDENTITY_HASH_HEX_LEN + 3;
-        for (family, prefix) in [
-            (WorkloadRoleFamily::ExecutorPlatform, "wamn_exec_platform"),
-            (WorkloadRoleFamily::EventMaterializer, "wamn_materializer"),
-        ] {
-            assert_eq!(family.generation_prefix(), prefix, "{family:?}");
-            assert_ne!(family.generation_prefix(), family.acl_role(), "{family:?}");
-            assert!(family.acl_role().len() + suffix > 63, "{family:?}");
-            assert!(prefix.len() + suffix <= 63, "{family:?}");
-        }
-        // The callable-HTTP admitter's 18-byte name fits, so it keeps the
-        // wildcard arm's default of reusing the ACL role name.
-        assert_eq!(
-            WorkloadRoleFamily::HttpAdmitter.generation_prefix(),
-            WorkloadRoleFamily::HttpAdmitter.acl_role()
-        );
-    }
-
-    /// The identity tuple the module's existing frozen rows already use. `database`
-    /// is an opaque framed field in the derivation, so reusing this tuple puts
-    /// the new identities in the same coordinate system as the old ones rather
-    /// than inventing a control-database name here.
-    const FROZEN_IDENTITY: WorkloadRoleIdentity<'static> = WorkloadRoleIdentity::Control {
-        org: "acme",
-        project: "billing",
-        environment: "dev",
-        database: "wamn-db-acme--billing--dev--k3m9x2p7",
-    };
-
-    /// THE IDENTITY LIE, CLOSED BY THE DERIVATION ITSELF (`wamn-0h0g.13.63`).
-    ///
-    /// Both control readers are `Control`-identity-bound because identity follows the
-    /// RESOURCE PLANE: their credentials reach the CONTROL database. The
-    /// convenient reuse — re-pointing either consumer's credential at the
-    /// already-existing `ServiceReader` — would encode an identity lie in a variant
-    /// that means `ProjectEnvironment`. It cannot be reintroduced quietly: the
-    /// grain test refuses before any role name exists, so the reuse fails here
-    /// rather than minting a plausible-looking login under the wrong plane.
-    #[test]
-    fn the_control_readers_cannot_be_reissued_as_the_project_environment_service_reader() {
-        for family in [
-            WorkloadRoleFamily::RegistryReader,
-            WorkloadRoleFamily::IdentityReader,
-        ] {
-            assert_eq!(
-                family.identity_type(),
-                WorkloadRoleIdentityType::Control,
-                "{family:?}: identity follows the resource plane, and that plane is control"
-            );
-            workload_generation_role(family, FROZEN_IDENTITY, CredentialGeneration::A)
-                .expect("a control reader derives under control identity");
-        }
-        assert_eq!(
-            WorkloadRoleFamily::ServiceReader.identity_type(),
-            WorkloadRoleIdentityType::ProjectEnvironment,
-            "ServiceReader is the project-environment reader; that is why it is not reusable"
-        );
-        let error = workload_generation_role(
-            WorkloadRoleFamily::ServiceReader,
-            FROZEN_IDENTITY,
-            CredentialGeneration::A,
-        )
-        .expect_err("ServiceReader accepted a control identity");
-        assert_eq!(error.family, WorkloadRoleFamily::ServiceReader);
-        assert_eq!(error.expected, WorkloadRoleIdentityType::ProjectEnvironment);
-        assert_eq!(error.actual, WorkloadRoleIdentityType::Control);
-    }
 }

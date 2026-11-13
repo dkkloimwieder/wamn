@@ -1,5 +1,7 @@
 //! Converge the generated GuestSql authority union for the installed package set.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 use plan::{
     desired_acl, desired_effective_acl, render_undeclared_revocation, residue_targets,
@@ -10,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail, ensure};
-use tokio_postgres::{Client, NoTls, Transaction};
+
 use wamn_schema_control::plan_package_migrations;
 
 use wamn_compiler::{
@@ -148,50 +150,56 @@ struct EffectiveAcl {
 
 /// Read effective application privileges for reconciliation.
 async fn read_effective_privileges(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     role: &str,
     schemas: &[String],
 ) -> anyhow::Result<EffectiveAcl> {
     let mut acl = EffectiveAcl::default();
-    for row in tx
-        .query(
-            "SELECT n.nspname::text, privilege FROM pg_namespace n \
+    for row in sqlx::query(
+        "SELECT n.nspname::text, privilege FROM pg_namespace n \
              CROSS JOIN unnest($3::text[]) AS privilege \
              WHERE n.nspname = ANY($2::text[]) AND has_schema_privilege($1, n.oid, privilege)",
-            &[&role, &schemas, &SCHEMA_PRIVILEGES],
-        )
-        .await
-        .context("read effective application schema privileges")?
+    )
+    .bind(role)
+    .bind(schemas)
+    .bind(SCHEMA_PRIVILEGES)
+    .fetch_all(&mut **tx)
+    .await
+    .context("read effective application schema privileges")?
     {
         acl.schema.insert((row.get(0), row.get(1)));
     }
-    for row in tx
-        .query(
-            "SELECT n.nspname::text, c.relname::text, privilege \
+    for row in sqlx::query(
+        "SELECT n.nspname::text, c.relname::text, privilege \
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
              CROSS JOIN unnest($3::text[]) AS privilege \
              WHERE n.nspname = ANY($2::text[]) AND c.relkind IN ('r','p','v','m','f') \
                AND has_table_privilege($1, c.oid, privilege)",
-            &[&role, &schemas, &TABLE_PRIVILEGES],
-        )
-        .await
-        .context("read effective application table privileges")?
+    )
+    .bind(role)
+    .bind(schemas)
+    .bind(TABLE_PRIVILEGES)
+    .fetch_all(&mut **tx)
+    .await
+    .context("read effective application table privileges")?
     {
         acl.table.insert((row.get(0), row.get(1), row.get(2)));
     }
-    for row in tx
-        .query(
-            "SELECT n.nspname::text, c.relname::text, a.attname::text, privilege \
+    for row in sqlx::query(
+        "SELECT n.nspname::text, c.relname::text, a.attname::text, privilege \
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
              JOIN pg_attribute a ON a.attrelid = c.oid \
              CROSS JOIN unnest($3::text[]) AS privilege \
              WHERE n.nspname = ANY($2::text[]) AND c.relkind IN ('r','p','v','m','f') \
                AND a.attnum > 0 AND NOT a.attisdropped \
                AND has_column_privilege($1, c.oid, a.attnum, privilege)",
-            &[&role, &schemas, &COLUMN_PRIVILEGES],
-        )
-        .await
-        .context("read effective application column privileges")?
+    )
+    .bind(role)
+    .bind(schemas)
+    .bind(COLUMN_PRIVILEGES)
+    .fetch_all(&mut **tx)
+    .await
+    .context("read effective application column privileges")?
     {
         acl.column
             .insert((row.get(0), row.get(1), row.get(2), row.get(3)));
@@ -340,20 +348,12 @@ async fn execute_prepared(
         !project_env_key.is_empty(),
         "org, project and environment must not be empty"
     );
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to project environment")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = reconcile_mode(&mut client, project_env_key, packages, mode, apply).await;
     drop(client);
-    if result.is_err() {
-        connection_task.abort();
-    } else {
-        connection_task
-            .await
-            .context("join data-access database connection")?
-            .context("drive data-access database connection")?;
-    }
     result
 }
 
@@ -364,11 +364,11 @@ async fn reconcile_mode(
     mode: ReconcileMode<'_>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    let tx = client
-        .transaction()
+    let mut tx = client
+        .begin()
         .await
         .context("begin package data-access reconciliation")?;
-    let result = reconcile_in_transaction(&tx, project_env_key, packages, mode, apply).await?;
+    let result = reconcile_in_transaction(&mut tx, project_env_key, packages, mode, apply).await?;
     if apply {
         tx.commit()
             .await
@@ -383,7 +383,7 @@ async fn reconcile_mode(
 
 /// Reconcile through the existing owner without committing the caller's transaction.
 async fn reconcile_in_transaction(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
@@ -393,10 +393,13 @@ async fn reconcile_in_transaction(
         ReconcileMode::Local(environment) => Some(environment),
         ReconcileMode::Production => None,
     };
-    tx.query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
+    sqlx::query(ASSIGN_PROJECT_ENV_KEY_SQL)
+        .bind(project_env_key)
+        .fetch_one(&mut **tx)
         .await
         .context("bind package identity")?;
-    tx.query_one(LOCK_SQL, &[])
+    sqlx::query(LOCK_SQL)
+        .fetch_one(&mut **tx)
         .await
         .context("lock project data-access carrier")?;
     validate_installed_set(tx, project_env_key, packages, local.is_some()).await?;
@@ -413,11 +416,9 @@ async fn reconcile_in_transaction(
         .collect::<Vec<_>>();
     let effective = derive_effective_data_access(&relation_fields, &overlays)
         .context("derive installed-set data-access authority")?;
-    let role = tx
-        .query_opt(
-            "SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = $1",
-            &[&DATA_ACCESS_ROLE],
-        )
+    let role = sqlx::query("SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = $1")
+        .bind(DATA_ACCESS_ROLE)
+        .fetch_optional(&mut **tx)
         .await
         .context("read stable App ACL role")?;
     let Some(role) = role else {
@@ -426,7 +427,7 @@ async fn reconcile_in_transaction(
         );
     };
     ensure!(
-        !role.get::<_, bool>(0),
+        !role.get::<bool, _>(0),
         "package-data-access-role-login-refused: role={DATA_ACCESS_ROLE} must remain NOLOGIN"
     );
 
@@ -437,16 +438,24 @@ async fn reconcile_in_transaction(
     let residue = undeclared_residue(tx, &effective).await?;
     let changed = before != desired || before_effective != desired_effective || !residue.is_empty();
     if changed {
-        tx.batch_execute(
-            &render_effective_data_access_sql(&effective)
-                .context("render installed-set data-access reconciliation")?,
-        )
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            render_effective_data_access_sql(&effective)
+                .context("render installed-set data-access reconciliation")?
+                .clone(),
+        ))
+        .execute(&mut **tx)
         .await
+        .map(drop)
         .context("apply generated data-access reconciliation")?;
         if !residue.is_empty() {
-            tx.batch_execute(&render_undeclared_revocation(effective.role(), &residue))
-                .await
-                .context("revoke App authority on undeclared package relations")?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(render_undeclared_revocation(
+                effective.role(),
+                &residue,
+            )))
+            .execute(&mut **tx)
+            .await
+            .map(drop)
+            .context("revoke App authority on undeclared package relations")?;
         }
     }
     let after = direct_acl(tx, &effective).await?;
@@ -486,7 +495,7 @@ async fn reconcile_in_transaction(
 /// runs in the transaction that commits the grants, so the comment and the
 /// grants move together or not at all.
 async fn record_local_manifests(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     environment: &str,
     packages: &[PresentedPackage],
@@ -510,10 +519,10 @@ async fn record_local_manifests(
 }
 
 async fn load_relation_fields(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     schemas: &[String],
 ) -> anyhow::Result<Vec<DataAccessRelationFields>> {
-    tx.query(
+    sqlx::query(
         "SELECT namespace.nspname::text, relation.relname::text, \
                 array_agg(attribute.attname::text ORDER BY attribute.attname::text COLLATE \"C\") \
            FROM pg_catalog.pg_class AS relation \
@@ -525,18 +534,20 @@ async fn load_relation_fields(
             AND attribute.attnum > 0 AND NOT attribute.attisdropped \
           GROUP BY namespace.nspname, relation.relname \
           ORDER BY namespace.nspname COLLATE \"C\", relation.relname COLLATE \"C\"",
-        &[&schemas, &CONTROL_OWNED_RELATION_MAPS.as_slice()],
     )
+    .bind(schemas)
+    .bind(CONTROL_OWNED_RELATION_MAPS.as_slice())
+    .fetch_all(&mut **tx)
     .await
     .context("read live package relation fields")?
     .into_iter()
     .map(|row| {
         Ok(DataAccessRelationFields::new(
-            row.try_get::<_, String>(0)
+            row.try_get::<String, _>(0)
                 .context("decode relation schema")?,
-            row.try_get::<_, String>(1)
+            row.try_get::<String, _>(1)
                 .context("decode relation table")?,
-            row.try_get::<_, Vec<String>>(2)
+            row.try_get::<Vec<String>, _>(2)
                 .context("decode relation fields")?,
         ))
     })
@@ -544,14 +555,13 @@ async fn load_relation_fields(
 }
 
 async fn direct_acl(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     effective: &EffectiveDataAccess,
 ) -> anyhow::Result<DirectAcl> {
     let schemas = effective.schemas();
     let mut acl = DirectAcl::default();
-    for row in tx
-        .query(
-            "SELECT namespace.nspname, \
+    for row in sqlx::query(
+        "SELECT namespace.nspname, \
                     COALESCE(grantee.rolname::text, 'PUBLIC'), \
                     entry.privilege_type, entry.is_grantable \
                FROM pg_catalog.pg_namespace AS namespace \
@@ -559,27 +569,25 @@ async fn direct_acl(
                LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = entry.grantee \
               WHERE (entry.grantee = 0 OR grantee.rolname = $1) \
                 AND namespace.nspname = ANY($2::text[])",
-            &[&effective.role(), &schemas],
-        )
-        .await
-        .context("read direct schema ACL")?
+    )
+    .bind(effective.role())
+    .bind(schemas)
+    .fetch_all(&mut **tx)
+    .await
+    .context("read direct schema ACL")?
     {
         acl.schema
             .insert((row.get(0), row.get(1), row.get(2), row.get(3)));
     }
     for relation in effective.relations() {
-        for row in tx
-            .query(
-                "SELECT COALESCE(grantee.rolname::text, 'PUBLIC'), \
+        for row in sqlx::query("SELECT COALESCE(grantee.rolname::text, 'PUBLIC'), \
                         entry.privilege_type, entry.is_grantable \
                    FROM pg_catalog.pg_class AS relation \
                    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                    CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS entry \
                    LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = entry.grantee \
                   WHERE (entry.grantee = 0 OR grantee.rolname = $1) \
-                    AND namespace.nspname = $2 AND relation.relname = $3",
-                &[&effective.role(), &relation.schema(), &relation.table()],
-            )
+                    AND namespace.nspname = $2 AND relation.relname = $3").bind(effective.role()).bind(relation.schema()).bind(relation.table()).fetch_all(&mut **tx)
             .await
             .with_context(|| {
                 format!(
@@ -597,9 +605,7 @@ async fn direct_acl(
                 row.get(2),
             ));
         }
-        for row in tx
-            .query(
-                "SELECT attribute.attname, COALESCE(grantee.rolname::text, 'PUBLIC'), \
+        for row in sqlx::query("SELECT attribute.attname, COALESCE(grantee.rolname::text, 'PUBLIC'), \
                         entry.privilege_type, entry.is_grantable \
                    FROM pg_catalog.pg_class AS relation \
                    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
@@ -608,9 +614,7 @@ async fn direct_acl(
                    LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = entry.grantee \
                   WHERE (entry.grantee = 0 OR grantee.rolname = $1) \
                     AND namespace.nspname = $2 AND relation.relname = $3 \
-                    AND attribute.attnum > 0 AND NOT attribute.attisdropped",
-                &[&effective.role(), &relation.schema(), &relation.table()],
-            )
+                    AND attribute.attnum > 0 AND NOT attribute.attisdropped").bind(effective.role()).bind(relation.schema()).bind(relation.table()).fetch_all(&mut **tx)
             .await
             .with_context(|| {
                 format!(
@@ -634,7 +638,7 @@ async fn direct_acl(
 }
 
 async fn effective_acl(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     effective: &EffectiveDataAccess,
 ) -> anyhow::Result<EffectiveAcl> {
     let mut acl = read_effective_privileges(tx, effective.role(), effective.schemas()).await?;
@@ -666,7 +670,7 @@ async fn effective_acl(
 /// role never does, so a revocation there removes nothing that is true. A named
 /// exception list grows with the applier and hides the day that stops holding.
 async fn undeclared_residue(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     effective: &EffectiveDataAccess,
 ) -> anyhow::Result<UndeclaredResidue> {
     let schemas = effective.schemas();
@@ -683,25 +687,21 @@ async fn undeclared_residue(
     let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
     let sequence_privileges = vec!["SELECT", "UPDATE", "USAGE"];
     let mut residue = UndeclaredResidue::new();
-    for row in tx
-        .query(
-            UNDECLARED_RESIDUE_SQL,
-            &[
-                &effective.role(),
-                &schemas,
-                &table_privileges,
-                &column_privileges,
-                &sequence_privileges,
-            ],
-        )
+    for row in sqlx::query(UNDECLARED_RESIDUE_SQL)
+        .bind(effective.role())
+        .bind(schemas)
+        .bind(&table_privileges)
+        .bind(&column_privileges)
+        .bind(&sequence_privileges)
+        .fetch_all(&mut **tx)
         .await
         .context("read residual App authority on undeclared package relations")?
     {
         let schema = row
-            .try_get::<_, String>(0)
+            .try_get::<String, _>(0)
             .context("decode residue schema")?;
         let table = row
-            .try_get::<_, String>(1)
+            .try_get::<String, _>(1)
             .context("decode residue relation")?;
         if effective
             .relations()
@@ -716,13 +716,14 @@ async fn undeclared_residue(
 }
 
 async fn validate_installed_set(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     packages: &[PresentedPackage],
     local: bool,
 ) -> anyhow::Result<()> {
-    let installed = tx
-        .query(SELECT_INSTALLED_SQL, &[&project_env_key])
+    let installed = sqlx::query(SELECT_INSTALLED_SQL)
+        .bind(project_env_key)
+        .fetch_all(&mut **tx)
         .await
         .context("read complete installed package set")?
         .into_iter()

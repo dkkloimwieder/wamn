@@ -1,6 +1,8 @@
 //! Live PostgreSQL grants and credential isolation on fresh installations.
 
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_test_infrastructure::locked_database;
 
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
@@ -22,21 +24,17 @@ const READ_TABLES: [&str; 12] = [
 ];
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the disposable database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
 /// Every privilege in schema `platform` that `wamn_app` or PUBLIC holds: on
 /// the schema, its relations, their columns and its routines.
-async fn surface(client: &Client) -> Vec<String> {
-    client
-        .query(
-            "WITH grantee AS (SELECT oid FROM pg_roles WHERE rolname = 'wamn_app' UNION ALL SELECT 0::oid), \
+async fn surface(client: &mut Client) -> Vec<String> {
+    sqlx::query("WITH grantee AS (SELECT oid FROM pg_roles WHERE rolname = 'wamn_app' UNION ALL SELECT 0::oid), \
                   platform AS (SELECT oid FROM pg_namespace WHERE nspname = 'platform') \
              SELECT entry FROM ( \
                SELECT 'schema platform ' || x.privilege_type AS entry \
@@ -58,9 +56,7 @@ async fn surface(client: &Client) -> Vec<String> {
                       aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x \
                 WHERE p.pronamespace IN (SELECT oid FROM platform) \
                   AND x.grantee IN (SELECT oid FROM grantee) \
-             ) q ORDER BY entry COLLATE \"C\"",
-            &[],
-        )
+             ) q ORDER BY entry COLLATE \"C\"").fetch_all(&mut *client)
         .await
         .expect("read the wamn_app surface in platform")
         .iter()
@@ -89,13 +85,9 @@ fn invariant_one() -> Vec<String> {
 }
 
 /// The control-plane tables that no application database may hold.
-async fn control_plane_tables(client: &Client) -> i64 {
-    client
-        .query_one(
-            "SELECT count(*) FROM information_schema.tables \
-              WHERE table_name IN ('credential', 'oauth_token', 'oauth_authorization', 'target', 'target_application', 'integrations')",
-            &[],
-        )
+async fn control_plane_tables(client: &mut Client) -> i64 {
+    sqlx::query("SELECT count(*) FROM information_schema.tables \
+              WHERE table_name IN ('credential', 'oauth_token', 'oauth_authorization', 'target', 'target_application', 'integrations')").fetch_one(&mut *client)
         .await
         .expect("read the tables of the database")
         .get(0)
@@ -104,25 +96,29 @@ async fn control_plane_tables(client: &Client) -> i64 {
 /// A project database with the catalog and the application schema of this
 /// commit, as provisioning installs them.
 async fn install(url: &str, schema: &str) -> Client {
-    let client = connect(url).await;
-    client
-        .batch_execute(
-            "DO $$ BEGIN \
+    let mut client = connect(url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+                 CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
                END IF; \
                 \
-             END $$;",
-        )
+             END $$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("create the platform roles");
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut client)
         .await
-        .expect("create the platform roles");
-    client
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("install the catalog");
-    client
-        .batch_execute(schema)
+    sqlx::raw_sql(sqlx::AssertSqlSafe((schema).to_string()))
+        .execute(&mut client)
         .await
+        .map(drop)
         .expect("install the application schema");
     client
 }
@@ -130,26 +126,23 @@ async fn install(url: &str, schema: &str) -> Client {
 #[tokio::test]
 async fn a_fresh_install_grants_the_application_role_invariant_one() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = install(&url, wamn_control_provision::APP_SCHEMA_SQL).await;
-    assert_eq!(surface(&client).await, invariant_one());
-    assert_eq!(control_plane_tables(&client).await, 0);
+    let mut client = install(&url, wamn_control_provision::APP_SCHEMA_SQL).await;
+    assert_eq!(surface(&mut client).await, invariant_one());
+    assert_eq!(control_plane_tables(&mut client).await, 0);
 }
 
 #[tokio::test]
 async fn integration_and_target_seeds_live_only_in_the_system_database() {
     let mut server = wamn_test_postgres::start(&[]).unwrap();
     let database = server.create_database("wamn_system").unwrap();
-    let admin = connect(database.url()).await;
-    admin
-        .batch_execute(
-            "CREATE ROLE wamn_db_owner NOLOGIN; CREATE ROLE wamn_system LOGIN PASSWORD 'c31-system-fixture';
-        ALTER DATABASE wamn_system OWNER TO wamn_system; SET ROLE wamn_system",
-        )
-        .await
+    let mut admin = connect(database.url()).await;
+    sqlx::raw_sql("CREATE ROLE wamn_db_owner NOLOGIN NOINHERIT; CREATE ROLE wamn_system LOGIN PASSWORD 'c31-system-fixture';
+        ALTER DATABASE wamn_system OWNER TO wamn_system; SET ROLE wamn_system").execute(&mut admin).await.map(drop)
         .unwrap();
-    admin
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
     let expected = vec![
         "gcs:host:false".to_owned(),
@@ -157,15 +150,15 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
         "modbus:wasm:true".to_owned(),
         "s3:host:false".to_owned(),
     ];
-    let seeds = async || -> Vec<String> {
-        admin.query("SELECT code || ':' || runtime_type || ':' || exclusive FROM registry.integration_type ORDER BY code",&[]).await.unwrap().iter().map(|r|r.get(0)).collect()
+    let mut seeds = async || -> Vec<String> {
+        sqlx::query("SELECT code || ':' || runtime_type || ':' || exclusive FROM registry.integration_type ORDER BY code").fetch_all(&mut admin).await.unwrap().iter().map(|r|r.get(0)).collect()
     };
     assert_eq!(seeds().await, expected);
-    let target: String=admin.query_one("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL",&[]).await.unwrap().get(0);
+    let target: String=sqlx::query("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL").fetch_one(&mut admin).await.unwrap().get(0);
     assert_eq!(target, "cloud:cloud:active");
     let app = server.create_database("c31_application").unwrap();
-    let application = install(app.url(), wamn_control_provision::APP_SCHEMA_SQL).await;
-    assert_eq!(control_plane_tables(&application).await, 0);
+    let mut application = install(app.url(), wamn_control_provision::APP_SCHEMA_SQL).await;
+    assert_eq!(control_plane_tables(&mut application).await, 0);
 }
 
 /// Effective PostgreSQL privilege tests include inherited roles and PUBLIC.
@@ -173,20 +166,14 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
 async fn credentials_are_inaccessible_to_application_roles() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let client = connect(database.url()).await;
-    client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$").await.unwrap();
-    let exposed: Vec<String> = client.query(
-        "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins','oauth_token','oauth_authorization')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1",
-        &[],
-    ).await.unwrap().iter().map(|row| row.get(0)).collect();
+    let mut client = connect(database.url()).await;
+    sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
+    let exposed: Vec<String> = sqlx::query("SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins','oauth_token','oauth_authorization')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1").fetch_all(&mut client).await.unwrap().iter().map(|row| row.get(0)).collect();
     assert!(
         exposed.is_empty(),
         "credential relations exposed to wamn_app: {exposed:?}"
     );
-    let routines: Vec<String> = client.query(
-        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (p.prosrc ~* '(credential|password|secret|token|identity[.]pats)' OR p.prorettype IN (SELECT reltype FROM pg_class WHERE relname IN ('oauth_token','oauth_authorization','credential','password_credentials','password_tokens','password_logins','pats'))) AND has_function_privilege('wamn_app',p.oid,'EXECUTE') ORDER BY 1",
-        &[],
-    ).await.unwrap().iter().map(|row| row.get(0)).collect();
+    let routines: Vec<String> = sqlx::query("SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (p.prosrc ~* '(credential|password|secret|token|identity[.]pats)' OR p.prorettype IN (SELECT reltype FROM pg_class WHERE relname IN ('oauth_token','oauth_authorization','credential','password_credentials','password_tokens','password_logins','pats'))) AND has_function_privilege('wamn_app',p.oid,'EXECUTE') ORDER BY 1").fetch_all(&mut client).await.unwrap().iter().map(|row| row.get(0)).collect();
     assert!(
         routines.is_empty(),
         "credential routines exposed through inherited or PUBLIC access: {routines:?}"

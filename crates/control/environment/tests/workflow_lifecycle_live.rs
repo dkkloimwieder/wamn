@@ -10,9 +10,10 @@
 //! lifecycle lock is an advisory lock, so the project database also serves as
 //! the system database of the lock.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::collections::{BTreeMap, BTreeSet};
 
-use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, PackageCoordinate,
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
@@ -57,12 +58,10 @@ struct Fixture {
 }
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to a disposable database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -129,31 +128,35 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
 async fn fixture() -> Fixture {
     let project_database = wamn_platform_identity::test_database::project_platform();
     let project_url = project_database.url().to_owned();
-    let project = connect(&project_url).await;
-    project.batch_execute(&format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id())).await.unwrap();
+    let mut project = connect(&project_url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id()))).execute(&mut project).await.map(drop).unwrap();
     let manifest = release();
     let bytes = manifest.canonical_bytes();
     let digest = manifest.digest().as_str().to_owned();
-    project
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&PROJECT_ENV_KEY, &digest, &bytes],
-        )
-        .await
-        .expect("install the serving release");
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&digest)
+    .bind(&bytes)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("install the serving release");
 
     // The platform rows twice: the second run writes nothing.
     let principals =
         wamn_control_provision::platform_principals_sql(DOMAIN).expect("a domain renders");
     for _ in 0..2 {
-        project
-            .batch_execute(&format!("BEGIN;\n{principals}COMMIT;"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN;\n{principals}COMMIT;")))
+            .execute(&mut project)
             .await
+            .map(drop)
             .expect("write the platform principal rows");
     }
-    project
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN;\n{}\
              INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{ALICE}', 'user', 'alice@{DOMAIN}'), \
@@ -163,8 +166,12 @@ async fn fixture() -> Fixture {
              COMMIT;",
             bind_platform_principal_sql(PlatformComponent::Provisioning)
         ))
-        .await
-        .expect("seed the users and roles");
+            .to_string(),
+    ))
+    .execute(&mut project)
+    .await
+    .map(drop)
+    .expect("seed the users and roles");
     Fixture {
         project,
         project_url,
@@ -189,9 +196,9 @@ impl Fixture {
         execution: WorkflowExecution<'_>,
         trigger: WorkflowTrigger<'_>,
     ) -> Result<(), AuthorWorkflowError> {
-        let transaction = self.project.transaction().await.unwrap();
+        let mut transaction = self.project.begin().await.unwrap();
         author_workflow(
-            &transaction,
+            &mut transaction,
             &AuthorWorkflowRequest {
                 org: "workflow-project",
                 project: "fixture",
@@ -210,16 +217,20 @@ impl Fixture {
         Ok(())
     }
 
-    async fn grant(&self, user: &str, role: &str) {
-        self.project
-            .batch_execute(&format!(
+    async fn grant(&mut self, user: &str, role: &str) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "BEGIN;\n{}\
                  INSERT INTO platform.user_role (user_id, role_name) \
                  VALUES ('{user}', '{role}');\nCOMMIT;",
                 bind_platform_principal_sql(PlatformComponent::Provisioning)
             ))
-            .await
-            .expect("grant the role");
+                .to_string(),
+        ))
+        .execute(&mut self.project)
+        .await
+        .map(drop)
+        .expect("grant the role");
     }
 
     async fn enable(
@@ -242,18 +253,19 @@ impl Fixture {
         .await
     }
 
-    async fn enabled(&self, id: &str) -> Vec<i32> {
-        self.project
-            .query(
-                "SELECT version FROM catalog.workflows \
+    async fn enabled(&mut self, id: &str) -> Vec<i32> {
+        sqlx::query(
+            "SELECT version FROM catalog.workflows \
                   WHERE project_env_key = $1 AND workflow_id = $2 AND enabled ORDER BY version",
-                &[&PROJECT_ENV_KEY, &id],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| row.get(0))
-            .collect()
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .bind(&id)
+        .fetch_all(&mut self.project)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect()
     }
 }
 
@@ -288,15 +300,13 @@ async fn authorship_converges_and_refuses_graphs_outside_the_release() {
         .await
         .expect("the same bytes converge");
     let (count, enabled, created_by): (i64, bool, String) = {
-        let row = fixture
-            .project
-            .query_one(
-                "SELECT count(*), bool_or(enabled), min(created_by::text) \
+        let row = sqlx::query(
+            "SELECT count(*), bool_or(enabled), min(created_by::text) \
                    FROM catalog.workflows WHERE workflow_id = 'nightly'",
-                &[],
-            )
-            .await
-            .unwrap();
+        )
+        .fetch_one(&mut fixture.project)
+        .await
+        .unwrap();
         (row.get(0), row.get(1), row.get(2))
     };
     assert_eq!((count, enabled, created_by.as_str()), (1, false, ALICE));
@@ -344,32 +354,33 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held() {
     );
 
     // The partial index refuses a second enabled version written directly.
-    let refused = fixture
-        .project
-        .execute(
-            "UPDATE catalog.workflows SET enabled = true \
+    let refused = sqlx::query(
+        "UPDATE catalog.workflows SET enabled = true \
               WHERE workflow_id = 'nightly' AND version = 1",
-            &[],
-        )
-        .await
-        .expect_err("two enabled versions refuse");
+    )
+    .execute(&mut fixture.project)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_err("two enabled versions refuse");
     assert_eq!(
-        refused.code(),
-        Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+        refused
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("23505")
     );
 
     // The trigger refuses a graph change and admits a change of `enabled`.
-    let refused = fixture
-        .project
-        .execute(
-            "UPDATE catalog.workflows SET graph_json = '{}'::jsonb \
+    let refused = sqlx::query(
+        "UPDATE catalog.workflows SET graph_json = '{}'::jsonb \
               WHERE workflow_id = 'nightly' AND version = 1",
-            &[],
-        )
-        .await
-        .expect_err("a graph change refuses");
-    let database = refused.as_db_error().expect("a database refusal");
-    assert_eq!(database.code().code(), "55000");
+    )
+    .execute(&mut fixture.project)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_err("a graph change refuses");
+    let database = refused.as_database_error().expect("a database refusal");
+    assert_eq!(database.code().as_deref().unwrap(), "55000");
     assert_eq!(database.message(), "workflow-version-immutable");
 
     // A held lock refuses enable and disable, and the state stays.
@@ -419,21 +430,20 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
     let mut fixture = fixture().await;
 
     // The workflow user row is written once, as a service, with no role.
-    let row = fixture
-        .project
-        .query_one(
-            "SELECT count(*), min(type), min(email), min(display_name) FROM platform.\"user\" \
+    let row = sqlx::query(
+        "SELECT count(*), min(type), min(email), min(display_name) FROM platform.\"user\" \
               WHERE id = $1::text::uuid",
-            &[&wamn_identity_protocol::workflow_user_id().to_string()],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&wamn_identity_protocol::workflow_user_id().to_string())
+    .fetch_one(&mut fixture.project)
+    .await
+    .unwrap();
     assert_eq!(
         (
-            row.get::<_, i64>(0),
-            row.get::<_, String>(1),
-            row.get::<_, String>(2),
-            row.get::<_, String>(3)
+            row.get::<i64, _>(0),
+            row.get::<String, _>(1),
+            row.get::<String, _>(2),
+            row.get::<String, _>(3)
         ),
         (
             1,
@@ -490,11 +500,10 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
     assert_eq!(fixture.enabled("approve").await, [2]);
 }
 
-async fn capture_orders(fixture: &Fixture) {
+async fn capture_orders(fixture: &mut Fixture) {
     use wamn_control_provision::sql;
-    fixture
-        .project
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE SCHEMA orders; CREATE TABLE orders.orders (id int PRIMARY KEY); {}; {} {}",
             sql::ensure_entity_map_sql("orders"),
             sql::create_publication_sql("workflow_events", "orders"),
@@ -503,8 +512,12 @@ async fn capture_orders(fixture: &Fixture) {
                 .replace("$2", "'order'")
                 .replace("$3", "'orders'")
         ))
-        .await
-        .unwrap();
+            .to_string(),
+    ))
+    .execute(&mut fixture.project)
+    .await
+    .map(drop)
+    .unwrap();
 }
 
 #[tokio::test]
@@ -512,7 +525,7 @@ async fn event_authorship_requires_a_captured_application_model() {
     use wamn_event_wire::Op;
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
-    capture_orders(&fixture).await;
+    capture_orders(&mut fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
 
     for (source_package, entity, ops, condition) in [
@@ -552,12 +565,12 @@ async fn event_authorship_requires_a_captured_application_model() {
         .author_trigger(&graph, WorkflowExecution::Invoker, trigger)
         .await
         .unwrap();
-    let row = fixture.project.query_one("SELECT source_package, entity, ops, condition, enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'", &[]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), APPLICATION);
-    assert_eq!(row.get::<_, String>(1), "order");
-    assert_eq!(row.get::<_, Vec<String>>(2), ["update", "delete"]);
-    assert_eq!(row.get::<_, String>(3), "new.status != old.status");
-    assert_eq!(row.get::<_, Option<i64>>(4), None);
+    let row = sqlx::query("SELECT source_package, entity, ops, condition, enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'").fetch_one(&mut fixture.project).await.unwrap();
+    assert_eq!(row.get::<String, _>(0), APPLICATION);
+    assert_eq!(row.get::<String, _>(1), "order");
+    assert_eq!(row.get::<Vec<String>, _>(2), ["update", "delete"]);
+    assert_eq!(row.get::<String, _>(3), "new.status != old.status");
+    assert_eq!(row.get::<Option<i64>, _>(4), None);
     for update in [
         "condition = NULL",
         "entity = 'missing'",
@@ -566,13 +579,14 @@ async fn event_authorship_requires_a_captured_application_model() {
         "enable_sequence = 1",
     ] {
         assert!(
-            fixture
-                .project
-                .batch_execute(&format!(
-                    "UPDATE catalog.workflows SET {update} WHERE workflow_id = 'changed'"
-                ))
-                .await
-                .is_err()
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&format!("UPDATE catalog.workflows SET {update} WHERE workflow_id = 'changed'"))
+                    .to_string()
+            ))
+            .execute(&mut fixture.project)
+            .await
+            .map(drop)
+            .is_err()
         );
     }
 }
@@ -589,13 +603,10 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
-    capture_orders(&fixture).await;
+    capture_orders(&mut fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
 
-    let release_bytes = fixture.project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
-        &[&PROJECT_ENV_KEY, &fixture.digest],
-    ).await.unwrap().get::<_, Vec<u8>>(0);
+    let release_bytes = sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2").bind(&PROJECT_ENV_KEY).bind(&fixture.digest).fetch_one(&mut fixture.project).await.unwrap().get::<Vec<u8>, _>(0);
     assert!(
         serde_json::from_slice::<serde_json::Value>(&release_bytes)
             .unwrap()
@@ -616,10 +627,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .await
         .unwrap();
     assert_eq!(
-        fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
-            &[&PROJECT_ENV_KEY, &fixture.digest],
-        ).await.unwrap().get::<_, Vec<u8>>(0),
+        sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2").bind(&PROJECT_ENV_KEY).bind(&fixture.digest).fetch_one(&mut fixture.project).await.unwrap().get::<Vec<u8>, _>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
     );
@@ -683,25 +691,19 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     .await
     .unwrap();
     assert_eq!(
-        fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
-            &[&PROJECT_ENV_KEY, &fixture.digest],
-        ).await.unwrap().get::<_, Vec<u8>>(0),
+        sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2").bind(&PROJECT_ENV_KEY).bind(&fixture.digest).fetch_one(&mut fixture.project).await.unwrap().get::<Vec<u8>, _>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
     );
-    let sequence = async |project: &Client| -> i64 {
-        project
-            .query_one(
-                "SELECT enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'",
-                &[],
-            )
+    let sequence = async |project: &mut Client| -> i64 {
+        sqlx::query("SELECT enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'")
+            .fetch_one(&mut *project)
             .await
             .unwrap()
             .get(0)
     };
     assert_eq!(
-        sequence(&fixture.project).await,
+        sequence(&mut fixture.project).await,
         i64::try_from(second.sequence).unwrap()
     );
     assert_eq!(stream.info().await.unwrap().state.consumer_count, 1);
@@ -714,14 +716,11 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     .await
     .unwrap();
     assert_eq!(
-        sequence(&fixture.project).await,
+        sequence(&mut fixture.project).await,
         i64::try_from(second.sequence).unwrap()
     );
     assert_eq!(
-        fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
-            &[&PROJECT_ENV_KEY, &fixture.digest],
-        ).await.unwrap().get::<_, Vec<u8>>(0),
+        sqlx::query("SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2").bind(&PROJECT_ENV_KEY).bind(&fixture.digest).fetch_one(&mut fixture.project).await.unwrap().get::<Vec<u8>, _>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
     );
@@ -744,7 +743,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     .await
     .unwrap();
     assert_eq!(
-        sequence(&fixture.project).await,
+        sequence(&mut fixture.project).await,
         i64::try_from(third.sequence).unwrap()
     );
     assert_eq!(stream.info().await.unwrap().state.consumer_count, 1);

@@ -566,7 +566,7 @@ cargo test --locked --offline -p wamn-ctl --features ops \
 ```
 
 The case applies a fixture package through `wamn-ctl apply-package` and runs `wamn-ctl-ops prune-record-history`.
-`prune_removes_only_the_expired_prefix_of_each_row` also creates the run retention generation to test the refusals.
+`prune_removes_only_the_expired_prefix_of_each_row` also creates the run retention login to test the refusals.
 
 ### Run history retention test
 
@@ -579,8 +579,8 @@ cargo test --locked --offline -p wamn-ctl --features ops \
   --test prune_run_history_live -- --nocapture
 ```
 
-The case applies `run-state.sql` and `run-queue.sql`, mints the run retention generation, and runs `wamn-ctl-ops prune-run-history`.
-It tests the removed and kept runs, the refusals, and the grants of the generation.
+The case applies `run-state.sql` and `run-queue.sql`, mints the run retention login, and runs `wamn-ctl-ops prune-run-history`.
+It tests the removed and kept runs, the refusals, and the grants of the login.
 
 ### Development identity lifecycle
 

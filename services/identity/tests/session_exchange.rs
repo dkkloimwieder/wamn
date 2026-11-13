@@ -4,6 +4,8 @@
 //! databases. It uses the production issuer and role-reader credential builders.
 //! Tokens and database credentials must never appear in assertion diagnostics.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wamn_broker::auth_changes::AuthDrops;
@@ -13,20 +15,15 @@ use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsage
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
-};
+
+use wamn_control_provision::identity_role::{IDENTITY_ISSUER_ROLE, identity_issuer_login};
 use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::sql::{
-    ensure_db_owner_role_sql, prepare_workload_generation_sql, record_generation_password_sql,
-    revoke_public_connect_base_grants_sql,
+    ensure_db_owner_role_sql, revoke_public_connect_base_grants_sql,
 };
-use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
-use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_login};
+use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily};
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::SessionJwks;
 use wamn_identity_protocol::test_util::{Audience, verify};
@@ -72,16 +69,10 @@ impl<T> ExpectRedacted<T> for Option<T> {
 
 struct Database {
     client: Client,
-    driver: JoinHandle<()>,
-}
-
-impl Drop for Database {
-    fn drop(&mut self) {
-        self.driver.abort();
-    }
 }
 
 struct Fixture {
+    observations: sqlx::PgPool,
     system: Database,
     environments: Vec<Database>,
     targets: Vec<SessionTarget>,
@@ -209,11 +200,11 @@ async fn verify_response(
     claims
 }
 
-async fn wait_for_blocked_issuer(system: &Client, issuer_role: &str) {
+async fn wait_for_blocked_issuer(system: &mut Client, issuer_role: &str) {
     tokio::time::timeout(HANG_GUARD, async {
         loop {
-            system.query_one("SELECT pg_stat_clear_snapshot()", &[]).await.expect_redacted("refresh backend observation");
-            let blocked: bool = system.query_one("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename=$1 AND pg_backend_pid()=ANY(pg_blocking_pids(pid)))", &[&issuer_role])
+            sqlx::query("SELECT pg_stat_clear_snapshot()").fetch_one(&mut *system).await.expect_redacted("refresh backend observation");
+            let blocked: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename=$1 AND pg_backend_pid()=ANY(pg_blocking_pids(pid)))").bind(&issuer_role).fetch_one(&mut *system)
                 .await.expect_redacted("observe actual issuer wait").get(0);
             if blocked { break; }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -221,29 +212,18 @@ async fn wait_for_blocked_issuer(system: &Client, issuer_role: &str) {
     }).await.expect_redacted("issuer must reach the held PostgreSQL lock");
 }
 
-async fn record_password_fingerprint(system: &Client, role: &str) {
-    let fingerprint = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(PASSWORD.as_bytes()));
-    system
-        .execute(record_generation_password_sql(), &[&role, &fingerprint])
+async fn seed_user(client: &mut Client, principal: &Principal, role: &str) {
+    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'").bind(&principal.id().to_string().as_str()).bind(&format!("{}@fixture.invalid", principal.id())).execute(&mut *client).await.map(|result| result.rows_affected()).expect_redacted("project user fixture");
+    sqlx::query("INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(&role)
+        .execute(&mut *client)
         .await
-        .expect_redacted("record the generation password fingerprint");
-}
-
-async fn seed_user(client: &Client, principal: &Principal, role: &str) {
-    client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().to_string().as_str(), &format!("{}@fixture.invalid", principal.id())])
-        .await.expect_redacted("project user fixture");
-    client
-        .execute(
-            "INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING",
-            &[&role],
-        )
-        .await
+        .map(|result| result.rows_affected())
         .expect_redacted("project role fixture");
-    client.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING", &[&principal.id().to_string().as_str(), &role])
-        .await.expect_redacted("exact project/principal role fixture");
+    sqlx::query("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING").bind(&principal.id().to_string().as_str()).bind(&role).execute(&mut *client).await.map(|result| result.rows_affected()).expect_redacted("exact project/principal role fixture");
 }
 
-async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
+async fn grant(system: &mut Client, principal: &Principal, org: &str, env: &str) {
     wamn_platform_identity::org::activate_org_membership(system, principal.id(), org)
         .await
         .expect_redacted("active org membership fixture");
@@ -253,17 +233,16 @@ async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
 }
 
 async fn setup(raw: &str) -> Fixture {
-    let admin = url::Url::parse(raw).expect_redacted("test database URL shape");
+    let mut admin = url::Url::parse(raw).expect_redacted("test database URL shape");
     assert!(
         admin.path() == "/wamn_system",
         "never reset another database"
     );
-    let system = connect(raw).await;
-    let safe: bool = system.client.query_one("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
+    let mut system = connect(raw).await;
+    let safe: bool = sqlx::query("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user").fetch_one(&mut system.client)
         .await.expect_redacted("disposable PG18 preflight").get(0);
     assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
-    let issuer_role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A)
-        .expect_redacted("issuer role");
+    let issuer_role = identity_issuer_login(ISSUER).expect_redacted("issuer role");
     let mut roles = vec![
         issuer_role.clone(),
         IDENTITY_ISSUER_ROLE.to_owned(),
@@ -278,7 +257,7 @@ async fn setup(raw: &str) -> Fixture {
             env: env.into(),
         };
         let name = project_env_database_name(org, "widgets", env, SUFFIX);
-        let role = workload_generation_role(
+        let role = workload_login(
             WorkloadRoleFamily::SessionRoleReader,
             WorkloadRoleIdentity::ProjectEnvironment {
                 org,
@@ -286,14 +265,13 @@ async fn setup(raw: &str) -> Fixture {
                 environment: env,
                 database: &name,
             },
-            CredentialGeneration::A,
         )
         .expect_redacted("reader role");
         let target = SessionTarget::new(
             &triple,
             SUFFIX,
             &wamn_registry::project_env_key(org, "widgets", env),
-            &login_url(&admin, &name, &role),
+            &login_url(&mut admin, &name, &role),
         )
         .expect_redacted("production target capability");
         assert!(!format!("{target:?}").contains(PASSWORD));
@@ -302,71 +280,71 @@ async fn setup(raw: &str) -> Fixture {
     }
     let databases: Vec<String> = targets
         .iter()
-        .map(|t| t.connection().database().to_owned())
+        .map(|t| t.connection().database.as_str().to_owned())
         .collect();
-    let exists: bool = system.client.query_one("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[])) OR EXISTS (SELECT FROM pg_database WHERE datname=ANY($2::text[]))", &[&roles, &databases])
+    let exists: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=ANY($1::text[])) OR EXISTS (SELECT FROM pg_database WHERE datname=ANY($2::text[]))").bind(&roles).bind(&databases).fetch_one(&mut system.client)
         .await.expect_redacted("exact fixture names must be absent").get(0);
     assert!(
         !exists,
         "refuse to overwrite existing fixture databases or authority roles"
     );
-    system
-        .client
-        .batch_execute(ensure_db_owner_role_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut system.client)
+    .await
+    .map(drop)
+    .expect_redacted("record history grants name wamn_db_owner");
+    sqlx::raw_sql("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;").execute(&mut system.client).await.map(drop).expect_redacted("prepare armed disposable system owner");
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut system.client)
         .await
-        .expect_redacted("record history grants name wamn_db_owner");
-    system.client.batch_execute("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;")
-        .await.expect_redacted("prepare armed disposable system owner");
-    system
-        .client
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect_redacted("production system schema");
-    system
-        .client
-        .batch_execute("RESET ROLE; CREATE ROLE wamn_app NOLOGIN;  ")
+    sqlx::raw_sql("RESET ROLE; CREATE ROLE wamn_app NOLOGIN NOINHERIT;  ")
+        .execute(&mut system.client)
         .await
+        .map(drop)
         .expect_redacted("schema prerequisite roles");
     // The system fixture is platform setup, so it writes as wamn:provisioning.
-    system
-        .client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut system.client)
         .await
+        .map(|result| result.rows_affected())
         .expect_redacted("bind wamn:provisioning for the system fixture session");
     for name in &databases {
-        system
-            .client
-            .batch_execute(&format!("CREATE DATABASE {}", escape_identifier(name)))
-            .await
-            .expect_redacted("create exact disposable environment");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE {}",
+            escape_identifier(name)
+        )))
+        .execute(&mut system.client)
+        .await
+        .map(drop)
+        .expect_redacted("create exact disposable environment");
     }
-    system
-        .client
-        .batch_execute(revoke_public_connect_base_grants_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (revoke_public_connect_base_grants_sql()).to_string(),
+    ))
+    .execute(&mut system.client)
+    .await
+    .map(drop)
+    .expect_redacted("production CONNECT minimum on disposable cluster");
+    sqlx::raw_sql("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
+        .execute(&mut system.client)
         .await
-        .expect_redacted("production CONNECT minimum on disposable cluster");
-    system
-        .client
-        .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
-        .await
+        .map(drop)
         .expect_redacted("system TEMP minimum");
-    system
-        .client
-        .batch_execute(
-            &prepare_identity_issuer_generation_sql(
-                ISSUER,
-                CredentialGeneration::A,
-                PASSWORD,
-                "2100-01-01T00:00:00Z",
-            )
-            .expect_redacted("issuer credential SQL"),
-        )
-        .await
-        .expect_redacted("actual issuer provisioning");
-    let issuer_url = login_url(&admin, "wamn_system", &issuer_role);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::issuer_login_sql(ISSUER, PASSWORD)
+            .expect_redacted("issuer credential SQL"))
+            .to_string(),
+    ))
+    .execute(&mut system.client)
+    .await
+    .map(drop)
+    .expect_redacted("actual issuer provisioning");
+    let issuer_url = login_url(&mut admin, "wamn_system", &issuer_role);
     let mut key_authority = connect(&issuer_url).await;
     let public = publish_session_key(&mut key_authority.client, ISSUER)
         .await
@@ -378,60 +356,75 @@ async fn setup(raw: &str) -> Fixture {
     let mut environments = Vec::new();
     for target in &targets {
         let mut url = admin.clone();
-        url.set_path(&format!("/{}", target.connection().database()));
-        let environment = connect(url.as_str()).await;
+        url.set_path(&format!("/{}", target.connection().database.as_str()));
+        let mut environment = connect(url.as_str()).await;
         for schema in [
             wamn_catalog::CATALOG_SCHEMA_SQL,
             include_str!("../../../deploy/sql/run-state.sql"),
             include_str!("../../../deploy/sql/run-queue.sql"),
             include_str!("../../../deploy/sql/app-schema.sql"),
         ] {
-            environment
-                .client
-                .batch_execute(schema)
+            sqlx::raw_sql(sqlx::AssertSqlSafe((schema).to_string()))
+                .execute(&mut environment.client)
                 .await
+                .map(drop)
                 .expect_redacted("production environment schema");
         }
         // The fixture writes as its test principal, whose row stamps itself.
         // Both bindings stay for the later fixture writes of this session.
-        environment
-            .client
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
                  SET app.operation = 'admin:session-exchange-fixture'; \
                  INSERT INTO platform.\"user\" (id,type,email) \
                  VALUES ('{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))
-            .await
-            .expect_redacted("environment test principal");
-        environment
-            .client
-            .batch_execute(&format!(
+                .to_string(),
+        ))
+        .execute(&mut environment.client)
+        .await
+        .map(drop)
+        .expect_redacted("environment test principal");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "REVOKE TEMPORARY ON DATABASE {} FROM PUBLIC",
-                escape_identifier(target.connection().database())
+                escape_identifier(target.connection().database.as_str())
             ))
-            .await
-            .expect_redacted("environment TEMP minimum");
-        environment
-            .client
-            .batch_execute(&prepare_workload_generation_sql(
+                .to_string(),
+        ))
+        .execute(&mut environment.client)
+        .await
+        .map(drop)
+        .expect_redacted("environment TEMP minimum");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 WorkloadRoleFamily::SessionRoleReader,
-                target.connection().database(),
-                target.connection().role(),
+                target.connection().database.as_str(),
+                target.connection().username.as_str(),
                 PASSWORD,
-                "2100-01-01T00:00:00Z",
             ))
-            .await
-            .expect_redacted("actual dedicated role-reader provisioning");
-        record_password_fingerprint(&system.client, target.connection().role()).await;
+                .to_string(),
+        ))
+        .execute(&mut environment.client)
+        .await
+        .map(drop)
+        .expect_redacted("actual dedicated role-reader provisioning");
         let triple = target.triple();
-        system.client.execute("INSERT INTO registry.orgs (id,placement_type) VALUES ($1,'dedicated') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture org");
-        system.client.execute("INSERT INTO registry.projects (org,id) VALUES ($1,'widgets') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture project");
-        system.client.execute("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')", &[&triple.org, &triple.env.as_str()]).await.expect_redacted("fixture environment policy");
-        system.client.execute("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$2,$2) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)", &[&triple.org, &triple.env.as_str(), &SUFFIX]).await.expect_redacted("current environment registry entry");
+        sqlx::query("INSERT INTO registry.orgs (id,placement_type) VALUES ($1,'dedicated') ON CONFLICT DO NOTHING").bind(&triple.org).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("fixture org");
+        sqlx::query(
+            "INSERT INTO registry.projects (org,id) VALUES ($1,'widgets') ON CONFLICT DO NOTHING",
+        )
+        .bind(&triple.org)
+        .execute(&mut system.client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect_redacted("fixture project");
+        sqlx::query("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')").bind(&triple.org).bind(&triple.env.as_str()).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("fixture environment policy");
+        sqlx::query("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$2,$2) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)").bind(&triple.org).bind(&triple.env.as_str()).bind(&SUFFIX).execute(&mut system.client).await.map(|result| result.rows_affected()).expect_redacted("current environment registry entry");
         environments.push(environment);
     }
     Fixture {
+        observations: wamn_postgres::pool(raw, 4).await.unwrap(),
         system,
         environments,
         targets,
@@ -443,7 +436,7 @@ async fn setup(raw: &str) -> Fixture {
 
 async fn cleanup(fixture: Fixture) {
     let Fixture {
-        system,
+        mut system,
         environments,
         targets,
         roles,
@@ -451,25 +444,31 @@ async fn cleanup(fixture: Fixture) {
     } = fixture;
     drop(environments);
     for target in targets {
-        system
-            .client
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "DROP DATABASE {} WITH (FORCE)",
-                escape_identifier(target.connection().database())
+                escape_identifier(target.connection().database.as_str())
             ))
-            .await
-            .expect_redacted("remove only owned disposable environment");
+                .to_string(),
+        ))
+        .execute(&mut system.client)
+        .await
+        .map(drop)
+        .expect_redacted("remove only owned disposable environment");
     }
-    system.client.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE").await.expect_redacted("remove owned system fixture schemas");
+    sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE").execute(&mut system.client).await.map(drop).expect_redacted("remove owned system fixture schemas");
     for role in roles {
-        system
-            .client
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "DROP OWNED BY {role}; DROP ROLE {role}",
                 role = escape_identifier(&role)
             ))
-            .await
-            .expect_redacted("remove exact fixture authority role");
+                .to_string(),
+        ))
+        .execute(&mut system.client)
+        .await
+        .map(drop)
+        .expect_redacted("remove exact fixture authority role");
     }
 }
 
@@ -492,7 +491,7 @@ async fn start_config(config: IdentityConfig) -> Https {
         service,
         tls_config(&certificate, &private).expect_redacted("production TLS"),
     ));
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
         .https_only(true)
         .no_proxy()
         .retry(reqwest::retry::never())
@@ -510,17 +509,10 @@ async fn start_config(config: IdentityConfig) -> Https {
 }
 
 async fn connect(url: &str) -> Database {
-    let (client, connection) =
-        tokio::time::timeout(Duration::from_secs(5), tokio_postgres::connect(url, NoTls))
-            .await
-            .expect_redacted("bounded disposable connection")
-            .map_err(|_| ())
-            .expect_redacted("connect without credential diagnostics");
     Database {
-        client,
-        driver: tokio::spawn(async move {
-            let _ = connection.await;
-        }),
+        client: wamn_postgres::connect(url)
+            .await
+            .expect_redacted("database connection"),
     }
 }
 
@@ -530,7 +522,6 @@ fn login_url(admin: &url::Url, database: &str, role: &str) -> String {
     url.set_username(role).expect_redacted("targeted role");
     url.set_password(Some(PASSWORD))
         .expect_redacted("fixture password");
-    url.set_query(None);
     url.set_fragment(None);
     url.into()
 }
@@ -586,17 +577,17 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("password system database");
-    let fixture = setup(db.url()).await;
+    let mut fixture = setup(db.url()).await;
     let alice = create_user(
-        &fixture.system.client,
+        &mut fixture.system.client,
         "password-alice",
         "password-alice@example.invalid",
         "Alice",
     )
     .await
     .expect_redacted("password user");
-    seed_user(&fixture.environments[0].client, &alice, "receiver").await;
-    grant(&fixture.system.client, &alice, "demo", "dev").await;
+    seed_user(&mut fixture.environments[0].client, &alice, "receiver").await;
+    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
         .to_string()
@@ -653,7 +644,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         400
     );
     let login = json!({"email":" PASSWORD-ALICE@EXAMPLE.INVALID ","password":PASSWORD,"aud":fixture.targets[0].audience()});
-    let jwks = wamn_platform_identity::session_keys::session_jwks(&issuer.client, ISSUER)
+    let jwks = wamn_platform_identity::session_keys::session_jwks(&mut issuer.client, ISSUER)
         .await
         .unwrap();
     verify_response(
@@ -682,7 +673,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         assert_failure(reply, 401, "{\"error\":\"unauthorized\"}").await;
     }
     revoke_project_env_membership(
-        &fixture.system.client,
+        &mut fixture.system.client,
         alice.id(),
         "demo",
         "widgets",
@@ -699,14 +690,12 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    grant(&fixture.system.client, &alice, "demo", "dev").await;
-    fixture.environments[0]
-        .client
-        .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&alice.id().to_string().as_str()],
-        )
+    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&alice.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_eq!(
         post(&replica, "/password/session", login.clone())
@@ -716,16 +705,14 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    fixture.environments[0]
-        .client
-        .execute(
-            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
-            &[&alice.id().to_string().as_str()],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid")
+        .bind(&alice.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     disable_principal(
-        &fixture.system.client,
+        &mut fixture.system.client,
         alice.id(),
         &mut AuthDrops::default(),
     )
@@ -746,8 +733,8 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     assert_eq!(throttled.status(), 429);
     assert_eq!(throttled.headers()["retry-after"], "60");
     // Advance only the owned counters, without sleeping, to test recovery.
-    fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'; UPDATE identity.principals SET status='active', disabled_at=NULL WHERE subject='password-alice'").await.unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    sqlx::raw_sql("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'; UPDATE identity.principals SET status='active', disabled_at=NULL WHERE subject='password-alice'").execute(&mut fixture.system.client).await.map(drop).unwrap();
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     assert_eq!(
         post(&replica, "/password/session", login.clone())
             .send()
@@ -756,7 +743,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     verify_response(
         post(&replica, "/password/session", login)
             .send()
@@ -782,17 +769,17 @@ async fn password_environment_discovery_requires_current_authority() {
     let db = postgres
         .create_database("wamn_system")
         .expect_redacted("discovery database");
-    let fixture = setup(db.url()).await;
+    let mut fixture = setup(db.url()).await;
     let alice = create_user(
-        &fixture.system.client,
+        &mut fixture.system.client,
         "discovery-alice",
         "discovery@example.invalid",
         "Alice",
     )
     .await
     .expect_redacted("discovery user");
-    for database in &fixture.environments {
-        seed_user(&database.client, &alice, "receiver").await;
+    for database in &mut fixture.environments {
+        seed_user(&mut database.client, &alice, "receiver").await;
     }
     let actor = PlatformComponent::Provisioning
         .principal_id()
@@ -835,14 +822,14 @@ async fn password_environment_discovery_requires_current_authority() {
 
     // A project role alone never supplies membership, including across organizations.
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    grant(&fixture.system.client, &alice, "demo", "dev").await;
+    grant(&mut fixture.system.client, &alice, "demo", "dev").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
-    grant(&fixture.system.client, &alice, "demo", "prod").await;
+    grant(&mut fixture.system.client, &alice, "demo", "prod").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1])).await;
-    grant(&fixture.system.client, &alice, "other", "dev").await;
+    grant(&mut fixture.system.client, &alice, "other", "dev").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0, 1, 2])).await;
     revoke_project_env_membership(
-        &fixture.system.client,
+        &mut fixture.system.client,
         alice.id(),
         "other",
         "widgets",
@@ -866,54 +853,50 @@ async fn password_environment_discovery_requires_current_authority() {
             .status(),
         429
     );
-    discovery_window(&fixture).await;
+    discovery_window(&fixture.observations).await;
 
-    fixture.environments[1]
-        .client
-        .execute(
-            "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
-            &[&alice.id().to_string().as_str()],
-        )
+    sqlx::query("DELETE FROM platform.user_role WHERE user_id=$1::text::uuid")
+        .bind(&alice.id().to_string().as_str())
+        .execute(&mut fixture.environments[1].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
-    fixture.environments[0]
-        .client
-        .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&alice.id().to_string().as_str()],
-        )
+    sqlx::query("UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&alice.id().to_string().as_str())
+        .execute(&mut fixture.environments[0].client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    seed_user(&fixture.environments[0].client, &alice, "receiver").await;
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    seed_user(&mut fixture.environments[0].client, &alice, "receiver").await;
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    sqlx::raw_sql("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").execute(&mut fixture.system.client).await.map(drop).unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // An inactive environment is not offered.
-    discovery_window(&fixture).await;
-    fixture
-        .system
-        .client
-        .batch_execute(
-            "UPDATE registry.environments SET status='inactive' WHERE org='demo' AND env='dev'",
-        )
-        .await
-        .unwrap();
+    discovery_window(&fixture.observations).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("UPDATE registry.environments SET status='inactive' WHERE org='demo' AND env='dev'")
+            .to_string(),
+    ))
+    .execute(&mut fixture.system.client)
+    .await
+    .map(drop)
+    .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    fixture
-        .system
-        .client
-        .batch_execute(
-            "UPDATE registry.environments SET status='active' WHERE org='demo' AND env='dev'",
-        )
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("UPDATE registry.environments SET status='active' WHERE org='demo' AND env='dev'")
+            .to_string(),
+    ))
+    .execute(&mut fixture.system.client)
+    .await
+    .map(drop)
+    .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // A prior discovery cannot authorize issuance after membership changes.
     revoke_project_env_membership(
-        &fixture.system.client,
+        &mut fixture.system.client,
         alice.id(),
         "demo",
         "widgets",
@@ -934,7 +917,7 @@ async fn password_environment_discovery_requires_current_authority() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
-    discovery_window(&fixture).await;
+    discovery_window(&fixture.observations).await;
 
     for (email, password) in [
         ("absent@example.invalid", PASSWORD),
@@ -950,7 +933,7 @@ async fn password_environment_discovery_requires_current_authority() {
         assert_failure(response, 401, "{\"error\":\"unauthorized\"}").await;
     }
     disable_principal(
-        &fixture.system.client,
+        &mut fixture.system.client,
         alice.id(),
         &mut AuthDrops::default(),
     )
@@ -978,16 +961,13 @@ async fn password_environment_discovery_requires_current_authority() {
             400
         );
     }
-    let pats: i64 = fixture
-        .system
-        .client
-        .query_one(
-            "SELECT count(*) FROM identity.pats WHERE principal_id=$1::text::uuid",
-            &[&alice.id().to_string().as_str()],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let pats: i64 =
+        sqlx::query("SELECT count(*) FROM identity.pats WHERE principal_id=$1::text::uuid")
+            .bind(&alice.id().to_string().as_str())
+            .fetch_one(&mut fixture.system.client)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(pats, 0, "discovery must not create a hidden PAT");
     drop(issuer);
     drop(https);
@@ -1008,7 +988,12 @@ async fn assert_environments(response: reqwest::Response, expected: Value) {
     );
 }
 
-async fn discovery_window(fixture: &Fixture) {
-    fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'")
-        .await.expect_redacted("advance only the owned throttle window");
+async fn discovery_window(observations: &sqlx::PgPool) {
+    sqlx::raw_sql(
+        "UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'",
+    )
+    .execute(observations)
+    .await
+    .map(drop)
+    .expect_redacted("advance only the owned throttle window");
 }

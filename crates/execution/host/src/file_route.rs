@@ -7,6 +7,7 @@
 //! request body. Its Content-Type supplies the media type. GET
 //! `/api/<application>/files/<id>` streams the stored bytes after session admission.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::pin::Pin;
@@ -138,9 +139,14 @@ fn failed(field: &'static str, source: impl Into<anyhow::Error>) -> FileError {
         source: Some(source.into()),
     }
 }
-impl From<tokio_postgres::Error> for FileError {
-    fn from(error: tokio_postgres::Error) -> Self {
-        if error.code() == Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION) {
+impl From<sqlx::Error> for FileError {
+    fn from(error: sqlx::Error) -> Self {
+        if error
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref()
+            == Some("23503")
+        {
             Self {
                 refusal: Some(FileRefusal::Referenced),
                 field: "file_id",
@@ -200,7 +206,7 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
-    pub client: Option<Arc<tokio_postgres::Client>>,
+    pub client: Option<sqlx::PgPool>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
     pub facts: Arc<wamn_runtime::connection_facts::ConnectionFacts>,
     pub org: String,
@@ -225,11 +231,11 @@ impl FileConnections for RegistryFileConnections {
             )
         })?;
         let mut generations = Vec::new();
-        for row in client
-            .query(
-                wamn_registry::sql::EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS,
-                &[&self.org, &self.project, &self.environment],
-            )
+        for row in sqlx::query(wamn_registry::sql::EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS)
+            .bind(&self.org)
+            .bind(&self.project)
+            .bind(&self.environment)
+            .fetch_all(client)
             .await?
         {
             generations.push(FileConnection {
@@ -362,15 +368,6 @@ impl fmt::Debug for FileRoutes {
 }
 
 /// A session advisory lock holds no database transaction during object I/O.
-struct FileLock {
-    driver: tokio::task::JoinHandle<()>,
-}
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        self.driver.abort();
-    }
-}
-
 impl FileRoutes {
     pub fn new(
         release: Arc<LoadedRelease>,
@@ -390,32 +387,25 @@ impl FileRoutes {
         }
     }
 
-    async fn lock(&self, id: Uuid) -> Result<(tokio_postgres::Client, FileLock), FileError> {
+    async fn lock(&self, id: Uuid) -> Result<sqlx::PgConnection, FileError> {
         let url = self.administration_url.as_deref().ok_or_else(|| {
             failed(
                 "administration",
                 anyhow::anyhow!("file mutation requires the administration login"),
             )
         })?;
-        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-        let guard = FileLock {
-            driver: tokio::spawn(async move {
-                if let Err(error) = connection.await {
-                    tracing::warn!(%error, "file lock connection failed");
-                }
-            }),
-        };
-        let allowed: bool = client.query_one("SELECT NOT rolsuper AND pg_has_role(current_user, 'wamn_administration', 'MEMBER') FROM pg_roles WHERE rolname = current_user", &[]).await?.try_get(0)?;
+        let mut client = wamn_postgres::connect(url)
+            .await
+            .map_err(|error| failed("administration", error))?;
+        let allowed: bool = sqlx::query("SELECT NOT rolsuper AND pg_has_role(current_user, 'wamn_administration', 'MEMBER') FROM pg_roles WHERE rolname = current_user").fetch_one(&mut client).await?.try_get(0)?;
         if !allowed {
             return Err(refused(FileRefusal::PermissionDenied, "administration"));
         }
-        client
-            .query_one(
-                "SELECT pg_advisory_lock(hashtextextended($1, 0))",
-                &[&format!("wamn:file:{id}")],
-            )
+        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
+            .bind(format!("wamn:file:{id}"))
+            .fetch_one(&mut client)
             .await?;
-        Ok((client, guard))
+        Ok(client)
     }
 
     async fn store(
@@ -476,8 +466,10 @@ impl FileRoutes {
                     wamn_catalog::host_route_version()
                 ),
                 async |client| {
-                    let row = client
-                        .query_opt(&sql, &[&id.to_string(), &application])
+                    let row = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                        .bind(id.to_string())
+                        .bind(application)
+                        .fetch_optional(&mut *client)
                         .await?
                         .ok_or_else(|| refused(FileRefusal::NotFound, "file_id"))?;
                     decode_record(&row)
@@ -507,8 +499,7 @@ impl FileRoutes {
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
-                client.execute("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
-                    &[&id.to_string(), &application, &connection.id, &name, &media_type, &size, &staged.sha256, &staged.blob_key]).await?;
+                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
         // A committed row remains readable through staging if promotion fails.
@@ -559,7 +550,7 @@ impl FileRoutes {
         request: DeleteRequest,
     ) -> Result<Value, FileError> {
         let principal = principal(caller, "delete")?;
-        let (_client, _lock) = self.lock(request.file_id).await?;
+        let _lock = self.lock(request.file_id).await?;
         let row = self
             .record(&principal, &request.application, request.file_id, "delete")
             .await?;
@@ -571,12 +562,32 @@ impl FileRoutes {
                 true,
             )
             .await?;
-        self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
-            &format!("wamn-control:file/delete@{}", wamn_catalog::host_route_version()), async |client| {
-                let deleted = client.execute("DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2", &[&request.file_id.to_string(), &request.application]).await?;
-                if deleted != 1 { return Err(refused(FileRefusal::NotFound, "file_id")); }
-                Ok::<_, FileError>(())
-            }).await.map_err(|error| failed("catalog", error))??;
+        self.postgres
+            .administration_transaction(
+                &self.project,
+                &self.release.target().project_env_key,
+                &principal,
+                &format!(
+                    "wamn-control:file/delete@{}",
+                    wamn_catalog::host_route_version()
+                ),
+                async |client| {
+                    let deleted = sqlx::query(
+                        "DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2",
+                    )
+                    .bind(request.file_id.to_string())
+                    .bind(&request.application)
+                    .execute(&mut *client)
+                    .await
+                    .map(|result| result.rows_affected())?;
+                    if deleted != 1 {
+                        return Err(refused(FileRefusal::NotFound, "file_id"));
+                    }
+                    Ok::<_, FileError>(())
+                },
+            )
+            .await
+            .map_err(|error| failed("catalog", error))??;
         if let Err(error) = store.delete(&row.blob_key).await {
             // Metadata deletion is committed. The collector (wamn-2wdsf.4)
             // owns orphan cleanup, so this path does not retry object deletion.
@@ -595,7 +606,7 @@ impl FileRoutes {
         request: ExposeRequest,
     ) -> Result<Value, FileError> {
         let principal = principal(caller, "expose")?;
-        let (_client, _lock) = self.lock(request.file_id).await?;
+        let _lock = self.lock(request.file_id).await?;
         let row = self
             .record(&principal, &request.application, request.file_id, "expose")
             .await?;
@@ -627,8 +638,7 @@ impl FileRoutes {
         .await?;
         let written = self.postgres.administration_transaction(&self.project, &self.release.target().project_env_key, &principal,
             &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()), async |client| {
-                let updated = client.execute("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)",
-                    &[&request.file_id.to_string(), &request.application, &request.exposure.literal(), &url]).await?;
+                let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(&request.application).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(updated)
             }).await.map_err(|error| failed("catalog", error))?;
         if let Err(error) = written {
@@ -923,7 +933,7 @@ fn require_binding(
 fn decode<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, FileError> {
     serde_json::from_str(payload).map_err(|_| refused(FileRefusal::InvalidInput, "input"))
 }
-fn decode_record(row: &tokio_postgres::Row) -> Result<FileRecord, FileError> {
+fn decode_record(row: &sqlx::postgres::PgRow) -> Result<FileRecord, FileError> {
     let id: String = row.try_get(0)?;
     let exposure: String = row.try_get(4)?;
     let file = FileRecord {
@@ -1449,7 +1459,6 @@ mod tests {
             .unwrap();
         assert_eq!(response.status().as_u16(), 404);
         assert!(response.bytes().await.unwrap().is_empty());
-        task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     }
 

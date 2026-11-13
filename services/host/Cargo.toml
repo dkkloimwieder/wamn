@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 mimalloc = { workspace = true }
@@ -39,7 +41,6 @@ clap = { workspace = true, features = ["derive", "env"] }
 # `trace` reads the sampler's decision from the active context (src/observability.rs).
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util", "process"] }
-tokio-postgres = { workspace = true }
 tracing = { workspace = true }
 # `tracing` does not re-export the `Current` that a wrapping subscriber returns.
 tracing-core = { workspace = true }

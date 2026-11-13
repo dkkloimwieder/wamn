@@ -9,6 +9,7 @@
 //! [`expected`]. [`history`] reads the history entries of the writes.
 
 use serde_json::{Value, json};
+use sqlx::{Connection as _, Row as _};
 use wamn_platform_identity::configuration::{
     Connection, ExternalSystem, Integration, NumberSequence, PlatformConfiguration, Setting,
     write_configuration,
@@ -40,18 +41,20 @@ pub const TABLES: [&str; 5] = [
 /// one transaction that binds [`CALLER`] and [`OPERATION`]. It returns the
 /// rows inserted or changed.
 pub async fn write(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     configuration: &PlatformConfiguration,
 ) -> anyhow::Result<u64> {
-    let transaction = client.transaction().await?;
-    transaction
-        .execute(
-            "SELECT pg_catalog.set_config('app.user_id', $1, true), \
+    let mut transaction = client.begin().await?;
+    sqlx::query(
+        "SELECT pg_catalog.set_config('app.user_id', $1, true), \
              pg_catalog.set_config('app.operation', $2, true)",
-            &[&CALLER, &OPERATION],
-        )
-        .await?;
-    let written = write_configuration(&transaction, configuration).await?;
+    )
+    .bind(&CALLER)
+    .bind(&OPERATION)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())?;
+    let written = write_configuration(&mut transaction, configuration).await?;
     transaction.commit().await?;
     Ok(written)
 }
@@ -119,7 +122,7 @@ pub fn expected(project: &str) -> Vec<Value> {
 }
 
 /// The fixture caller's rows, without timestamps, in the order of [`expected`].
-pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Value>> {
+pub async fn read_back(client: &mut sqlx::PgConnection) -> anyhow::Result<Vec<Value>> {
     let mut rows = Vec::new();
     for table in TABLES {
         let condition = match table {
@@ -128,14 +131,10 @@ pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Va
             "connection" => format!("id = '{CONNECTION_ID}'::uuid"),
             _ => format!("created_by = '{CALLER}'::uuid"),
         };
-        for row in client
-            .query(
-                &format!("SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.{table} t WHERE {condition} ORDER BY 1"),
-                &[],
-            )
+        for row in sqlx::query(sqlx::AssertSqlSafe(format!("SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.{table} t WHERE {condition} ORDER BY 1"))).fetch_all(&mut *client)
             .await?
         {
-            let row: Value = serde_json::from_str(&row.get::<_, String>(0))?;
+            let row: Value = serde_json::from_str(&row.get::<String, _>(0))?;
             rows.push(json!({"table": table, "row": row}));
         }
     }
@@ -145,20 +144,16 @@ pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Va
 /// The fixture caller's history entries, each as
 /// `<table> <type> <operation> <changed_by>`, in the order of [`TABLES`] and
 /// then of position.
-pub async fn history(client: &tokio_postgres::Client) -> anyhow::Result<Vec<String>> {
+pub async fn history(client: &mut sqlx::PgConnection) -> anyhow::Result<Vec<String>> {
     let mut entries = Vec::new();
     for table in ["number_sequence", "setting"] {
-        for row in client
-            .query(
-                &format!(
+        for row in sqlx::query(sqlx::AssertSqlSafe(format!(
                     "SELECT type || ' ' || operation || ' ' || changed_by::text \
                        FROM platform.{table}_history WHERE changed_by = $1::text::uuid ORDER BY position"
-                ),
-                &[&CALLER],
-            )
+                ))).bind(&CALLER).fetch_all(&mut *client)
             .await?
         {
-            entries.push(format!("{table} {}", row.get::<_, String>(0)));
+            entries.push(format!("{table} {}", row.get::<String, _>(0)));
         }
     }
     Ok(entries)

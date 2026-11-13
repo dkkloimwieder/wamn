@@ -13,11 +13,11 @@
 //! across a release answers the stored result. The entry boundary returns
 //! result text without parsing it.
 
+use sqlx::Row as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio_postgres::Row;
-use tokio_postgres::types::ToSql;
+use sqlx::postgres::PgRow as Row;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{
     Begun, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome, UncertainIntent,
@@ -26,7 +26,8 @@ use wamn_run_state::operator_action::OperatorActionBasis;
 
 use super::operation_transaction::OperationTransaction;
 use super::resources::{StatementConnectionGuard, take_conn};
-use super::{PgError, WamnPostgres};
+use super::types::PgParam;
+use super::{PgError, SqlValue, WamnPostgres};
 
 /// The complete success body of a generated delete, before request correlation.
 pub const DELETED_RESULT: &str = r#"{"value":{"outcome":"deleted"}}"#;
@@ -49,11 +50,11 @@ const CLAIM_RESULT_SQL: &str = "INSERT INTO platform.write_log (operation, idemp
 
 /// Bind a known result only when the claim and the work share a transaction.
 fn claim_statement(
-    mut params: Vec<Box<dyn ToSql + Sync + Send>>,
+    mut params: Vec<SqlValue>,
     result: Option<&str>,
-) -> (&'static str, Vec<Box<dyn ToSql + Sync + Send>>) {
+) -> (&'static str, Vec<SqlValue>) {
     if let Some(result) = result {
-        params.push(Box::new(result.to_owned()));
+        params.push(SqlValue::Text(result.to_owned()));
         (CLAIM_RESULT_SQL, params)
     } else {
         (CLAIM_SQL, params)
@@ -128,7 +129,7 @@ async fn begin_with<F, Fut>(
     run: F,
 ) -> Result<Begun, StoreError>
 where
-    F: Fn(&'static str, Vec<Box<dyn ToSql + Sync + Send>>) -> Fut,
+    F: Fn(&'static str, Vec<SqlValue>) -> Fut,
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
 {
     let operation = log_operation(intent.operation).to_owned();
@@ -137,9 +138,9 @@ where
     let id = intent_id(&operation, &key);
     let (sql, params) = claim_statement(
         vec![
-            Box::new(operation.clone()),
-            Box::new(key.clone()),
-            Box::new(request.clone()),
+            SqlValue::Text(operation.clone()),
+            SqlValue::Text(key.clone()),
+            SqlValue::Bytes(request.clone()),
         ],
         result,
     );
@@ -147,9 +148,12 @@ where
     if !claimed.is_empty() {
         return Ok(Begun::New(id));
     }
-    let rows = run(READ_SQL, vec![Box::new(operation), Box::new(key)])
-        .await
-        .map_err(storage("begin"))?;
+    let rows = run(
+        READ_SQL,
+        vec![SqlValue::Text(operation), SqlValue::Text(key)],
+    )
+    .await
+    .map_err(storage("begin"))?;
     let row = rows
         .first()
         .ok_or_else(|| contract("begin", format!("claim {} has no row", id.0)))?;
@@ -173,7 +177,7 @@ async fn finish_with<F, Fut>(
     run: F,
 ) -> Result<(), StoreError>
 where
-    F: Fn(&'static str, Vec<Box<dyn ToSql + Sync + Send>>) -> Fut,
+    F: Fn(&'static str, Vec<SqlValue>) -> Fut,
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
 {
     let (operation, key) = claim_of("finish", id)?;
@@ -182,9 +186,9 @@ where
     let rows = run(
         FINISH_SQL,
         vec![
-            Box::new(operation.to_owned()),
-            Box::new(key.to_owned()),
-            Box::new(result),
+            SqlValue::Text(operation.to_owned()),
+            SqlValue::Text(key.to_owned()),
+            SqlValue::Text(result),
         ],
     )
     .await
@@ -206,9 +210,9 @@ impl OperationTransaction {
         let operation = log_operation(operation).to_owned();
         let (sql, params) = claim_statement(
             vec![
-                Box::new(operation.clone()),
-                Box::new(key.to_owned()),
-                Box::new(request.clone()),
+                SqlValue::Text(operation.clone()),
+                SqlValue::Text(key.to_owned()),
+                SqlValue::Bytes(request.clone()),
             ],
             self.known_result.as_deref(),
         );
@@ -219,7 +223,7 @@ impl OperationTransaction {
         let rows = self
             .log_statement(
                 READ_SQL,
-                vec![Box::new(operation), Box::new(key.to_owned())],
+                vec![SqlValue::Text(operation), SqlValue::Text(key.to_owned())],
             )
             .await?;
         let row = rows.first().ok_or_else(|| {
@@ -255,41 +259,30 @@ impl OperationTransaction {
     async fn log_statement(
         &self,
         sql: &'static str,
-        params: Vec<Box<dyn ToSql + Sync + Send>>,
+        params: Vec<SqlValue>,
     ) -> Result<Vec<Row>, PgError> {
         let state = &self.transaction().state;
-        let connection = StatementConnectionGuard::new(
+        let mut connection = StatementConnectionGuard::new(
             take_conn(state)?,
             Arc::clone(&self.transaction().destroyed),
         );
-        let params: Vec<&(dyn ToSql + Sync)> = params
-            .iter()
-            .map(|param| param.as_ref() as &(dyn ToSql + Sync))
-            .collect();
         let result = async {
-            let prepared = connection
-                .connection()
-                .prepare_cached(sql)
-                .await
-                .map_err(|error| super::types::map_pg_error(&error))?;
             let identity = self
                 .identity
                 .lock()
                 .expect("request element identity lock poisoned")
                 .take();
             if let Some(identity) = identity {
-                let (bound, rows) = tokio::join!(biased;
-                    identity.bind(connection.connection()),
-                    connection.connection().query(&prepared, &params));
-                bound?;
-                rows.map_err(|error| super::types::map_pg_error(&error))
-            } else {
-                connection
-                    .connection()
-                    .query(&prepared, &params)
-                    .await
-                    .map_err(|error| super::types::map_pg_error(&error))
+                identity.bind(connection.connection()).await?;
             }
+            let mut query = sqlx::query(sql);
+            for value in &params {
+                query = query.bind(PgParam(value));
+            }
+            query
+                .fetch_all(connection.connection())
+                .await
+                .map_err(|error| super::types::map_pg_error(&error))
         }
         .await;
         match result {
@@ -395,21 +388,17 @@ impl WriteLogStore {
     async fn statement(
         &self,
         sql: &'static str,
-        params: Vec<Box<dyn ToSql + Sync + Send>>,
+        params: Vec<SqlValue>,
     ) -> Result<Vec<Row>, PgError> {
-        let (connection, _pool) = self
+        let (mut connection, _pool) = self
             .postgres
             .checkout_guest(&self.project, &self.project_env_key)
             .await?;
-        let params: Vec<&(dyn ToSql + Sync)> = params
-            .iter()
-            .map(|param| param.as_ref() as &(dyn ToSql + Sync))
-            .collect();
-        let result = async {
-            let prepared = connection.prepare_cached(sql).await?;
-            connection.query(&prepared, &params).await
+        let mut query = sqlx::query(sql);
+        for value in &params {
+            query = query.bind(PgParam(value));
         }
-        .await;
+        let result = query.fetch_all(&mut *connection).await;
         match result {
             Ok(rows) => Ok(rows),
             Err(error) => {
@@ -444,7 +433,10 @@ impl IntentStore for WriteLogStore {
         let rows = self
             .statement(
                 RELEASE_SQL,
-                vec![Box::new(operation.to_owned()), Box::new(key.to_owned())],
+                vec![
+                    SqlValue::Text(operation.to_owned()),
+                    SqlValue::Text(key.to_owned()),
+                ],
             )
             .await
             .map_err(storage("release"))?;
@@ -456,7 +448,7 @@ impl IntentStore for WriteLogStore {
 
     async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {
         let rows = self
-            .statement(UNCERTAIN_SQL, vec![Box::new(i64::from(limit))])
+            .statement(UNCERTAIN_SQL, vec![SqlValue::Int64(i64::from(limit))])
             .await
             .map_err(storage("uncertain"))?;
         Ok(rows

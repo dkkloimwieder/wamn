@@ -4,7 +4,6 @@
 //! They change membership only and do not create users, roles, or tokens.
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
@@ -64,27 +63,28 @@ async fn run(
     changes: &Publisher,
 ) -> anyhow::Result<PrincipalId> {
     let principal_id = validate_args(&args)?;
-    let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
+    let mut client = wamn_postgres::connect(&args.system_database_url)
         .await
         .context("connect to the system database for project environment membership")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
+        sqlx::raw_sql("SET ROLE wamn_system")
+            .execute(&mut client)
             .await
+            .map(drop)
             .context("SET ROLE wamn_system for project environment membership")?;
-        let transaction = provisioning_transaction(&mut client).await?;
+        let mut transaction = provisioning_transaction(&mut client).await?;
         let mut drops = AuthDrops::default();
         match action {
             Action::Grant => {
                 wamn_platform_identity::org::activate_org_membership(
-                    &transaction,
+                    &mut transaction,
                     &principal_id,
                     &args.org,
                 )
                 .await?;
                 grant_project_env_membership(
-                    &transaction,
+                    &mut transaction,
                     &principal_id,
                     &args.org,
                     &args.project,
@@ -96,7 +96,7 @@ async fn run(
             }
             Action::Revoke => {
                 revoke_project_env_membership(
-                    &transaction,
+                    &mut transaction,
                     &principal_id,
                     &args.org,
                     &args.project,
@@ -116,7 +116,6 @@ async fn run(
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result?;
     Ok(principal_id)
 }

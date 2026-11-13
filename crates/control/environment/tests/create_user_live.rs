@@ -10,8 +10,9 @@
 //! process lock of that server, because the system schema needs the
 //! cluster-wide `wamn_system` role.
 
-use tokio_postgres::error::SqlState;
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
+
 use wamn_control_provision::{
     PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
@@ -23,12 +24,10 @@ use wamn_test_infrastructure::locked_database;
 const EMAIL: &str = "a.person@example.test";
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the disposable system database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -41,29 +40,35 @@ async fn connect(url: &str) -> Client {
 /// then `wamn_system` has no EXECUTE on the trigger function that every write
 /// fires.
 async fn system_database(url: &str) -> Client {
-    let client = connect(url).await;
-    client
-        .batch_execute(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
-               CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+    let mut client = connect(url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
+               CREATE ROLE wamn_system NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE \
                  NOREPLICATION NOBYPASSRLS; \
              END IF; END $$; \
              DO $grant$ BEGIN \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
-             END $grant$;",
-        )
-        .await
-        .expect("create the wamn_system role and give it the database");
-    client
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("create the wamn_db_owner role the record-history grants name");
-    client
-        .batch_execute(&format!(
-            "SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"
-        ))
-        .await
-        .expect("apply the system schema of record as its owner");
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("create the wamn_system role and give it the database");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("create the wamn_db_owner role the record-history grants name");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"
+    )))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("apply the system schema of record as its owner");
     client
 }
 
@@ -79,7 +84,7 @@ fn request(url: &str, subject: &str, email: &str) -> CreateUserRequest {
 #[tokio::test]
 async fn create_user_stores_the_email_folded_to_lower_case() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let observer = system_database(&url).await;
+    let mut observer = system_database(&url).await;
 
     let principal = create_user_principal(
         request(&url, "A.Person@Example.Test", EMAIL),
@@ -89,14 +94,13 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     .expect("create the user principal");
 
     let id = principal.id().to_string().as_str().to_owned();
-    let stored: String = observer
-        .query_one(
-            "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-            &[&id],
-        )
-        .await
-        .expect("read the stored email")
-        .get(0);
+    let stored: String =
+        sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
+            .bind(&id)
+            .fetch_one(&mut observer)
+            .await
+            .expect("read the stored email")
+            .get(0);
     assert_eq!(stored, EMAIL);
 
     // The address the caller typed in mixed case names the same user.
@@ -111,14 +115,13 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     .await
     .expect("create a second user principal from a mixed-case address");
     let mixed_id = mixed.id().to_string().as_str().to_owned();
-    let folded: String = observer
-        .query_one(
-            "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-            &[&mixed_id],
-        )
-        .await
-        .expect("read the second stored email")
-        .get(0);
+    let folded: String =
+        sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
+            .bind(&mixed_id)
+            .fetch_one(&mut observer)
+            .await
+            .expect("read the second stored email")
+            .get(0);
     assert_eq!(folded, "second.person@example.test");
 }
 
@@ -147,11 +150,9 @@ async fn one_email_address_names_one_principal() {
         .expect("the refusal carries the identity error");
     assert_eq!(identity.error_type(), IdentityErrorType::Conflict);
 
-    let rows: i64 = observer
-        .query_one(
-            "SELECT count(*) FROM identity.principals WHERE email = $1",
-            &[&EMAIL],
-        )
+    let rows: i64 = sqlx::query("SELECT count(*) FROM identity.principals WHERE email = $1")
+        .bind(&EMAIL)
+        .fetch_one(&mut observer)
         .await
         .expect("count the principals that carry the address")
         .get(0);
@@ -159,32 +160,35 @@ async fn one_email_address_names_one_principal() {
 
     // The verb keeps the server's own words out of its error, so the naming of
     // the constraint comes from the server directly.
-    observer
-        .batch_execute("SET ROLE wamn_system")
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut observer)
         .await
+        .map(drop)
         .expect("take the owner role of identity.principals");
-    let transaction = observer
-        .transaction()
+    let mut transaction = observer
+        .begin()
         .await
         .expect("begin the refusal transaction");
-    transaction
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .expect("bind the actor the stamp trigger needs");
-    let refused = transaction
-        .execute(
-            "INSERT INTO identity.principals (type, subject, email, display_name) \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .expect("bind the actor the stamp trigger needs");
+    let refused = sqlx::query(
+        "INSERT INTO identity.principals (type, subject, email, display_name) \
              VALUES ('user', 'third.person@example.test', $1, 'A User')",
-            &[&EMAIL],
-        )
-        .await
-        .unwrap_err();
+    )
+    .bind(&EMAIL)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap_err();
     let refusal = refused
-        .as_db_error()
+        .as_database_error()
         .unwrap_or_else(|| panic!("the server refuses the repeated address: {refused}"));
-    assert_eq!(refusal.code(), &SqlState::UNIQUE_VIOLATION);
+    assert_eq!(refusal.code().as_deref(), Some("23505"));
     assert_eq!(refusal.constraint(), Some("principals_email_key"));
 }
 
@@ -192,9 +196,10 @@ async fn one_email_address_names_one_principal() {
 async fn only_a_user_row_carries_an_email() {
     let url = locked_database::database(wamn_test_postgres::database);
     let mut client = system_database(&url).await;
-    client
-        .batch_execute("SET ROLE wamn_system")
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .expect("take the owner role of identity.principals");
     let platform = PlatformComponent::Provisioning.principal_id().to_string();
 
@@ -222,24 +227,23 @@ async fn only_a_user_row_carries_an_email() {
     ];
 
     for (case, statement) in cases {
-        let transaction = client
-            .transaction()
+        let mut transaction = client.begin().await.expect("begin the refusal transaction");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
+        ))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)
+        .expect("bind the actor the stamp trigger needs");
+        let error = sqlx::query(sqlx::AssertSqlSafe((statement.as_str()).to_string()))
+            .execute(&mut *transaction)
             .await
-            .expect("begin the refusal transaction");
-        transaction
-            .batch_execute(&bind_platform_principal_sql(
-                PlatformComponent::Provisioning,
-            ))
-            .await
-            .expect("bind the actor the stamp trigger needs");
-        let error = transaction
-            .execute(statement.as_str(), &[])
-            .await
+            .map(|result| result.rows_affected())
             .unwrap_err();
         let refusal = error
-            .as_db_error()
+            .as_database_error()
             .unwrap_or_else(|| panic!("{case} is refused by the server: {error}"));
-        assert_eq!(refusal.code(), &SqlState::CHECK_VIOLATION, "{case}");
+        assert_eq!(refusal.code().as_deref(), Some("23514"), "{case}");
         assert_eq!(
             refusal.constraint(),
             Some("principals_email_check"),

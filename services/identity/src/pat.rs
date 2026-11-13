@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use sqlx::Connection as _;
+
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
@@ -59,20 +61,21 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     if inner.reopen(&mut issuance).await.is_err() {
         return unavailable();
     }
-    let Ok(transaction) = issuance.client.transaction().await else {
+    let Ok(mut transaction) = issuance.client.begin().await else {
         return unavailable();
     };
-    if transaction
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .is_err()
+    if sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    )))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .is_err()
     {
         return unavailable();
     }
     let token = match issue_pat(
-        &transaction,
+        &mut transaction,
         &principal,
         &request.label,
         Duration::from_secs(request.lifetime_seconds),

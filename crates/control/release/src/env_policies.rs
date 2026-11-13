@@ -9,7 +9,8 @@
 //! into [`RecoveryDomain`] via serde.
 
 use anyhow::Context as _;
-use tokio_postgres::Row;
+use sqlx::Row as _;
+use sqlx::postgres::PgRow as Row;
 use wamn_control_provision::{EnvPolicy, RecoveryDomain};
 use wamn_registry::Env;
 
@@ -22,7 +23,7 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
     let recovery_domain: RecoveryDomain =
         serde_json::from_str(&recovery_text).context("parse recovery_domain jsonb")?;
     Ok(EnvPolicy {
-        name: Env::new(row.get::<_, String>(0)),
+        name: Env::new(row.get::<String, _>(0)),
         recovery_domain,
         promotion_rank: row.get(2),
         instances: row.get(3),
@@ -39,16 +40,17 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
 /// Read one env policy from an org's set, or `None` if the slug names none of
 /// the org's policies.
 pub async fn read_env_policy(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &str,
     name: &str,
 ) -> anyhow::Result<Option<EnvPolicy>> {
-    let rows = client
-        .query(
-            wamn_registry::sql::select_env_policy_sql().as_str(),
-            &[&org, &name],
-        )
-        .await
-        .context("select env_policy")?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::select_env_policy_sql().as_str()).to_string(),
+    ))
+    .bind(org)
+    .bind(name)
+    .fetch_all(&mut *client)
+    .await
+    .context("select env_policy")?;
     rows.first().map(env_policy_from_row).transpose()
 }

@@ -71,9 +71,12 @@ fn package_and_apply_create_maps_with_schema_ownership_in_either_order() {
         &format!(
             "{} {} {} {}",
             sql::ensure_db_owner_role_sql(),
+            "CREATE ROLE wamn_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT PASSWORD 'apply-password'; GRANT wamn_db_owner TO wamn_apply;",
             wamn_control_provision::apply::ensure_apply_role_sql(),
-            wamn_control_provision::apply::apply_password_sql("apply-password"),
-            sql::ensure_replication_role_sql("cdc_reader", "cdc-password"),
+            wamn_control_provision::test_database::replication_login_sql(
+                "cdc_reader",
+                "cdc-password"
+            ),
         ),
     );
     for package_first in [true, false] {
@@ -178,7 +181,7 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
             "{drop_db};\nDROP ROLE IF EXISTS \"{cdc}\";\n{create_db};\n{role}\n",
             drop_db = sql::drop_database_named_sql(&db),
             create_db = sql::create_database_named_sql(&db),
-            role = sql::ensure_replication_role_sql(&cdc, "wamn_cdc"),
+            role = wamn_control_provision::test_database::replication_login_sql(&cdc, "wamn_cdc"),
         ),
     );
 
@@ -285,7 +288,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key
             "{drop_db};\nDROP ROLE IF EXISTS \"{cdc}\";\n{create_db};\n{role}\n",
             drop_db = sql::drop_database_named_sql(&db),
             create_db = sql::create_database_named_sql(&db),
-            role = sql::ensure_replication_role_sql(&cdc, "wamn_cdc"),
+            role = wamn_control_provision::test_database::replication_login_sql(&cdc, "wamn_cdc"),
         ),
     );
 

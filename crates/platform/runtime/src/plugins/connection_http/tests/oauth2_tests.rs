@@ -1,5 +1,6 @@
 //! OAuth2 credentials exercise the host send path over a local listener.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::VecDeque;
 use std::convert::Infallible;
 
@@ -202,17 +203,24 @@ impl Fixture {
         secret: &str,
     ) {
         for project in projects {
-            let tx = self.credentials.admin.transaction().await.unwrap();
-            tx.batch_execute("SET LOCAL ROLE wamn_system")
+            let mut tx = self.credentials.admin.begin().await.unwrap();
+            sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+                .execute(&mut *tx)
                 .await
+                .map(drop)
                 .unwrap();
-            tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Provisioning,
+                ))
+                    .to_string(),
             ))
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
             wamn_test_infrastructure::credentials::define(
-                &tx,
+                &mut tx,
                 "acme",
                 &serde_json::json!({
                     "project": project, "env": "dev", "name": name,
@@ -291,39 +299,46 @@ impl Fixture {
         let mut projects = HashMap::new();
         for project in ["project-a", "project-b"] {
             let database = wamn_platform_identity::test_database::project_platform();
-            let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-                .await
-                .unwrap();
-            tokio::spawn(driver);
-            admin.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").await.unwrap();
+            let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+
+            sqlx::raw_sql("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").execute(&mut admin).await.map(drop).unwrap();
             let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
-            admin.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&project_env_key,&manifest_digest,&bytes]).await.unwrap();
-            let rows = self.credentials.admin.query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'", &[&project]).await.unwrap();
+            sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&manifest_digest).bind(&bytes).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+            let rows = sqlx::query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'").bind(&project).fetch_all(&mut wamn_postgres::connect(self.credentials.database.url()).await.unwrap()).await.unwrap();
             for row in rows {
                 let connection: uuid::Uuid = row.get(0);
                 let integration: uuid::Uuid = row.get(1);
                 let name: String = row.get(2);
-                admin.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1,'http',$2,'active')", &[&integration,&name]).await.unwrap();
-                admin.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1,$2,'http','active')", &[&connection,&integration]).await.unwrap();
-                admin.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,'package_a',$3,'wamn:connection/http@0.1.0','write')", &[&project_env_key,&invocation.component_digest,&name]).await.unwrap();
-                admin.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)", &[&project_env_key,&manifest_digest,&connection]).await.unwrap();
-                admin.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)", &[&project_env_key,&manifest_digest,&invocation.component_digest,&name,&connection]).await.unwrap();
+                sqlx::query("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1,'http',$2,'active')").bind(&integration).bind(&name).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+                sqlx::query("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1,$2,'http','active')").bind(&connection).bind(&integration).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+                sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,'package_a',$3,'wamn:connection/http@0.1.0','write')").bind(&project_env_key).bind(&invocation.component_digest).bind(&name).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+                sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)").bind(&project_env_key).bind(&manifest_digest).bind(&connection).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
+                sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)").bind(&project_env_key).bind(&manifest_digest).bind(&invocation.component_digest).bind(&name).bind(&connection).execute(&mut admin).await.map(|result| result.rows_affected()).unwrap();
             }
-            admin.batch_execute("COMMIT").await.unwrap();
-            admin.batch_execute("CREATE SCHEMA wamn_run").await.unwrap();
-            let role = format!("oauth2_{}_{}", database.name(), project.replace('-', "_"));
-            admin
-                .batch_execute(
-                    &wamn_control_provision::sql::prepare_workload_generation_sql(
-                        wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
-                        database.name(),
-                        &role,
-                        "oauth2-test-password",
-                        "2099-01-01T00:00:00Z",
-                    ),
-                )
+            sqlx::raw_sql("COMMIT")
+                .execute(&mut admin)
                 .await
+                .map(drop)
                 .unwrap();
+            sqlx::raw_sql("CREATE SCHEMA wamn_run")
+                .execute(&mut admin)
+                .await
+                .map(drop)
+                .unwrap();
+            let role = format!("oauth2_{}_{}", database.name(), project.replace('-', "_"));
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_control_provision::test_database::login_sql(
+                    wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
+                    database.name(),
+                    &role,
+                    "oauth2-test-password",
+                ))
+                    .to_string(),
+            ))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .unwrap();
             let mut authority = url::Url::parse(database.url()).unwrap();
             authority.set_username(&role).unwrap();
             authority
@@ -414,19 +429,20 @@ impl Fixture {
     }
 
     async fn due(&self, plugin: &ConnectionHttp) {
-        self.credentials
-            .admin
+        sqlx::query("UPDATE identity.oauth_token SET expires_at='-infinity'")
             .execute(
-                "UPDATE identity.oauth_token SET expires_at='-infinity'",
-                &[],
+                &mut wamn_postgres::connect(self.credentials.database.url())
+                    .await
+                    .unwrap(),
             )
             .await
+            .map(|result| result.rows_affected())
             .unwrap();
         plugin.oauth2.entries.lock().unwrap().clear();
     }
 
     async fn stored(&self, connection: uuid::Uuid) -> crate::oauth_token::Token {
-        let row = self.credentials.admin.query_one("SELECT ciphertext,nonce,wrapped_key,key_id FROM identity.oauth_token WHERE connection_id=$1", &[&connection]).await.unwrap();
+        let row = sqlx::query("SELECT ciphertext,nonce,wrapped_key,key_id FROM identity.oauth_token WHERE connection_id=$1").bind(&connection).fetch_one(&mut wamn_postgres::connect(self.credentials.database.url()).await.unwrap()).await.unwrap();
         let envelope = crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap();
         let plaintext = envelope
             .decrypt(&crate::oauth_encryption::Encrypted {
@@ -527,18 +543,25 @@ impl Fixture {
     }
 
     pub(super) async fn write_basic(&mut self) {
-        let tx = self.credentials.admin.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut tx = self.credentials.admin.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
         let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
         wamn_platform_identity::connections::administration::execute_with_store(
-            &tx, "acme", "connection.write",
+            &mut tx, "acme", "connection.write",
             &serde_json::json!({
                 "project":"project-a", "env":"dev", "name":"handle",
                 "parameters":{"primary-authority":self.base,"tls-verification":"disabled","auth":{}},
@@ -677,15 +700,13 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
     .await;
     let plugin = fixture.plugin(&fixture.parameters()).await;
     fixture.send(&plugin, "handle").await.unwrap();
-    fixture
-        .credentials
-        .admin
-        .execute(
-            "UPDATE identity.oauth_token SET expires_at=clock_timestamp()+interval '60 seconds'",
-            &[],
-        )
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE identity.oauth_token SET expires_at=clock_timestamp()+interval '60 seconds'",
+    )
+    .execute(&mut fixture.credentials.admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     for (_, expires) in plugin.oauth2.entries.lock().unwrap().values_mut() {
         *expires = tokio::time::Instant::now();
     }
@@ -909,6 +930,9 @@ async fn two_hosts_refresh_one_due_row_once() {
         &second.facts.oauth_encryption().unwrap()
     ));
     let before = fixture.counts().0;
+    let mut monitor = wamn_postgres::connect(fixture.credentials.database.url())
+        .await
+        .unwrap();
     let (resume, arrived) = fixture.pause_token();
     let (a, b, ()) = tokio::join!(
         fixture.send(&first, "handle"),
@@ -917,9 +941,7 @@ async fn two_hosts_refresh_one_due_row_once() {
             arrived.await.unwrap();
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    let blocked: bool = fixture.credentials.admin.query_one(
-                        "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT registry.lock_oauth_connection%')", &[]
-                    ).await.unwrap().get(0);
+                    let blocked: bool = sqlx::query("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT registry.lock_oauth_connection%')").fetch_one(&mut monitor).await.unwrap().get(0);
                     if blocked { break; }
                     tokio::task::yield_now().await;
                 }
@@ -967,30 +989,38 @@ async fn provider_failure_is_shared_for_thirty_seconds_with_or_without_a_row() {
         assert!(matches!(a, Err(ConnectionError::CredentialUnavailable)));
         assert!(matches!(b, Err(ConnectionError::CredentialUnavailable)));
         assert_eq!(fixture.counts().0 - before, 1);
-        let row = fixture
-            .credentials
-            .admin
-            .query_one("SELECT refresh_status FROM identity.oauth_token", &[])
+        let row = sqlx::query("SELECT refresh_status FROM identity.oauth_token")
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap();
-        assert_eq!(row.get::<_, String>(0), "failing");
-        fixture.credentials.admin.execute("UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",&[]).await.unwrap();
+        assert_eq!(row.get::<String, _>(0), "failing");
+        sqlx::query(
+            "UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",
+        )
+        .execute(&mut fixture.credentials.admin)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
         assert!(matches!(
             fixture.send(&second, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
         ));
         assert_eq!(fixture.counts().0 - before, 2);
-        fixture.credentials.admin.execute("UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",&[]).await.unwrap();
+        sqlx::query(
+            "UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",
+        )
+        .execute(&mut fixture.credentials.admin)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
         assert_eq!(fixture.send(&first, "handle").await.unwrap().status, 200);
         assert_eq!(fixture.counts().0 - before, 3);
         assert_eq!(
-            fixture
-                .credentials
-                .admin
-                .query_one("SELECT refresh_status FROM identity.oauth_token", &[])
+            sqlx::query("SELECT refresh_status FROM identity.oauth_token")
+                .fetch_one(&mut fixture.credentials.admin)
                 .await
                 .unwrap()
-                .get::<_, String>(0),
+                .get::<String, _>(0),
             "ok"
         );
     }
@@ -1032,28 +1062,34 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
         .await
         .unwrap()
         .unwrap();
-    let (mut rotating, driver) =
-        tokio_postgres::connect(fixture.credentials.database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-    tokio::spawn(driver);
-    let pid: i32 = rotating
-        .query_one("SELECT pg_backend_pid()", &[])
+    let mut rotating = wamn_postgres::connect(fixture.credentials.database.url())
+        .await
+        .unwrap();
+
+    let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut rotating)
         .await
         .unwrap()
         .get(0);
     let store = Arc::clone(&fixture.credentials.store);
     let rotation = tokio::spawn(async move {
-        let tx = rotating.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut tx = rotating.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
-        let result = wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",
+        let result = wamn_platform_identity::connections::administration::execute_with_store(&mut tx,"acme","connection.set_credential",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle","credential":r#"{"client_secret":"rotated-secret"}"#}).to_string(),
             &mut wamn_broker::auth_changes::AuthDrops::default(),
             &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(store.as_ref())).await.unwrap();
@@ -1062,10 +1098,9 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
     });
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let blocked: bool = fixture
-                .credentials
-                .admin
-                .query_one("SELECT cardinality(pg_blocking_pids($1))>0", &[&pid])
+            let blocked: bool = sqlx::query("SELECT cardinality(pg_blocking_pids($1))>0")
+                .bind(&pid)
+                .fetch_one(&mut fixture.credentials.admin)
                 .await
                 .unwrap()
                 .get(0);
@@ -1081,16 +1116,12 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
     refresh.await.unwrap().unwrap();
     rotation.await.unwrap();
     assert_eq!(
-        fixture
-            .credentials
-            .admin
-            .query_one(
-                "SELECT count(*) FROM identity.oauth_token WHERE connection_id=$1",
-                &[&connection]
-            )
+        sqlx::query("SELECT count(*) FROM identity.oauth_token WHERE connection_id=$1")
+            .bind(&connection)
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     plugin.facts.read_again(&connection).await.unwrap();
@@ -1134,14 +1165,10 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
     let plugin = fixture.plugin(&fixture.parameters()).await;
     let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
     // This refresh-row test seeds the grant directly; the PKCE flow runs below.
-    fixture
-        .credentials
-        .admin
-        .execute(
-            "UPDATE registry.integration SET auth_type='oauth2_authorization_code'",
-            &[],
-        )
+    sqlx::query("UPDATE registry.integration SET auth_type='oauth2_authorization_code'")
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     let code_host = fixture.other_host(&plugin).await;
     assert!(matches!(
@@ -1149,24 +1176,16 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
         Err(ConnectionError::Unauthorized)
     ));
     assert_eq!(fixture.counts(), (0, 0));
-    fixture
-        .credentials
-        .admin
-        .execute(
-            "UPDATE registry.integration SET auth_type='oauth2_client_credentials'",
-            &[],
-        )
+    sqlx::query("UPDATE registry.integration SET auth_type='oauth2_client_credentials'")
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     fixture.send(&plugin, "handle").await.unwrap();
-    fixture
-        .credentials
-        .admin
-        .execute(
-            "UPDATE registry.integration SET auth_type='oauth2_authorization_code'",
-            &[],
-        )
+    sqlx::query("UPDATE registry.integration SET auth_type='oauth2_authorization_code'")
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     let encrypted = code_host
         .facts
@@ -1181,8 +1200,7 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
         )
         .await
         .unwrap();
-    fixture.credentials.admin.execute("UPDATE identity.oauth_token SET ciphertext=$2,nonce=$3,wrapped_key=$4,key_id=$5,expires_at='-infinity' WHERE connection_id=$1",
-        &[&connection,&encrypted.ciphertext,&encrypted.nonce,&encrypted.wrapped_key,&encrypted.key_id]).await.unwrap();
+    sqlx::query("UPDATE identity.oauth_token SET ciphertext=$2,nonce=$3,wrapped_key=$4,key_id=$5,expires_at='-infinity' WHERE connection_id=$1").bind(&connection).bind(&encrypted.ciphertext).bind(&encrypted.nonce).bind(&encrypted.wrapped_key).bind(&encrypted.key_id).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     fixture.send(&code_host, "handle").await.unwrap();
     assert_eq!(
         fixture.stored(connection).await.refresh_token.as_deref(),
@@ -1263,17 +1281,24 @@ async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>
 
 impl Fixture {
     async fn authorize(&mut self, oauth: &crate::oauth_authorization::Authorization) -> url::Url {
-        let tx = self.credentials.admin.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut tx = self.credentials.admin.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
         let context = wamn_platform_identity::connections::administration::configure(
-            &tx,
+            &mut tx,
             "acme",
             "connection.authorize",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
@@ -1282,7 +1307,7 @@ impl Fixture {
         .unwrap();
         let url = oauth
             .authorize(
-                &tx,
+                &mut tx,
                 &context,
                 wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
             )
@@ -1298,17 +1323,24 @@ impl Fixture {
     }
 
     async fn rewrite(&mut self, secret: Option<&str>) {
-        let tx = self.credentials.admin.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
+        let mut tx = self.credentials.admin.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+                .to_string(),
         ))
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *tx)
             .await
+            .map(drop)
             .unwrap();
         let context = wamn_platform_identity::connections::administration::configure(
-            &tx,
+            &mut tx,
             "acme",
             "connection.get",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
@@ -1326,7 +1358,7 @@ impl Fixture {
             ),
         };
         wamn_platform_identity::connections::administration::execute_with_store(
-            &tx,
+            &mut tx,
             "acme",
             operation,
             &request.to_string(),
@@ -1407,26 +1439,20 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
             .contains("HTTP 503")
     );
     assert_eq!(
-        fixture
-            .credentials
-            .admin
-            .query_one(
-                "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
-                &[&query["state"]]
-            )
+        sqlx::query("SELECT count(*) FROM identity.oauth_authorization WHERE state=$1")
+            .bind(&query["state"])
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     assert_eq!(
-        fixture
-            .credentials
-            .admin
-            .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+        sqlx::query("SELECT count(*) FROM identity.oauth_token")
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     oauth
@@ -1541,7 +1567,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
             .reason
             .contains("access_denied")
     );
-    fixture.credentials.admin.execute("UPDATE identity.oauth_authorization SET expires_at=clock_timestamp()-interval '1 second' WHERE state=$1",&[&state]).await.unwrap();
+    sqlx::query("UPDATE identity.oauth_authorization SET expires_at=clock_timestamp()-interval '1 second' WHERE state=$1").bind(&state).execute(&mut fixture.credentials.admin).await.map(|result| result.rows_affected()).unwrap();
     assert_eq!(
         oauth
             .callback(&mut fixture.credentials.admin, "acme", &callback)
@@ -1551,16 +1577,12 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         "expired state"
     );
     assert_eq!(
-        fixture
-            .credentials
-            .admin
-            .query_one(
-                "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
-                &[&state]
-            )
+        sqlx::query("SELECT count(*) FROM identity.oauth_authorization WHERE state=$1")
+            .bind(&state)
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     let url = fixture.authorize(&oauth).await;
@@ -1571,14 +1593,11 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         .1
         .into_owned();
     // Exercise the generation guard independently of write's pending-state deletion.
-    fixture
-        .credentials
-        .admin
-        .execute(
-            "UPDATE identity.oauth_authorization SET generation=generation-1 WHERE state=$1",
-            &[&state],
-        )
+    sqlx::query("UPDATE identity.oauth_authorization SET generation=generation-1 WHERE state=$1")
+        .bind(&state)
+        .execute(&mut fixture.credentials.admin)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
     assert_eq!(
         oauth
@@ -1607,13 +1626,11 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
     );
     assert_eq!(fixture.counts(), (0, 0));
     assert_eq!(
-        fixture
-            .credentials
-            .admin
-            .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+        sqlx::query("SELECT count(*) FROM identity.oauth_token")
+            .fetch_one(&mut fixture.credentials.admin)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
 }
@@ -1852,26 +1869,20 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
             assert!(endpoint.observed.lock().unwrap().is_empty());
             assert_eq!(fixture.counts(), (0, 0));
             assert_eq!(
-                fixture
-                    .credentials
-                    .admin
-                    .query_one(
-                        "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
-                        &[&query["state"]]
-                    )
+                sqlx::query("SELECT count(*) FROM identity.oauth_authorization WHERE state=$1")
+                    .bind(&query["state"])
+                    .fetch_one(&mut fixture.credentials.admin)
                     .await
                     .unwrap()
-                    .get::<_, i64>(0),
+                    .get::<i64, _>(0),
                 1
             );
             assert_eq!(
-                fixture
-                    .credentials
-                    .admin
-                    .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+                sqlx::query("SELECT count(*) FROM identity.oauth_token")
+                    .fetch_one(&mut fixture.credentials.admin)
                     .await
                     .unwrap()
-                    .get::<_, i64>(0),
+                    .get::<i64, _>(0),
                 0
             );
         }

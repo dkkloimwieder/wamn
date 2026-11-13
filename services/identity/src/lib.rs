@@ -1,5 +1,7 @@
 //! The identity authority serves public keys, user login, and operator credential issuance.
 
+use sqlx::Connection as _;
+use sqlx::PgConnection as Client;
 pub mod cli;
 pub mod mail;
 mod password;
@@ -23,12 +25,10 @@ use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tokio::task::{JoinHandle, JoinSet};
-use tokio_postgres::{Client, NoTls};
+use tokio::task::JoinSet;
+
 use tokio_rustls::TlsAcceptor;
-use wamn_control_provision::identity_issuer::{
-    IdentityIssuerConnection, parse_identity_issuer_url,
-};
+use wamn_control_provision::identity_role::identity_issuer_login;
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_platform_identity::session_keys::session_jwks;
 
@@ -37,10 +37,10 @@ use wamn_platform_identity::session_keys::session_jwks;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Validated exact issuer and its narrow database credential.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IdentityConfig {
     issuer: String,
-    connection: IdentityIssuerConnection,
+    connection: String,
     targets: BTreeMap<String, SessionTarget>,
     mail: Option<mail::MailConfig>,
     changes: wamn_broker::Publisher,
@@ -49,8 +49,18 @@ pub struct IdentityConfig {
 impl IdentityConfig {
     /// Validate the targeted credential before any database socket is opened.
     pub fn new(issuer: &str, database_url: &str) -> Result<Self, IdentityServiceError> {
-        let connection = parse_identity_issuer_url(database_url, issuer)
+        let (username, database) = wamn_postgres::identity(database_url)
             .map_err(|_| IdentityServiceError::new("identity database configuration refused"))?;
+        if username
+            != identity_issuer_login(issuer)
+                .map_err(|_| IdentityServiceError::new("invalid issuer"))?
+            || database != "wamn_system"
+        {
+            return Err(IdentityServiceError::new(
+                "identity database authority refused",
+            ));
+        }
+        let connection = database_url.to_owned();
         Ok(Self {
             issuer: issuer.to_owned(),
             connection,
@@ -105,16 +115,14 @@ pub struct IdentityService {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
 struct Inner {
     issuer: String,
     // Every held connection opens again with this capability after Postgres
     // closes it, for example when the server restarts.
-    connection: IdentityIssuerConnection,
+    connection: String,
     passwords: Option<password::State>,
     changes: wamn_broker::Publisher,
-    database: std::sync::RwLock<Arc<Database>>,
-    reopening: Mutex<()>,
+    database: Mutex<Database>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
     targets: BTreeMap<String, ConfiguredTarget>,
@@ -130,67 +138,51 @@ struct ConfiguredTarget {
 
 pub(crate) struct Database {
     pub(crate) client: Client,
-    driver: JoinHandle<()>,
 }
 
 impl fmt::Debug for Database {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Database")
-            .field("connected", &!self.client.is_closed())
+            .field("connected", &true)
             .finish_non_exhaustive()
     }
 }
 
-impl Drop for Database {
-    fn drop(&mut self) {
-        self.driver.abort();
-    }
-}
-
 pub(crate) async fn connect(config: &IdentityConfig) -> Result<Database, IdentityServiceError> {
-    // The parsed capability is the only URL passed to the driver. NoTls is the
-    // repository's existing internal system-database transport contract.
-    connect_database(config.connection.url()).await
+    connect_database(&config.connection).await
 }
 
-// Callers supply only an already parsed issuer or session-reader capability.
-pub(crate) async fn connect_database(url: &str) -> Result<Database, IdentityServiceError> {
-    let (client, connection) =
-        tokio::time::timeout(IO_TIMEOUT, tokio_postgres::connect(url, NoTls))
-            .await
-            .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
-            .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
-    let driver = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok(Database { client, driver })
+pub(crate) async fn connect_database(input: &str) -> Result<Database, IdentityServiceError> {
+    let client = tokio::time::timeout(IO_TIMEOUT, wamn_postgres::connect(input))
+        .await
+        .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
+        .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
+    Ok(Database { client })
 }
 
 impl Inner {
-    /// The shared connection, opened again when Postgres closed it.
-    async fn database(&self) -> Result<Arc<Database>, IdentityServiceError> {
-        let current = || self.database.read().expect("database lock").clone();
-        let database = current();
-        if !database.client.is_closed() {
-            return Ok(database);
-        }
-        let _reopening = self.reopening.lock().await;
-        let database = current();
-        if !database.client.is_closed() {
-            return Ok(database);
-        }
-        let database = Arc::new(connect_database(self.connection.url()).await?);
-        *self.database.write().expect("database lock") = Arc::clone(&database);
+    async fn database(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, Database>, IdentityServiceError> {
+        let mut database = self.database.lock().await;
+        self.reopen(&mut database).await?;
         Ok(database)
     }
 
-    /// Open a held connection again when Postgres closed it.
     async fn reopen(&self, database: &mut Database) -> Result<(), IdentityServiceError> {
-        if database.client.is_closed() {
-            *database = connect_database(self.connection.url()).await?;
+        if database.client.ping().await.is_err() {
+            *database = connect_database(&self.connection).await?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Debug for IdentityConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IdentityConfig")
+            .field("issuer", &self.issuer)
+            .finish_non_exhaustive()
     }
 }
 
@@ -210,8 +202,7 @@ impl IdentityService {
                 connection: config.connection,
                 passwords,
                 changes: config.changes,
-                database: std::sync::RwLock::new(Arc::new(database)),
-                reopening: Mutex::new(()),
+                database: Mutex::new(database),
                 issuance,
                 targets: config
                     .targets
@@ -271,8 +262,8 @@ impl IdentityService {
                 },
                 "/.well-known/jwks.json" => {
                     match tokio::time::timeout(IO_TIMEOUT, async {
-                        let database = self.inner.database().await.map_err(|_| ())?;
-                        session_jwks(&database.client, &self.inner.issuer)
+                        let mut database = self.inner.database().await.map_err(|_| ())?;
+                        session_jwks(&mut database.client, &self.inner.issuer)
                             .await
                             .map_err(|_| ())
                     })
@@ -448,3 +439,11 @@ impl fmt::Display for IdentityServiceError {
 }
 
 impl std::error::Error for IdentityServiceError {}
+
+impl fmt::Debug for Inner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Inner")
+            .field("issuer", &self.issuer)
+            .finish_non_exhaustive()
+    }
+}

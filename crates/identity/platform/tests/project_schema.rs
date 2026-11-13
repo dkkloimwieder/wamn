@@ -5,8 +5,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, platform_principals_sql, sql,
-    workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, platform_principals_sql, sql, workload_login,
 };
 use wamn_identity_protocol::PlatformComponent;
 
@@ -59,13 +58,12 @@ fn current_database(url: &str) -> String {
 }
 
 fn app_generation(database: &str, project_env_key: &str) -> String {
-    workload_generation_role(
+    workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key,
             database,
         },
-        CredentialGeneration::A,
     )
     .expect("App accepts project target")
 }
@@ -91,12 +89,11 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     let other = wamn_test_postgres::database();
     let other_database = current_database(other.url());
     let project_env_key_2_app = app_generation(&other_database, PROJECT_ENV_KEY_2);
-    let mut other_script = sql::prepare_workload_generation_sql(
+    let mut other_script = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &other_database,
         &project_env_key_2_app,
         APP_GENERATION_PASSWORD,
-        APP_GENERATION_VALID_UNTIL,
     );
     other_script.push_str(sql::revoke_public_connect_base_grants_sql());
     other_script.push_str(&record_history_sql());
@@ -109,12 +106,11 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
 
     // Production preparation hardens the stable ACL carrier to passwordless
     // NOLOGIN/NOINHERIT and makes each project generation the only LOGIN.
-    let mut script = sql::prepare_workload_generation_sql(
+    let mut script = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &project_env_key_1_app,
         APP_GENERATION_PASSWORD,
-        APP_GENERATION_VALID_UNTIL,
     );
     script.push('\n');
 

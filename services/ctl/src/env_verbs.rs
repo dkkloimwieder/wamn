@@ -422,7 +422,7 @@ async fn sql_lock(
         serde_json::from_slice(&std::fs::read(file)?)?;
     let lock = expected.lock(platform, document, exclusive).await?;
     wamn_environment_control::provision_project_env::require_connected(
-        lock.client(),
+        &mut *lock.client().await,
         &document.triple(),
     )
     .await?;

@@ -3,6 +3,7 @@
 pub mod support;
 use support::*;
 
+use sqlx::{Connection as _, Row as _};
 mod event_batch {
     use super::*;
     use futures_util::StreamExt as _;
@@ -15,17 +16,14 @@ mod event_batch {
             "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
         );
         let _lock = wamn_test_postgres::lock();
-        let fixture = fixture().await;
+        let mut fixture = fixture().await;
         fixture.grant_workflow_user("reader").await;
-        let txid = changed_order(&fixture).await;
-        event(&fixture, "first", 0, Some("reader")).await;
-        fixture.admin.execute(
-            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
-             SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
-            &[&APP],
-        ).await.unwrap();
-        let upgraded = release_variant(&fixture, APP, b"1251").await;
-        let billing = release_variant(&fixture, "billing", b"1252").await;
+        let txid = changed_order(&mut fixture).await;
+        event(&mut fixture, "first", 0, Some("reader")).await;
+        sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
+             SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1").bind(&APP).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
+        let upgraded = release_variant(&mut fixture, APP, b"1251").await;
+        let billing = release_variant(&mut fixture, "billing", b"1252").await;
         let mut retired = serde_json::to_value(upgraded.manifest()).unwrap();
         retired["components"] = json!([]);
         let retired: ServingManifest = serde_json::from_value(retired).unwrap();
@@ -87,11 +85,11 @@ mod event_batch {
                 source_event_id: &id,
             };
             events
-                .route_event(&fixture.postgres, &admission)
+                .route_event(&mut fixture.postgres, &admission)
                 .await
                 .unwrap();
             events
-                .route_event(&fixture.postgres, &admission)
+                .route_event(&mut fixture.postgres, &admission)
                 .await
                 .unwrap();
             events
@@ -103,16 +101,13 @@ mod event_batch {
                 ("billing".to_owned(), delivery.clone()),
                 billing.release().manifest_digest.as_str().to_owned(),
             );
-            let before = fixture
-                .admin
-                .query(
-                    "SELECT package_id FROM wamn_run.runs WHERE invoked_by = $1",
-                    &[&delivery],
-                )
+            let before = sqlx::query("SELECT package_id FROM wamn_run.runs WHERE invoked_by = $1")
+                .bind(&delivery)
+                .fetch_all(&mut fixture.admin)
                 .await
                 .unwrap();
             assert_eq!(before.len(), 1, "B admits while A is stopped");
-            assert_eq!(before[0].get::<_, String>(0), "billing");
+            assert_eq!(before[0].get::<String, _>(0), "billing");
             let mut expected_digest = loaded.release().manifest_digest.as_str().to_owned();
             if lsn == 40 {
                 // Commit on A1, lose its ACK, then redeliver to a host without
@@ -165,10 +160,7 @@ mod event_batch {
                 );
                 old.unwrap();
                 new.unwrap();
-                expected_digest = fixture.admin.query_one(
-                    "SELECT manifest_digest FROM wamn_run.runs WHERE package_id = $1 AND invoked_by = $2",
-                    &[&APP, &delivery],
-                ).await.unwrap().get(0);
+                expected_digest = sqlx::query("SELECT manifest_digest FROM wamn_run.runs WHERE package_id = $1 AND invoked_by = $2").bind(&APP).bind(&delivery).fetch_one(&mut fixture.admin).await.unwrap().get(0);
                 assert!(
                     [
                         fixture.digest.as_str(),
@@ -187,14 +179,11 @@ mod event_batch {
                     .unwrap();
             }
             expected.insert((APP.to_owned(), delivery), expected_digest);
-            let rows = fixture
-                .admin
-                .query(
-                    "SELECT package_id, invoked_by, manifest_digest FROM wamn_run.runs",
-                    &[],
-                )
-                .await
-                .unwrap();
+            let rows =
+                sqlx::query("SELECT package_id, invoked_by, manifest_digest FROM wamn_run.runs")
+                    .fetch_all(&mut fixture.admin)
+                    .await
+                    .unwrap();
             assert_eq!(
                 rows.len(),
                 expected.len(),
@@ -204,8 +193,8 @@ mod event_batch {
                 .iter()
                 .map(|row| {
                     (
-                        (row.get::<_, String>(0), row.get::<_, String>(1)),
-                        row.get::<_, String>(2),
+                        (row.get::<String, _>(0), row.get::<String, _>(1)),
+                        row.get::<String, _>(2),
                     )
                 })
                 .collect();

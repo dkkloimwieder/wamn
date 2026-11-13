@@ -1,5 +1,6 @@
 //! Record a user assertion through the installed schema and migration owners.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
@@ -19,23 +20,21 @@ pub async fn adopt_package_schemas(
     roots: &[&PackageRoot],
     local_environment: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
-    let mut client = crate::database::connect(database_url).await?;
-    let tx = migration::begin(&mut client, project_env_key).await?;
-    tx.query_one(super::LOCK_SQL, &[]).await?;
-    let actual: String = tx
-        .query_one(
-            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await?
-        .get(0);
+    let mut client = wamn_postgres::connect(database_url).await?;
+    let mut tx = migration::begin(&mut client, project_env_key).await?;
+    sqlx::query(super::LOCK_SQL).fetch_one(&mut *tx).await?;
+    let actual: String =
+        sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut *tx)
+            .await?
+            .get(0);
     ensure!(
         actual == initialization_identity,
         "database initialization changed before adoption: recorded={initialization_identity}, actual={actual}"
     );
     if let Some(environment) = local_environment {
         wamn_runtime::local_application::read_local_target_comment(
-            &tx,
+            &mut tx,
             project_env_key,
             environment,
         )
@@ -52,10 +51,13 @@ pub async fn adopt_package_schemas(
         let complete = plan_package_migrations(&directory, None, &[])?;
         let id = complete.coordinate.package_id();
         ensure!(seen.insert(id.to_owned()), "adoption repeats package {id}");
-        tx.query_one(super::LOCK_PACKAGE_SQL, &[&project_env_key, &id])
+        sqlx::query(super::LOCK_PACKAGE_SQL)
+            .bind(project_env_key)
+            .bind(id)
+            .fetch_one(&mut *tx)
             .await?;
-        let existing = load_applied_package(&tx, project_env_key, id).await?;
-        let records = read_package_migrations(&tx, project_env_key, id).await?;
+        let existing = load_applied_package(&mut tx, project_env_key, id).await?;
+        let records = read_package_migrations(&mut tx, project_env_key, id).await?;
         ensure!(
             !records
                 .iter()
@@ -79,16 +81,12 @@ pub async fn adopt_package_schemas(
             }) {
                 continue;
             }
-            tx.execute(
-                "INSERT INTO catalog.package_migrations \
+            sqlx::query("INSERT INTO catalog.package_migrations \
                  (project_env_key, package_id, package_version, ordinal, relative_path, sha256, outcome) \
                  VALUES ($1,$2,$3,$4,$5,$6,'adopted') \
                  ON CONFLICT (project_env_key, package_id, ordinal) DO UPDATE \
                  SET package_version=EXCLUDED.package_version, relative_path=EXCLUDED.relative_path, \
-                     sha256=EXCLUDED.sha256, outcome='adopted', applied_at=NULL",
-                &[&project_env_key, &id, &complete.coordinate.package_version(),
-                  &i32::try_from(file.ordinal)?, &file.relative_path, &file.sha256],
-            ).await.with_context(|| format!("adopt {id}: {}", file.relative_path))?;
+                     sha256=EXCLUDED.sha256, outcome='adopted', applied_at=NULL").bind(project_env_key).bind(id).bind(complete.coordinate.package_version()).bind(i32::try_from(file.ordinal)?).bind(&file.relative_path).bind(&file.sha256).execute(&mut *tx).await.map(|result| result.rows_affected()).with_context(|| format!("adopt {id}: {}", file.relative_path))?;
             asserted.push(file.relative_path.clone());
         }
         if existing
@@ -96,7 +94,7 @@ pub async fn adopt_package_schemas(
             .is_none_or(|record| record.physical_schema_fingerprint != fingerprint)
         {
             super::package_version::record_package_schema(
-                &tx,
+                &mut tx,
                 project_env_key,
                 &complete.coordinate,
                 directory.artifact_digest.as_deref(),

@@ -6,9 +6,8 @@
 //! releasing that lock. Authored grants use `mutate_grant` inside the application
 //! transaction. The CLI calls the HTTP routes.
 
+use sqlx::Row as _;
 use std::fmt;
-
-use tokio_postgres::GenericClient;
 
 use wamn_identity_protocol::ADMIN_ROLE;
 
@@ -56,11 +55,9 @@ pub struct ApplicationUser<'a> {
 /// Refuse a project database without platform rows. The database is the org
 /// boundary, so its rows name no project: the caller derives the project of
 /// the environment from its triple (`project_env_key`).
-pub async fn require_platform_rows(
-    client: &(impl GenericClient + Sync),
-) -> Result<(), IdentityError> {
-    let present: bool = client
-        .query_one(PLATFORM_ROWS_SQL, &[])
+pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<(), IdentityError> {
+    let present: bool = sqlx::query(PLATFORM_ROWS_SQL)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .get(0);
@@ -77,14 +74,16 @@ pub async fn require_platform_rows(
 /// Write the status row of the environment, the mirror of its system row that
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     status: crate::org::EnvironmentStatus,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    client
-        .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&status.as_str()])
+    sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
+        .bind(status.as_str())
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.project_env_key(project_env_key);
     Ok(())
@@ -92,21 +91,18 @@ pub async fn write_environment_status(
 
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    client
-        .execute(
-            USER_ROW_SQL,
-            &[
-                &user.principal_id.to_string().as_str(),
-                &user.email,
-                &user.display_name,
-            ],
-        )
+    sqlx::query(USER_ROW_SQL)
+        .bind(user.principal_id.to_string().as_str())
+        .bind(user.email)
+        .bind(user.display_name)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, user.principal_id.to_string().as_str());
     Ok(())
@@ -114,21 +110,18 @@ pub async fn write_user(
 
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     service: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    client
-        .execute(
-            SERVICE_ROW_SQL,
-            &[
-                &service.principal_id.to_string().as_str(),
-                &service.email,
-                &service.display_name,
-            ],
-        )
+    sqlx::query(SERVICE_ROW_SQL)
+        .bind(service.principal_id.to_string().as_str())
+        .bind(service.email)
+        .bind(service.display_name)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, service.principal_id.to_string().as_str());
     Ok(())
@@ -136,17 +129,17 @@ pub async fn write_service(
 
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    client
-        .execute(
-            DROP_USER_ROLE_SQL,
-            &[&principal_id.to_string().as_str(), &ADMIN_ROLE],
-        )
+    sqlx::query(DROP_USER_ROLE_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(ADMIN_ROLE)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, principal_id.to_string().as_str());
     Ok(())
@@ -155,14 +148,16 @@ pub async fn remove_admin(
 /// Remove the user row of the principal. Its foreign keys remove its role
 /// rows and its API keys.
 pub async fn remove_user(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    client
-        .execute(DROP_USER_ROW_SQL, &[&principal_id.to_string().as_str()])
+    sqlx::query(DROP_USER_ROW_SQL)
+        .bind(principal_id.to_string().as_str())
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, principal_id.to_string().as_str());
     Ok(())
@@ -287,7 +282,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -304,9 +299,11 @@ pub async fn create_role(
         }
         .into());
     }
-    let written = client
-        .execute(ROLE_SQL, &[&role])
+    let written = sqlx::query(ROLE_SQL)
+        .bind(role)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.project_env_key(project_env_key);
     Ok(written == 1)
@@ -315,7 +312,7 @@ pub async fn create_role(
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -323,9 +320,11 @@ pub async fn delete_role(
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminDeleted.into());
     }
-    let removed = client
-        .execute(DROP_ROLE_SQL, &[&role])
+    let removed = sqlx::query(DROP_ROLE_SQL)
+        .bind(role)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.project_env_key(project_env_key);
     Ok(removed == 1)
@@ -333,11 +332,12 @@ pub async fn delete_role(
 
 /// Refuse unless `role` exists in the environment.
 pub async fn require_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<(), AdministrationError> {
-    let exists = client
-        .query_opt(ROLE_EXISTS_SQL, &[&role])
+    let exists = sqlx::query(ROLE_EXISTS_SQL)
+        .bind(role)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .is_some();
@@ -355,15 +355,18 @@ pub async fn require_role(
 /// stores any reference that `permission_reference_check` accepts, whether a
 /// release serves it or not.
 async fn grant_permission(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> Result<PermissionGrantOutcome, AdministrationError> {
-    let rows_added = client
-        .execute(PERMISSION_SQL, &[&role, &reference])
+    let rows_added = sqlx::query(PERMISSION_SQL)
+        .bind(role)
+        .bind(reference)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.project_env_key(project_env_key);
     Ok(PermissionGrantOutcome { rows_added })
@@ -372,15 +375,18 @@ async fn grant_permission(
 /// Remove the row `reference` from `role`. A revoke of a reference the role
 /// does not hold refuses.
 async fn revoke_permission(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), AdministrationError> {
-    let removed = client
-        .execute(DROP_PERMISSION_SQL, &[&role, &reference])
+    let removed = sqlx::query(DROP_PERMISSION_SQL)
+        .bind(role)
+        .bind(reference)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     if removed == 0 {
         return Err(AdministrationRefusal::NotHeld {
@@ -396,15 +402,18 @@ async fn revoke_permission(
 /// Give the existing role `role` to the user `user_id`. A second grant
 /// changes nothing.
 async fn grant_user_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
-    let written = client
-        .execute(USER_ROLE_SQL, &[&user_id, &role])
+    let written = sqlx::query(USER_ROLE_SQL)
+        .bind(user_id)
+        .bind(role)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, user_id);
     Ok(written == 1)
@@ -413,15 +422,18 @@ async fn grant_user_role(
 /// Take the role `role` from the user `user_id`. A revoke of a role the user
 /// does not hold changes nothing.
 async fn revoke_user_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
-    let removed = client
-        .execute(DROP_USER_ROLE_SQL, &[&user_id, &role])
+    let removed = sqlx::query(DROP_USER_ROLE_SQL)
+        .bind(user_id)
+        .bind(role)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.principal(project_env_key, user_id);
     Ok(removed == 1)
@@ -454,11 +466,12 @@ pub struct ApplicationUserRow {
 
 /// Refuse unless the database has the application user `user_id`.
 pub async fn require_user(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     user_id: &str,
 ) -> Result<(), AdministrationError> {
-    let exists = client
-        .query_opt(USER_EXISTS_SQL, &[&user_id])
+    let exists = sqlx::query(USER_EXISTS_SQL)
+        .bind(user_id)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .is_some();
@@ -474,10 +487,10 @@ pub async fn require_user(
 
 /// The application users of the database with their roles, by email.
 pub async fn application_users(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
 ) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
-    Ok(client
-        .query(USER_LIST_SQL, &[])
+    Ok(sqlx::query(USER_LIST_SQL)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -492,10 +505,10 @@ pub async fn application_users(
 
 /// The role names of the database, `admin` included.
 pub async fn role_names(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
 ) -> Result<Vec<String>, AdministrationError> {
-    Ok(client
-        .query(ROLE_LIST_SQL, &[])
+    Ok(sqlx::query(ROLE_LIST_SQL)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -505,12 +518,13 @@ pub async fn role_names(
 
 /// The stored permissions of `role`.
 pub async fn permission_rows(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<Vec<String>, AdministrationError> {
     require_role(client, role).await?;
-    Ok(client
-        .query(PERMISSION_LIST_SQL, &[&role])
+    Ok(sqlx::query(PERMISSION_LIST_SQL)
+        .bind(role)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -522,71 +536,67 @@ pub async fn permission_rows(
 /// The caller locks membership before opening the application transaction and
 /// commits the application transaction before ending the system transaction.
 pub async fn project_authority(
-    system: &tokio_postgres::Transaction<'_>,
-    target: &(impl GenericClient + Sync),
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    target: &mut sqlx::PgConnection,
     coordinate: ApplicationTarget<'_>,
     principal: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     crate::org::lock_membership(system, principal, coordinate.org).await?;
-    let row = system.query_opt(
-        "SELECT p.type, p.status, p.email, p.display_name, p.subject, \
+    let row = sqlx::query("SELECT p.type, p.status, p.email, p.display_name, p.subject, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
          OR identity.is_project_admin(p.id,$2,$4,$3) \
-         FROM identity.principals p WHERE p.id=$1::text::uuid",
-        &[&principal.to_string().as_str(), &coordinate.org, &coordinate.project, &coordinate.env],
-    ).await.map_err(|error| database_error(&error))?;
+         FROM identity.principals p WHERE p.id=$1::text::uuid").bind(principal.to_string().as_str()).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, coordinate.project_env_key, principal, drops).await;
     };
     let type_: String = row.get(0);
-    let active = row.get::<_, String>(1) == "active";
+    let active = row.get::<String, _>(1) == "active";
     let admin: bool = row.get(7);
     if type_ == "service" {
         // Services derive administration from their project role, without user membership.
-        let present = target
-            .query_opt(
-                "SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid",
-                &[&principal.to_string().as_str()],
-            )
+        let present = sqlx::query("SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid")
+            .bind(principal.to_string().as_str())
+            .fetch_optional(&mut *target)
             .await
             .map_err(|error| database_error(&error))?
             .is_some();
         if active && admin && !present {
-            let domain: String = system
-                .query_one(
-                    wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
-                    &[],
-                )
-                .await
-                .map_err(|error| database_error(&error))?
-                .get(0);
-            let email = format!("{}@{domain}", row.get::<_, String>(4));
+            let domain: String = sqlx::query(
+                wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
+            )
+            .fetch_one(&mut **system)
+            .await
+            .map_err(|error| database_error(&error))?
+            .get(0);
+            let email = format!("{}@{domain}", row.get::<String, _>(4));
             write_service(
                 target,
                 coordinate.project_env_key,
                 ApplicationUser {
                     principal_id: principal,
                     email: &email,
-                    display_name: &row.get::<_, String>(3),
+                    display_name: &row.get::<String, _>(3),
                 },
                 drops,
             )
             .await?;
         }
         if active && admin {
-            target
-                .execute(ROLE_SQL, &[&ADMIN_ROLE])
+            sqlx::query(ROLE_SQL)
+                .bind(ADMIN_ROLE)
+                .execute(&mut *target)
                 .await
+                .map(|result| result.rows_affected())
                 .map_err(|error| database_error(&error))?;
-            target
-                .execute(
-                    USER_ROLE_SQL,
-                    &[&principal.to_string().as_str(), &ADMIN_ROLE],
-                )
+            sqlx::query(USER_ROLE_SQL)
+                .bind(principal.to_string().as_str())
+                .bind(ADMIN_ROLE)
+                .execute(&mut *target)
                 .await
+                .map(|result| result.rows_affected())
                 .map_err(|error| database_error(&error))?;
             drops.principal(coordinate.project_env_key, principal.to_string().as_str());
         } else {
@@ -594,7 +604,7 @@ pub async fn project_authority(
         }
         return Ok(());
     }
-    if type_ != "user" || !active || !row.get::<_, bool>(5) || !row.get::<_, bool>(6) {
+    if type_ != "user" || !active || !row.get::<bool, _>(5) || !row.get::<bool, _>(6) {
         return remove_user(target, coordinate.project_env_key, principal, drops).await;
     }
     let email: String = row.get(2);
@@ -654,7 +664,7 @@ pub fn permission_is_grantable(reference: &str) -> bool {
 /// Mutate an authored grant inside the caller's application transaction.
 /// The caller serializes role and permission writes with the application lock.
 pub async fn mutate_grant(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     project_env_key: &str,
     authority: GrantAuthority<'_>,
     change: GrantChange<'_>,
@@ -691,21 +701,15 @@ pub async fn mutate_grant(
             .into());
     }
     if grant && let GrantAuthority::User(actor) = authority {
-            let admin: bool = client.query_one(
-                "SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')",
-                &[&actor.to_string().as_str()],
-            ).await.map_err(|error| database_error(&error))?.get(0);
+            let admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')").bind(actor.to_string().as_str()).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
             if !admin {
                 let required = match change {
                     GrantChange::Permission { reference, .. } => vec![reference.to_owned()],
                     GrantChange::UserRole { role, .. } => permission_rows(client, role).await?,
                 };
                 for reference in required {
-                    let held: bool = client.query_one(
-                        "SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
-                         WHERE r.user_id=$1::text::uuid AND p.permission=$2)",
-                        &[&actor.to_string().as_str(), &reference],
-                    ).await.map_err(|error| database_error(&error))?.get(0);
+                    let held: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
+                         WHERE r.user_id=$1::text::uuid AND p.permission=$2)").bind(actor.to_string().as_str()).bind(&reference).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
                     if !held || !permission_is_grantable(&reference) {
                         return Err(AdministrationRefusal::NotGrantable { reference }.into());
                     }

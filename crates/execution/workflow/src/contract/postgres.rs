@@ -1,7 +1,9 @@
 //! [`PostgresWorkflows`]: the workflow contract over the run plane.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use tokio::sync::Mutex;
-use tokio_postgres::{Client, Transaction};
+
 use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
@@ -65,19 +67,13 @@ impl PostgresWorkflows {
     }
 
     /// Bind the transaction to the run plane and the release project.
-    async fn target(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
+    async fn target(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), WorkflowError> {
         let executor = PlatformComponent::Executor;
-        transaction
-            .query_one(
-                "SELECT set_config('search_path', $1, true), set_config('app.project_env_key', $2, true), \
-                 set_config('app.user_id', $3, true), set_config('app.operation', $4, true)",
-                &[
-                    &self.schema,
-                    &self.project_env_key(),
-                    &executor.principal_id().to_string(),
-                    &executor.principal_name(),
-                ],
-            )
+        sqlx::query("SELECT set_config('search_path', $1, true), set_config('app.project_env_key', $2, true), \
+                 set_config('app.user_id', $3, true), set_config('app.operation', $4, true)").bind(&self.schema).bind(self.project_env_key()).bind(executor.principal_id().to_string()).bind(executor.principal_name()).fetch_one(&mut **transaction)
             .await
             .map_err(|error| WorkflowError::storage("target the transaction", error))?;
         Ok(())
@@ -86,14 +82,13 @@ impl PostgresWorkflows {
     /// The facts that name why a park or a release changed nothing.
     async fn queue_state(
         &self,
-        transaction: &Transaction<'_>,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         run_id: &str,
     ) -> Result<Option<QueueState>, WorkflowError> {
-        let row = transaction
-            .query_opt(
-                &select_run_queue_state_sql(),
-                &[&run_id, &self.environment()],
-            )
+        let row = sqlx::query(sqlx::AssertSqlSafe(select_run_queue_state_sql()))
+            .bind(run_id)
+            .bind(self.environment())
+            .fetch_optional(&mut **transaction)
             .await
             .map_err(|error| WorkflowError::storage("read the run's queue state", error))?;
         row.map(|row| {
@@ -105,9 +100,7 @@ impl PostgresWorkflows {
             })
         })
         .transpose()
-        .map_err(|error: tokio_postgres::Error| {
-            WorkflowError::storage("decode the run's queue state", error)
-        })
+        .map_err(|error: sqlx::Error| WorkflowError::storage("decode the run's queue state", error))
     }
 }
 
@@ -115,17 +108,19 @@ impl PostgresWorkflows {
 impl Workflows for PostgresWorkflows {
     async fn park(&self, run_id: &str) -> Result<(), WorkflowError> {
         let mut client = self.client.lock().await;
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .map_err(|error| WorkflowError::storage("begin the park", error))?;
-        self.target(&transaction).await?;
-        let parked = transaction
-            .query_opt(&park_queued_run_sql(), &[&run_id, &self.environment()])
+        self.target(&mut transaction).await?;
+        let parked = sqlx::query(sqlx::AssertSqlSafe(park_queued_run_sql()))
+            .bind(run_id)
+            .bind(self.environment())
+            .fetch_optional(&mut *transaction)
             .await
             .map_err(|error| WorkflowError::storage("park the run", error))?;
         if parked.is_none() {
-            match self.queue_state(&transaction, run_id).await? {
+            match self.queue_state(&mut transaction, run_id).await? {
                 None => {
                     return Err(WorkflowError::new(
                         WorkflowErrorType::NotFound,
@@ -167,17 +162,19 @@ impl Workflows for PostgresWorkflows {
 
     async fn release(&self, run_id: &str) -> Result<(), WorkflowError> {
         let mut client = self.client.lock().await;
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .map_err(|error| WorkflowError::storage("begin the release", error))?;
-        self.target(&transaction).await?;
-        let released = transaction
-            .query_opt(&release_parked_run_sql(), &[&run_id, &self.environment()])
+        self.target(&mut transaction).await?;
+        let released = sqlx::query(sqlx::AssertSqlSafe(release_parked_run_sql()))
+            .bind(run_id)
+            .bind(self.environment())
+            .fetch_optional(&mut *transaction)
             .await
             .map_err(|error| WorkflowError::storage("release the run", error))?;
         if released.is_none() {
-            return Err(match self.queue_state(&transaction, run_id).await? {
+            return Err(match self.queue_state(&mut transaction, run_id).await? {
                 None => WorkflowError::new(
                     WorkflowErrorType::NotFound,
                     format!("run {run_id} does not exist"),
@@ -197,13 +194,15 @@ impl Workflows for PostgresWorkflows {
     async fn list(&self, limit: u32) -> Result<Vec<WorkflowRun>, WorkflowError> {
         let limit = i64::from(limit);
         let mut client = self.client.lock().await;
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .map_err(|error| WorkflowError::storage("begin the list", error))?;
-        self.target(&transaction).await?;
-        let rows = transaction
-            .query(&list_workflow_runs_sql(), &[&self.environment(), &limit])
+        self.target(&mut transaction).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(list_workflow_runs_sql()))
+            .bind(self.environment())
+            .bind(limit)
+            .fetch_all(&mut *transaction)
             .await
             .map_err(|error| WorkflowError::storage("list the runs", error))?;
         let runs = rows

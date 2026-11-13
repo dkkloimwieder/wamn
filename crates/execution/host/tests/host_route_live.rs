@@ -6,15 +6,14 @@
 //! admits the caller, and the host answers the route under the targeted
 //! administration login.
 
+use sqlx::Row as _;
 use std::sync::Arc;
 use wamn_broker::Publisher;
 
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::HostRouteSet;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
@@ -109,27 +108,26 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("host_route")?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
-    let (admitter, administration) = install(&admin, &database, admin_url).await?;
+    let (admitter, administration) = install(&mut admin, &database, admin_url).await?;
 
     // The administration login writes the authorization relations and
     // appends their history entries, and reads nothing on the run plane.
-    let targeted = connect(&login(admin_url, &administration)?).await?;
-    let identity = targeted
-        .query_one(
-            "SELECT rolsuper OR rolbypassrls, \
+    let mut targeted = connect(&login(admin_url, &administration)?).await?;
+    let identity = sqlx::query(
+        "SELECT rolsuper OR rolbypassrls, \
                     has_schema_privilege(current_user, 'wamn_run', 'USAGE') \
              FROM pg_roles WHERE rolname = current_user",
-            &[],
-        )
-        .await?;
-    assert!(!identity.get::<_, bool>(0) && !identity.get::<_, bool>(1));
-    targeted
-        .batch_execute(&format!(
+    )
+    .fetch_one(&mut targeted)
+    .await?;
+    assert!(!identity.get::<bool, _>(0) && !identity.get::<bool, _>(1));
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{MEMBER}', true), \
                     set_config('app.operation', 'admin:host-route-fixture', true); \
@@ -137,15 +135,18 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
              DELETE FROM platform.role WHERE name = 'written'; \
              COMMIT;"
         ))
-        .await?;
-    let entries: i64 = admin
-        .query_one(
-            "SELECT count(*) FROM platform.role_history WHERE (before ->> 'name') = 'written' \
+            .to_string(),
+    ))
+    .execute(&mut targeted)
+    .await
+    .map(drop)?;
+    let entries: i64 = sqlx::query(
+        "SELECT count(*) FROM platform.role_history WHERE (before ->> 'name') = 'written' \
                 OR (after ->> 'name') = 'written'",
-            &[],
-        )
-        .await?
-        .get(0);
+    )
+    .fetch_one(&mut admin)
+    .await?
+    .get(0);
     assert_eq!(
         entries, 2,
         "each administration write appends its history entry"
@@ -155,26 +156,38 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let mut server = Server::start().await;
     let (verifier, _token_clock, _key_clock) = server.verifier();
     session_fixture::install_authority(
-        &admin,
+        &mut admin,
         PROJECT,
         "dev",
         AUDIENCE,
         &[claims()["sub"].as_str().unwrap(), MEMBER],
     )
     .await?;
-    admin
-        .batch_execute(&sql::grant_identity_reader_surface_sql())
-        .await?;
-    admin
-        .batch_execute(
-            "CREATE ROLE host_route_identity_reader LOGIN; \
-             GRANT wamn_identity_reader TO host_route_identity_reader;",
-        )
-        .await?;
-    let identity_reader = connect(admin_url).await?;
-    identity_reader
-        .batch_execute("SET ROLE host_route_identity_reader")
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_identity_reader_surface_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE host_route_identity_reader LOGIN; \
+             GRANT wamn_identity_reader TO host_route_identity_reader;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    let identity_reader = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::raw_sql("SET ROLE host_route_identity_reader")
+                    .execute(connection)
+                    .await
+                    .map(drop)
+            })
+        })
+        .connect_lazy_with(wamn_postgres::connect_options(admin_url).await?);
     let release = load_release()?;
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
@@ -186,7 +199,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
                 SessionRouteAuthentication::new(
                     verifier,
-                    Arc::new(identity_reader),
+                    identity_reader,
                     Arc::clone(&postgres_credentials),
                     PROJECT,
                 ),
@@ -308,7 +321,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         delivery,
         first,
         ..
-    } = &host;
+    } = &mut host;
     let first = first.clone();
     let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
     let mut admin_claims = claims();
@@ -355,13 +368,13 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
 
     // A caller without admin is refused, even with a stored row that names
     // the route.
-    admin
-        .execute(
-            "INSERT INTO platform.permission (role_name, permission) \
+    sqlx::query(
+        "INSERT INTO platform.permission (role_name, permission) \
              VALUES ('purchase-reader', 'wamn-control:role/list')",
-            &[],
-        )
-        .await?;
+    )
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
     for reference in [
         "wamn-control:user/list",
         "wamn-control:role/list",
@@ -513,15 +526,14 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         .await,
         json!({"granted": true})
     );
-    let stamp = admin
-        .query_one(
-            "SELECT operation, changed_by::text FROM platform.user_role_history \
+    let stamp = sqlx::query(
+        "SELECT operation, changed_by::text FROM platform.user_role_history \
              WHERE (after ->> 'role_name') = 'clerk'",
-            &[],
-        )
-        .await?;
+    )
+    .fetch_one(&mut *admin)
+    .await?;
     assert_eq!(
-        (stamp.get::<_, String>(0), stamp.get::<_, String>(1)),
+        (stamp.get::<String, _>(0), stamp.get::<String, _>(1)),
         (
             "wamn-control:user-role/grant@0.9.0".to_owned(),
             first.clone()
@@ -536,12 +548,15 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         .await,
         json!({"code": "user_not_found", "detail": {"field": "user_id"}})
     );
-    admin
-        .execute(
-            "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
-            &[&first, &ORG, &PROJECT],
-        )
-        .await?;
+    sqlx::query(
+        "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+    )
+    .bind(&first)
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
     // user.list answers the covering grant before any revoke.
     assert_eq!(
         answer("wamn-control:user/list", json!({})).await["users"]
@@ -560,9 +575,10 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         .await,
         json!({"code": "admin_covered", "detail": {"field": "user_id"}})
     );
-    admin
-        .execute("DELETE FROM identity.project_roles", &[])
-        .await?;
+    sqlx::query("DELETE FROM identity.project_roles")
+        .execute(admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         answer(
             "wamn-control:user-role/revoke",
@@ -592,14 +608,14 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         routing,
         delivery,
         ..
-    } = &host;
-    admin
-        .execute(
-            "INSERT INTO platform.number_sequence (application, name, pattern) \
+    } = &mut host;
+    sqlx::query(
+        "INSERT INTO platform.number_sequence (application, name, pattern) \
              VALUES ('receiving', 'purchase_order', 'P-{seq:po}')",
-            &[],
-        )
-        .await?;
+    )
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
     let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
     let mut admin_claims = claims();
     admin_claims["roles"] = json!(["admin"]);
@@ -651,10 +667,10 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         "an authored role without the permission is refused"
     );
     assert_eq!(
-        admin
-            .query_one("SELECT count(*) FROM platform.number_counter", &[])
+        sqlx::query("SELECT count(*) FROM platform.number_counter")
+            .fetch_one(&mut *admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
 
@@ -686,26 +702,25 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
             .expect("the set answers"),
         json!({"request_id": "set-7", "value": {"value": 7}})
     );
-    let row = admin
-        .query_one(
-            "SELECT value, updated_by::text FROM platform.number_counter \
+    let row = sqlx::query(
+        "SELECT value, updated_by::text FROM platform.number_counter \
              WHERE counter = 'po' AND key_value = ''",
-            &[],
-        )
-        .await?;
+    )
+    .fetch_one(&mut *admin)
+    .await?;
     assert_eq!(
-        (row.get::<_, i64>(0), row.get::<_, String>(1)),
+        (row.get::<i64, _>(0), row.get::<String, _>(1)),
         (7, MEMBER.to_owned())
     );
-    let logged = admin
-        .query_one(
-            "SELECT result FROM platform.write_log \
+    let logged = sqlx::query(
+        "SELECT result FROM platform.write_log \
              WHERE operation = $1 AND idempotency_key = 'set-7'",
-            &[&set],
-        )
-        .await?;
+    )
+    .bind(&set)
+    .fetch_one(admin)
+    .await?;
     assert_eq!(
-        logged.get::<_, Option<String>>(0).as_deref(),
+        logged.get::<Option<String>, _>(0).as_deref(),
         Some(r#"{"value":7}"#)
     );
     assert_eq!(
@@ -729,9 +744,9 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_control_provision::test_database::system();
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
     let audience = wamn_platform_identity::control::control_audience(ORG)?;
@@ -739,70 +754,58 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         .as_str()
         .expect("fixture principal")
         .to_owned();
-    admin
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql(ORG, PROJECT, "dev"),
-        )
-        .await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(ORG, PROJECT, "dev"))
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO identity.principals(id,type,subject,email,display_name) \
-             VALUES($1::text::uuid,'user','control-route@example.test','control-route@example.test','Control route fixture')",
-            &[&principal],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO identity.org_memberships(principal_id,org,status) VALUES($1::text::uuid,$2,'active')",
-            &[&principal, &ORG],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO identity.project_env_memberships(principal_id,org,project,env) \
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO identity.principals(id,type,subject,email,display_name) \
+             VALUES($1::text::uuid,'user','control-route@example.test','control-route@example.test','Control route fixture')").bind(&principal).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO identity.org_memberships(principal_id,org,status) VALUES($1::text::uuid,$2,'active')").bind(&principal).bind(&ORG).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO identity.project_env_memberships(principal_id,org,project,env) \
              VALUES($1::text::uuid,$2,$3,'dev')",
-            &[&principal, &ORG, &PROJECT],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO identity.password_logins(id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) \
-             VALUES($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')",
-            &[&principal, &session_fixture::ISSUER, &audience],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid, $2, $3, 'project-admin')",
-            &[&principal, &ORG, &PROJECT],
-        )
-        .await?;
-    let role = workload_generation_role(
+    )
+    .bind(&principal)
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO identity.password_logins(id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) \
+             VALUES($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')").bind(&principal).bind(&session_fixture::ISSUER).bind(&audience).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid, $2, $3, 'project-admin')").bind(&principal).bind(&ORG).bind(&PROJECT).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    let role = workload_login(
         WorkloadRoleFamily::Control,
         WorkloadRoleIdentity::Org {
             org: ORG,
             database: &database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::Control,
             &database,
             &role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
-    let control = Arc::new(connect(&login(admin_url, &role)?).await?);
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    let control = wamn_postgres::pool(&login(admin_url, &role)?, 4).await?;
     let writer = Arc::new(tokio::sync::Mutex::new(
         connect(&login(admin_url, &role)?).await?,
     ));
@@ -818,7 +821,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         .with_authenticator(Arc::new(
             wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
                 verifier,
-                Arc::clone(&control),
+                control.clone(),
             ),
         ));
     let delivery = HostRouteDelivery::new(
@@ -898,12 +901,11 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         401
     );
 
-    admin
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&principal],
-        )
-        .await?;
+    sqlx::query("DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid")
+        .bind(&principal)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         routing
             .authenticate_authorization_for_test(&route, Some(&bearer))
@@ -914,23 +916,16 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     );
 
     // An org-admin is admitted and holds every project of the org.
-    admin
-        .execute(
-            "INSERT INTO identity.org_roles(principal_id,org,role) VALUES ($1::text::uuid, $2, 'org-admin')",
-            &[&principal, &ORG],
-        )
-        .await?;
-    admin
-        .batch_execute(
-            "INSERT INTO registry.orgs(id,placement_type) VALUES('otherorg','dedicated')",
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO registry.projects(org,id) VALUES ($1, 'shop'), ('otherorg', 'mail')",
-            &[&ORG],
-        )
-        .await?;
+    sqlx::query("INSERT INTO identity.org_roles(principal_id,org,role) VALUES ($1::text::uuid, $2, 'org-admin')").bind(&principal).bind(&ORG).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql("INSERT INTO registry.orgs(id,placement_type) VALUES('otherorg','dedicated')")
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::query("INSERT INTO registry.projects(org,id) VALUES ($1, 'shop'), ('otherorg', 'mail')")
+        .bind(&ORG)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let caller = routing
         .authenticate_authorization_for_test(&route, Some(&bearer))
         .await
@@ -967,12 +962,11 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         assert_eq!(page["next_cursor"].is_null(), index + 1 == projects.len());
         input = json!({"limit": 1, "cursor": page["next_cursor"]});
     }
-    admin
-        .execute(
-            "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
-            &[&principal],
-        )
-        .await?;
+    sqlx::query("DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid")
+        .bind(&principal)
+        .execute(&mut admin)
+        .await
+        .map(|result| result.rows_affected())?;
     assert_eq!(
         routing
             .authenticate_authorization_for_test(&route, Some(&bearer))
@@ -1050,12 +1044,13 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
         "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN",
     );
     let mut host = application_host("cli_admin_revoke").await?;
-    host.admin
-        .execute(
-            "INSERT INTO identity.project_roles VALUES($1::text::uuid,$2,$3,'project-admin')",
-            &[&host.first, &ORG, &PROJECT],
-        )
-        .await?;
+    sqlx::query("INSERT INTO identity.project_roles VALUES($1::text::uuid,$2,$3,'project-admin')")
+        .bind(&host.first)
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut host.admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let host_url = format!("http://{}", listener.local_addr()?);
     let delivery = Arc::clone(&host.delivery);
@@ -1151,7 +1146,7 @@ async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> 
     let error = String::from_utf8(output.stderr)?;
     assert!(error.contains("admin_covered"), "{error}");
     server.await??;
-    let still_admin: bool = host.admin.query_one("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')", &[&host.first]).await?.get(0);
+    let still_admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')").bind(&host.first).fetch_one(&mut host.admin).await?.get(0);
     assert!(still_admin);
     host.server.stop().await;
     Ok(())

@@ -4,6 +4,7 @@
 //! ignore it. FIFO order, lease recovery, crash accounting, caller outcomes,
 //! and release pins retain their standard behavior.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
@@ -27,8 +28,8 @@ async fn production_lease_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_catalog::test_database::project();
     let url = database.url();
-    let fixture = install_fixture(url).await?;
-    let admin = &fixture.admin;
+    let mut fixture = install_fixture(url).await?;
+    let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
 
@@ -69,36 +70,37 @@ async fn production_lease_live() -> anyhow::Result<()> {
     // its production row locks, then the rolled-back head remains leasable.
     seed_run(admin, "double-a", "cat_main").await?;
     seed_run(admin, "double-b", "cat_main").await?;
-    let first_leaseholder = connect(url).await?;
-    first_leaseholder
-        .batch_execute(&format!(
-            "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"
-        ))
-        .await?;
-    first_leaseholder
-        .execute(
-            "SELECT set_config('app.project_env_key', $1, true)",
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?;
-    let locked = first_leaseholder
-        .query_one(
-            &select_production_lease_sql(),
-            &[
-                &release_package_ids.as_slice(),
-                &ENVIRONMENT,
-                &Some(POD_MANIFEST_DIGEST),
-            ],
-        )
-        .await?;
-    assert_eq!(locked.get::<_, String>(0), "double-a");
+    let mut first_leaseholder = connect(url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"
+    )))
+    .execute(&mut first_leaseholder)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(&PROJECT_ENV_KEY)
+        .execute(&mut first_leaseholder)
+        .await
+        .map(|result| result.rows_affected())?;
+    let locked = sqlx::query(sqlx::AssertSqlSafe(
+        (&select_production_lease_sql()).to_string(),
+    ))
+    .bind(&release_package_ids.as_slice())
+    .bind(&ENVIRONMENT)
+    .bind(&Some(POD_MANIFEST_DIGEST))
+    .fetch_one(&mut first_leaseholder)
+    .await?;
+    assert_eq!(locked.get::<String, _>(0), "double-a");
     let skipped = ready_run(
         plugin
             .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     assert_eq!(skipped, "double-b");
-    first_leaseholder.batch_execute("ROLLBACK").await?;
+    sqlx::raw_sql("ROLLBACK")
+        .execute(&mut first_leaseholder)
+        .await
+        .map(drop)?;
     let released = ready_run(
         plugin
             .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
@@ -112,29 +114,26 @@ async fn production_lease_live() -> anyhow::Result<()> {
 
     // The effect-free exhausted path computes the generic outcome and hash in
     // the host, atomically releases an attached caller, and dequeues.
-    admin
-        .execute(
-            &format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs \
                    (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
                  VALUES ($1,'janitor','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','running','cat_main','{POD_MANIFEST_DIGEST}', \
                          'test',$2,$3,'http')"
-            ),
-            &[&PROJECT_ENV_KEY, &WIRING_ID, &WIRING_VERSION],
-        )
-        .await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.run_queue \
+            ))).bind(&PROJECT_ENV_KEY).bind(&WIRING_ID).bind(&WIRING_VERSION).execute(&mut *admin).await.map(|result| result.rows_affected())?;
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "INSERT INTO {SCHEMA}.run_queue \
                    (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
                  VALUES ($1,'janitor','2000-01-01','dead','2000-01-01',3,3)"
-            ),
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
     assert_eq!(
         plugin
             .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
@@ -143,35 +142,36 @@ async fn production_lease_live() -> anyhow::Result<()> {
             run_id: "janitor".into()
         }
     );
-    let janitor = admin
-        .query_one(
-            &format!(
-                "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
+    let janitor = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
                         caller_outcome_hash,caller_released_at IS NOT NULL, \
                         EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
                                  WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
                    FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id='janitor'"
-            ),
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .fetch_one(&mut *admin)
+    .await?;
     let janitor_body = json!({"error": {
         "code": "infrastructure-failure", "wiring-id": WIRING_ID, "wiring-version": WIRING_VERSION,
         "run-id": "janitor"
     }});
-    assert_eq!(janitor.get::<_, String>(0), "infrastructure-failure");
+    assert_eq!(janitor.get::<String, _>(0), "infrastructure-failure");
     assert_eq!(
-        serde_json::from_str::<Value>(&janitor.get::<_, String>(1))?,
+        serde_json::from_str::<Value>(&janitor.get::<String, _>(1))?,
         janitor_body
     );
-    assert_eq!(janitor.get::<_, i32>(2), 500);
-    assert_eq!(janitor.get::<_, Option<String>>(3), None);
+    assert_eq!(janitor.get::<i32, _>(2), 500);
+    assert_eq!(janitor.get::<Option<String>, _>(3), None);
     assert_eq!(
-        janitor.get::<_, String>(4),
+        janitor.get::<String, _>(4),
         wamn_digest::canonical_json_sha256(&janitor_body)
     );
-    assert!(janitor.get::<_, bool>(5));
-    assert!(!janitor.get::<_, bool>(6));
+    assert!(janitor.get::<bool, _>(5));
+    assert!(!janitor.get::<bool, _>(6));
 
     seed_exhausted_run(admin, "janitor-callerless").await?;
     make_callerless(admin, "janitor-callerless").await?;
@@ -213,19 +213,21 @@ async fn production_lease_live() -> anyhow::Result<()> {
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
     seed_run(admin, "grant-refused", "cat_main").await?;
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.run_queue \
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=2, max_attempts=3 \
                   WHERE project_env_key=$1 AND run_id='grant-refused'"
-            ),
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?;
-    admin
-        .batch_execute(&format!(
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE FUNCTION {SCHEMA}.refuse_probed_grant() \
                RETURNS trigger LANGUAGE plpgsql AS $probe$ \
                BEGIN \
@@ -239,7 +241,11 @@ async fn production_lease_live() -> anyhow::Result<()> {
                ON {SCHEMA}.runs FOR EACH ROW \
                EXECUTE FUNCTION {SCHEMA}.refuse_probed_grant();"
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let starved = plugin
         .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
@@ -251,12 +257,16 @@ async fn production_lease_live() -> anyhow::Result<()> {
         3,
         "the refused lease rolled its own crash evidence back"
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP TRIGGER refuse_probed_grant ON {SCHEMA}.runs; \
              DROP FUNCTION {SCHEMA}.refuse_probed_grant();"
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     assert_eq!(
         plugin
             .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
@@ -334,32 +344,36 @@ async fn production_lease_live() -> anyhow::Result<()> {
 
     // No path rewrites or erases the pin.
     for assignment in [quote_literal(EMPTY_HASH), "NULL".to_owned()] {
-        let rewritten = admin
-            .execute(
-                &format!(
-                    "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
+        let rewritten = sqlx::query(sqlx::AssertSqlSafe(
+            (&format!(
+                "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
                       WHERE project_env_key=$1 AND run_id='release-record'"
-                ),
-                &[&PROJECT_ENV_KEY],
-            )
-            .await
-            .expect_err("no path may rewrite an admitted release in place");
+            ))
+                .to_string(),
+        ))
+        .bind(&PROJECT_ENV_KEY)
+        .execute(&mut *admin)
+        .await
+        .map(|result| result.rows_affected())
+        .expect_err("no path may rewrite an admitted release in place");
         let db = rewritten
-            .as_db_error()
+            .as_database_error()
             .expect("guard refusal is a db error");
-        assert_eq!(db.code().code(), "55000");
+        assert_eq!(db.code().as_deref().unwrap(), "55000");
         assert_eq!(db.message(), "run-admission-pin-immutable");
     }
     assert_eq!(release_record(admin, "release-record").await?, recorded);
-    admin
-        .execute(
-            &format!(
-                "DELETE FROM {SCHEMA}.run_queue \
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "DELETE FROM {SCHEMA}.run_queue \
                   WHERE project_env_key=$1 AND run_id='release-record'"
-            ),
-            &[&PROJECT_ENV_KEY],
-        )
-        .await?;
+        ))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
 
     teardown(fixture).await
 }
@@ -368,11 +382,11 @@ async fn production_lease_live() -> anyhow::Result<()> {
 async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_catalog::test_database::project();
-    let fixture = install_fixture(database.url()).await?;
-    let admin = &fixture.admin;
+    let mut fixture = install_fixture(database.url()).await?;
+    let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, $2)", &[&PROJECT_ENV_KEY, &ENVIRONMENT]).await?;
+    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, $2)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).execute(&mut *admin).await.map(|result| result.rows_affected())?;
     let actor = wamn_identity_protocol::PlatformComponent::Executor
         .principal_id()
         .to_string();
@@ -408,9 +422,11 @@ async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
         &actor,
     )
     .await;
-    admin
-        .execute("DELETE FROM wamn_run.run_queue WHERE run_id=$1", &[&run_id])
-        .await?;
+    sqlx::query("DELETE FROM wamn_run.run_queue WHERE run_id=$1")
+        .bind(&run_id)
+        .execute(&mut *admin)
+        .await
+        .map(|result| result.rows_affected())?;
 
     seed_run(admin, "history-lease", PACKAGE_ID).await?;
     let acquired = ready_run(
@@ -436,8 +452,8 @@ async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
 async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_catalog::test_database::project();
-    let fixture = install_fixture(database.url()).await?;
-    let admin = &fixture.admin;
+    let mut fixture = install_fixture(database.url()).await?;
+    let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     let packages = [PACKAGE_ID.to_owned()];
     for last_release in [true, false] {
@@ -447,12 +463,11 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
             "last-expiry"
         };
         seed_run(admin, run, PACKAGE_ID).await?;
-        admin
-            .execute(
-                "UPDATE wamn_run.run_queue SET max_attempts=3 WHERE run_id=$1",
-                &[&run],
-            )
-            .await?;
+        sqlx::query("UPDATE wamn_run.run_queue SET max_attempts=3 WHERE run_id=$1")
+            .bind(&run)
+            .execute(&mut *admin)
+            .await
+            .map(|result| result.rows_affected())?;
         let lease = plugin
             .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
@@ -468,12 +483,11 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                 .await?
         );
         assert_eq!(queue_attempts(admin, run).await?, 1);
-        admin
-            .execute(
-                "UPDATE wamn_run.run_queue SET available_at='2000-01-01' WHERE run_id=$1",
-                &[&run],
-            )
-            .await?;
+        sqlx::query("UPDATE wamn_run.run_queue SET available_at='2000-01-01' WHERE run_id=$1")
+            .bind(&run)
+            .execute(&mut *admin)
+            .await
+            .map(|result| result.rows_affected())?;
         let lease = plugin
             .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
@@ -505,14 +519,14 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                     .await?
             );
             assert_terminal_status_dequeued(admin, run, "failed").await?;
-            let row = admin.query_one("SELECT fail_type,result_json::text,caller_outcome_json::text,terminal_reason FROM wamn_run.runs WHERE run_id=$1", &[&run]).await?;
-            assert_eq!(row.get::<_, String>(0), "retry-exhausted");
-            assert_eq!(row.get::<_, String>(3), "retry-exhausted");
-            let result: Value = serde_json::from_str(&row.get::<_, String>(1))?;
+            let row = sqlx::query("SELECT fail_type,result_json::text,caller_outcome_json::text,terminal_reason FROM wamn_run.runs WHERE run_id=$1").bind(&run).fetch_one(&mut *admin).await?;
+            assert_eq!(row.get::<String, _>(0), "retry-exhausted");
+            assert_eq!(row.get::<String, _>(3), "retry-exhausted");
+            let result: Value = serde_json::from_str(&row.get::<String, _>(1))?;
             assert_eq!(result["error"]["code"], "retry-exhausted");
             assert_eq!(
                 result,
-                serde_json::from_str::<Value>(&row.get::<_, String>(2))?
+                serde_json::from_str::<Value>(&row.get::<String, _>(2))?
             );
         } else {
             expire_effect_run(admin, run).await?;
@@ -541,11 +555,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                 }
             );
             assert_terminal_status_dequeued(admin, run, "infrastructure-failure").await?;
-            let body: String = admin
-                .query_one(
-                    "SELECT caller_outcome_json::text FROM wamn_run.runs WHERE run_id=$1 AND terminal_reason='infrastructure-failure'",
-                    &[&run],
-                )
+            let body: String = sqlx::query("SELECT caller_outcome_json::text FROM wamn_run.runs WHERE run_id=$1 AND terminal_reason='infrastructure-failure'").bind(&run).fetch_one(&mut *admin)
                 .await?
                 .get(0);
             assert_eq!(
@@ -567,8 +577,8 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
 async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_catalog::test_database::project();
-    let fixture = install_fixture(database.url()).await?;
-    let admin = &fixture.admin;
+    let mut fixture = install_fixture(database.url()).await?;
+    let admin = &mut fixture.admin;
     let plugin = &fixture.plugin;
     let packages = [PACKAGE_ID.to_owned()];
     for attempts in [0_i32, 1, 2, 8, 9, 18] {
@@ -583,12 +593,12 @@ async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
         else {
             panic!("lease missing")
         };
-        admin
-            .execute(
-                "UPDATE wamn_run.run_queue SET attempts=$2 WHERE run_id=$1",
-                &[&run, &attempts],
-            )
-            .await?;
+        sqlx::query("UPDATE wamn_run.run_queue SET attempts=$2 WHERE run_id=$1")
+            .bind(&run)
+            .bind(&attempts)
+            .execute(&mut *admin)
+            .await
+            .map(|result| result.rows_affected())?;
         assert!(
             !plugin
                 .release_lease(COMPONENT, &run, lease_generation + 1)
@@ -600,10 +610,11 @@ async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
                 .await?
         );
         assert_eq!(queue_attempts(admin, &run).await?, attempts);
-        let before: std::time::SystemTime = admin
-            .query_one("SELECT clock_timestamp()", &[])
-            .await?
-            .get(0);
+        let before: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
+            sqlx::query("SELECT clock_timestamp()")
+                .fetch_one(&mut *admin)
+                .await?
+                .get(0);
         assert!(
             plugin
                 .release_lease(COMPONENT, &run, lease_generation)
@@ -611,19 +622,22 @@ async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
         );
         let base = (1000_i64 << attempts).min(300_000);
         let upper = (base * 12 / 10).min(300_000);
-        let row = admin
-            .query_one(
-                "SELECT attempts,lease_owner IS NULL AND lease_expires_at IS NULL, \
+        let row = sqlx::query(
+            "SELECT attempts,lease_owner IS NULL AND lease_expires_at IS NULL, \
              available_at >= $2::timestamptz + $3::bigint * interval '1 millisecond' \
              AND available_at <= clock_timestamp() + $4::bigint * interval '1 millisecond' \
              FROM wamn_run.run_queue WHERE run_id=$1",
-                &[&run, &before, &base, &upper],
-            )
-            .await?;
-        assert_eq!(row.get::<_, i32>(0), attempts + 1);
-        assert!(row.get::<_, bool>(1));
+        )
+        .bind(&run)
+        .bind(&before)
+        .bind(&base)
+        .bind(&upper)
+        .fetch_one(&mut *admin)
+        .await?;
+        assert_eq!(row.get::<i32, _>(0), attempts + 1);
+        assert!(row.get::<bool, _>(1));
         assert!(
-            row.get::<_, bool>(2),
+            row.get::<bool, _>(2),
             "attempt {attempts} delay outside jitter bounds"
         );
         assert!(
@@ -631,12 +645,11 @@ async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
                 .release_lease(COMPONENT, &run, lease_generation)
                 .await?
         );
-        admin
-            .execute(
-                "UPDATE wamn_run.run_queue SET available_at = 'infinity' WHERE run_id=$1",
-                &[&run],
-            )
-            .await?;
+        sqlx::query("UPDATE wamn_run.run_queue SET available_at = 'infinity' WHERE run_id=$1")
+            .bind(&run)
+            .execute(&mut *admin)
+            .await
+            .map(|result| result.rows_affected())?;
     }
     teardown(fixture).await
 }

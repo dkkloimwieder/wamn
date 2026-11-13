@@ -42,6 +42,8 @@
 //! environment holds (`admin` holds every operation of the release), from its
 //! `platform.role` and `platform.permission`. It writes nothing.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 mod connection_test;
 mod integration;
@@ -55,7 +57,7 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use tokio_postgres::{Client, NoTls, Transaction};
+
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
@@ -100,8 +102,8 @@ impl From<anyhow::Error> for Refusal {
     }
 }
 
-impl From<tokio_postgres::Error> for Refusal {
-    fn from(error: tokio_postgres::Error) -> Self {
+impl From<sqlx::Error> for Refusal {
+    fn from(error: sqlx::Error) -> Self {
         Self::Failed(error.into())
     }
 }
@@ -136,7 +138,7 @@ impl From<IdentityError> for Refusal {
 /// What the org routes of one control host use.
 pub(crate) struct ControlRoutes<'a> {
     /// The `control` login for reads.
-    pub(crate) control: &'a Client,
+    pub(crate) control: &'a sqlx::PgPool,
     /// A second `control` login that holds one write transaction at a time.
     pub(crate) writer: &'a Mutex<Client>,
     /// The operator client of the identity service, for `user.invite`.
@@ -243,13 +245,16 @@ impl ControlRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let admitted = match attachment.route.authority {
-            HostRouteAuthority::OrgAdmin => self.admits(self.control, caller, None).await?,
+            HostRouteAuthority::OrgAdmin => {
+                self.admits(&mut *self.control.acquire().await?, caller, None)
+                    .await?
+            }
             HostRouteAuthority::ProjectAdmin => {
                 let target: Value =
                     serde_json::from_str(payload).map_err(|error| Refusal::Failed(error.into()))?;
                 let project = parse::<ProjectTarget>(payload)?.project;
                 self.admits_environment(
-                    self.control,
+                    &mut *self.control.acquire().await?,
                     caller,
                     Some(&project),
                     target["env"].as_str(),
@@ -259,10 +264,17 @@ impl ControlRoutes<'_> {
             // A read for every control caller: `org-admin`, or `project-admin`
             // of a project of the org.
             HostRouteAuthority::Member => {
-                self.admits(self.control, caller, None).await?
-                    || !control_projects_page(self.control, caller, self.org, None, Some(1))
-                        .await?
-                        .is_empty()
+                self.admits(&mut *self.control.acquire().await?, caller, None)
+                    .await?
+                    || !control_projects_page(
+                        &mut *self.control.acquire().await?,
+                        caller,
+                        self.org,
+                        None,
+                        Some(1),
+                    )
+                    .await?
+                    .is_empty()
             }
             authority @ (HostRouteAuthority::Admin | HostRouteAuthority::Granted) => {
                 return Err(Refusal::Failed(anyhow::anyhow!(
@@ -289,7 +301,7 @@ impl ControlRoutes<'_> {
                     Order::Principal,
                 )?;
                 let users = org_users_page(
-                    self.control,
+                    &mut *self.control.acquire().await?,
                     self.org,
                     page.after(0),
                     page.after(1),
@@ -301,17 +313,21 @@ impl ControlRoutes<'_> {
             HostHandler::ProjectList => {
                 let page =
                     control_page(payload, attachment, caller, self.org, None, Order::Project)?;
-                let projects =
-                    org_projects_page(self.control, self.org, page.after(0), page.read_limit())
-                        .await?;
+                let projects = org_projects_page(
+                    &mut *self.control.acquire().await?,
+                    self.org,
+                    page.after(0),
+                    page.read_limit(),
+                )
+                .await?;
                 Ok(page.answer("projects", projects, |row| json!([row.name])))
             }
             HostHandler::UserInvite => self.invite(attachment, caller, payload).await,
             HostHandler::UserActivate => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                reactivate_org_membership(&transaction, &principal, self.org).await?;
+                let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+                reactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
                 drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
@@ -321,9 +337,10 @@ impl ControlRoutes<'_> {
             HostHandler::UserDeactivate => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 let mut drops = AuthDrops::default();
-                deactivate_org_membership(&transaction, &principal, self.org, &mut drops).await?;
+                deactivate_org_membership(&mut transaction, &principal, self.org, &mut drops)
+                    .await?;
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(None).await?;
@@ -334,8 +351,8 @@ impl ControlRoutes<'_> {
             HostHandler::OrgAdminGrant => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                grant_org_admin(&transaction, &principal, self.org).await?;
+                let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+                grant_org_admin(&mut transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
                 drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
@@ -348,9 +365,9 @@ impl ControlRoutes<'_> {
             HostHandler::OrgAdminRevoke => {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 let mut drops = AuthDrops::default();
-                revoke_org_admin(&transaction, &principal, self.org, &mut drops).await?;
+                revoke_org_admin(&mut transaction, &principal, self.org, &mut drops).await?;
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(None).await?;
@@ -369,7 +386,7 @@ impl ControlRoutes<'_> {
                     Order::Environment,
                 )?;
                 let environments = project_envs_page(
-                    self.control,
+                    &mut *self.control.acquire().await?,
                     self.org,
                     &request.project,
                     page.after(0),
@@ -380,10 +397,14 @@ impl ControlRoutes<'_> {
             }
             HostHandler::EnvironmentStatus => {
                 let request: EnvironmentRequest = parse(payload)?;
-                if !project_envs(self.control, self.org, &request.project)
-                    .await?
-                    .iter()
-                    .any(|entry| entry.name == request.env)
+                if !project_envs(
+                    &mut *self.control.acquire().await?,
+                    self.org,
+                    &request.project,
+                )
+                .await?
+                .iter()
+                .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",
@@ -403,15 +424,16 @@ impl ControlRoutes<'_> {
                     application_counts(&logins[0]).await
                 };
                 let memberships = async {
-                    let row = self
-                        .control
-                        .query_one(
-                            "SELECT count(*)::int4 FROM identity.project_env_memberships \
+                    let row = sqlx::query(
+                        "SELECT count(*)::int4 FROM identity.project_env_memberships \
                          WHERE org = $1 AND project = $2 AND env = $3",
-                            &[&self.org, &request.project, &request.env],
-                        )
-                        .await?;
-                    anyhow::Ok(row.get::<_, i32>(0))
+                    )
+                    .bind(self.org)
+                    .bind(&request.project)
+                    .bind(&request.env)
+                    .fetch_one(self.control)
+                    .await?;
+                    anyhow::Ok(row.get::<i32, _>(0))
                 };
                 Ok(status_with_counts(
                     status,
@@ -424,10 +446,14 @@ impl ControlRoutes<'_> {
             }
             HostHandler::ReleaseProfile => {
                 let request: ReleaseRequest = parse(payload)?;
-                if !project_envs(self.control, self.org, &request.project)
-                    .await?
-                    .iter()
-                    .any(|entry| entry.name == request.env)
+                if !project_envs(
+                    &mut *self.control.acquire().await?,
+                    self.org,
+                    &request.project,
+                )
+                .await?
+                .iter()
+                .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",
@@ -467,7 +493,7 @@ impl ControlRoutes<'_> {
                     Order::Principal,
                 )?;
                 let members = project_members_page(
-                    self.control,
+                    &mut *self.control.acquire().await?,
                     self.org,
                     &request.project,
                     request.environment.as_str(),
@@ -484,7 +510,7 @@ impl ControlRoutes<'_> {
                 let request: MemberRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self
+                let mut transaction = self
                     .begin_in_environment(
                         &mut writer,
                         attachment,
@@ -494,7 +520,7 @@ impl ControlRoutes<'_> {
                     )
                     .await?;
                 grant_member(
-                    &transaction,
+                    &mut transaction,
                     &principal,
                     self.org,
                     &request.project,
@@ -519,7 +545,7 @@ impl ControlRoutes<'_> {
                 let request: MemberRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self
+                let mut transaction = self
                     .begin_in_environment(
                         &mut writer,
                         attachment,
@@ -530,7 +556,7 @@ impl ControlRoutes<'_> {
                     .await?;
                 let mut drops = AuthDrops::default();
                 revoke_member(
-                    &transaction,
+                    &mut transaction,
                     &principal,
                     self.org,
                     &request.project,
@@ -554,10 +580,11 @@ impl ControlRoutes<'_> {
                 let request: ProjectPrincipalRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self
+                let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
-                grant_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                grant_project_admin(&mut transaction, &principal, self.org, &request.project)
+                    .await?;
                 let mut drops = AuthDrops::default();
                 drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
@@ -575,12 +602,12 @@ impl ControlRoutes<'_> {
                 let request: ProjectPrincipalRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
-                let transaction = self
+                let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
                 let mut drops = AuthDrops::default();
                 revoke_project_admin(
-                    &transaction,
+                    &mut transaction,
                     &principal,
                     self.org,
                     &request.project,
@@ -639,10 +666,10 @@ impl ControlRoutes<'_> {
                     });
                 }
                 let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                create_project(&transaction, self.org, &request.project).await?;
+                let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+                create_project(&mut transaction, self.org, &request.project).await?;
                 let mut drops = AuthDrops::default();
-                for row in transaction.query("SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2", &[&self.org, &request.project]).await? {
+                for row in sqlx::query("SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2").bind(self.org).bind(&request.project).fetch_all(&mut *transaction).await? {
                     drops.identity(row.get(0));
                 }
                 transaction.commit().await?;
@@ -696,8 +723,8 @@ impl ControlRoutes<'_> {
         // The lock stays held through the application rows, so no other
         // write of this host runs between the system rows and them.
         let mut writer = self.writer.lock().await;
-        let transaction = self.begin(&mut writer, attachment, caller).await?;
-        invite_member(&transaction, &user.principal_id, self.org, &grants).await?;
+        let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+        invite_member(&mut transaction, &user.principal_id, self.org, &grants).await?;
         let mut drops = AuthDrops::default();
         drops.identity(user.principal_id.to_string().as_str());
         transaction.commit().await?;
@@ -755,22 +782,22 @@ impl ControlRoutes<'_> {
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await;
-        let transaction = self.begin(&mut writer, attachment, caller).await?;
-        let envs = status_environments(&transaction, self.org, project, env).await?;
-        let environments: Vec<(String, String)> = transaction
-            .query(
-                wamn_registry::sql::ENVIRONMENT_PROJECTS,
-                &[&self.org, &envs],
-            )
-            .await?
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect();
+        let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+        let envs = status_environments(&mut transaction, self.org, project, env).await?;
+        let environments: Vec<(String, String)> =
+            sqlx::query(wamn_registry::sql::ENVIRONMENT_PROJECTS)
+                .bind(self.org)
+                .bind(&envs)
+                .fetch_all(&mut *transaction)
+                .await?
+                .into_iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect();
         if status == EnvironmentStatus::Inactive {
             self.write_statuses(attachment, caller, &environments, status)
                 .await?;
         }
-        set_environment_status(&transaction, self.org, project, &envs, status).await?;
+        set_environment_status(&mut transaction, self.org, project, &envs, status).await?;
         transaction.commit().await?;
         if status == EnvironmentStatus::Active {
             self.write_statuses(attachment, caller, &environments, status)
@@ -838,7 +865,7 @@ impl ControlRoutes<'_> {
 
     /// Every current environment of the selected target.
     async fn environments(&self, project: Option<&str>) -> Result<Vec<(String, String)>, Refusal> {
-        Ok(org_environments(self.control, self.org, project).await?)
+        Ok(org_environments(&mut *self.control.acquire().await?, self.org, project).await?)
     }
 
     /// Project current authority while holding the user's system membership lock.
@@ -855,8 +882,8 @@ impl ControlRoutes<'_> {
         if let Some(pause) = self.projection_pause {
             pause.arrive(principal, false).await;
         }
-        let system = writer.transaction().await?;
-        wamn_platform_identity::org::lock_membership(&system, principal, self.org).await?;
+        let mut system = writer.begin().await?;
+        wamn_platform_identity::org::lock_membership(&mut system, principal, self.org).await?;
         #[cfg(feature = "test-util")]
         if let Some(pause) = self.projection_pause {
             pause.arrive(principal, true).await;
@@ -870,7 +897,8 @@ impl ControlRoutes<'_> {
                 env,
                 project_env_key: &project_env_key,
             };
-            match write_application(&system, &url, target, attachment, caller, principal).await {
+            match write_application(&mut system, &url, target, attachment, caller, principal).await
+            {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -894,7 +922,7 @@ impl ControlRoutes<'_> {
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-    ) -> Result<Transaction<'c>, Refusal> {
+    ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         self.begin_in(writer, attachment, caller, None).await
     }
 
@@ -904,7 +932,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         project: Option<&str>,
-    ) -> Result<Transaction<'c>, Refusal> {
+    ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         self.begin_in_environment(writer, attachment, caller, project, None)
             .await
     }
@@ -918,17 +946,19 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: Option<&str>,
         environment: Option<&str>,
-    ) -> Result<Transaction<'c>, Refusal> {
-        let transaction = writer.transaction().await?;
-        transaction
-            .execute(
-                "SELECT pg_catalog.set_config('app.user_id', $1, true), \
+    ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
+        let mut transaction = writer.begin().await?;
+        sqlx::query(
+            "SELECT pg_catalog.set_config('app.user_id', $1, true), \
                  pg_catalog.set_config('app.operation', $2, true)",
-                &[&caller.to_string().as_str(), &attachment.operation],
-            )
-            .await?;
+        )
+        .bind(caller.to_string().as_str())
+        .bind(&attachment.operation)
+        .execute(&mut *transaction)
+        .await
+        .map(|result| result.rows_affected())?;
         if !self
-            .admits_environment(&transaction, caller, project, environment)
+            .admits_environment(&mut transaction, caller, project, environment)
             .await?
         {
             return Err(denied(attachment));
@@ -940,7 +970,7 @@ impl ControlRoutes<'_> {
     /// `project` when a project route names one.
     async fn admits(
         &self,
-        client: &(impl tokio_postgres::GenericClient + Sync),
+        client: &mut sqlx::PgConnection,
         caller: &PrincipalId,
         project: Option<&str>,
     ) -> Result<bool, Refusal> {
@@ -949,7 +979,7 @@ impl ControlRoutes<'_> {
 
     async fn admits_environment(
         &self,
-        client: &(impl tokio_postgres::GenericClient + Sync),
+        client: &mut sqlx::PgConnection,
         caller: &PrincipalId,
         project: Option<&str>,
         environment: Option<&str>,
@@ -981,24 +1011,17 @@ const APPLICATION_COUNTS_SQL: &str = "SELECT \
     (SELECT count(*)::int4 FROM platform.role r)";
 
 async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
-    let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    // Poll the connection here so cancellation drops its socket too. A spawned
-    // connection could retain a blocked query after the deadline.
-    tokio::select! {
-        result = async {
-            let transaction = client.build_transaction().read_only(true).start().await?;
-            let row = transaction
-                .query_one(APPLICATION_COUNTS_SQL, &[])
-                .await?;
-            let counts = (row.get(0), row.get(1));
-            transaction.commit().await?;
-            anyhow::Ok(counts)
-        } => result,
-        result = connection => {
-            result?;
-            anyhow::bail!("administration connection closed before status counts")
-        }
-    }
+    let mut client = wamn_postgres::connect(url).await?;
+    let mut transaction = client.begin().await?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *transaction)
+        .await?;
+    let row = sqlx::query(APPLICATION_COUNTS_SQL)
+        .fetch_one(&mut *transaction)
+        .await?;
+    let counts = (row.get(0), row.get(1));
+    transaction.commit().await?;
+    Ok(counts)
 }
 
 async fn optional_status_count<T>(
@@ -1046,29 +1069,25 @@ async fn status_with_counts(
 /// administration login. It returns the drops of the write, none when the
 /// database holds no platform rows.
 async fn write_application(
-    system: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     url: &str,
     target: ApplicationTarget<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
 ) -> anyhow::Result<AuthDrops> {
-    let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    let connection = tokio::spawn(connection);
+    let mut client = wamn_postgres::connect(url).await?;
+
     let result = async {
-        let transaction = client.transaction().await?;
-        transaction.execute(
-            "SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.operation', $2, true)",
-            &[&caller.to_string().as_str(), &attachment.operation],
-        ).await?;
-        require_platform_rows(&transaction).await?;
+        let mut transaction = client.begin().await?;
+        sqlx::query("SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.operation', $2, true)").bind(caller.to_string().as_str()).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+        require_platform_rows(&mut transaction).await?;
         let mut drops = AuthDrops::default();
-        project_authority(system, &transaction, target, principal, &mut drops).await?;
+        project_authority(system, &mut transaction, target, principal, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }.await;
     drop(client);
-    let _ = connection.await;
     result
 }
 
@@ -1126,24 +1145,31 @@ async fn release_profile(
         BTreeMap<String, Vec<String>>,
     )>,
 > {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let mut client = wamn_postgres::connect(url)
         .await
         .context("connect the administration login")?;
-    let connection = tokio::spawn(connection);
+
     let result = async {
-        let Some(row) = client.query_opt(RELEASE_SQL, &[&digest]).await? else {
+        let Some(row) = sqlx::query(RELEASE_SQL)
+            .bind(digest)
+            .fetch_optional(&mut client)
+            .await?
+        else {
             return Ok(None);
         };
         let (manifest, _) =
-            wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<_, Vec<u8>>(0))
+            wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<Vec<u8>, _>(0))
                 .context("decode the release manifest")?;
         let mut relations = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
         let mut views = BTreeMap::<String, wamn_catalog::profile::ViewRelation>::new();
-        for row in client.query(RELATION_COLUMNS_SQL, &[]).await? {
-            if row.get::<_, bool>(2) {
+        for row in sqlx::query(RELATION_COLUMNS_SQL)
+            .fetch_all(&mut client)
+            .await?
+        {
+            if row.get::<bool, _>(2) {
                 let view = views.entry(row.get(0)).or_default();
                 view.columns.insert(row.get(1));
-                if let Some(table) = row.get::<_, Option<String>>(3) {
+                if let Some(table) = row.get::<Option<String>, _>(3) {
                     let columns = view.base_tables.entry(table).or_default();
                     if let Some(column) = row.get(4) {
                         columns.insert(column);
@@ -1155,9 +1181,9 @@ async fn release_profile(
         }
         let profile =
             wamn_catalog::profile::release_profile(&manifest.components, &relations, &views);
-        require_platform_rows(&client).await?;
+        require_platform_rows(&mut client).await?;
         let mut roles = BTreeMap::new();
-        for role in role_names(&client).await? {
+        for role in role_names(&mut client).await? {
             let operations = if role == ADMIN_ROLE {
                 profile
                     .operations
@@ -1165,7 +1191,7 @@ async fn release_profile(
                     .map(|each| each.operation.clone())
                     .collect()
             } else {
-                permission_rows(&client, &role).await?
+                permission_rows(&mut client, &role).await?
             };
             roles.insert(role, operations);
         }
@@ -1173,7 +1199,6 @@ async fn release_profile(
     }
     .await;
     drop(client);
-    let _ = connection.await;
     result
 }
 
@@ -1186,28 +1211,29 @@ async fn write_status(
     caller: &PrincipalId,
     status: EnvironmentStatus,
 ) -> anyhow::Result<AuthDrops> {
-    let (mut client, connection) = tokio_postgres::connect(url, NoTls)
+    let mut client = wamn_postgres::connect(url)
         .await
         .context("connect the administration login")?;
-    let connection = tokio::spawn(connection);
+
     let result = async {
-        let transaction = client.transaction().await?;
-        transaction
-            .execute(
-                "SELECT pg_catalog.set_config('app.user_id', $1, true), \
+        let mut transaction = client.begin().await?;
+        sqlx::query(
+            "SELECT pg_catalog.set_config('app.user_id', $1, true), \
                  pg_catalog.set_config('app.operation', $2, true)",
-                &[&caller.to_string().as_str(), &attachment.operation],
-            )
-            .await?;
-        require_platform_rows(&transaction).await?;
+        )
+        .bind(caller.to_string().as_str())
+        .bind(&attachment.operation)
+        .execute(&mut *transaction)
+        .await
+        .map(|result| result.rows_affected())?;
+        require_platform_rows(&mut transaction).await?;
         let mut drops = AuthDrops::default();
-        write_environment_status(&transaction, project_env_key, status, &mut drops).await?;
+        write_environment_status(&mut transaction, project_env_key, status, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }
     .await;
     drop(client);
-    let _ = connection.await;
     result
 }
 

@@ -1,5 +1,6 @@
 //! Generate real exclusion diagnostics and run the fixture error-mapping test.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -67,20 +68,29 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn diagnostic(client: &tokio_postgres::Client, update: &str) -> anyhow::Result<Value> {
-    client.batch_execute("SET ROLE wamn_app").await?;
-    let result = client.batch_execute(update).await;
-    client.batch_execute("RESET ROLE").await?;
+async fn diagnostic(client: &mut sqlx::PgConnection, update: &str) -> anyhow::Result<Value> {
+    sqlx::raw_sql("SET ROLE wamn_app")
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
+    let result = sqlx::raw_sql(sqlx::AssertSqlSafe((update).to_string()))
+        .execute(&mut *client)
+        .await
+        .map(drop);
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
     let error = result.expect_err("the fixture update must violate its exclusion");
     let error = error
-        .as_db_error()
+        .as_database_error()
         .context("expected PostgreSQL diagnostics")?;
     ensure!(
-        error.code().code() == "23P01",
+        error.code().as_deref().unwrap() == "23P01",
         "expected exclusion violation"
     );
     Ok(
-        json!({"sqlstate": error.code().code(), "constraint": error.constraint().context("server constraint name")?}),
+        json!({"sqlstate": error.code().as_deref().unwrap(), "constraint": error.constraint().context("server constraint name")?}),
     )
 }
 
@@ -113,25 +123,25 @@ async fn main() -> anyhow::Result<()> {
         std::fs::copy(root.join(name), destination)?;
     }
     let mut server = postgres::start(&[])?;
-    let database = server.create_database("exclusion_diagnostics")?;
-    let (client, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    let task = tokio::spawn(connection);
-    client.batch_execute("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").await?;
-    client
-        .batch_execute(include_str!(
-            "../../../apps/platform_fixture/migrations/0001_initial.sql"
-        ))
-        .await?;
-    client.batch_execute("GRANT SELECT, UPDATE ON inventory.widget TO wamn_app;
+    let mut database = server.create_database("exclusion_diagnostics")?;
+    let mut client = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;
+    sqlx::raw_sql(include_str!(
+        "../../../apps/platform_fixture/migrations/0001_initial.sql"
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql("GRANT SELECT, UPDATE ON inventory.widget TO wamn_app;
         INSERT INTO inventory.widget_maker (id, name)
         VALUES ('00000000-0000-4000-8000-000000000f01', 'first maker'),
                ('00000000-0000-4000-8000-000000000f02', 'second maker');
         INSERT INTO inventory.widget (code, maker_id)
         VALUES ('priority', '00000000-0000-4000-8000-000000000f01'),
                ('standard', '00000000-0000-4000-8000-000000000f02');
-        ALTER TABLE inventory.widget ADD CONSTRAINT widget_maker_id_excl EXCLUDE USING gist (maker_id WITH =);").await?;
-    let fixture = diagnostic(&client, "UPDATE inventory.widget SET maker_id = (SELECT maker_id FROM inventory.widget WHERE code = 'priority') WHERE code = 'standard'").await?;
+        ALTER TABLE inventory.widget ADD CONSTRAINT widget_maker_id_excl EXCLUDE USING gist (maker_id WITH =);").execute(&mut client).await.map(drop)?;
+    let fixture = diagnostic(&mut client, "UPDATE inventory.widget SET maker_id = (SELECT maker_id FROM inventory.widget WHERE code = 'priority') WHERE code = 'standard'").await?;
     generate_fixture(
         database.url(),
         &scratch.path().join("apps/platform_fixture"),
@@ -143,7 +153,6 @@ async fn main() -> anyhow::Result<()> {
         serde_json::to_vec(&json!({"fixture": fixture}))?,
     )?;
     drop(client);
-    task.await??;
     server.stop()?;
     let task_target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);

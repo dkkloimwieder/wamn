@@ -2,6 +2,7 @@
 
 use super::*;
 use anyhow::Context as _;
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use wamn_catalog::HostHandler;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
@@ -136,23 +137,27 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("operation_routes")?;
-    let admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
-    admin
-        .batch_execute(&format!(
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET app.user_id='{}'",
             PlatformComponent::Provisioning.principal_id()
         ))
-        .await?;
-    let owner = create_or_reuse_user(&admin, "job-owner@example.test", "Owner")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    let owner = create_or_reuse_user(&mut admin, "job-owner@example.test", "Owner")
         .await?
         .principal_id;
-    let other = create_or_reuse_user(&admin, "job-other@example.test", "Other")
+    let other = create_or_reuse_user(&mut admin, "job-other@example.test", "Other")
         .await?
         .principal_id;
     for (principal, project) in [(&owner, "billing"), (&other, "shop")] {
         invite_member(
-            &admin,
+            &mut admin,
             principal,
             ORG,
             &MemberGrants {
@@ -170,7 +175,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: None,
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer,
             identity: None,
             org: ORG.into(),

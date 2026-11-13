@@ -40,9 +40,9 @@ use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sq
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
-    workload_generation_role,
+    workload_login,
 };
-use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL};
+use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL};
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -541,7 +541,7 @@ fn generation(family: WorkloadRoleFamily) -> String {
             database: CONTROL_DATABASE,
         },
     };
-    workload_generation_role(family, target, CredentialGeneration::A)
+    workload_login(family, target)
         .unwrap_or_else(|error| panic!("mint a {family:?} generation: {error}"))
 }
 
@@ -744,12 +744,11 @@ fn mint(db_url: &str, family: WorkloadRoleFamily) {
     apply(
         db_url,
         "prepare a workload generation",
-        &sql::prepare_workload_generation_sql(
+        &wamn_control_provision::test_database::login_sql(
             family,
             database_of(family),
             &login,
             PROBE_PASSWORD,
-            "2099-01-01T00:00:00Z",
         ),
     );
 }

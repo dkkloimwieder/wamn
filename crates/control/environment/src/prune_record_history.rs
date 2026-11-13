@@ -24,19 +24,21 @@
 //! The final transaction also expires successful write-log claims after 30 days.
 //! Claims with a null result remain, regardless of age.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 use plan::prune_history_sql;
 
 use anyhow::{Context as _, bail};
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use tokio_postgres::{Client, NoTls};
+
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
 use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity,
-    bind_platform_principal_sql, workload_generation_role,
+    PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, bind_platform_principal_sql,
+    workload_login,
 };
 
 /// Inputs of one record history retention run.
@@ -82,56 +84,47 @@ pub async fn prune_expired_record_history(
     {
         bail!("org, project and environment must be non-empty");
     }
-    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
+    let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("audit retention credential connect")?;
-    let connection_task = tokio::spawn(connection);
+
     let result = async {
-        verify_audit_retention_identity(&client, &request.project_env_key()).await?;
+        verify_audit_retention_identity(&mut client, &request.project_env_key()).await?;
         prune(&mut client).await
     }
     .await;
     drop(client);
-    let _ = connection_task.await;
     result
 }
 
-/// Refuse unless the connected role is one of the two audit retention
-/// generations of this exact `(project, database)` pair.
+/// Refuse unless the connected role is the audit retention login of this exact `(project, database)` pair.
 ///
-/// The verb derives the expected names from the environment coordinate and the server's
+/// The verb derives the expected name from the environment coordinate and the server's
 /// `current_database()`. The URL is operator input, so the verb does not read
 /// the database from it.
 async fn verify_audit_retention_identity(
-    client: &Client,
+    client: &mut Client,
     project_env_key: &str,
 ) -> anyhow::Result<()> {
-    let row = client
-        .query_one(
-            "SELECT current_user::text AS role, current_database()::text AS database",
-            &[],
-        )
-        .await
-        .context("read connected audit retention identity")?;
+    let row =
+        sqlx::query("SELECT current_user::text AS role, current_database()::text AS database")
+            .fetch_one(&mut *client)
+            .await
+            .context("read connected audit retention identity")?;
     let role: String = row.get("role");
     let database: String = row.get("database");
     let target = WorkloadRoleIdentity::ProjectEnvKey {
         project_env_key,
         database: &database,
     };
-    let mut expected = Vec::new();
-    for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-        expected.push(
-            workload_generation_role(WorkloadRoleFamily::AuditRetention, target, generation)
-                .context("derive the expected audit retention generation identity")?,
-        );
-    }
-    if expected.contains(&role) {
+    let expected = workload_login(WorkloadRoleFamily::AuditRetention, target)
+        .context("derive the expected retention identity")?;
+    if expected == role {
         return Ok(());
     }
     bail!(
         "refusing to prune record history: connected as {role:?} in database {database:?}, which \
-         is not an audit-retention credential generation for project_env_key {project_env_key:?} (expected one of \
+         is not an audit-retention login for project_env_key {project_env_key:?} (expected \
          {expected:?})"
     )
 }
@@ -148,35 +141,37 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
     let mut pruned = Vec::new();
     let mut last: Option<(String, String)> = None;
     loop {
-        let transaction = client
-            .transaction()
+        let mut transaction = client
+            .begin()
             .await
             .context("begin a record history retention transaction")?;
-        transaction
-            .batch_execute(&bind_platform_principal_sql(
-                PlatformComponent::AuditRetention,
-            ))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
+            PlatformComponent::AuditRetention,
+        )))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)
+        .context("bind wamn:audit-retention as the actor")?;
+        sqlx::raw_sql("SET LOCAL TimeZone = 'UTC'")
+            .execute(&mut *transaction)
             .await
-            .context("bind wamn:audit-retention as the actor")?;
-        transaction
-            .batch_execute("SET LOCAL TimeZone = 'UTC'")
-            .await
+            .map(drop)
             .context("set the retention time zone")?;
-        transaction
-            .query_one(AUDIT_RETENTION_LOCK_SQL, &[])
+        sqlx::query(AUDIT_RETENTION_LOCK_SQL)
+            .fetch_one(&mut *transaction)
             .await
             .context("lock the audit retention source")?;
-        let next = transaction
-            .query(AUDIT_RETENTION_TARGETS_SQL, &[])
+        let next = sqlx::query(AUDIT_RETENTION_TARGETS_SQL)
+            .fetch_all(&mut *transaction)
             .await
             .context("read the retention of each logged relation")?
             .into_iter()
             .map(|row| {
                 (
-                    row.get::<_, String>("schema_name"),
-                    row.get::<_, String>("relation_name"),
-                    row.get::<_, String>("history_name"),
-                    row.get::<_, String>("days"),
+                    row.get::<String, _>("schema_name"),
+                    row.get::<String, _>("relation_name"),
+                    row.get::<String, _>("history_name"),
+                    row.get::<String, _>("days"),
                 )
             })
             .find(|(schema, relation, _, _)| {
@@ -185,15 +180,16 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
                 })
             });
         let Some((schema, relation, history, days)) = next else {
-            if transaction
-                .query_opt(WRITE_LOG_RETENTION_TARGET_SQL, &[])
+            if sqlx::query(WRITE_LOG_RETENTION_TARGET_SQL)
+                .fetch_optional(&mut *transaction)
                 .await
                 .context("find the write log retention target")?
                 .is_some()
             {
-                transaction
-                    .execute(WRITE_LOG_RETENTION_SQL, &[])
+                sqlx::query(WRITE_LOG_RETENTION_SQL)
+                    .execute(&mut *transaction)
                     .await
+                    .map(|result| result.rows_affected())
                     .context("prune successful write log claims older than 30 days")?;
             }
             transaction
@@ -210,8 +206,9 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
             escape_identifier(&schema),
             escape_identifier(&history)
         );
-        let removed: i64 = transaction
-            .query_one(&prune_history_sql(&table), &[&days])
+        let removed: i64 = sqlx::query(sqlx::AssertSqlSafe(prune_history_sql(&table)))
+            .bind(days)
+            .fetch_one(&mut *transaction)
             .await
             .with_context(|| format!("prune {schema}.{history}"))?
             .get(0);

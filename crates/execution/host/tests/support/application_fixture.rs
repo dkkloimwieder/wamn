@@ -6,15 +6,15 @@
 //! `host_route_live` and `tests/integration`'s `control_client_live` include
 //! it beside the shared session fixture, as `session_fixture`.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::sync::Arc;
 use wamn_broker::Publisher;
 
 use serde_json::json;
-use tokio_postgres::{Client, NoTls};
+
 use wamn_catalog::{HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION};
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
@@ -35,8 +35,8 @@ pub(super) const MEMBER: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
 pub(super) const PASSWORD: &str = "host-route-test-only";
 
 pub(super) async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { connection.await.expect("fixture database connection") });
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -50,7 +50,7 @@ pub(super) fn login(admin_url: &str, role: &str) -> anyhow::Result<String> {
 }
 
 pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::Result<String> {
-    Ok(workload_generation_role(
+    Ok(workload_login(
         family,
         WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
@@ -58,99 +58,105 @@ pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::
             environment: "dev",
             database,
         },
-        CredentialGeneration::A,
     )?)
 }
 
 /// The project database, its two targeted logins, and the fixture rows: the
 /// first principal holds `admin`, and the member holds one authored role.
 pub(super) async fn install(
-    admin: &Client,
+    admin: &mut Client,
     database: &str,
     admin_url: &str,
 ) -> anyhow::Result<(String, String)> {
-    admin
-        .batch_execute(
-            "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
               \
-             CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
-        )
-        .await?;
-    admin
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(include_str!("../../../../../deploy/sql/app-schema.sql"))
-        .await?;
+             CREATE SCHEMA wamn_run AUTHORIZATION postgres;")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(include_str!("../../../../../deploy/sql/app-schema.sql"))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     let admitter = generation(WorkloadRoleFamily::HttpAdmitter, database)?;
     let administration = generation(WorkloadRoleFamily::Administration, database)?;
     for (family, role) in [
         (WorkloadRoleFamily::HttpAdmitter, &admitter),
         (WorkloadRoleFamily::Administration, &administration),
     ] {
-        admin
-            .batch_execute(&sql::prepare_workload_generation_sql(
-                family,
-                database,
-                role,
-                PASSWORD,
-                "2099-01-01T00:00:00Z",
-            ))
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(family, database, role, PASSWORD))
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     }
     let first = claims()["sub"]
         .as_str()
         .expect("fixture principal")
         .to_owned();
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:seed-host-route-fixture', false)",
-            &[&first],
-        )
-        .await?;
-    let writer = connect(&login(admin_url, &administration)?).await?;
-    let identity = writer
-        .query_one(
-            "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",
-            &[],
-        )
-        .await?;
+    )
+    .bind(&first)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    let mut writer = connect(&login(admin_url, &administration)?).await?;
+    let identity =
+        sqlx::query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")
+            .fetch_one(&mut writer)
+            .await?;
     anyhow::ensure!(
-        !identity.get::<_, bool>(0) && !identity.get::<_, bool>(1),
+        !identity.get::<bool, _>(0) && !identity.get::<bool, _>(1),
         "fixture configuration uses the administration login"
     );
-    writer.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-host-route-fixture',false)",&[&first]).await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-host-route-fixture',false)").bind(&first).execute(&mut writer).await.map(|result| result.rows_affected())?;
     for role in ["admin", "purchase-reader"] {
-        writer
-            .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
-            .await?;
+        sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+            .bind(&role)
+            .execute(&mut writer)
+            .await
+            .map(|result| result.rows_affected())?;
     }
-    writer
-        .execute(
-            "INSERT INTO platform.permission (role_name, permission) \
+    sqlx::query(
+        "INSERT INTO platform.permission (role_name, permission) \
              VALUES ('purchase-reader', 'session-test:purchase/read')",
-            &[],
-        )
-        .await?;
+    )
+    .execute(&mut writer)
+    .await
+    .map(|result| result.rows_affected())?;
     for (principal, email, role) in [
         (first.as_str(), "first@example.test", "admin"),
         (MEMBER, "member@example.test", "purchase-reader"),
     ] {
-        writer
-            .execute(
-                "INSERT INTO platform.\"user\" (id, type, email) \
+        sqlx::query(
+            "INSERT INTO platform.\"user\" (id, type, email) \
                  VALUES ($1::text::uuid, 'user', $2)",
-                &[&principal, &email],
-            )
-            .await?;
-        writer
-            .execute(
-                "INSERT INTO platform.user_role (user_id, role_name) \
+        )
+        .bind(&principal)
+        .bind(&email)
+        .execute(&mut writer)
+        .await
+        .map(|result| result.rows_affected())?;
+        sqlx::query(
+            "INSERT INTO platform.user_role (user_id, role_name) \
                  VALUES ($1::text::uuid, $2)",
-                &[&principal, &role],
-            )
-            .await?;
+        )
+        .bind(&principal)
+        .bind(&role)
+        .execute(&mut writer)
+        .await
+        .map(|result| result.rows_affected())?;
     }
     Ok((admitter, administration))
 }
@@ -158,24 +164,26 @@ pub(super) async fn install(
 /// The App generation of the fixture project_env_key, as provisioning prepares it:
 /// the guest authority that `number_counter.set` runs under. Returns its
 /// login name.
-pub(super) async fn app_generation(admin: &Client, database: &str) -> anyhow::Result<String> {
-    let role = workload_generation_role(
+pub(super) async fn app_generation(admin: &mut Client, database: &str) -> anyhow::Result<String> {
+    let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             database,
             &role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     Ok(role)
 }
 
@@ -269,38 +277,55 @@ pub(super) async fn application_host_with_release(
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database(name)?;
     let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await?;
+    let mut database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
-    let (admitter, administration) = install(&admin, &database, admin_url).await?;
-    let guest = app_generation(&admin, &database).await?;
+    let (admitter, administration) = install(&mut admin, &mut database, admin_url).await?;
+    let guest = app_generation(&mut admin, &mut database).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
-    session_fixture::install_authority(&admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER]).await?;
+    session_fixture::install_authority(&mut admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER])
+        .await?;
     // Application routes advertise PATs and sessions. Extend the session
     // authority fixture with the columns the real PAT reader prepares.
-    admin.batch_execute(
-        "ALTER TABLE identity.principals ADD COLUMN subject text, ADD COLUMN display_name text; \
-         ALTER TABLE identity.pats ADD COLUMN token_prefix text, ADD COLUMN token_hash text",
-    ).await?;
-    admin
-        .batch_execute(&sql::grant_identity_reader_surface_sql())
-        .await?;
-    admin
-        .batch_execute(
-            "CREATE ROLE host_route_identity_reader LOGIN; \
-             GRANT wamn_identity_reader TO host_route_identity_reader;",
-        )
-        .await?;
-    let reader = async || -> anyhow::Result<Arc<Client>> {
-        let client = connect(admin_url).await?;
-        client
-            .batch_execute("SET ROLE host_route_identity_reader")
-            .await?;
-        Ok(Arc::new(client))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE identity.principals ADD COLUMN subject text, ADD COLUMN display_name text; \
+         ALTER TABLE identity.pats ADD COLUMN token_prefix text, ADD COLUMN token_hash text")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_identity_reader_surface_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE host_route_identity_reader LOGIN; \
+             GRANT wamn_identity_reader TO host_route_identity_reader;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    let reader = async || -> anyhow::Result<sqlx::PgPool> {
+        let options = wamn_postgres::connect_options(admin_url).await?;
+        Ok(sqlx::postgres::PgPoolOptions::new()
+            .max_connections(4)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::raw_sql("SET ROLE host_route_identity_reader")
+                        .execute(connection)
+                        .await
+                        .map(drop)
+                })
+            })
+            .connect_lazy_with(options))
     };
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
@@ -310,16 +335,13 @@ pub(super) async fn application_host_with_release(
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default()
-                .with_authentication(Arc::new(
-                    RouteAuthentication::new(
-                        reader().await?,
-                        Arc::clone(&postgres_credentials),
-                        ORG,
-                        PROJECT,
-                        PROJECT_ENV_KEY,
-                    )
-                    .await?,
-                ))
+                .with_authentication(Arc::new(RouteAuthentication::new(
+                    reader().await?,
+                    Arc::clone(&postgres_credentials),
+                    ORG,
+                    PROJECT,
+                    PROJECT_ENV_KEY,
+                )))
                 .with_session_authentication(Arc::new(SessionRouteAuthentication::new(
                     verifier,
                     reader().await?,

@@ -45,6 +45,24 @@ impl std::fmt::Debug for Secret {
     }
 }
 impl Secret {
+    /// Build the username and password Secret that CloudNativePG reads.
+    pub fn basic_auth(namespace: &str, name: &str, username: &str, password: &str) -> Self {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let mut secret = Self::new(namespace, name);
+        secret.content_type = "kubernetes.io/basic-auth".into();
+        secret
+            .data
+            .insert("username".into(), STANDARD.encode(username));
+        secret
+            .data
+            .insert("password".into(), STANDARD.encode(password));
+        secret.metadata.attributes.insert(
+            "labels".into(),
+            serde_json::json!({"cnpg.io/reload":"true"}),
+        );
+        secret
+    }
+
     pub fn new(namespace: &str, name: &str) -> Self {
         Self {
             api_version: "v1".into(),

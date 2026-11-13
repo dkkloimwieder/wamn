@@ -1,7 +1,9 @@
 //! Shared SQL file execution, resolution, and session exclusion.
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{Client, Transaction, types::ToSql};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_schema_control::{PendingMigration, RecordedMigration, SqlStatement};
 
 /// The developer's explicit decision about one uncertain file.
@@ -101,19 +103,17 @@ pub fn resolution_package<'a>(
 #[derive(Debug)]
 pub struct MigrationTable<'a> {
     pub name: &'a str,
-    pub keys: &'a [(&'a str, &'a (dyn ToSql + Sync))],
+    pub keys: &'a [(&'a str, &'a str)],
     pub recorded: &'a [RecordedMigration],
     pub target: ResolutionTarget<'a>,
 }
 
 impl MigrationTable<'_> {
-    async fn complete(&self, tx: &Transaction<'_>, path: &str) -> anyhow::Result<()> {
-        let mut params: Vec<&(dyn ToSql + Sync)> = self
-            .keys
-            .iter()
-            .map(|(_, value)| *value)
-            .collect::<Vec<_>>();
-        params.push(&path);
+    async fn complete(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        path: &str,
+    ) -> anyhow::Result<()> {
         let predicates = self
             .keys
             .iter()
@@ -134,12 +134,18 @@ impl MigrationTable<'_> {
         let sql = format!(
             "UPDATE {} SET outcome = 'applied', applied_at = now() WHERE {conjunction}relative_path = ${} AND outcome = 'started'",
             self.name,
-            params.len()
+            self.keys.len() + 1
         );
-        let updated = tx
-            .execute(&sql, &params)
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for (_, value) in self.keys {
+            query = query.bind(value);
+        }
+        let updated = query
+            .bind(path)
+            .execute(&mut **tx)
             .await
-            .context("record nontransactional completion")?;
+            .context("record nontransactional completion")?
+            .rows_affected();
         ensure!(
             updated == 1,
             "nontransactional start record disappeared: {path}"
@@ -153,16 +159,16 @@ pub trait MigrationHooks: Send {
     fn begin<'a>(
         &mut self,
         client: &'a mut Client,
-    ) -> impl std::future::Future<Output = anyhow::Result<Transaction<'a>>> + Send;
+    ) -> impl std::future::Future<Output = anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>>> + Send;
     fn initialize(
         &mut self,
-        _tx: &Transaction<'_>,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
         async { Ok(()) }
     }
     fn before(
         &mut self,
-        _tx: &Transaction<'_>,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         _file: &PendingMigration,
         _accept: bool,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
@@ -170,25 +176,25 @@ pub trait MigrationHooks: Send {
     }
     fn transactional(
         &mut self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         sql: &SqlStatement,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
     fn nontransactional(
         &mut self,
-        client: &Client,
+        client: &mut Client,
         file: &PendingMigration,
         sql: &SqlStatement,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
     fn after(
         &mut self,
-        _tx: &Transaction<'_>,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         _file: &PendingMigration,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
         async { Ok(()) }
     }
     fn finish(
         &mut self,
-        _tx: &Transaction<'_>,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
         async { Ok(()) }
     }
@@ -264,23 +270,23 @@ pub async fn execute_migrations(
         wamn_schema_control::migrations::validate_execution_sql(file, sql)?;
     }
     let mut tx = hooks.begin(client).await?;
-    hooks.initialize(&tx).await?;
+    hooks.initialize(&mut tx).await?;
     let mut executed = 0;
     for (file, [sql, record]) in pending.iter().zip(statements.as_chunks::<2>().0) {
         let accept = file.started
             && resolution.is_some_and(|choice| {
                 choice.path == file.relative_path && choice.action == Resolution::Applied
             });
-        hooks.before(&tx, file, accept).await?;
+        hooks.before(&mut tx, file, accept).await?;
         if file.transactional {
-            hooks.transactional(&tx, sql).await?;
-            execute(&tx, record).await?;
+            hooks.transactional(&mut tx, sql).await?;
+            execute(&mut tx, record).await?;
             executed += 1;
         } else {
             tx.commit().await.context("commit migration batch")?;
             tx = hooks.begin(client).await?;
             if !file.started {
-                execute(&tx, record).await?;
+                execute(&mut tx, record).await?;
             }
             tx.commit().await.context("commit nontransactional start")?;
             if !accept {
@@ -288,29 +294,36 @@ pub async fn execute_migrations(
                 executed += 1;
             }
             tx = hooks.begin(client).await?;
-            table.complete(&tx, &file.relative_path).await?;
+            table.complete(&mut tx, &file.relative_path).await?;
         }
-        hooks.after(&tx, file).await?;
+        hooks.after(&mut tx, file).await?;
         tx.commit().await.context("commit migration completion")?;
         tx = hooks.begin(client).await?;
     }
-    hooks.finish(&tx).await?;
+    hooks.finish(&mut tx).await?;
     tx.commit()
         .await
         .context("commit completed schema operation")?;
     Ok(executed)
 }
 
-async fn execute(tx: &Transaction<'_>, statement: &SqlStatement) -> anyhow::Result<()> {
+async fn execute(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    statement: &SqlStatement,
+) -> anyhow::Result<()> {
     let result = if statement.params.is_empty() {
-        tx.batch_execute(&statement.sql).await
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.sql.clone()))
+            .execute(&mut **tx)
+            .await
+            .map(drop)
     } else {
-        tx.execute(
-            &statement.sql,
-            &crate::sql_params::as_postgres(&statement.params),
+        crate::sql_params::bind(
+            sqlx::query(sqlx::AssertSqlSafe(statement.sql.clone())),
+            &statement.params,
         )
+        .execute(&mut **tx)
         .await
-        .map(|_| ())
+        .map(drop)
     };
     result.with_context(|| format!("apply {}", statement.summary))
 }
@@ -319,42 +332,46 @@ async fn execute(tx: &Transaction<'_>, statement: &SqlStatement) -> anyhow::Resu
 /// A blocking advisory-lock query can deadlock with CREATE INDEX CONCURRENTLY,
 /// which waits for older snapshots. Each attempt finishes before the client sleeps.
 pub async fn lock_session(
-    client: &Client,
+    client: &mut Client,
     transaction_lock_sql: &str,
-    parameters: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+    parameters: &[&str],
 ) -> anyhow::Result<i64> {
-    let key: i64 = client
-        .query_one(
-            &transaction_lock_sql.replace("pg_advisory_xact_lock", ""),
-            parameters,
-        )
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(
+        transaction_lock_sql.replace("pg_advisory_xact_lock", ""),
+    ));
+    for value in parameters {
+        query = query.bind(value);
+    }
+    let key: i64 = query
+        .fetch_one(&mut *client)
         .await
         .context("read package schema lock key")?
         .get(0);
     let mut delay = std::time::Duration::from_millis(25);
     let mut reported_holders = None;
     loop {
-        if client
-            .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
+        if sqlx::query("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *client)
             .await
             .context("try package schema session lock")?
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
         {
             return Ok(key);
         }
-        let holders = client
-            .query(
-                "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted \
+        let holders = sqlx::query(
+            "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted \
              AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) \
              AND classid::bigint=(($1::bigint >> 32) & 4294967295) \
              AND objid::bigint=($1::bigint & 4294967295) AND objsubid=1 ORDER BY pid",
-                &[&key],
-            )
-            .await
-            .context("read package schema lock holders")?
-            .iter()
-            .map(|row| row.get::<_, Option<i32>>(0))
-            .collect::<Vec<_>>();
+        )
+        .bind(key)
+        .fetch_all(&mut *client)
+        .await
+        .context("read package schema lock holders")?
+        .iter()
+        .map(|row| row.get::<Option<i32>, _>(0))
+        .collect::<Vec<_>>();
         if reported_holders.as_ref() != Some(&holders) {
             eprintln!("waiting for package schema lock {key}; PostgreSQL holders: {holders:?}");
             reported_holders = Some(holders);

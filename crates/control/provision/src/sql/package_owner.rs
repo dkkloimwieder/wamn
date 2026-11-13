@@ -1,26 +1,12 @@
 //! Package object owners and their platform history privileges.
 
-use super::{ensure_acl_role_sql, escape_identifier, escape_literal};
+use super::{ensure_acl_role_sql, escape_identifier};
 use crate::package_owner_role;
 
 /// Provision the package owner before creating its schemas and objects.
 pub fn ensure_package_owner_role_sql(package: &str) -> String {
     let role = package_owner_role(package);
-    format!(
-        "{} DO $package_owner$ BEGIN \
-           IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_provisioner') \
-             AND NOT EXISTS (SELECT FROM pg_catalog.pg_auth_members m \
-               JOIN pg_catalog.pg_roles owner_role ON owner_role.oid = m.roleid \
-               JOIN pg_catalog.pg_roles provisioner ON provisioner.oid = m.member \
-               WHERE owner_role.rolname = {role_literal} AND provisioner.rolname = 'wamn_provisioner' \
-               GROUP BY m.roleid, m.member \
-               HAVING bool_or(m.admin_option) AND bool_or(m.inherit_option) AND bool_or(m.set_option)) THEN \
-             GRANT {role} TO wamn_provisioner WITH ADMIN TRUE, INHERIT TRUE, SET TRUE; \
-           END IF; END $package_owner$;",
-        ensure_acl_role_sql(&role),
-        role = escape_identifier(&role),
-        role_literal = escape_literal(&role),
-    )
+    ensure_acl_role_sql(&role)
 }
 
 /// Preserve the history surface formerly used through the database owner.

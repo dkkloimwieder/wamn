@@ -13,6 +13,7 @@
 //! cluster-wide roles `wamn_app` and `wamn_db_owner` that the build creates
 //! when they are absent.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -21,7 +22,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
-use tokio_postgres::NoTls;
 use wamn_digest::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
@@ -315,24 +315,21 @@ async fn pass_one_and_two(
     let (corpus, grants) =
         statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to plan the package statements")?;
-    let connection_task = tokio::spawn(connection);
+
     let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
     drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
+
     let package =
         generate_from_manifest(&catalog, &canonical, &manifest, package_root, &verdicts?)?;
-    let client = client_bindings(package_root, &manifest, &package)?;
+    let mut client = client_bindings(package_root, &manifest, &package)?;
     let mut files = expected_files(&package)?
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    for file in &client {
+    for file in &mut client {
         let relative = Path::new(file.path())
             .strip_prefix("generated")
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
@@ -371,16 +368,18 @@ async fn physical_schema(
             }
         }
     }
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
-    let task = tokio::spawn(connection);
+    let mut client = wamn_postgres::connect(database_url).await?;
+
     let result = async {
         let mut columns = BTreeMap::new();
         for (id, model) in &manifest.models {
             if model.owner != manifest.package.id {
                 continue;
             }
-            let rows = client
-                .query(SELECT_RELATION_COLUMNS_SQL, &[&model.schema, &model.table])
+            let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
+                .bind(&model.schema)
+                .bind(&model.table)
+                .fetch_all(&mut client)
                 .await?;
             columns.insert(
                 id.clone(),
@@ -401,7 +400,6 @@ async fn physical_schema(
     }
     .await;
     drop(client);
-    task.await??;
     result
 }
 
@@ -500,31 +498,25 @@ async fn missing_paged_query_indexes(
             }
             // The normalized IR sorts columns by name. PostgreSQL retains the
             // definition order that the authored naming rule requires.
-            let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+            let mut client = wamn_postgres::connect(database_url)
                 .await
                 .context("connect to name the missing pagination index")?;
-            let task = tokio::spawn(connection);
-            let columns = client
-                .query(
-                    "SELECT attribute.attname::text
+
+            let columns = sqlx::query("SELECT attribute.attname::text
                      FROM pg_catalog.pg_attribute AS attribute
                      JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
                      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
                      WHERE namespace.nspname = $1 AND relation.relname = $2
                        AND attribute.attnum > 0 AND NOT attribute.attisdropped
                        AND attribute.attname::text = ANY($3::text[])
-                     ORDER BY attribute.attnum",
-                    &[&model.schema, &model.table, &vec![field, tie_breaker]],
-                )
+                     ORDER BY attribute.attnum").bind(&model.schema).bind(&model.table).bind(vec![field, tie_breaker]).fetch_all(&mut client)
                 .await;
             drop(client);
-            task.await
-                .context("join the index naming connection")?
-                .context("drive the index naming connection")?;
+
             let columns = columns
                 .context("read the pagination index columns in table-definition order")?
                 .iter()
-                .map(|row| row.get::<_, String>(0))
+                .map(|row| row.get::<String, _>(0))
                 .collect::<Vec<_>>();
             let name = authored_object_name(table.name(), &columns, "idx");
             warnings.push(format!(
@@ -771,10 +763,10 @@ async fn migrate(
     schemas.dedup();
     directories.push(package_root.join("migrations"));
 
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to the verification database")?;
-    let task = tokio::spawn(connection);
+
     let result = async {
         if !schemas.is_empty() {
             let quoted = schemas
@@ -792,14 +784,12 @@ async fn migrate(
                 quoted.join(", ")
             )
             .expect("writing to a String cannot fail");
-            client
-                .batch_execute(&sql)
-                .await
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut client).await.map(drop)
                 .context("create the package schemas")?;
         }
         // Public platform identity keys support application foreign keys.
         // These verification relations contain no system database or registry data.
-        client.batch_execute("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").await.context("create platform references for package verification")?;
+        sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").execute(&mut client).await.map(drop).context("create platform references for package verification")?;
         for directory in directories {
             if !directory.exists() {
                 continue;
@@ -814,25 +804,21 @@ async fn migrate(
             for file in files {
                 let sql = fs::read_to_string(&file)
                     .with_context(|| format!("read migration {}", file.display()))?;
-                client
-                    .batch_execute(&sql)
-                    .await
+                sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut client).await.map(drop)
                     .with_context(|| format!("apply migration {}", file.display()))?;
             }
         }
-        create_history_tables(&client, manifest).await
+        create_history_tables(&mut client, manifest).await
     }
     .await;
     drop(client);
-    task.await
-        .context("join the migration connection")?
-        .context("drive the migration connection")?;
+
     result
 }
 
 /// Create the history table of each relation the package keeps a log of.
 async fn create_history_tables(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     manifest: &ManifestSources,
 ) -> Result<()> {
     let logged = manifest
@@ -843,46 +829,56 @@ async fn create_history_tables(
     if logged.is_empty() {
         return Ok(());
     }
-    client
-        .batch_execute(
-            "DO $application_role$ BEGIN \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $application_role$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
                END IF; \
              EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
-             END $application_role$",
-        )
+             END $application_role$")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .context("create the application role")?;
+    let history = sqlx::raw_sql(RECORD_HISTORY_SQL)
+        .execute(&mut *client)
         .await
-        .context("create the application role")?;
-    let history = client.batch_execute(RECORD_HISTORY_SQL).await;
+        .map(drop);
     // The frozen bootstrap's advisory lock is database-local, but roles are
     // cluster-wide. A concurrent creator has committed before this collision
     // returns; the failed implicit transaction left no history DDL behind.
     if history
         .as_ref()
         .err()
-        .and_then(tokio_postgres::Error::as_db_error)
+        .and_then(sqlx::Error::as_database_error)
         .is_some_and(|error| {
-            error.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION
+            error.code().as_deref() == Some("23505")
                 && error.constraint() == Some("pg_authid_rolname_index")
         })
     {
-        client.batch_execute(RECORD_HISTORY_SQL).await
+        sqlx::raw_sql(RECORD_HISTORY_SQL)
+            .execute(&mut *client)
+            .await
+            .map(drop)
     } else {
         history
     }
     .context("apply record-history.sql")?;
-    client
-        .batch_execute(RECORD_HISTORY_APP_GRANTS_SQL)
+    sqlx::raw_sql(RECORD_HISTORY_APP_GRANTS_SQL)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
-        client
-            .batch_execute(&wamn_schema_control::physical_schema::history_table_sql(
-                &model.into(),
-            ))
-            .await
-            .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_schema_control::physical_schema::history_table_sql(&model.into()),
+        ))
+        .execute(&mut *client)
+        .await
+        .map(drop)
+        .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }
     Ok(())
 }
@@ -943,15 +939,16 @@ impl VerificationDatabase {
 }
 
 async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
-    let (client, connection) = tokio_postgres::connect(server_url, NoTls)
+    let mut client = wamn_postgres::connect(server_url)
         .await
         .context("connect to the PostgreSQL server")?;
-    let task = tokio::spawn(connection);
-    let result = client.batch_execute(sql).await;
+
+    let result = sqlx::raw_sql(sqlx::AssertSqlSafe((sql).to_string()))
+        .execute(&mut client)
+        .await
+        .map(drop);
     drop(client);
-    task.await
-        .context("join the server connection")?
-        .context("drive the server connection")?;
+
     result.with_context(|| format!("execute {sql}"))
 }
 
@@ -1053,20 +1050,20 @@ mod tests {
         .await;
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
-        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+        wamn_schema_introspection::postgres::read_catalog(&mut client, &["files_fixture"])
             .await
             .unwrap();
-        let task = tokio::spawn(connection);
-        wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
-            .await
-            .unwrap();
-        let error = client.batch_execute("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").await.unwrap_err();
+        let error = sqlx::raw_sql("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").execute(&mut client).await.map(drop).unwrap_err();
         assert_eq!(
-            error.code(),
-            Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23503")
         );
         drop(client);
-        task.await.unwrap().unwrap();
     }
 
     #[tokio::test]

@@ -1,3 +1,4 @@
+use sqlx::Row as _;
 // Receiving environment tests and helpers.
 
 use super::*;
@@ -32,19 +33,16 @@ pub(super) fn required_journey_path(key: &str) -> anyhow::Result<PathBuf> {
 /// Applying the packages leaves the built-in `admin` role and no permission
 /// row: `admin` holds every served operation without rows, and no other role is
 /// authored yet (docs/architecture/execution.md#host-run-routes).
-pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
-    let roles = project
-        .query(
-            "SELECT name FROM platform.role ORDER BY name COLLATE \"C\"",
-            &[],
-        )
+pub(super) async fn verify_journey_operation_grants(project: &mut Client) -> anyhow::Result<()> {
+    let roles = sqlx::query("SELECT name FROM platform.role ORDER BY name COLLATE \"C\"")
+        .fetch_all(&mut *project)
         .await
         .context("read the installed roles")?
         .into_iter()
-        .map(|row| row.get::<_, String>(0))
+        .map(|row| row.get::<String, _>(0))
         .collect::<Vec<_>>();
-    let permissions: i64 = project
-        .query_one("SELECT count(*) FROM platform.permission", &[])
+    let permissions: i64 = sqlx::query("SELECT count(*) FROM platform.permission")
+        .fetch_one(&mut *project)
         .await
         .context("count the installed permission rows")?
         .get(0);
@@ -63,11 +61,10 @@ pub(super) fn repository_root() -> anyhow::Result<PathBuf> {
         .context("resolve the repository root for the product command")
 }
 
-pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
+pub(super) async fn seed_receiving_business_rows(project: &mut Client) -> anyhow::Result<()> {
     bind_fixture_principal(project).await?;
-    project
-        .batch_execute(
-            "INSERT INTO receiving.item (id, item_number) VALUES \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO receiving.item (id, item_number) VALUES \
                ('00000000-0000-0000-0000-000000000101', 'ITEM-101'); \
              INSERT INTO receiving.location (id, location_code) VALUES \
                ('00000000-0000-0000-0000-000000000201', 'DOCK-1'); \
@@ -98,8 +95,11 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
              VALUES \
                ('00000000-0000-0000-0000-000000000303', 'PO-303', \
                 '00000000-0000-0000-0000-000000000403', 'complete', 2, \
-                true, 'pending');",
-        )
-        .await
-        .context("seed only Receiving business rows")
+                true, 'pending');")
+            .to_string(),
+    ))
+    .execute(&mut *project)
+    .await
+    .map(drop)
+    .context("seed only Receiving business rows")
 }

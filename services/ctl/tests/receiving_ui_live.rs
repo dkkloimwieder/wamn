@@ -1,5 +1,6 @@
 //! Drive Receiving screens through the local application host and identity service.
 
+use sqlx::Connection as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
@@ -147,18 +148,15 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
             println!("{line}");
             if line == "run holding" { break; }
         }
-        let (mut admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
-        let driver = tokio::spawn(driver);
+        let mut admin = wamn_postgres::connect(system.url()).await?;
+
         let actor: wamn_identity_protocol::PrincipalId =
             PlatformComponent::Provisioning.principal_id().to_string().parse()?;
         // Bind the caller for the existing platform verbs. No identity table SQL belongs here.
-        admin.execute(
-            "SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:receiving-ui-test', false)",
-            &[&actor.to_string().as_str()],
-        ).await?;
+        sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:receiving-ui-test', false)").bind(&actor.to_string().as_str()).execute(&mut admin).await.map(|result| result.rows_affected())?;
         // dev up calls provision-org --admin through its shared implementation.
-        let user = create_or_reuse_user(&admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
-        grant_project_env_membership(&admin, &user, ORG, PROJECT, ENVIRONMENT).await?;
+        let user = create_or_reuse_user(&mut admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
+        grant_project_env_membership(&mut admin, &user, ORG, PROJECT, ENVIRONMENT).await?;
         let invitation = wamn_platform_identity::password::issue_invitation(&mut admin, &actor, &user).await?;
         let web: Value = serde_json::from_slice(&std::fs::read(root.join("web.json"))?)?;
         let url = web["applications"].as_array().context("application URLs")?
@@ -168,19 +166,15 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
         let target = config["target_database_url"].as_str().context("target database URL")?;
         let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
         reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
-        let (business, business_driver) = tokio_postgres::connect(target, tokio_postgres::NoTls).await?;
-        let business_driver = tokio::spawn(business_driver);
-        let tx = admin.transaction().await?;
-        wamn_platform_identity::org::grant_project_admin(&tx, &user, ORG, PROJECT).await?;
+        let mut business = wamn_postgres::connect(target).await?;
+
+        let mut tx = admin.begin().await?;
+        wamn_platform_identity::org::grant_project_admin(&mut tx, &user, ORG, PROJECT).await?;
         tx.commit().await?;
         reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
-        business.execute(
-            "SELECT set_config('app.user_id', $1, false), set_config('app.project_env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
-            &[&actor.to_string().as_str(), &project_env_key],
-        ).await?;
-        business.batch_execute(include_str!("fixtures/receiving_ui.sql")).await?;
+        sqlx::query("SELECT set_config('app.user_id', $1, false), set_config('app.project_env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)").bind(&actor.to_string().as_str()).bind(&project_env_key).execute(&mut business).await.map(|result| result.rows_affected())?;
+        sqlx::raw_sql(include_str!("fixtures/receiving_ui.sql")).execute(&mut business).await.map(drop)?;
         drop(business);
-        business_driver.await??;
         let enrolled = reqwest::Client::new().post(format!("{url}/password/enroll"))
             .json(&json!({"principal_id": user.to_string().as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
             .send().await?;
@@ -201,7 +195,6 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
         ensure!(output.status.success(), "browser failed: {}", output.status);
         ensure!(String::from_utf8_lossy(&output.stdout).contains(browser_run.passed), "Receiving browser assertions did not finish");
         drop(admin);
-        driver.await??;
         Ok::<_, anyhow::Error>(())
     }.await;
     let application_cleanup = async {

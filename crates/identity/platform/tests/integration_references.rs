@@ -1,37 +1,39 @@
 //! Each environment reference prevents deletion before authority changes.
 
+use sqlx::Connection as _;
 use wamn_platform_identity::connections::references::refuse_environment_references;
 
 async fn refusal(relation: &str, expected: &str) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(driver);
-    client.batch_execute("CREATE SCHEMA platform; CREATE SCHEMA catalog; \
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("CREATE SCHEMA platform; CREATE SCHEMA catalog; \
         CREATE TABLE platform.external_system(id uuid PRIMARY KEY); \
         CREATE TABLE platform.connection(id uuid PRIMARY KEY); \
         CREATE TABLE platform.record_source(external_system_id uuid REFERENCES platform.external_system(id)); \
         CREATE TABLE platform.file(connection_id uuid); \
         CREATE TABLE catalog.connection_binding(connection_id uuid); \
         CREATE TABLE catalog.release_connection(connection_id uuid); \
-        INSERT INTO platform.external_system VALUES ('00000000-0000-0000-0000-000000000001')").await.unwrap();
-    client
-        .batch_execute(&format!(
-            "INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"
-        ))
-        .await
-        .unwrap();
-    let tx = client.transaction().await.unwrap();
+        INSERT INTO platform.external_system VALUES ('00000000-0000-0000-0000-000000000001')").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!("INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"))
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let mut tx = client.begin().await.unwrap();
     let group = if expected == "record" {
         "external_system"
     } else {
         "connection"
     };
-    let error = refuse_environment_references(&tx, group, "00000000-0000-0000-0000-000000000001")
-        .await
-        .unwrap_err();
+    let error =
+        refuse_environment_references(&mut tx, group, "00000000-0000-0000-0000-000000000001")
+            .await
+            .unwrap_err();
     assert_eq!(error.code, "referenced");
     assert_eq!(error.field, expected);
 }

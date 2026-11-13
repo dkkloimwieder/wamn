@@ -86,14 +86,14 @@ impl FromStr for UpgradeTarget {
 
 impl UpgradeTarget {
     /// The existing Helm release name and namespace that own this selection.
-    pub fn owner(&self, document: &ClusterDocument) -> (Cow<'_, str>, &'static str) {
+    pub fn owner<'a>(&'a self, document: &'a ClusterDocument) -> (Cow<'a, str>, &'a str) {
         match self {
             Self::Control => (
                 wamn_registry::name::control_resource(&document.org).into(),
-                "hosts",
+                &document.org,
             ),
-            Self::Identity => ("identity".into(), "identity"),
-            Self::Host { release, .. } => (release.as_str().into(), "hosts"),
+            Self::Identity => ("identity".into(), &document.org),
+            Self::Host { release, .. } => (release.as_str().into(), &document.org),
         }
     }
 }

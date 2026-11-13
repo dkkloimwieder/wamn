@@ -6,6 +6,7 @@
 //! admits a run for each row whose cron names that minute. A row enabled or disabled between ticks takes
 //! effect at the next tick.
 
+use sqlx::Row as _;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -48,7 +49,7 @@ SELECT application, workflow_id, schedule FROM catalog.workflows \
 /// reads them on the task's executor connection and admits through
 /// [`WamnPostgres::admit_schedule_run`].
 pub struct PostgresSchedules {
-    client: tokio_postgres::Client,
+    client: sqlx::PgPool,
     postgres: Arc<WamnPostgres>,
     project: String,
     release: Arc<wamn_engine::release_manifest::LoadedRelease>,
@@ -67,7 +68,7 @@ impl PostgresSchedules {
     /// Serve the schedules of `applications` in `project_env_key` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
-        client: tokio_postgres::Client,
+        client: sqlx::PgPool,
         postgres: Arc<WamnPostgres>,
         project: impl Into<String>,
         release: Arc<wamn_engine::release_manifest::LoadedRelease>,
@@ -89,12 +90,11 @@ impl ScheduleRows for PostgresSchedules {
             .applications
             .first_key_value()
             .context("schedule host has no application")?;
-        let rows = self
-            .client
-            .query(
-                ENABLED_SCHEDULES_SQL,
-                &[&target.project_env_key, &target.environment, application],
-            )
+        let rows = sqlx::query(ENABLED_SCHEDULES_SQL)
+            .bind(&target.project_env_key)
+            .bind(&target.environment)
+            .bind(application)
+            .fetch_all(&self.client)
             .await
             .context("read the enabled workflow schedules")?;
         rows.iter()
@@ -105,7 +105,7 @@ impl ScheduleRows for PostgresSchedules {
                     schedule: row.try_get(2)?,
                 })
             })
-            .collect::<Result<_, tokio_postgres::Error>>()
+            .collect::<Result<_, sqlx::Error>>()
             .context("decode an enabled workflow schedule")
     }
 

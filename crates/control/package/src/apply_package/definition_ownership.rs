@@ -1,3 +1,4 @@
+use sqlx::Row as _;
 pub(super) mod plan;
 pub(super) use plan::{definition_error, model_for_relation, validate_migration_policy};
 use plan::{definition_error_for_parts, explicit_definition_owner};
@@ -6,7 +7,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::Transaction;
 use wamn_compiler::manifest::{ModelDeclaration, PackageManifest};
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 use wamn_schema_control::PackageDirectory;
@@ -86,7 +86,7 @@ pub(super) struct StoredDefinitionOwner {
 }
 
 pub(super) async fn reconcile_definition_ownership(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     package_id: &str,
@@ -114,20 +114,19 @@ pub(super) async fn reconcile_definition_ownership(
                     extensible,
                 )
                 .await?;
-                for row in tx
-                    .query(
-                        SELECT_RELATION_DEFINITIONS_SQL,
-                        &[&mutation.schema(), &mutation.relation()],
-                    )
+                for row in sqlx::query(SELECT_RELATION_DEFINITIONS_SQL)
+                    .bind(mutation.schema())
+                    .bind(mutation.relation())
+                    .fetch_all(&mut **tx)
                     .await
                     .context("read server-derived relation definitions")?
                 {
-                    let type_ = match row.get::<_, String>(0).as_str() {
+                    let type_ = match row.get::<String, _>(0).as_str() {
                         "field" => DefinitionType::Field,
                         "constraint" => DefinitionType::Constraint,
                         value => unreachable!("closed server definition type {value}"),
                     };
-                    let definition = row.get::<_, String>(1);
+                    let definition = row.get::<String, _>(1);
                     changed |= insert_definition_owner(
                         tx,
                         project_env_key,
@@ -164,7 +163,7 @@ pub(super) async fn reconcile_definition_ownership(
 }
 
 async fn ensure_definition_present(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
 ) -> anyhow::Result<()> {
@@ -196,7 +195,7 @@ async fn ensure_definition_present(
     reason = "the parameters are the exact durable definition-owner row"
 )]
 async fn insert_definition_owner(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
@@ -206,20 +205,17 @@ async fn insert_definition_owner(
     client_field_extensible: bool,
 ) -> anyhow::Result<bool> {
     let mutation = &planned.mutation;
-    let inserted = tx
-        .execute(
-            INSERT_DEFINITION_OWNER_SQL,
-            &[
-                &project_env_key,
-                &mutation.schema(),
-                &mutation.relation(),
-                &type_.as_str(),
-                &definition,
-                &package_id,
-                &client_field_extensible,
-            ],
-        )
+    let inserted = sqlx::query(INSERT_DEFINITION_OWNER_SQL)
+        .bind(project_env_key)
+        .bind(mutation.schema())
+        .bind(mutation.relation())
+        .bind(type_.as_str())
+        .bind(definition)
+        .bind(package_id)
+        .bind(client_field_extensible)
+        .execute(&mut **tx)
         .await
+        .map(|result| result.rows_affected())
         .context("record server-derived definition owner")?;
     if inserted == 1 {
         return Ok(true);
@@ -253,35 +249,32 @@ async fn insert_definition_owner(
 }
 
 pub(super) async fn load_definition_owner(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     schema: &str,
     relation: &str,
     type_: DefinitionType,
     definition: &str,
 ) -> anyhow::Result<Option<StoredDefinitionOwner>> {
-    tx.query_opt(
-        SELECT_DEFINITION_OWNER_SQL,
-        &[
-            &project_env_key,
-            &schema,
-            &relation,
-            &type_.as_str(),
-            &definition,
-        ],
-    )
-    .await
-    .context("read durable definition owner")
-    .map(|row| {
-        row.map(|row| StoredDefinitionOwner {
-            package_id: row.get(0),
-            client_field_extensible: row.get(1),
+    sqlx::query(SELECT_DEFINITION_OWNER_SQL)
+        .bind(project_env_key)
+        .bind(schema)
+        .bind(relation)
+        .bind(type_.as_str())
+        .bind(definition)
+        .fetch_optional(&mut **tx)
+        .await
+        .context("read durable definition owner")
+        .map(|row| {
+            row.map(|row| StoredDefinitionOwner {
+                package_id: row.get(0),
+                client_field_extensible: row.get(1),
+            })
         })
-    })
 }
 
 pub(super) async fn definition_present(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     schema: &str,
     relation: &str,
     type_: DefinitionType,
@@ -289,19 +282,27 @@ pub(super) async fn definition_present(
 ) -> anyhow::Result<bool> {
     let row = match type_ {
         DefinitionType::Relation => {
-            tx.query_one(SELECT_RELATION_PRESENT_SQL, &[&schema, &relation])
+            sqlx::query(SELECT_RELATION_PRESENT_SQL)
+                .bind(schema)
+                .bind(relation)
+                .fetch_one(&mut **tx)
                 .await
         }
         DefinitionType::Field => {
-            tx.query_one(SELECT_FIELD_PRESENT_SQL, &[&schema, &relation, &definition])
+            sqlx::query(SELECT_FIELD_PRESENT_SQL)
+                .bind(schema)
+                .bind(relation)
+                .bind(definition)
+                .fetch_one(&mut **tx)
                 .await
         }
         DefinitionType::Constraint => {
-            tx.query_one(
-                SELECT_CONSTRAINT_PRESENT_SQL,
-                &[&schema, &relation, &definition],
-            )
-            .await
+            sqlx::query(SELECT_CONSTRAINT_PRESENT_SQL)
+                .bind(schema)
+                .bind(relation)
+                .bind(definition)
+                .fetch_one(&mut **tx)
+                .await
         }
     }
     .context("read server definition presence")?;
@@ -311,7 +312,7 @@ pub(super) async fn definition_present(
 pub(super) use plan::MigrationPolicyPlan;
 
 pub(super) async fn validate_definition_ownership_before_apply(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     package_id: &str,
@@ -357,7 +358,7 @@ pub(super) async fn validate_definition_ownership_before_apply(
 }
 
 async fn preflight_create_relation(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     package_id: &str,
@@ -410,7 +411,7 @@ async fn preflight_create_relation(
 }
 
 async fn preflight_add_definition(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     package_id: &str,
@@ -537,7 +538,7 @@ async fn preflight_add_definition(
 }
 
 async fn preflight_existing_definition_mutation(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &str,
     package_id: &str,

@@ -7,67 +7,71 @@
 //!
 //! `control_route_live` and `tests/integration`'s `control_client_live` include it.
 
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, sql,
-    workload_generation_role,
+    PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
 
 pub(super) const ORG: &str = "org-a";
 pub(super) const PASSWORD: &str = "control-route-test-only";
 
 pub(super) async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { connection.await.expect("fixture database connection") });
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
 /// The control store that `provision-system` installs, one org with two
 /// projects and one environment each, and the org's `control` login.
-pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<String> {
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+pub(super) async fn install(admin: &mut Client, admin_url: &str) -> anyhow::Result<String> {
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut *admin)
         .await?
         .get(0);
-    admin
-        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
-        .await?;
+    sqlx::raw_sql("CREATE ROLE wamn_system NOLOGIN NOINHERIT")
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     wamn_environment_control::provision_system::install_control_store(admin).await?;
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET ROLE wamn_system; SET app.user_id = '{}'",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ))
-        .await?;
-    admin
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                VALUES ('org-a', 'pooled', 'wamn-pg'); \
              INSERT INTO registry.env_policies \
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
                VALUES ('org-a', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
              INSERT INTO registry.projects (org, id) VALUES ('org-a', 'billing'), ('org-a', 'shop'); \
              WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('org-a','dev','dev'),('org-a','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('org-a','billing','dev','s1','aaaaaaa1'),('org-a','shop','dev','s2','aaaaaaa2'); \
-             RESET ROLE",
-        )
-        .await?;
-    let role = workload_generation_role(
+             RESET ROLE").execute(&mut *admin).await.map(drop)?;
+    let role = workload_login(
         WorkloadRoleFamily::Control,
         WorkloadRoleIdentity::Org {
             org: ORG,
             database: &database,
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::Control,
             &database,
             &role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&role)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
@@ -82,37 +86,47 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
 /// into `logins` under the key its control patch names, as the mounted
 /// Secret shows it.
 pub(super) async fn project_database(
-    admin: &Client,
+    admin: &mut Client,
     admin_url: &str,
     system_url: &str,
     project: &str,
     instance: &str,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
-    use wamn_environment_control::provision_project_env::{
-        self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
-    };
-    let database = wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
-    admin
-        .batch_execute(&provision_project_env::role_posture_sql())
-        .await?;
-    admin
-        .batch_execute(&format!("CREATE DATABASE \"{database}\" OWNER wamn_system"))
-        .await?;
-    admin
-        .batch_execute(&provision_project_env::privilege_sql(&database))
-        .await?;
+    use wamn_environment_control::provision_project_env;
+    let mut database =
+        wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_project_env::role_posture_sql()).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE \"{database}\" OWNER wamn_system"
+    )))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&provision_project_env::privilege_sql(&mut database)).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let mut target_url = url::Url::parse(admin_url)?;
     target_url.set_path(&format!("/{database}"));
-    let target = connect(target_url.as_str()).await?;
-    target
-        .batch_execute(
-            " \
-             CREATE SCHEMA wamn_run;",
-        )
-        .await?;
-    target
-        .batch_execute(&format!(
+    let mut target = connect(target_url.as_str()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (" \
+             CREATE SCHEMA wamn_run;")
+            .to_string(),
+    ))
+    .execute(&mut target)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "{} {} {}",
             wamn_control_provision::sql::ensure_platform_group_role_sql(),
             wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -120,75 +134,66 @@ pub(super) async fn project_database(
                 WorkloadRoleFamily::AuditRetention
             ),
         ))
-        .await?;
-    target
-        .batch_execute(&format!(
-            "SET ROLE wamn_system; {}",
-            wamn_catalog::CATALOG_SCHEMA_SQL
-        ))
-        .await?;
-    target
-        .batch_execute(&format!(
+            .to_string(),
+    ))
+    .execute(&mut target)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE wamn_system; {}",
+        wamn_catalog::CATALOG_SCHEMA_SQL
+    )))
+    .execute(&mut target)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "{} RESET ROLE;",
             include_str!("../../../../../deploy/sql/app-schema.sql")
         ))
-        .await?;
-    target
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+            .to_string(),
+    ))
+    .execute(&mut target)
+    .await
+    .map(drop)?;
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:control-route-fixture', false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
-    target
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+    )
+    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+    .execute(&mut target)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",
-            &[
-                &PlatformComponent::Provisioning.principal_id().to_string(),
-                &PlatformComponent::Provisioning.principal_name(),
-            ],
-        )
-        .await?;
+    )
+    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+    .bind(&PlatformComponent::Provisioning.principal_name())
+    .execute(&mut target)
+    .await
+    .map(|result| result.rows_affected())?;
 
-    let secret = logins.join(format!("{project}.secret.json"));
-    let patch = logins.join(format!("{project}.patch.json"));
-    provision_project_env::run_workload_action(&WorkloadActionRequest {
-        org: ORG.to_owned(),
-        project: project.to_owned(),
-        env: "dev".to_owned(),
-        system_database_url: Some(system_url.to_owned()),
-        target_admin_database_url: Some(target_url.to_string()),
-        cluster: None,
-        cluster_namespace: "platform".to_owned(),
-        db_host: target_url.host_str().map(str::to_owned),
-        db_port: target_url.port_or_known_default().unwrap_or(5432),
-        namespace: "hosts".to_owned(),
-        action: WorkloadGenerationAction {
-            family: WorkloadRoleFamily::Administration,
-            verb: WorkloadActionVerb::Prepare,
-            generation: CredentialGeneration::A,
-        },
-        secret: Some(secret.clone()),
-        emit_role_sql: None,
-        control_administration_patch: Some(patch.clone()),
-    })
+    let login = wamn_test_infrastructure::credentials::database_login(
+        system_url,
+        Some(target_url.as_str()),
+        ORG,
+        project,
+        "dev",
+        WorkloadRoleFamily::Administration,
+    )
     .await?;
-    let patch: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&patch)?)?;
-    for (key, url) in patch["stringData"]
-        .as_object()
-        .expect("the patch sets one key")
-    {
-        std::fs::write(logins.join(key), url.as_str().expect("the key holds a URL"))?;
-    }
-    std::fs::remove_file(secret)?;
+    std::fs::write(
+        logins.join(wamn_registry::project_env_key(ORG, project, "dev")),
+        login,
+    )?;
     Ok(target)
 }
 
 /// The project databases of `billing/dev` and `shop/dev`, with their logins
 /// in a fresh directory named for `test`.
 pub(super) async fn environments(
-    admin: &Client,
+    admin: &mut Client,
     admin_url: &str,
     test: &str,
 ) -> anyhow::Result<(std::path::PathBuf, Client, Client)> {

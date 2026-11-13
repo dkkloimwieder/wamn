@@ -1,0 +1,21 @@
+[package]
+name = "wamn-postgres"
+description = "Verified PostgreSQL connections and component configuration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+url.workspace = true
+base64.workspace = true
+wamn-kubernetes.workspace = true
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

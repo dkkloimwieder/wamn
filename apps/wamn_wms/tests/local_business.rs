@@ -1,5 +1,6 @@
 //! WMS business operations over real local components and PostgreSQL.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -61,34 +62,36 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         attachments: &attachments,
     })
     .await?;
-    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
+    let mut admin = wamn_postgres::connect(project.url()).await?;
+
     // A revision near the top of int4, with room for the moves that follow.
     let initial_revision = 2_147_483_547_i64;
-    crate::business_fixture::seed_fixture(&admin, initial_revision).await?;
+    crate::business_fixture::seed_fixture(&mut admin, initial_revision).await?;
     let runtime = crate::business_fixture::runtime_phase();
     let route = crate::wms_runtime_live::Route::local(
         application.endpoint.clone(),
         application.route_host.clone(),
         application.bearer.clone(),
     );
-    crate::inventory_commands_live::assert_outcomes(&admin).await?;
-    crate::inventory_commands_live::assert_fresh_reads(&admin, project.url()).await?;
+    crate::inventory_commands_live::assert_outcomes(&mut admin).await?;
+    crate::inventory_commands_live::assert_fresh_reads(&mut admin, project.url()).await?;
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
     crate::wms_runtime_live::assert_blank_codes_refuse(&route).await?;
     // Every balance equals the sum of its transactions, after the seed and
     // every command above.
-    let disagreements = admin
-        .query(include_str!("inventory_balance.sql"), &[])
-        .await
-        .context("run the inventory balance query")?;
+    let disagreements = sqlx::query(sqlx::AssertSqlSafe(
+        (include_str!("inventory_balance.sql")).to_string(),
+    ))
+    .fetch_all(&mut admin)
+    .await
+    .context("run the inventory balance query")?;
     let disagreements = disagreements
         .iter()
         .map(|row| {
             (0..5)
-                .map(|column| row.get::<_, Option<String>>(column).unwrap_or_default())
+                .map(|column| row.get::<Option<String>, _>(column).unwrap_or_default())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -97,7 +100,6 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         "every balance equals the sum of its transactions: {disagreements:?}"
     );
     drop(admin);
-    connection.abort();
     application.shutdown().await?;
     Ok(())
 }

@@ -23,8 +23,8 @@ impl std::error::Error for ConnectionError {
         self.source.as_deref().map(|source| source as _)
     }
 }
-impl From<tokio_postgres::Error> for ConnectionError {
-    fn from(source: tokio_postgres::Error) -> Self {
+impl From<sqlx::Error> for ConnectionError {
+    fn from(source: sqlx::Error) -> Self {
         Self {
             code: "database_error",
             field: "connection",

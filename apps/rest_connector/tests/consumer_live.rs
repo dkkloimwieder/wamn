@@ -1,14 +1,13 @@
 //! Apply the release's data access and call its consumer through the native host.
 
+use sqlx::Row as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
-use tokio_postgres::Client;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use sqlx::PgConnection as Client;
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_environment_control::reconcile_package_data_access::{
     ReconcilePackageDataAccessRequest, reconcile_package_data_access,
@@ -38,46 +37,55 @@ pub async fn execution_role(
     role: &str,
     operations: &[&str],
 ) -> anyhow::Result<Client> {
-    let (project, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    project
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    let mut project = wamn_postgres::connect(database.url()).await?;
+
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-            &[&wamn_identity_protocol::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
+    )
+    .bind(
+        &wamn_identity_protocol::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+    )
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'enabler@example.test') ON CONFLICT (id) DO NOTHING",
-            &[&ENABLER],
-        )
-        .await?;
-    project
-        .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
-        .await?;
+    )
+    .bind(&ENABLER)
+    .execute(&mut project)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO platform.role (name) VALUES ($1)")
+        .bind(&role)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
     for operation in operations {
-        project
-            .execute(
-                "INSERT INTO platform.permission (role_name, permission) \
+        sqlx::query(
+            "INSERT INTO platform.permission (role_name, permission) \
                  VALUES ($1, $2)",
-                &[&role, operation],
-            )
-            .await?;
+        )
+        .bind(&role)
+        .bind(operation)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
     }
     let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     for user in [ENABLER, workflow_user.as_str()] {
-        project
-            .execute(
-                "INSERT INTO platform.user_role (user_id, role_name) \
+        sqlx::query(
+            "INSERT INTO platform.user_role (user_id, role_name) \
                  VALUES ($1::text::uuid, $2)",
-                &[&user, &role],
-            )
-            .await?;
+        )
+        .bind(&user)
+        .bind(&role)
+        .execute(&mut project)
+        .await
+        .map(|result| result.rows_affected())?;
     }
     Ok(project)
 }
@@ -88,7 +96,7 @@ pub async fn execution_role(
 /// admitter for the per-node grant read. The host's credential test refuses
 /// any other login, the superuser included.
 pub async fn workflow_host(
-    admin: &Client,
+    admin: &mut Client,
     database: &wamn_test_postgres::Database,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
@@ -98,15 +106,16 @@ pub async fn workflow_host(
         true,
     )
     .await?;
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_identity_protocol::PlatformComponent::Provisioning
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
-        .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ($1,'test')", &[&PROJECT_ENV_KEY]).await?;
+        .execute(&mut *admin)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ($1,'test')").bind(&PROJECT_ENV_KEY).execute(&mut *admin).await.map(|result| result.rows_affected())?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(
@@ -130,7 +139,7 @@ pub async fn workflow_host(
             AuthorityClass::CallableHttp,
         ),
     ] {
-        let role = workload_generation_role(
+        let role = workload_login(
             family,
             WorkloadRoleIdentity::ProjectEnvironment {
                 org: PROJECT_ENV_KEY,
@@ -138,17 +147,19 @@ pub async fn workflow_host(
                 environment: "test",
                 database: database.name(),
             },
-            CredentialGeneration::A,
         )?;
-        admin
-            .batch_execute(&sql::prepare_workload_generation_sql(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 family,
                 database.name(),
                 &role,
                 PASSWORD,
-                "2099-01-01T00:00:00Z",
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
         let mut login = url::Url::parse(database.url())?;
         login.set_username(&role).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
@@ -282,17 +293,17 @@ pub async fn schedule_run(
 /// `workflow` user with `role` active: the grants the role holds now, read
 /// through `host` as the router reads them before each node.
 pub async fn run_caller(
-    admin: &Client,
+    admin: &mut Client,
     host: &WamnPostgres,
     run: &str,
     role: &str,
 ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
-    let row = admin
-        .query_one(
-            "SELECT execution_principal_id::text, execution_role FROM wamn_run.runs WHERE run_id=$1",
-            &[&run],
-        )
-        .await?;
+    let row = sqlx::query(
+        "SELECT execution_principal_id::text, execution_role FROM wamn_run.runs WHERE run_id=$1",
+    )
+    .bind(&run)
+    .fetch_one(&mut *admin)
+    .await?;
     let principal: String = row.get(0);
     let execution_role: String = row.get(1);
     anyhow::ensure!(
@@ -306,22 +317,36 @@ pub async fn run_caller(
 }
 
 pub async fn install(
-    admin: &Client,
+    admin: &mut Client,
     database: &wamn_test_postgres::Database,
     roots: &[PathBuf],
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
-    admin
-        .batch_execute("CREATE ROLE wamn_app NOLOGIN; ")
-        .await?;
-    admin.batch_execute(sql::ensure_db_owner_role_sql()).await?;
-    admin.batch_execute("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$").await?;
-    admin
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_app NOLOGIN; ").to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$").to_string())).execute(&mut *admin).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_catalog::CATALOG_SCHEMA_SQL).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (include_str!("../../../deploy/sql/app-schema.sql")).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let packages = roots
         .iter()
         .map(|root| {
@@ -355,28 +380,31 @@ pub async fn install(
         environment: "test".into(),
     })
     .await?;
-    let role = workload_generation_role(
+    let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: database.name(),
         },
-        CredentialGeneration::A,
     )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             database.name(),
             &role,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await?;
-    admin
-        .batch_execute(&wamn_control_provision::platform_principals_sql(
-            "example.test",
-        )?)
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::platform_principals_sql("example.test")?).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
     let system = wamn_control_provision::test_database::system();
     system.execute(&[
         "BEGIN",
@@ -403,9 +431,7 @@ pub async fn install(
         &wamn_broker::Publisher::default(),
     )
     .await?;
-    let privileges = admin
-        .query_one(
-            "SELECT has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'SELECT'), \
+    let privileges = sqlx::query("SELECT has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'SELECT'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'SELECT'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'INSERT'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'INSERT'), \
@@ -414,13 +440,11 @@ pub async fn install(
            AND has_table_privilege($1, 'platform.write_log', 'DELETE'), \
          has_column_privilege($1, 'platform.write_log', 'result', 'UPDATE'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'external_system_id', 'SELECT,INSERT'), \
-         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_id', 'SELECT,INSERT')",
-            &[&role],
-        )
+         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_id', 'SELECT,INSERT')").bind(&role).fetch_one(&mut *admin)
         .await?;
     assert_eq!(
         (0..8)
-            .map(|index| privileges.get::<_, bool>(index))
+            .map(|index| privileges.get::<bool, _>(index))
             .collect::<Vec<_>>(),
         [true, false, true, true, true, true, true, true]
     );
@@ -433,21 +457,31 @@ pub async fn install(
     Ok(url.into())
 }
 
-pub async fn source(admin: &tokio_postgres::Client, name: &str) -> anyhow::Result<uuid::Uuid> {
-    admin.batch_execute("BEGIN").await?;
-    admin
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+pub async fn source(admin: &mut sqlx::PgConnection, name: &str) -> anyhow::Result<uuid::Uuid> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("BEGIN").to_string()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await?;
-    let id = admin
-        .query_one(
-            "INSERT INTO platform.external_system(id,name) VALUES (gen_random_uuid(),$1) RETURNING id",
-            &[&name],
-        )
-        .await?
-        .get(0);
-    admin.batch_execute("COMMIT").await?;
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)?;
+    let id = sqlx::query(
+        "INSERT INTO platform.external_system(id,name) VALUES (gen_random_uuid(),$1) RETURNING id",
+    )
+    .bind(&name)
+    .fetch_one(&mut *admin)
+    .await?
+    .get(0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(("COMMIT").to_string()))
+        .execute(&mut *admin)
+        .await
+        .map(drop)?;
     Ok(id)
 }
 
@@ -541,10 +575,9 @@ pub async fn invoke(
         "consumer host transaction declared=true, intent context present={}",
         intents.is_some()
     );
-    let (admin, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    let source_id = source(&admin, "rest-fixture").await?.to_string();
+    let mut admin = wamn_postgres::connect(database.url()).await?;
+
+    let source_id = source(&mut admin, "rest-fixture").await?.to_string();
     // The rest_connector item is an environment workflow, authored, enabled and
     // admitted at one due moment (docs/architecture/execution.md#workflows).
     let document: wamn_catalog::WiringDocument =
@@ -553,7 +586,7 @@ pub async fn invoke(
                 .join("apps/rest_connector/publication/wirings/rest_item.json"),
             wamn_compiler::operation_reference::AuthoredDocument::Wiring,
         )?)?;
-    let workflow_host = workflow_host(&admin, database, manifest).await?;
+    let workflow_host = workflow_host(&mut admin, database, manifest).await?;
     let run = schedule_run(
         database,
         &workflow_host,
@@ -565,7 +598,7 @@ pub async fn invoke(
         "2026-10-21T12:02:00Z",
     )
     .await?;
-    let caller = run_caller(&admin, &workflow_host, &run, ROLE).await?;
+    let caller = run_caller(&mut admin, &workflow_host, &run, ROLE).await?;
     wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let finish_operation = "rest-connector:sync/finish@0.1.1";
     let connector = admissions

@@ -4,6 +4,7 @@
 //! reproduce migration, generation, admission, publication, release, or
 //! activation semantics.
 
+use sqlx::Connection as _;
 #[cfg(test)]
 use wamn_scalar::SqlValueType;
 pub(super) mod plan;
@@ -23,7 +24,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Context as _;
 use serde::Deserialize;
 use tokio::process::Command;
-use tokio_postgres::NoTls;
 use wamn_catalog::PackageCoordinate;
 use wamn_compiler::manifest::PackageManifest;
 use wamn_environment_control::reconcile_package_data_access;
@@ -770,12 +770,12 @@ impl ProductionDevStageRunner {
     }
 
     async fn reconcile_local_grants(
-        &self,
+        &mut self,
         prepared: &PreparedLocalGrants,
         apply: bool,
     ) -> Result<(), ProductionDevStageError> {
         self.target_lease
-            .as_ref()
+            .as_mut()
             .expect("local target lease is held")
             .reconcile_configuration(&prepared.target, apply)
             .await
@@ -1096,14 +1096,15 @@ impl ProductionDevStageRunner {
         .map_err(|source| {
             ProductionDevStageError::owner("apply exact local connection selections", source)
         })?;
-        let grants = self.local_grants.as_ref().ok_or_else(|| {
+        let grants = self.local_grants.take().ok_or_else(|| {
             ProductionDevStageError::invalid(
                 "apply local grants",
                 "the candidate has no validated grant inputs",
             )
         })?;
-        self.reconcile_local_grants(grants, true).await?;
+        self.reconcile_local_grants(&grants, true).await?;
         self.acl_inputs = Some(grants.inputs.clone());
+        self.local_grants = Some(grants);
         self.clear_after(DevStage::Activate);
         let release = self.release.as_ref().ok_or_else(|| {
             ProductionDevStageError::invalid(
@@ -1214,38 +1215,27 @@ impl ProductionDevStageRunner {
 
     async fn reauthenticate_publisher(&self) -> Result<(), ProductionDevStageError> {
         let endpoint = self.config.identity_database_endpoint().to_owned();
-        let (client, connection) =
-            tokio_postgres::connect(self.config.identity_database_url(), NoTls)
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::authentication_unavailable(
-                        endpoint.clone(),
-                        source.into(),
-                    )
-                })?;
-        let connection_task = tokio::spawn(connection);
-        let authenticated =
-            wamn_platform_identity::authenticate_pat(&client, self.config.condition_bearer_token())
-                .await;
+        let mut client = wamn_postgres::connect(self.config.identity_database_url())
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::authentication_unavailable(endpoint.clone(), source)
+            })?;
+
+        let authenticated = wamn_platform_identity::authenticate_pat(
+            &mut client,
+            self.config.condition_bearer_token(),
+        )
+        .await;
         drop(client);
         let authenticated = match authenticated {
             Ok(authenticated) => authenticated,
             Err(source) => {
-                connection_task.abort();
                 return Err(ProductionDevStageError::authentication_unavailable(
                     endpoint,
                     source.into(),
                 ));
             }
         };
-        connection_task
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::authentication_unavailable(endpoint.clone(), source.into())
-            })?
-            .map_err(|source| {
-                ProductionDevStageError::authentication_unavailable(endpoint.clone(), source.into())
-            })?;
         authenticated.ok_or_else(|| {
             ProductionDevStageError::owner_at(
                 "re-authenticate publisher",
@@ -1510,7 +1500,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             )?);
         }
         self.target_lease
-            .as_ref()
+            .as_mut()
             .expect("lease acquired")
             .require_current_lease()
             .await
@@ -1549,7 +1539,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         });
         let instance = self
             .target_lease
-            .as_ref()
+            .as_mut()
             .expect("lease acquired")
             .instance(&self.config)
             .await
@@ -1562,7 +1552,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             )?;
             let reset_inputs = self
                 .target_lease
-                .as_ref()
+                .as_mut()
                 .expect("lease acquired")
                 .prepare_reset(&self.config)
                 .await
@@ -1576,7 +1566,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                 "reset development database; all application data is discarded");
             let instance = self
                 .target_lease
-                .as_ref()
+                .as_mut()
                 .expect("lease acquired")
                 .recreate_prepared(&self.config, &reset_inputs)
                 .await
@@ -1596,7 +1586,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                 if matches_installed
                     && let Some((_, recorded, catalogs)) = self
                         .target_lease
-                        .as_ref()
+                        .as_mut()
                         .expect("lease acquired")
                         .retained_target(&self.config)
                         .await
@@ -1665,8 +1655,11 @@ async fn prepare_local_bindings(
     packages: &[wamn_compiler::manifest::PackageManifest],
     manifest_digest: &str,
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
-    let system = wamn_package_control::database::connect(config.system_database_url()).await?;
-    system.batch_execute("SET ROLE wamn_db_owner").await?;
+    let mut system = wamn_postgres::connect(config.system_database_url()).await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let mut document = environment.clone();
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
@@ -1676,7 +1669,7 @@ async fn prepare_local_bindings(
             );
     }
     let bindings =
-        wamn_environment_control::environment::bindings::analyse(&system, &document, packages)
+        wamn_environment_control::environment::bindings::analyse(&mut system, &document, packages)
             .await?;
     let drops = wamn_environment_control::environment::bindings::project_authority(
         config.system_database_url(),
@@ -1721,8 +1714,8 @@ async fn prepare_local_bindings(
             });
         }
     }
-    let mut project = wamn_package_control::database::connect(config.target_database_url()).await?;
-    let tx = project.transaction().await?;
+    let mut project = wamn_postgres::connect(config.target_database_url()).await?;
+    let mut tx = project.begin().await?;
     for input in &prepared {
         let admission = admissions
             .iter()
@@ -1742,7 +1735,7 @@ async fn prepare_local_bindings(
             &declaration.interface,
         )?;
         let mode = if input.read_only { "read" } else { "write" };
-        tx.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().project_env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interface,&mode]).await?;
+        sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(config.activation_identity().project_env_key()).bind(input.requirement.component_digest()).bind(&input.package_id).bind(input.requirement.store_alias()).bind(&interface).bind(mode).execute(&mut *tx).await.map(|result| result.rows_affected())?;
     }
     tx.commit().await?;
     Ok(prepared)
@@ -1755,15 +1748,17 @@ async fn reserve_local_bindings(
     prepared: &[PreparedLocalBinding],
     digest: &str,
 ) -> anyhow::Result<()> {
-    let mut system = wamn_package_control::database::connect(config.system_database_url()).await?;
-    let tx = system.transaction().await?;
-    tx.batch_execute(&format!(
+    let mut system = wamn_postgres::connect(config.system_database_url()).await?;
+    let mut tx = system.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SET LOCAL ROLE wamn_db_owner; {}",
         wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ),
-    ))
-    .await?;
+    )))
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let mut document = environment.clone();
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
@@ -1771,7 +1766,8 @@ async fn reserve_local_bindings(
             wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
     }
     let bindings =
-        wamn_environment_control::environment::bindings::analyse(&tx, &document, packages).await?;
+        wamn_environment_control::environment::bindings::analyse(&mut tx, &document, packages)
+            .await?;
     for input in prepared {
         let application = environment
             .application_for_package(&input.package_id)
@@ -1805,39 +1801,47 @@ async fn resolve_local_bindings(
         &config.activation_identity().environment,
     )
     .await?;
-    let (client, connection) = tokio_postgres::connect(config.target_database_url(), NoTls).await?;
-    let driver = tokio::spawn(connection);
-    let mut system = wamn_package_control::database::connect(config.system_database_url()).await?;
-    let authority = system.transaction().await?;
-    authority
-        .batch_execute(&format!(
-            "SET LOCAL ROLE wamn_db_owner; {}",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ),
-        ))
-        .await?;
+    let mut client = wamn_postgres::connect(config.target_database_url()).await?;
+
+    let mut system = wamn_postgres::connect(config.system_database_url()).await?;
+    let mut authority = system.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET LOCAL ROLE wamn_db_owner; {}",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )))
+    .execute(&mut *authority)
+    .await
+    .map(drop)?;
     let mut document = environment.clone();
     // DEP2-03 replaces the shared candidate with application publication.
     for application in document.applications.values_mut() {
         application.current =
             wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
     }
-    let resolved =
-        wamn_environment_control::environment::bindings::analyse(&authority, &document, packages)
-            .await?;
+    let resolved = wamn_environment_control::environment::bindings::analyse(
+        &mut authority,
+        &document,
+        packages,
+    )
+    .await?;
     let result = async {
-        client.batch_execute("BEGIN").await?;
-        client
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut client)
+            .await
+            .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning,
-            ))
-            .await?;
-        client
-            .query_one(
-                "SELECT set_config('app.project_env_key', $1, true)",
-                &[&config.activation_identity().project_env_key()],
-            )
+            ),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)?;
+        sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+            .bind(config.activation_identity().project_env_key())
+            .fetch_one(&mut client)
             .await?;
         let mut bindings = Vec::new();
         for input in prepared {
@@ -1885,14 +1889,16 @@ async fn resolve_local_bindings(
                 "local live authority changed after candidate validation"
             );
         }
-        client.batch_execute("ROLLBACK").await?;
+        sqlx::raw_sql("ROLLBACK")
+            .execute(&mut client)
+            .await
+            .map(drop)?;
         if apply.is_some() {
-            let mut project =
-                wamn_package_control::database::connect(config.target_database_url()).await?;
-            let tx = project.transaction().await?;
+            let mut project = wamn_postgres::connect(config.target_database_url()).await?;
+            let mut tx = project.begin().await?;
             let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
             wamn_environment_control::environment::bindings::write(
-                &tx,
+                &mut tx,
                 &config.activation_identity().project_env_key(),
                 digest,
                 &document,
@@ -1909,7 +1915,6 @@ async fn resolve_local_bindings(
     }
     .await;
     drop(client);
-    driver.abort();
     authority.rollback().await?;
     result
 }
@@ -1919,10 +1924,10 @@ async fn reconcile_local_replica_identity(
     packages: &[PathBuf],
     apply: bool,
 ) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let mut client = wamn_postgres::connect(database_url)
         .await
         .context("connect to the local target for replican identity")?;
-    let driver = tokio::spawn(connection);
+
     let result = async {
         for root in packages {
             let directory = apply_package::read_package_directory(root)?;
@@ -1930,7 +1935,7 @@ async fn reconcile_local_replica_identity(
                 .context("derive package model mapping")?;
             let package_id = package.coordinate.package_id();
             let plan = wamn_environment_control::reconcile_replica_identity::reconcile(
-                &client,
+                &mut client,
                 &package.models,
                 apply,
             )
@@ -1941,7 +1946,6 @@ async fn reconcile_local_replica_identity(
     }
     .await;
     drop(client);
-    driver.abort();
     result
 }
 

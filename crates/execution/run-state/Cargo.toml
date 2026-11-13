@@ -29,7 +29,7 @@ sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }
-wamn-control-provision = { workspace = true }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 
 [lints]

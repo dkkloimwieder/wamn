@@ -1,7 +1,7 @@
 //! Project and environment connection rows copied from the system database.
 
 use anyhow::Context as _;
-use tokio_postgres::Transaction;
+use sqlx::Row as _;
 
 use crate::configuration::{Connection, ExternalSystem, Integration, PlatformConfiguration};
 use wamn_broker::auth_changes::AuthDrops;
@@ -38,7 +38,7 @@ fn failure(org: &str, project: &str, env: &str, source: anyhow::Error) -> Projec
 
 /// Read the project's external systems and integrations and the environment's connections.
 pub async fn projection(
-    system: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,
@@ -50,8 +50,8 @@ pub async fn projection(
 
 /// Reconcile copied rows and service principals in an administration transaction.
 pub async fn project(
-    system: &Transaction<'_>,
-    target: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,
@@ -62,19 +62,21 @@ pub async fn project(
 }
 
 async fn document(
-    system: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    Ok(system
-        .query_one(
-            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTION_PROJECTION_DOCUMENT,
-            &[&org, &project, &env],
-        )
-        .await
-        .context("read connection projection")?
-        .get(0))
+    Ok(
+        sqlx::query(wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTION_PROJECTION_DOCUMENT)
+            .bind(org)
+            .bind(project)
+            .bind(env)
+            .fetch_one(&mut **system)
+            .await
+            .context("read connection projection")?
+            .get(0),
+    )
 }
 
 fn rows_from_document(document: &serde_json::Value) -> anyhow::Result<PlatformConfiguration> {
@@ -122,8 +124,8 @@ fn text(row: &serde_json::Value, field: &str) -> anyhow::Result<String> {
 }
 
 async fn push(
-    system: &Transaction<'_>,
-    target: &Transaction<'_>,
+    system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    target: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &str,
     project: &str,
     env: &str,
@@ -136,39 +138,34 @@ async fn push(
         .filter(|row| row.status == "active")
         .map(|row| row.id.as_str())
         .collect();
-    let disabled: Vec<String> = target.query(
-        "SELECT id::text FROM platform.connection WHERE status='active' AND NOT (id::text=ANY($1::text[]))", &[&enabled],
-    ).await?.into_iter().map(|row| row.get(0)).collect();
+    let disabled: Vec<String> = sqlx::query("SELECT id::text FROM platform.connection WHERE status='active' AND NOT (id::text=ANY($1::text[]))").bind(&enabled).fetch_all(&mut **target).await?.into_iter().map(|row| row.get(0)).collect();
     crate::configuration::write_configuration(target, &rows).await?;
     let ids: Vec<_> = rows.connections.iter().map(|row| row.id.as_str()).collect();
-    target
-        .execute(
-            "DELETE FROM platform.connection WHERE NOT (id::text=ANY($1::text[]))",
-            &[&ids],
-        )
-        .await?;
+    sqlx::query("DELETE FROM platform.connection WHERE NOT (id::text=ANY($1::text[]))")
+        .bind(&ids)
+        .execute(&mut **target)
+        .await
+        .map(|result| result.rows_affected())?;
     let ids: Vec<_> = rows
         .integrations
         .iter()
         .map(|row| row.id.as_str())
         .collect();
-    target
-        .execute(
-            "DELETE FROM platform.integration WHERE NOT (id::text=ANY($1::text[]))",
-            &[&ids],
-        )
-        .await?;
+    sqlx::query("DELETE FROM platform.integration WHERE NOT (id::text=ANY($1::text[]))")
+        .bind(&ids)
+        .execute(&mut **target)
+        .await
+        .map(|result| result.rows_affected())?;
     let ids: Vec<_> = rows
         .external_systems
         .iter()
         .map(|row| row.id.as_str())
         .collect();
-    target
-        .execute(
-            "DELETE FROM platform.external_system WHERE NOT (id::text=ANY($1::text[]))",
-            &[&ids],
-        )
-        .await?;
+    sqlx::query("DELETE FROM platform.external_system WHERE NOT (id::text=ANY($1::text[]))")
+        .bind(&ids)
+        .execute(&mut **target)
+        .await
+        .map(|result| result.rows_affected())?;
     let mut drops = AuthDrops::default();
     let project_env_key = wamn_registry::project_env_key(org, project, env);
     for row in document["principal"]
@@ -182,12 +179,9 @@ async fn push(
             text(row, "subject")?,
             text(row, "platform_domain")?
         );
-        let changed = target.execute(
-            "INSERT INTO platform.\"user\"(id,type,email,display_name,status) VALUES ($1::text::uuid,'service',$2,$3,$4) \
+        let changed = sqlx::query("INSERT INTO platform.\"user\"(id,type,email,display_name,status) VALUES ($1::text::uuid,'service',$2,$3,$4) \
              ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email, display_name=EXCLUDED.display_name, status=EXCLUDED.status \
-             WHERE (\"user\".email,\"user\".display_name,\"user\".status) IS DISTINCT FROM (EXCLUDED.email,EXCLUDED.display_name,EXCLUDED.status)",
-            &[&id, &email, &text(row, "display_name")?, &text(row, "status")?],
-        ).await?;
+             WHERE (\"user\".email,\"user\".display_name,\"user\".status) IS DISTINCT FROM (EXCLUDED.email,EXCLUDED.display_name,EXCLUDED.status)").bind(&id).bind(&email).bind(&text(row, "display_name")?).bind(&text(row, "status")?).execute(&mut **target).await.map(|result| result.rows_affected())?;
         if changed != 0 || disabled.contains(&connection_id) {
             drops.principal(&project_env_key, &id);
         }
@@ -197,40 +191,46 @@ async fn push(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::Connection as _;
     #[tokio::test]
     async fn copies_project_rows_and_only_environment_connections_with_effective_status() {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_control_provision::test_database::system();
-        let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        tokio::spawn(driver);
-        let source = client.transaction().await.unwrap();
-        source
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+        let mut source = client.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning,
             ))
+                .to_string(),
+        ))
+        .execute(&mut *source)
+        .await
+        .map(drop)
+        .unwrap();
+        sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+            .execute(&mut *source)
             .await
-            .unwrap();
-        source
-            .batch_execute("SET LOCAL ROLE wamn_system")
-            .await
+            .map(drop)
             .unwrap();
         for (project, env) in [
             ("project-a", "dev"),
             ("project-a", "prod"),
             ("project-b", "dev"),
         ] {
-            source
-                .batch_execute(
-                    &wamn_control_provision::test_database::seed_org_project_env_sql(
-                        "acme", project, env,
-                    ),
-                )
-                .await
-                .unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "acme", project, env,
+                ))
+                    .to_string(),
+            ))
+            .execute(&mut *source)
+            .await
+            .map(drop)
+            .unwrap();
         }
-        source.batch_execute(r"
+        sqlx::raw_sql(r"
             UPDATE registry.meta SET platform_domain='example.invalid';
             UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud');
             INSERT INTO registry.external_system(org,project,name) VALUES ('acme','project-a','source'),('acme','project-b','source');
@@ -248,26 +248,27 @@ mod tests {
             WHERE i.name=CASE WHEN i.project='project-a' THEN 'disabled' ELSE 'active' END;
             INSERT INTO registry.connection_generation(connection_id,generation,created_at,created_by)
             SELECT id,1,now(),'00000000-0000-4000-8000-000000000001' FROM registry.connection;
-        ").await.unwrap();
-        source
-            .batch_execute("SET LOCAL ROLE wamn_control")
+        ").execute(&mut *source).await.map(drop).unwrap();
+        sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+            .execute(&mut *source)
             .await
+            .map(drop)
             .unwrap();
-        let rows = super::projection(&source, "acme", "project-a", "dev")
+        let rows = super::projection(&mut source, "acme", "project-a", "dev")
             .await
             .unwrap();
         assert_eq!(rows.external_systems.len(), 1);
         assert_eq!(rows.integrations.len(), 2);
         assert_eq!(rows.connections.len(), 1);
         assert_eq!(rows.connections[0].status, "disabled");
-        let other = super::projection(&source, "acme", "project-b", "dev")
+        let other = super::projection(&mut source, "acme", "project-b", "dev")
             .await
             .unwrap();
         assert_eq!(other.connections.len(), 1);
         assert_eq!(other.connections[0].status, "active");
         assert_ne!(rows.connections[0].id, other.connections[0].id);
-        source.batch_execute("SET LOCAL ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND project='project-b'; SET LOCAL ROLE wamn_control").await.unwrap();
-        let disabled = super::projection(&source, "acme", "project-b", "dev")
+        sqlx::raw_sql("SET LOCAL ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND project='project-b'; SET LOCAL ROLE wamn_control").execute(&mut *source).await.map(drop).unwrap();
+        let disabled = super::projection(&mut source, "acme", "project-b", "dev")
             .await
             .unwrap();
         assert_eq!(disabled.connections[0].status, "disabled");

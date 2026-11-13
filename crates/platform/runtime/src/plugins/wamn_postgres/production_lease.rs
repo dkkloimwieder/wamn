@@ -1,13 +1,15 @@
 //! Host-only composition of one production queue lease transaction.
 
+use sqlx::Row as _;
+use sqlx::Statement as _;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use super::resources::StatementConnectionGuard;
 
-use deadpool_postgres::Object;
-use tokio_postgres::Row;
-use tokio_postgres::types::FromSql;
+use super::pool::Object;
+use sqlx::postgres::PgRow as Row;
+use sqlx::{Decode, Type};
 use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
     ProductionLeaseClass, advance_lease_attempts_sql, classify_production_lease,
@@ -163,7 +165,7 @@ impl RunStore for WamnPostgres {
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -175,7 +177,7 @@ impl RunStore for WamnPostgres {
             })?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &project_env_key,
@@ -199,7 +201,7 @@ impl RunStore for WamnPostgres {
         }
 
         let result = lease_in_transaction(
-            &connection,
+            &mut connection,
             &runner,
             package_ids,
             environment,
@@ -209,7 +211,11 @@ impl RunStore for WamnPostgres {
         .await;
         match result {
             Ok(turn) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
+                if let Err(error) = sqlx::raw_sql("COMMIT")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     self.destroy(connection);
                     return Err(ProductionLeaseError::new(
                         ProductionLeaseErrorType::Storage,
@@ -223,7 +229,11 @@ impl RunStore for WamnPostgres {
                 }
             }
             Err(error) => {
-                if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+                if let Err(rollback_error) = sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     tracing::warn!(
                         error = %rollback_error,
                         operation = error.operation(),
@@ -275,7 +285,7 @@ impl RunStore for WamnPostgres {
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -287,7 +297,7 @@ impl RunStore for WamnPostgres {
             })?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &project_env_key,
@@ -310,10 +320,14 @@ impl RunStore for WamnPostgres {
             ));
         }
 
-        let result = reap_in_transaction(&connection, package_ids, environment, grace_ms).await;
+        let result = reap_in_transaction(&mut connection, package_ids, environment, grace_ms).await;
         match result {
             Ok(result) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
+                if let Err(error) = sqlx::raw_sql("COMMIT")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     self.destroy(connection);
                     return Err(ProductionLeaseError::new(
                         ProductionLeaseErrorType::Storage,
@@ -324,7 +338,11 @@ impl RunStore for WamnPostgres {
                 Ok(result)
             }
             Err(error) => {
-                if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+                if let Err(rollback_error) = sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     tracing::warn!(
                         error = %rollback_error,
                         operation = error.operation(),
@@ -381,7 +399,7 @@ impl RunStore for WamnPostgres {
                     format!("{error:?}"),
                 )
             })?;
-        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
             .begin_with_identity(
                 connection.connection(),
@@ -454,7 +472,7 @@ impl RunStore for WamnPostgres {
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -466,7 +484,7 @@ impl RunStore for WamnPostgres {
             })?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &project_env_key,
@@ -488,9 +506,14 @@ impl RunStore for WamnPostgres {
                 format!("{error:?}"),
             ));
         }
-        let result =
-            complete_in_transaction(&connection, run_id, &runner, lease_generation, completion)
-                .await;
+        let result = complete_in_transaction(
+            &mut connection,
+            run_id,
+            &runner,
+            lease_generation,
+            completion,
+        )
+        .await;
         finish_queue_transaction(self, connection, result, "commit production completion").await
     }
 
@@ -529,7 +552,7 @@ impl RunStore for WamnPostgres {
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -541,7 +564,7 @@ impl RunStore for WamnPostgres {
             })?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &project_env_key,
@@ -564,21 +587,25 @@ impl RunStore for WamnPostgres {
             ));
         }
         let result = async {
-            require_executor_authority(&connection).await?;
+            require_executor_authority(&mut connection).await?;
             let sql = wamn_run_state::transitions::record_deadline_adjustments_sql();
-            let statement = connection
-                .prepare_cached(&sql)
-                .await
-                .map_err(|error| storage("prepare deadline report", &error))?;
+            let statement = sqlx::Executor::prepare(
+                &mut *connection,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+            )
+            .await
+            .map_err(|error| storage("prepare deadline report", &error))?;
             let json = adjustments.to_string();
-            let row = connection
-                .query_one(
-                    &statement,
-                    &[&run_id, &run_id, &runner, &lease_generation, &json],
-                )
+            let row = sqlx::query(statement.sql().clone())
+                .bind(run_id)
+                .bind(run_id)
+                .bind(&runner)
+                .bind(lease_generation)
+                .bind(&json)
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(|error| storage("store deadline report", &error))?;
-            Ok(row.get::<_, bool>(0))
+            Ok(row.get::<bool, _>(0))
         }
         .await;
         finish_queue_transaction(self, connection, result, "commit deadline report").await
@@ -600,22 +627,26 @@ pub(super) async fn finish_queue_transaction<T>(
 }
 
 async fn finish_guarded_queue_transaction<T>(
-    connection: StatementConnectionGuard,
+    mut connection: StatementConnectionGuard,
     result: Result<T, ProductionLeaseError>,
     commit_operation: &'static str,
 ) -> Result<T, ProductionLeaseError> {
     match result {
         Ok(value) => {
-            connection
-                .connection()
-                .batch_execute("COMMIT")
+            sqlx::raw_sql("COMMIT")
+                .execute(connection.connection())
                 .await
+                .map(|_| ())
                 .map_err(|error| storage(commit_operation, &error))?;
             connection.repool();
             Ok(value)
         }
         Err(error) => {
-            if let Err(rollback_error) = connection.connection().batch_execute("ROLLBACK").await {
+            if let Err(rollback_error) = sqlx::raw_sql("ROLLBACK")
+                .execute(connection.connection())
+                .await
+                .map(|_| ())
+            {
                 tracing::warn!(
                     error = %rollback_error,
                     operation = error.operation(),
@@ -686,7 +717,7 @@ impl WamnPostgres {
                     format!("{error:?}"),
                 )
             })?;
-        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        let mut connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
             .begin_with_identity(
                 connection.connection(),
@@ -754,7 +785,7 @@ impl WamnPostgres {
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
         let application = self.application_for(component_id);
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
@@ -766,7 +797,7 @@ impl WamnPostgres {
             })?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &project_env_key,
@@ -789,22 +820,22 @@ impl WamnPostgres {
             ));
         }
         let result = async {
-            require_executor_authority(&connection).await?;
-            let row = connection
-                .query_one(
-                    PINNED_BACKLOG_SQL,
-                    &[
-                        &package_ids,
-                        &environment,
-                        &release.manifest_digest().as_str(),
-                    ],
-                )
+            require_executor_authority(&mut connection).await?;
+            let row = sqlx::query(PINNED_BACKLOG_SQL)
+                .bind(package_ids)
+                .bind(environment)
+                .bind(release.manifest_digest().as_str())
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(|error| storage("read pinned backlog", &error))?;
             row_value::<bool>(&row, 0, "pinned backlog")
         }
         .await;
-        if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+        if let Err(rollback_error) = sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *connection)
+            .await
+            .map(|_| ())
+        {
             tracing::warn!(
                 error = %rollback_error,
                 "pinned backlog rollback failed; destroying connection"
@@ -816,13 +847,11 @@ impl WamnPostgres {
 }
 
 pub(super) async fn require_executor_authority(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
 ) -> Result<(), ProductionLeaseError> {
-    let row = connection
-        .query_one(
-            CURRENT_USER_ROLE_MEMBERSHIP_SQL,
-            &[&AuthorityClass::ExecutorPlatform.acl_role()],
-        )
+    let row = sqlx::query(CURRENT_USER_ROLE_MEMBERSHIP_SQL)
+        .bind(AuthorityClass::ExecutorPlatform.acl_role())
+        .fetch_one(&mut *connection)
         .await
         .map_err(|error| storage("read executor authority", &error))?;
     let allowed: bool = row_value(&row, 0, "executor authority membership")?;
@@ -837,19 +866,24 @@ pub(super) async fn require_executor_authority(
 }
 
 async fn release_in_transaction(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
 ) -> Result<bool, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let sql = release_production_lease_sql();
-    let statement = connection
-        .prepare_cached(&sql)
-        .await
-        .map_err(|error| storage("prepare production release", &error))?;
-    let Some(row) = connection
-        .query_opt(&statement, &[&run_id, &runner, &lease_generation])
+    let statement = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare production release", &error))?;
+    let Some(row) = sqlx::query(statement.sql().clone())
+        .bind(run_id)
+        .bind(runner)
+        .bind(lease_generation)
+        .fetch_optional(&mut *connection)
         .await
         .map_err(|error| storage("release production lease", &error))?
     else {
@@ -863,12 +897,18 @@ async fn release_in_transaction(
         let (body, hash) =
             generic_failure_outcome(FailType::RetryExhausted.as_sql(), &identity, run_id)?;
         let sql = terminalize_released_production_sql();
-        let statement = connection
-            .prepare_cached(&sql)
-            .await
-            .map_err(|error| storage("prepare release exhaustion", &error))?;
-        connection
-            .query_one(&statement, &[&run_id, &body, &hash, &SystemTime::now()])
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+        )
+        .await
+        .map_err(|error| storage("prepare release exhaustion", &error))?;
+        sqlx::query(statement.sql().clone())
+            .bind(run_id)
+            .bind(&body)
+            .bind(&hash)
+            .bind(chrono::Utc::now())
+            .fetch_one(&mut *connection)
             .await
             .map_err(|error| storage("terminalize release exhaustion", &error))?;
     }
@@ -876,7 +916,7 @@ async fn release_in_transaction(
 }
 
 async fn renew_in_transaction(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -884,15 +924,18 @@ async fn renew_in_transaction(
 ) -> Result<ProductionLeaseRenewal, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let sql = renew_production_lease_sql();
-    let statement = connection
-        .prepare_cached(&sql)
-        .await
-        .map_err(|error| storage("prepare production lease renewal", &error))?;
-    let renewed = connection
-        .query_opt(
-            &statement,
-            &[&run_id, &runner, &lease_generation, &lease_ttl_ms],
-        )
+    let statement = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare production lease renewal", &error))?;
+    let renewed = sqlx::query(statement.sql().clone())
+        .bind(run_id)
+        .bind(runner)
+        .bind(lease_generation)
+        .bind(lease_ttl_ms)
+        .fetch_optional(&mut *connection)
         .await
         .map_err(|error| storage("renew production lease", &error))?;
     Ok(if renewed.is_some() {
@@ -903,7 +946,7 @@ async fn renew_in_transaction(
 }
 
 async fn complete_in_transaction(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     run_id: &str,
     runner: &str,
     lease_generation: i64,
@@ -927,26 +970,24 @@ async fn complete_in_transaction(
         let http_status = i32::from(caller.http_status());
         let release_node_id = caller.release_node_id();
         let sql = release_caller_sql();
-        let statement = connection
-            .prepare_cached(&sql)
-            .await
-            .map_err(|error| storage("prepare production caller release", &error))?;
-        let row = connection
-            .query_one(
-                &statement,
-                &[
-                    &run_id,
-                    &run_id,
-                    &runner,
-                    &lease_generation,
-                    &caller.outcome_type(),
-                    &body_json,
-                    &http_status,
-                    &release_node_id,
-                    &hash,
-                    &completed_at,
-                ],
-            )
+        let statement = sqlx::Executor::prepare(
+            &mut *connection,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+        )
+        .await
+        .map_err(|error| storage("prepare production caller release", &error))?;
+        let row = sqlx::query(statement.sql().clone())
+            .bind(run_id)
+            .bind(run_id)
+            .bind(runner)
+            .bind(lease_generation)
+            .bind(caller.outcome_type())
+            .bind(&body_json)
+            .bind(http_status)
+            .bind(release_node_id)
+            .bind(&hash)
+            .bind(chrono::DateTime::<chrono::Utc>::from(completed_at))
+            .fetch_one(&mut *connection)
             .await
             .map_err(|error| storage("release production caller", &error))?;
         let release = decode_caller_release(&row)?;
@@ -995,25 +1036,23 @@ async fn complete_in_transaction(
     })?;
     let fail_type = completion.fail_type().map(FailType::as_sql);
     let sql = terminalize_sql();
-    let statement = connection
-        .prepare_cached(&sql)
-        .await
-        .map_err(|error| storage("prepare production terminalization", &error))?;
-    let row = connection
-        .query_one(
-            &statement,
-            &[
-                &run_id,
-                &run_id,
-                &runner,
-                &lease_generation,
-                &completion.status().as_sql(),
-                &completion.terminal_reason(),
-                &result_json,
-                &fail_type,
-                &completed_at,
-            ],
-        )
+    let statement = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare production terminalization", &error))?;
+    let row = sqlx::query(statement.sql().clone())
+        .bind(run_id)
+        .bind(run_id)
+        .bind(runner)
+        .bind(lease_generation)
+        .bind(completion.status().as_sql())
+        .bind(completion.terminal_reason())
+        .bind(&result_json)
+        .bind(fail_type)
+        .bind(chrono::DateTime::<chrono::Utc>::from(completed_at))
+        .fetch_one(&mut *connection)
         .await
         .map_err(|error| storage("terminalize production run", &error))?;
     match decode_terminalization(&row)? {
@@ -1095,7 +1134,7 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 }
 
 async fn lease_in_transaction(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     runner: &str,
     package_ids: &[String],
     environment: &str,
@@ -1104,15 +1143,20 @@ async fn lease_in_transaction(
 ) -> Result<LeaseTurn, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let select_sql = select_production_lease_sql();
-    let select = connection
-        .prepare_cached(&select_sql)
-        .await
-        .map_err(|error| storage("prepare production candidate", &error))?;
+    let select = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(select_sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare production candidate", &error))?;
     // The select skips runs pinned to another release, so their head never
     // blocks this host's own backlog (R20). The grant below tests again the pin.
     let host_release: Option<&str> = release.map(|identity| identity.manifest_digest().as_str());
-    let Some(row) = connection
-        .query_opt(&select, &[&package_ids, &environment, &host_release])
+    let Some(row) = sqlx::query(select.sql().clone())
+        .bind(package_ids)
+        .bind(environment)
+        .bind(host_release)
+        .fetch_optional(&mut *connection)
         .await
         .map_err(|error| storage("select production candidate", &error))?
     else {
@@ -1134,12 +1178,15 @@ async fn lease_in_transaction(
     match classify_production_lease(selected.had_prior_lease) {
         ProductionLeaseClass::ExpiredPreEffect => {
             let clear_sql = clear_pre_effect_state_sql();
-            let clear = connection
-                .prepare_cached(&clear_sql)
-                .await
-                .map_err(|error| storage("prepare pre-effect state clear", &error))?;
-            connection
-                .query_one(&clear, &[&selected.run_id])
+            let clear = sqlx::Executor::prepare(
+                &mut *connection,
+                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(clear_sql.clone())),
+            )
+            .await
+            .map_err(|error| storage("prepare pre-effect state clear", &error))?;
+            sqlx::query(clear.sql().clone())
+                .bind(&selected.run_id)
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(|error| storage("clear pre-effect state", &error))?;
         }
@@ -1153,20 +1200,25 @@ async fn lease_in_transaction(
     // Crash evidence advances in its own statement outside the grant's
     // subtransaction.
     let advance_sql = advance_lease_attempts_sql();
-    let advance = connection
-        .prepare_cached(&advance_sql)
-        .await
-        .map_err(|error| storage("prepare crash-evidence advance", &error))?;
-    connection
-        .query_one(&advance, &[&selected.run_id])
+    let advance = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(advance_sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare crash-evidence advance", &error))?;
+    sqlx::query(advance.sql().clone())
+        .bind(&selected.run_id)
+        .fetch_one(&mut *connection)
         .await
         .map_err(|error| storage("advance crash evidence", &error))?;
 
     let grant_sql = grant_production_lease_sql();
-    let grant = connection
-        .prepare_cached(&grant_sql)
-        .await
-        .map_err(|error| storage("prepare production lease grant", &error))?;
+    let grant = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(grant_sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare production lease grant", &error))?;
     // The pod's own release digest, or NULL when it carries none. PostgreSQL
     // compares it to the immutable admission pin.
     let release = release.filter(|_| selected.candidate.is_none());
@@ -1174,22 +1226,25 @@ async fn lease_in_transaction(
     // The grant is the one abortable write left in this transaction, so it runs
     // in its own subtransaction: a database refusal rolls back to the savepoint
     // instead of the whole transaction, leaving the advance above committable.
-    connection
-        .batch_execute("SAVEPOINT wamn_production_grant")
+    sqlx::raw_sql("SAVEPOINT wamn_production_grant")
+        .execute(&mut *connection)
         .await
+        .map(|_| ())
         .map_err(|error| storage("open production lease savepoint", &error))?;
-    let granted = connection
-        .query_opt(
-            &grant,
-            &[&selected.run_id, &runner, &lease_ttl_ms, &manifest_digest],
-        )
+    let granted = sqlx::query(grant.sql().clone())
+        .bind(&selected.run_id)
+        .bind(runner)
+        .bind(lease_ttl_ms)
+        .bind(manifest_digest)
+        .fetch_optional(&mut *connection)
         .await;
     let granted = match granted {
         Ok(granted) => granted,
         Err(error) => {
-            connection
-                .batch_execute("ROLLBACK TO SAVEPOINT wamn_production_grant")
+            sqlx::raw_sql("ROLLBACK TO SAVEPOINT wamn_production_grant")
+                .execute(&mut *connection)
                 .await
+                .map(|_| ())
                 .map_err(|rollback| storage("roll back refused production lease", &rollback))?;
             return Ok(LeaseTurn::GrantRefused(storage(
                 "grant production lease",
@@ -1221,19 +1276,24 @@ async fn lease_in_transaction(
 }
 
 async fn reap_in_transaction(
-    connection: &Object,
+    connection: &mut sqlx::PgConnection,
     package_ids: &[String],
     environment: &str,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let select_sql = select_exhausted_production_sql();
-    let select = connection
-        .prepare_cached(&select_sql)
-        .await
-        .map_err(|error| storage("prepare exhausted candidate", &error))?;
-    let Some(row) = connection
-        .query_opt(&select, &[&grace_ms, &package_ids, &environment])
+    let select = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(select_sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare exhausted candidate", &error))?;
+    let Some(row) = sqlx::query(select.sql().clone())
+        .bind(grace_ms)
+        .bind(package_ids)
+        .bind(environment)
+        .fetch_optional(&mut *connection)
         .await
         .map_err(|error| storage("select exhausted candidate", &error))?
     else {
@@ -1283,17 +1343,20 @@ async fn reap_in_transaction(
         &selected.run_id,
     )?;
     let terminalize_sql = terminalize_exhausted_production_sql();
-    let terminalize = connection
-        .prepare_cached(&terminalize_sql)
-        .await
-        .map_err(|error| storage("prepare exhausted terminalization", &error))?;
+    let terminalize = sqlx::Executor::prepare(
+        &mut *connection,
+        sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(terminalize_sql.clone())),
+    )
+    .await
+    .map_err(|error| storage("prepare exhausted terminalization", &error))?;
     // D2b: this host owns the instant the reap stamps.
     let reaped_at = SystemTime::now();
-    let row = connection
-        .query_opt(
-            &terminalize,
-            &[&selected.run_id, &body, &body_hash, &reaped_at],
-        )
+    let row = sqlx::query(terminalize.sql().clone())
+        .bind(&selected.run_id)
+        .bind(&body)
+        .bind(&body_hash)
+        .bind(chrono::DateTime::<chrono::Utc>::from(reaped_at))
+        .fetch_optional(&mut *connection)
         .await
         .map_err(|error| storage("terminalize exhausted run", &error))?
         .ok_or_else(|| {
@@ -1535,7 +1598,7 @@ fn decode_wiring_identity(
 
 fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionLeaseError>
 where
-    for<'value> T: FromSql<'value>,
+    for<'value> T: Decode<'value, sqlx::Postgres> + Type<sqlx::Postgres>,
 {
     row.try_get(index).map_err(|error| {
         ProductionLeaseError::new(
@@ -1548,11 +1611,8 @@ where
 
 /// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
 /// Run rows contain application inputs, results, and invocation context.
-pub(super) fn storage(
-    operation: &'static str,
-    error: &tokio_postgres::Error,
-) -> ProductionLeaseError {
-    let detail = match error.as_db_error() {
+pub(super) fn storage(operation: &'static str, error: &sqlx::Error) -> ProductionLeaseError {
+    let detail = match error.as_database_error() {
         Some(database) => match database.constraint() {
             Some(constraint) => format!("{} ({constraint})", database.message()),
             None => database.message().to_owned(),
@@ -1570,22 +1630,21 @@ mod tests {
     async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
-        let (client, connection) =
-            tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-        let task = tokio::spawn(connection);
-        client.batch_execute("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").await?;
+        let mut client = wamn_postgres::connect(database.url()).await?;
+
+        sqlx::raw_sql("CREATE TEMP TABLE private_diagnostic (payload text, valid bool CONSTRAINT diagnostic_valid CHECK (valid))").execute(&mut client).await.map(drop)?;
         let marker = "private-person@example.invalid";
-        let error = client
-            .execute(
-                "INSERT INTO private_diagnostic VALUES ($1, false)",
-                &[&marker],
-            )
+        let error = sqlx::query("INSERT INTO private_diagnostic VALUES ($1, false)")
+            .bind(&marker)
+            .execute(&mut client)
             .await
+            .map(|result| result.rows_affected())
             .unwrap_err();
         assert!(
             error
-                .as_db_error()
+                .as_database_error()
                 .unwrap()
+                .downcast_ref::<sqlx::postgres::PgDatabaseError>()
                 .detail()
                 .unwrap()
                 .contains(marker)
@@ -1594,13 +1653,12 @@ mod tests {
         assert!(rendered.contains("diagnostic_valid"));
         assert!(rendered.contains("violates check constraint"));
         assert!(!rendered.contains(marker));
-        let error = client.batch_execute("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").await.unwrap_err();
+        let error = sqlx::raw_sql("DO $$ BEGIN RAISE EXCEPTION 'diagnostic message' USING DETAIL = 'private-detail-marker', HINT = 'private-hint-marker'; END $$").execute(&mut client).await.map(drop).unwrap_err();
         let rendered = storage("test storage", &error).to_string();
         assert!(rendered.contains("diagnostic message"));
         assert!(!rendered.contains("private-detail-marker"));
         assert!(!rendered.contains("private-hint-marker"));
         drop(client);
-        task.await??;
         Ok(())
     }
 
@@ -1608,18 +1666,14 @@ mod tests {
     async fn executor_authority_uses_current_user_for_each_operation() -> anyhow::Result<()> {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
-        let config: tokio_postgres::Config = database.url().parse()?;
-        let pool = deadpool_postgres::Pool::builder(deadpool_postgres::Manager::new(
-            config,
-            tokio_postgres::NoTls,
-        ))
-        .max_size(1)
-        .build()?;
-        let connection = pool.get().await?;
-        connection.batch_execute("BEGIN").await?;
-        connection
-            .batch_execute(
-                "DO $roles$ DECLARE role_name text; BEGIN \
+        let pool = wamn_postgres::pool(database.url(), 1).await?;
+        let mut connection = pool.acquire().await?;
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut *connection)
+            .await
+            .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            ("DO $roles$ DECLARE role_name text; BEGIN \
                    FOREACH role_name IN ARRAY ARRAY[ \
                      'wamn_executor_platform', \
                      'wamn_app', \
@@ -1631,36 +1685,40 @@ mod tests {
                    END LOOP; \
                  END $roles$; \
                  GRANT wamn_executor_platform TO wamn_executor_authority_test; \
-                 SET LOCAL ROLE wamn_executor_authority_test;",
-            )
+                 SET LOCAL ROLE wamn_executor_authority_test;")
+                .to_string(),
+        ))
+        .execute(&mut *connection)
+        .await
+        .map(drop)?;
+        require_executor_authority(&mut *connection).await?;
+        let users = sqlx::query("SELECT CURRENT_USER::text, SESSION_USER::text")
+            .fetch_one(&mut *connection)
             .await?;
-        require_executor_authority(&connection).await?;
-        let users = connection
-            .query_one("SELECT CURRENT_USER::text, SESSION_USER::text", &[])
-            .await?;
-        assert_eq!(users.get::<_, String>(0), "wamn_executor_authority_test");
-        assert_ne!(users.get::<_, String>(0), users.get::<_, String>(1));
+        assert_eq!(users.get::<String, _>(0), "wamn_executor_authority_test");
+        assert_ne!(users.get::<String, _>(0), users.get::<String, _>(1));
 
         let packages = ["authority-test".to_string()];
         let completion = ProductionCompletion::completed(serde_json::Value::Null, None);
         for role in ["wamn_app"] {
-            connection
-                .batch_execute(&format!("SET LOCAL ROLE {role}"))
-                .await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET LOCAL ROLE {role}")))
+                .execute(&mut *connection)
+                .await
+                .map(drop)?;
             for result in [
-                lease_in_transaction(&connection, "runner", &packages, "test", 1000, None)
+                lease_in_transaction(&mut connection, "runner", &packages, "test", 1000, None)
                     .await
                     .map(|_| ()),
-                reap_in_transaction(&connection, &packages, "test", 0)
+                reap_in_transaction(&mut connection, &packages, "test", 0)
                     .await
                     .map(|_| ()),
-                release_in_transaction(&connection, "run", "runner", 1)
+                release_in_transaction(&mut connection, "run", "runner", 1)
                     .await
                     .map(|_| ()),
-                renew_in_transaction(&connection, "run", "runner", 1, 1000)
+                renew_in_transaction(&mut connection, "run", "runner", 1, 1000)
                     .await
                     .map(|_| ()),
-                complete_in_transaction(&connection, "run", "runner", 1, &completion)
+                complete_in_transaction(&mut connection, "run", "runner", 1, &completion)
                     .await
                     .map(|_| ()),
             ] {
@@ -1668,29 +1726,35 @@ mod tests {
                 assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
             }
             assert_eq!(
-                connection
-                    .query_one("SELECT 1", &[])
+                sqlx::query("SELECT 1")
+                    .fetch_one(&mut *connection)
                     .await?
-                    .get::<_, i32>(0),
+                    .get::<i32, _>(0),
                 1
             );
         }
-        connection
-            .batch_execute("RESET ROLE; SAVEPOINT missing_role")
-            .await?;
-        connection
-            .batch_execute(&format!(
+        sqlx::raw_sql("RESET ROLE; SAVEPOINT missing_role")
+            .execute(&mut *connection)
+            .await
+            .map(drop)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "ALTER ROLE wamn_executor_platform RENAME TO wamn_authority_missing_{}",
                 std::process::id()
             ))
-            .await?;
-        let missing = require_executor_authority(&connection)
+                .to_string(),
+        ))
+        .execute(&mut *connection)
+        .await
+        .map(drop)?;
+        let missing = require_executor_authority(&mut *connection)
             .await
             .expect_err("an absent role must return the native refusal");
         assert_eq!(missing.error_type(), ProductionLeaseErrorType::Identity);
-        connection
-            .batch_execute("ROLLBACK TO missing_role; ROLLBACK")
-            .await?;
+        sqlx::raw_sql("ROLLBACK TO missing_role; ROLLBACK")
+            .execute(&mut *connection)
+            .await
+            .map(drop)?;
         Ok(())
     }
 

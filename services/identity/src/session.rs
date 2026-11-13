@@ -3,13 +3,13 @@
 //! A later login provider must establish the same principal and evidence start.
 //! It cannot supply environment roles, a database URL, or a new token profile.
 
+use sqlx::Row as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Response, StatusCode};
 use ring::rand::{SecureRandom as _, SystemRandom};
-use tokio_postgres::GenericClient;
 use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 use wamn_platform_identity::{
     AuthenticatedPrincipal,
@@ -71,7 +71,7 @@ pub(super) fn audience<'a>(inner: &'a Inner, audience: &'a str) -> Option<Audien
 /// the same current authority tests as discovery.
 pub(super) async fn claims_for_audience(
     inner: &Inner,
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &AuthenticatedPrincipal,
     audience: &Audience<'_>,
     authority: SessionAuthority,
@@ -92,12 +92,13 @@ pub(super) async fn claims_for_audience(
 
 /// Whether the principal holds a control role in the registered org.
 pub(super) async fn holds_control(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal: &AuthenticatedPrincipal,
     org: &str,
 ) -> Result<bool, ExchangeFailure> {
-    let registered: bool = client
-        .query_one(REGISTERED_ORG_SQL, &[&org])
+    let registered: bool = sqlx::query(REGISTERED_ORG_SQL)
+        .bind(org)
+        .fetch_one(&mut *client)
         .await
         .map_err(|_| failed())?
         .get(0);
@@ -176,9 +177,9 @@ pub(super) async fn authorized_roles(
     let principal = principal.principal();
     let target = &configured.binding;
     let triple = target.triple();
-    let database = inner.database().await.map_err(|_| failed())?;
+    let mut database = inner.database().await.map_err(|_| failed())?;
     if !has_project_env_membership(
-        &database.client,
+        &mut database.client,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -189,17 +190,12 @@ pub(super) async fn authorized_roles(
     {
         return Err(refused());
     }
-    let current: bool = database
-        .client
-        .query_one(
-            CURRENT_TARGET_SQL,
-            &[
-                &triple.org,
-                &triple.project,
-                &triple.env.as_str(),
-                &target.instance_suffix(),
-            ],
-        )
+    let current: bool = sqlx::query(CURRENT_TARGET_SQL)
+        .bind(&triple.org)
+        .bind(&triple.project)
+        .bind(triple.env.as_str())
+        .bind(target.instance_suffix())
+        .fetch_one(&mut database.client)
         .await
         .map_err(|_| failed())?
         .get(0);
@@ -208,7 +204,7 @@ pub(super) async fn authorized_roles(
     }
 
     if wamn_platform_identity::control::is_project_admin(
-        &database.client,
+        &mut database.client,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -223,18 +219,15 @@ pub(super) async fn authorized_roles(
     // Take the connection out while it is in use. Cancellation or a failed
     // query drops its driver, so no abandoned query stays on a retained reader.
     let mut retained = configured.reader.lock().await;
-    let roles_database = match retained.take().filter(|db| !db.client.is_closed()) {
+    let mut roles_database = match retained.take() {
         Some(database) => database,
-        None => connect_database(target.connection().url())
+        None => connect_database(&target.connection().to_json().map_err(|_| failed())?)
             .await
             .map_err(|_| failed())?,
     };
-    let rows = roles_database
-        .client
-        .query(
-            ENVIRONMENT_ROLES_SQL,
-            &[&principal.id().to_string().as_str()],
-        )
+    let rows = sqlx::query(ENVIRONMENT_ROLES_SQL)
+        .bind(principal.id().to_string().as_str())
+        .fetch_all(&mut roles_database.client)
         .await
         .map_err(|_| failed())?;
     let roles: Vec<String> = rows.iter().map(|row| row.get(0)).collect();

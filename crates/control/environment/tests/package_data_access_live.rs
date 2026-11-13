@@ -1,13 +1,12 @@
 //! Disposable-PG18 test for installed-set generated data authority.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use tokio_postgres::{Client, NoTls};
 use url::Url;
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 use wamn_environment_control::reconcile_package_data_access::{
     self, ReconcilePackageDataAccessRequest,
 };
@@ -22,10 +21,10 @@ const PASSWORD: &str = "package-data-access-live-password";
 const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to disposable PostgreSQL");
-    tokio::spawn(connection);
+
     client
 }
 
@@ -66,10 +65,8 @@ fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAcce
     }
 }
 
-async fn acl_identity(client: &Client) -> Vec<String> {
-    client
-        .query(
-            "SELECT identity FROM ( \
+async fn acl_identity(client: &mut Client) -> Vec<String> {
+    sqlx::query("SELECT identity FROM ( \
                SELECT 'schema:' || namespace.nspname || ':' || namespace.xmin::text AS identity \
                  FROM pg_catalog.pg_namespace AS namespace \
                 WHERE namespace.nspname = 'inventory' \
@@ -89,9 +86,7 @@ async fn acl_identity(client: &Client) -> Vec<String> {
                     'widget', 'widget_maker', \
                     'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-             ) AS observed ORDER BY identity COLLATE \"C\"",
-            &[],
-        )
+             ) AS observed ORDER BY identity COLLATE \"C\"").fetch_all(&mut *client)
         .await
         .expect("read ACL-bearing catalog identities")
         .into_iter()
@@ -105,7 +100,7 @@ async fn acl_identity(client: &Client) -> Vec<String> {
 /// an empty answer before reconciliation states that no guest path reads them.
 /// A non-empty answer is a finding about the applier, and the assertion that
 /// reads it says so.
-async fn applier_owned_authority(client: &Client) -> Vec<String> {
+async fn applier_owned_authority(client: &mut Client) -> Vec<String> {
     let table_privileges = vec![
         "DELETE",
         "INSERT",
@@ -117,9 +112,7 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
         "UPDATE",
     ];
     let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
-    client
-        .query(
-            "SELECT held FROM ( \
+    sqlx::query("SELECT held FROM ( \
                SELECT relation.relname || ':' || privilege AS held \
                  FROM pg_catalog.pg_class AS relation \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
@@ -138,13 +131,7 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
                   AND pg_catalog.has_column_privilege( \
                         'wamn_app', relation.oid, attribute.attnum, privilege) \
-             ) AS observed ORDER BY held COLLATE \"C\"",
-            &[
-                &table_privileges,
-                &column_privileges,
-                &APPLIER_OWNED_RELATIONS.as_slice(),
-            ],
-        )
+             ) AS observed ORDER BY held COLLATE \"C\"").bind(&table_privileges).bind(&column_privileges).bind(&APPLIER_OWNED_RELATIONS.as_slice()).fetch_all(&mut *client)
         .await
         .expect("read App authority on the applier-owned relation maps")
         .into_iter()
@@ -155,23 +142,22 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
 #[tokio::test]
 async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let admin = connect(&url).await;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(&url).await;
+    let mut database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await
         .expect("read disposable database")
         .get(0);
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("App generation accepts project target");
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -184,33 +170,44 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
                  EXECUTE 'DROP OWNED BY wamn_app'; \
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
-               CREATE ROLE wamn_app NOLOGIN; \
+               CREATE ROLE wamn_app NOLOGIN NOINHERIT; \
                 \
              END $reset$;"
         ))
-        .await
-        .expect("reset package data-access fixture");
-    admin
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the production package-owner role");
-    admin
-        .batch_execute(
-            "DO $grant$ BEGIN \
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("reset package data-access fixture");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("ensure the production package-owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $grant$ BEGIN \
                EXECUTE format(\
                  'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
                ); \
-             END $grant$;",
-        )
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("grant the package-owner role its production-equivalent database authority");
+    sqlx::raw_sql(CATALOG_SCHEMA)
+        .execute(&mut admin)
         .await
-        .expect("grant the package-owner role its production-equivalent database authority");
-    admin
-        .batch_execute(CATALOG_SCHEMA)
-        .await
+        .map(drop)
         .expect("install package catalog");
-    admin
-        .batch_execute(APP_SCHEMA)
+    sqlx::raw_sql(APP_SCHEMA)
+        .execute(&mut admin)
         .await
+        .map(drop)
         .expect("install application authorization base grants");
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
@@ -252,49 +249,56 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     })
     .await
     .expect("apply client overlay package before policy");
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &database,
             &generation,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await
-        .expect("prepare production App generation");
-    admin
-        .batch_execute(
-            "ALTER TABLE inventory.widget_maker ADD COLUMN undeclared_note text; \
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("prepare production App generation");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE inventory.widget_maker ADD COLUMN undeclared_note text; \
              GRANT DELETE ON TABLE inventory.widget_maker TO wamn_app; \
              GRANT UPDATE (name) ON TABLE inventory.widget_maker TO wamn_app; \
              GRANT SELECT (undeclared_note) ON TABLE inventory.widget_maker TO wamn_app; \
-             GRANT SELECT (name) ON TABLE inventory.widget_maker TO PUBLIC;",
-        )
-        .await
-        .expect("seed direct ACL residue");
+             GRANT SELECT (name) ON TABLE inventory.widget_maker TO PUBLIC;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("seed direct ACL residue");
     // Negative controls. The admin role mints three relations in the
     // package-owned schema that no package declares, one of each carrier the
     // sweep reads, and grants the App role authority on each. Showing the
     // absence of authority afterwards needs a relation that no package speaks
     // for. Every declared relation fails that test by construction.
-    admin
-        .batch_execute(
-            "CREATE TABLE inventory.unconsumed_relation ( \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE inventory.unconsumed_relation ( \
                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), note text); \
              CREATE VIEW inventory.unconsumed_view AS SELECT id FROM inventory.widget_maker; \
              CREATE SEQUENCE inventory.unconsumed_sequence; \
              GRANT SELECT ON TABLE inventory.unconsumed_relation TO wamn_app; \
              GRANT UPDATE (note) ON TABLE inventory.unconsumed_relation TO wamn_app; \
              GRANT SELECT ON TABLE inventory.unconsumed_view TO wamn_app; \
-             GRANT USAGE ON SEQUENCE inventory.unconsumed_sequence TO wamn_app;",
-        )
-        .await
-        .expect("seed authority on relations no package declares");
+             GRANT USAGE ON SEQUENCE inventory.unconsumed_sequence TO wamn_app;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("seed authority on relations no package declares");
     // The applier-owned relation maps carry no seed. The sweep reaches them like
     // every other relation in the schema, and this reading states what it finds
     // there before it runs.
     assert_eq!(
-        applier_owned_authority(&admin).await,
+        applier_owned_authority(&mut admin).await,
         Vec::<String>::new(),
         "a guest path already reaches an applier-owned relation map, which is a \
          finding about apply-package rather than a reason to exclude the map"
@@ -324,50 +328,55 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         "residual ACL did not require repair"
     );
     assert_eq!(
-        applier_owned_authority(&admin).await,
+        applier_owned_authority(&mut admin).await,
         Vec::<String>::new(),
         "reconciliation left App authority on an applier-owned relation map"
     );
-    let guest = connect(&generation_url(&url, &generation)).await;
-    guest
-        .query("SELECT id FROM inventory.widget_maker", &[])
+    let mut guest = connect(&generation_url(&url, &generation)).await;
+    sqlx::query("SELECT id FROM inventory.widget_maker")
+        .fetch_all(&mut guest)
         .await
         .expect("generated SELECT field is reachable through a real App generation");
-    guest
-        .execute(
-            "UPDATE inventory.widget \
+    sqlx::query(
+        "UPDATE inventory.widget \
                 SET maker_id = maker_id, edit_version = edit_version \
               WHERE false",
-            &[],
-        )
-        .await
-        .expect("generated writable and revision fields are reachable");
-    guest
-        .query("SELECT id FROM inventory.widget FOR KEY SHARE", &[])
+    )
+    .execute(&mut guest)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("generated writable and revision fields are reachable");
+    sqlx::query("SELECT id FROM inventory.widget FOR KEY SHARE")
+        .fetch_all(&mut guest)
         .await
         .expect("generated lock carrier permits the declared row lock");
-    guest
-        .query("SELECT overlay_note FROM inventory.widget", &[])
+    sqlx::query("SELECT overlay_note FROM inventory.widget")
+        .fetch_all(&mut guest)
         .await
         .expect("overlay SELECT survives beside base authority");
-    let delete = guest
-        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
+    let delete = sqlx::query("DELETE FROM inventory.widget_maker WHERE false")
+        .execute(&mut guest)
         .await
+        .map(|result| result.rows_affected())
         .expect_err("residual table DELETE survived reconciliation");
     assert_eq!(
-        delete.as_db_error().map(|error| error.code().code()),
+        delete
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
         Some("42501")
     );
     // undeclared_note is added to the live relation by the seeding above and
     // no manifest declares it, so it is a real undeclared column.
-    let undeclared_column = guest
-        .query("SELECT undeclared_note FROM inventory.widget_maker", &[])
+    let undeclared_column = sqlx::query("SELECT undeclared_note FROM inventory.widget_maker")
+        .fetch_all(&mut guest)
         .await
         .expect_err("the undeclared column remained readable");
     assert_eq!(
         undeclared_column
-            .as_db_error()
-            .map(|error| error.code().code()),
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
         Some("42501")
     );
     // The arm used to name a relation both packages declare, and whose
@@ -380,39 +389,49 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         "SELECT id FROM inventory.unconsumed_view",
         "SELECT nextval('inventory.unconsumed_sequence')",
     ] {
-        let denied = guest
-            .query(unconsumed, &[])
+        let denied = sqlx::query(sqlx::AssertSqlSafe((unconsumed).to_string()))
+            .fetch_all(&mut guest)
             .await
             .expect_err("seeded authority survived on a relation no package declares");
         assert_eq!(
-            denied.as_db_error().map(|error| error.code().code()),
+            denied
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
             Some("42501"),
             "{unconsumed} kept its seeded authority"
         );
     }
     for control_relation in ["wamn_entities", "wamn_cdc_exclusions"] {
-        let denied = guest
-            .query(&format!("SELECT * FROM inventory.{control_relation}"), &[])
-            .await
-            .expect_err("package data authority reached a control-owned relation map");
+        let denied = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT * FROM inventory.{control_relation}"
+        )))
+        .fetch_all(&mut guest)
+        .await
+        .expect_err("package data authority reached a control-owned relation map");
         assert_eq!(
-            denied.as_db_error().map(|error| error.code().code()),
+            denied
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
             Some("42501"),
             "{control_relation} became package data authority"
         );
     }
-    let overlay_delete = guest
-        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
+    let overlay_delete = sqlx::query("DELETE FROM inventory.widget_maker WHERE false")
+        .execute(&mut guest)
         .await
+        .map(|result| result.rows_affected())
         .expect_err("overlay residue survived installed-set reconciliation");
     assert_eq!(
         overlay_delete
-            .as_db_error()
-            .map(|error| error.code().code()),
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
         Some("42501")
     );
 
-    let first = acl_identity(&admin).await;
+    let first = acl_identity(&mut admin).await;
     let again = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
         installed_packages,
@@ -421,7 +440,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     .expect("replay installed-set data-access union");
     assert!(again.is_noop(), "replay did not report convergence");
     assert_eq!(
-        acl_identity(&admin).await,
+        acl_identity(&mut admin).await,
         first,
         "replay rewrote ACL state"
     );
@@ -477,10 +496,9 @@ fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
 }
 
 async fn install_lineage_fixture(url: &str) -> Client {
-    let admin = connect(url).await;
-    admin
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    let mut admin = connect(url).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $reset$ BEGIN \
@@ -488,33 +506,43 @@ async fn install_lineage_fixture(url: &str) -> Client {
                  EXECUTE 'DROP OWNED BY wamn_app'; \
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
-               CREATE ROLE wamn_app NOLOGIN; \
+               CREATE ROLE wamn_app NOLOGIN NOINHERIT; \
                 \
-             END $reset$;",
-        )
-        .await
-        .expect("reset package lineage fixture");
-    admin
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the production package-owner role");
-    admin
-        .batch_execute(
-            "DO $grant$ BEGIN \
+             END $reset$;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("reset package lineage fixture");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("ensure the production package-owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $grant$ BEGIN \
                EXECUTE format(\
                  'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
                ); \
-             END $grant$;",
-        )
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("grant the package-owner role its production-equivalent database authority");
+    sqlx::raw_sql(CATALOG_SCHEMA)
+        .execute(&mut admin)
         .await
-        .expect("grant the package-owner role its production-equivalent database authority");
-    admin
-        .batch_execute(CATALOG_SCHEMA)
-        .await
+        .map(drop)
         .expect("install package catalog");
-    admin
-        .batch_execute(APP_SCHEMA)
+    sqlx::raw_sql(APP_SCHEMA)
+        .execute(&mut admin)
         .await
+        .map(drop)
         .expect("install application authorization base grants");
     admin
 }
@@ -583,16 +611,17 @@ async fn moved_bytes_under_an_applied_version_are_refused() {
 #[tokio::test]
 async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let admin = install_lineage_fixture(&url).await;
+    let mut admin = install_lineage_fixture(&url).await;
     apply(&url, fixture_package_root()).await;
     apply(&url, overlay_package_root()).await;
     // platform and catalog are platform schemas. No package manifest names
     // them, so the reconciler never reads a relation there. The minimum grants the
     // two schema files install stand outside every package declaration, and so
     // does this seeded grant.
-    admin
-        .batch_execute("GRANT UPDATE (project_env_key) ON TABLE catalog.packages TO wamn_app;")
+    sqlx::raw_sql("GRANT UPDATE (project_env_key) ON TABLE catalog.packages TO wamn_app;")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .expect("seed App authority inside the platform schemas");
     reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
@@ -607,27 +636,25 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
         ("catalog.packages", "SELECT"),
     ] {
         assert!(
-            admin
-                .query_one(
-                    "SELECT pg_catalog.has_table_privilege('wamn_app', $1, $2)",
-                    &[&relation, &privilege],
-                )
+            sqlx::query("SELECT pg_catalog.has_table_privilege('wamn_app', $1, $2)")
+                .bind(&relation)
+                .bind(&privilege)
+                .fetch_one(&mut admin)
                 .await
                 .expect("read platform-schema table authority")
-                .get::<_, bool>(0),
+                .get::<bool, _>(0),
             "reconciliation revoked {privilege} on {relation}"
         );
     }
     assert!(
-        admin
-            .query_one(
-                "SELECT pg_catalog.has_column_privilege( \
-                   'wamn_app', 'catalog.packages', 'project_env_key', 'UPDATE')",
-                &[],
-            )
-            .await
-            .expect("read platform-schema column authority")
-            .get::<_, bool>(0),
+        sqlx::query(
+            "SELECT pg_catalog.has_column_privilege( \
+                   'wamn_app', 'catalog.packages', 'project_env_key', 'UPDATE')"
+        )
+        .fetch_one(&mut admin)
+        .await
+        .expect("read platform-schema column authority")
+        .get::<bool, _>(0),
         "reconciliation revoked the seeded platform-schema column grant"
     );
 }
@@ -652,33 +679,35 @@ fn stage_logged_fixture() -> PathBuf {
 #[tokio::test]
 async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let admin = install_lineage_fixture(&url).await;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = install_lineage_fixture(&url).await;
+    let mut database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await
         .expect("read disposable database")
         .get(0);
     let package = stage_logged_fixture();
     apply(&url, package.clone()).await;
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("App generation accepts project target");
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &database,
             &generation,
             PASSWORD,
-            "2099-01-01T00:00:00Z",
         ))
-        .await
-        .expect("prepare production App generation");
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("prepare production App generation");
     let first = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
         vec![package.clone()],
@@ -687,10 +716,9 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     .expect("reconcile the logged package");
     assert!(!first.is_noop(), "the logged package needed its grants");
 
-    let history_privileges = || async {
-        admin
-            .query(
-                "SELECT held FROM ( \
+    async fn history_privileges(admin: &mut Client) -> Vec<String> {
+        sqlx::query(
+            "SELECT held FROM ( \
                    SELECT attribute.attname::text || ':' || privilege AS held \
                      FROM pg_catalog.pg_attribute AS attribute \
                      CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) \
@@ -700,14 +728,14 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
                       AND pg_catalog.has_column_privilege( \
                             'wamn_app', attribute.attrelid, attribute.attnum, privilege) \
                  ) AS observed ORDER BY held COLLATE \"C\"",
-                &[],
-            )
-            .await
-            .expect("read App authority on the history table")
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect::<Vec<_>>()
-    };
+        )
+        .fetch_all(&mut *admin)
+        .await
+        .expect("read App authority on the history table")
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<Vec<_>>()
+    }
     let expected_privileges = [
         "after:INSERT",
         "before:INSERT",
@@ -718,52 +746,55 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         "transaction_id:INSERT",
         "type:INSERT",
     ];
-    assert_eq!(history_privileges().await, expected_privileges);
+    assert_eq!(history_privileges(&mut admin).await, expected_privileges);
 
-    admin
-        .batch_execute(
-            "BEGIN; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
              INSERT INTO inventory.widget_tag (id, label) \
                VALUES ('00000000-0000-4000-8000-00000000b003', 'history-tag'); \
-             COMMIT;",
-        )
-        .await
-        .expect("seed the logged relation as the fixture principal");
+             COMMIT;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("seed the logged relation as the fixture principal");
 
-    let guest = connect(&generation_url(&url, &generation)).await;
-    guest
-        .batch_execute(
-            "BEGIN; \
+    let mut guest = connect(&generation_url(&url, &generation)).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
                     set_config('app.operation', 'platform-fixture:widget-tag/update@2.1.1', true); \
              UPDATE inventory.widget_tag SET label = 'logged' \
               WHERE id = '00000000-0000-4000-8000-00000000b003'; \
-             COMMIT;",
-        )
-        .await
-        .expect("the App role writes a logged relation with its reconciled grants");
-    let entries = admin
-        .query(
-            "SELECT type, operation, changed_by::text, row_key::text, before::text, after::text \
+             COMMIT;")
+            .to_string(),
+    ))
+    .execute(&mut guest)
+    .await
+    .map(drop)
+    .expect("the App role writes a logged relation with its reconciled grants");
+    let entries = sqlx::query(
+        "SELECT type, operation, changed_by::text, row_key::text, before::text, after::text \
                FROM inventory.widget_tag_history ORDER BY position",
-            &[],
+    )
+    .fetch_all(&mut admin)
+    .await
+    .expect("read the history entries")
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>(0),
+            row.get::<String, _>(1),
+            row.get::<String, _>(2),
+            row.get::<String, _>(3),
+            row.get::<String, _>(4),
+            row.get::<String, _>(5),
         )
-        .await
-        .expect("read the history entries")
-        .into_iter()
-        .map(|row| {
-            (
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, String>(2),
-                row.get::<_, String>(3),
-                row.get::<_, String>(4),
-                row.get::<_, String>(5),
-            )
-        })
-        .collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
     assert_eq!(
         entries.len(),
         2,
@@ -788,17 +819,16 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
             r#"{"label": "logged"}"#.to_owned(),
         )
     );
-    let stamps = admin
-        .query_one(
-            "SELECT count(*) FROM pg_catalog.pg_attribute \
+    let stamps = sqlx::query(
+        "SELECT count(*) FROM pg_catalog.pg_attribute \
               WHERE attrelid = 'inventory.widget_tag'::regclass \
                 AND attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
                 AND NOT attisdropped",
-            &[],
-        )
-        .await
-        .expect("read stamp columns")
-        .get::<_, i64>(0);
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("read stamp columns")
+    .get::<i64, _>(0);
     assert_eq!(stamps, 0, "the logged relation carries no stamp column");
 
     for statement in [
@@ -806,12 +836,16 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         "UPDATE inventory.widget_tag_history SET type = type",
         "DELETE FROM inventory.widget_tag_history",
     ] {
-        let denied = guest
-            .execute(statement, &[])
+        let denied = sqlx::query(sqlx::AssertSqlSafe((statement).to_string()))
+            .execute(&mut guest)
             .await
+            .map(|result| result.rows_affected())
             .expect_err("the App role reached a history entry outside the log trigger");
         assert_eq!(
-            denied.as_db_error().map(|error| error.code().code()),
+            denied
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
             Some("42501"),
             "{statement}"
         );
@@ -824,27 +858,26 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     .await
     .expect("replay the logged package reconciliation");
     assert!(again.is_noop(), "the reconciler changed the history grant");
-    assert_eq!(history_privileges().await, expected_privileges);
+    assert_eq!(history_privileges(&mut admin).await, expected_privileges);
 
     std::fs::remove_dir_all(lineage_fixture_directory().join("fixture-logged"))
         .expect("remove the logged package fixture");
 }
 
 /// The full comment of the connected database.
-async fn database_comment(client: &Client) -> Option<String> {
-    client
-        .query_one(
-            "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
+async fn database_comment(client: &mut Client) -> Option<String> {
+    sqlx::query(
+        "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
                FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-            &[],
-        )
-        .await
-        .expect("read the database comment")
-        .get(0)
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the database comment")
+    .get(0)
 }
 
 /// The manifest digests the local target comment records.
-async fn recorded_manifests(client: &Client) -> BTreeMap<String, String> {
+async fn recorded_manifests(client: &mut Client) -> BTreeMap<String, String> {
     let comment = database_comment(client)
         .await
         .expect("the target carries a comment");
@@ -870,34 +903,38 @@ fn change_manifest_bytes(root: &Path) -> String {
 async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     const ENVIRONMENT: &str = "development";
     let url = locked_database::database(wamn_test_postgres::database);
-    let admin = install_lineage_fixture(&url).await;
+    let mut admin = install_lineage_fixture(&url).await;
     let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local");
     let (overlay, overlay_digest) = stage_package_root(&overlay_package_root(), "overlay-local");
     apply(&url, fixture.clone()).await;
     apply(&url, overlay.clone()).await;
 
-    let instance: u32 = admin
-        .query_one(
-            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-            &[],
-        )
-        .await
-        .expect("read the database instance")
-        .get(0);
+    let instance: u32 = sqlx::query(
+        "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+    )
+    .fetch_one(&mut admin)
+    .await
+    .expect("read the database instance")
+    .get::<sqlx::postgres::types::Oid, _>(0)
+    .0;
     let marker = wamn_runtime::local_application::local_target_marker(
         PROJECT_ENV_KEY,
         ENVIRONMENT,
         instance,
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DO $comment$ BEGIN \
                EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {}::text); \
              END $comment$;",
             postgres_protocol::escape::escape_literal(&marker)
         ))
-        .await
-        .expect("mark the local target");
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("mark the local target");
 
     let roots = vec![fixture.clone(), overlay.clone()];
     let reconcile = |apply: bool| {
@@ -920,11 +957,11 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     reconcile(false)
         .await
         .expect("validate the local grants before the cutover");
-    assert_eq!(database_comment(&admin).await, Some(marker.clone()));
+    assert_eq!(database_comment(&mut admin).await, Some(marker.clone()));
 
     reconcile(true).await.expect("apply the local grants");
     assert_eq!(
-        recorded_manifests(&admin).await,
+        recorded_manifests(&mut admin).await,
         BTreeMap::from([
             ("platform_fixture@2.1.1".to_owned(), first.clone()),
             ("platform_fixture_overlay@2.1.1".to_owned(), overlay_digest),
@@ -942,23 +979,23 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         .await
         .expect("the local reconcile takes a changed manifest at an applied coordinate");
     assert_eq!(
-        recorded_manifests(&admin)
+        recorded_manifests(&mut admin)
             .await
             .get("platform_fixture@2.1.1"),
         Some(&second),
         "the comment kept a digest the application no longer came from"
     );
     assert_eq!(
-        admin
-            .query_one(
-                "SELECT artifact_digest FROM catalog.packages \
+        sqlx::query(
+            "SELECT artifact_digest FROM catalog.packages \
                   WHERE project_env_key = $1 AND package_id = 'platform_fixture' \
-                    AND package_version = '2.1.1'",
-                &[&PROJECT_ENV_KEY],
-            )
-            .await
-            .expect("read the immutable package row")
-            .get::<_, Option<String>>(0),
+                    AND package_version = '2.1.1'"
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_one(&mut admin)
+        .await
+        .expect("read the immutable package row")
+        .get::<Option<String>, _>(0),
         Some(installed),
         "catalog.packages keeps the artifact digest the release apply recorded"
     );

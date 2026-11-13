@@ -18,6 +18,7 @@
 //! With `--data` the verb first patches the policy to `delete`, CloudNativePG
 //! drops the database before the CR is gone, and then the roles go.
 
+use sqlx::Row as _;
 pub(super) mod plan;
 mod resources;
 mod roles;
@@ -30,11 +31,10 @@ use async_nats::jetstream;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_login,
 };
 use wamn_control_provision::{
-    CredentialGeneration, cdc_object_name, control_administration_secret_name,
-    project_env_database_name, render_control_administration_patch,
+    cdc_object_name, control_administration_secret_name, project_env_database_name,
 };
 use wamn_event_wire::delivery_advisory_stream;
 use wamn_registry::Triple;
@@ -44,7 +44,7 @@ use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
 use super::lock::LifecycleLock;
 use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
-use wamn_package_control::database::connect;
+use wamn_postgres::connect;
 use wamn_release_control::release_chart;
 
 /// How long CloudNativePG may take to finalize the `Database` CR.
@@ -90,17 +90,19 @@ async fn delete_locked(
     let mut lines = Vec::new();
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
     let mut system = connect(admin_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
         .await
+        .map(drop)
         .context("SET ROLE wamn_system")?;
-    let Some(row) = system
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
-            &[&org, &project, &env],
-        )
-        .await
-        .context("read the environment row")?
+    let Some(row) =
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED)
+            .bind(org)
+            .bind(project)
+            .bind(env)
+            .fetch_optional(&mut system)
+            .await
+            .context("read the environment row")?
     else {
         lines.push(format!(
             "{triple} has no environment row: nothing else to delete"
@@ -276,7 +278,7 @@ async fn delete_locked(
         namespace,
         &[
             "get",
-            "secret",
+            "configmap",
             &control,
             "--ignore-not-found",
             "-o",
@@ -287,13 +289,15 @@ async fn delete_locked(
     .await?
     .is_empty();
     if control_present {
-        let patch = serde_json::to_vec(&render_control_administration_patch(triple, None))?;
+        let patch = serde_json::to_vec(
+            &serde_json::json!({"data":{wamn_control_provision::control_administration_key(&triple.project,&triple.env):null}}),
+        )?;
         kubectl(
             platform,
             namespace,
             &[
                 "patch",
-                "secret",
+                "configmap",
                 &control,
                 "--type",
                 "merge",
@@ -304,7 +308,7 @@ async fn delete_locked(
         )
         .await
         .with_context(|| format!("remove the environment's key of Secret {control}"))?;
-        let policy = super::analyse::read_policy(&system, org, row.get(1)).await?;
+        let policy = super::analyse::read_policy(&mut system, org, row.get(1)).await?;
         crate::platform::control::wait_administration(
             &platform.target,
             triple,
@@ -341,24 +345,22 @@ async fn delete_locked(
     lines.push(format!("deleted publication {database} (or it was gone)"));
 
     // The replication slot, on the cluster's `postgres` database.
-    let mut postgres_url = url::Url::parse(admin_url).context("parse the admin URL")?;
-    postgres_url.set_path("/postgres");
-    let admin = connect(postgres_url.as_str()).await?;
+    let postgres_url = wamn_postgres::database_configuration(admin_url, "postgres")?;
+    let mut admin = connect(&postgres_url).await?;
     let slot = cdc_object_name(org, project, env, &instance);
-    if let Some(row) = admin
-        .query_opt(
-            "SELECT active FROM pg_replication_slots WHERE slot_name = $1",
-            &[&slot],
-        )
+    if let Some(row) = sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name = $1")
+        .bind(&slot)
+        .fetch_optional(&mut admin)
         .await
         .context("read the replication slot")?
     {
-        if row.get::<_, bool>(0) {
+        if row.get::<bool, _>(0) {
             bail!("refused: replication slot {slot} is active: a reader still streams from it");
         }
-        admin
-            .batch_execute(&drop_replication_slot_sql(&slot))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(drop_replication_slot_sql(&slot)))
+            .execute(&mut admin)
             .await
+            .map(drop)
             .context("drop the replication slot")?;
         lines.push(format!("dropped replication slot {slot}"));
     }
@@ -407,29 +409,38 @@ async fn delete_locked(
 
     // The roles, only with the database: a retained database keeps its
     // owner roles for manual recovery.
-    let mut removed_roles = roles::delete_control_roles(admin_url, triple).await?;
+    let mut removed_roles = roles::delete_control_roles(admin_url, triple, platform).await?;
     lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
         let roles = instance_roles(triple, &instance, &project_env_key)?;
+        let options = wamn_postgres::connect_options(admin_url).await?;
+        let cluster = options
+            .get_host()
+            .split('.')
+            .next()
+            .context("database host")?
+            .trim_end_matches("-rw");
+        crate::provision_project_env::workload::remove_roles(
+            &platform.target.kubeconfig,
+            &platform.target.context,
+            org,
+            cluster,
+            &roles,
+        )
+        .await?;
         for role in &roles {
-            admin
-                .batch_execute(&format!("DROP ROLE IF EXISTS {}", escape_identifier(role)))
-                .await
-                .with_context(|| format!("drop role {role}"))?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DROP ROLE IF EXISTS {}",
+                escape_identifier(role)
+            )))
+            .execute(&mut admin)
+            .await
+            .map(drop)
+            .with_context(|| format!("drop role {role}"))?;
         }
         lines.push(format!("dropped {} roles (or they were gone)", roles.len()));
         removed_roles.extend(roles);
     }
-    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    for role in &removed_roles {
-        transaction
-            .execute(
-                wamn_control_provision::sql::forget_generation_password_sql(),
-                &[role],
-            )
-            .await?;
-    }
-    transaction.commit().await?;
 
     // Keep the registry inputs until the credential store and its account are gone.
     let account = wamn_registry::service_account_name(org, project, env);

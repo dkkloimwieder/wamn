@@ -7,11 +7,11 @@
 //! administration operations of the control routes, which start only at
 //! 4.19.1. A write whose stored value is equal is skipped.
 
+use sqlx::Connection as _;
 use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use tokio_postgres::Transaction;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_platform_identity::connections::{ConnectionError, administration};
@@ -28,20 +28,30 @@ pub async fn write(
     let lock =
         super::lock::LifecycleLock::acquire(&platform.system_database_url, &document.triple())
             .await?;
-    crate::provision_project_env::registry::require_connected(lock.client(), &document.triple())
-        .await?;
-    let mut client = wamn_package_control::database::connect(&platform.system_database_url).await?;
-    let tx = client
-        .transaction()
+    crate::provision_project_env::registry::require_connected(
+        &mut *lock.client().await,
+        &document.triple(),
+    )
+    .await?;
+    let mut client = wamn_postgres::connect(&platform.system_database_url).await?;
+    let mut tx = client
+        .begin()
         .await
         .context("begin the connection writes")?;
-    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        .execute(&mut *tx)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
     ))
-    .await?;
+    .execute(&mut *tx)
+    .await
+    .map(drop)?;
     let mut writes = Writes {
-        tx: &tx,
+        tx: &mut tx,
         org: &document.org,
         auth: AuthDrops::default(),
         drops: ConnectionDrops::default(),
@@ -118,14 +128,14 @@ fn read(documents: &Path, file: &str) -> anyhow::Result<Value> {
     .with_context(|| format!("parse {}", path.display()))
 }
 
-struct Writes<'a> {
-    tx: &'a Transaction<'a>,
+struct Writes<'a, 'c> {
+    tx: &'a mut sqlx::Transaction<'c, sqlx::Postgres>,
     org: &'a str,
     auth: AuthDrops,
     drops: ConnectionDrops,
 }
 
-impl Writes<'_> {
+impl Writes<'_, '_> {
     async fn call(&mut self, operation: &str, request: &Value) -> Result<Value, ConnectionError> {
         administration::execute(
             self.tx,

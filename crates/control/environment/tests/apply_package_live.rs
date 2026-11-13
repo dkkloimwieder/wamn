@@ -1,9 +1,10 @@
 //! Disposable-PostgreSQL closure test for the exact-byte package runner.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
@@ -18,22 +19,19 @@ const PROJECT_ENV_KEY: &str = "package-runner-live--dev--fixture";
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let mut client = wamn_postgres::connect(url)
         .await
         .expect("connect to disposable PostgreSQL");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    client.batch_execute(&format!(
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', false), set_config('app.operation', 'admin:seed-package-fixture', false)"
-    )).await.unwrap();
+    ))).execute(&mut client).await.map(drop).unwrap();
     client
 }
 
-async fn install(client: &Client) {
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+async fn install(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS race_alpha CASCADE; \
              DROP SCHEMA IF EXISTS race_beta CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
@@ -42,45 +40,57 @@ async fn install(client: &Client) {
              DROP SCHEMA IF EXISTS wamn_history CASCADE; \
              DO $roles$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN; \
+                 CREATE ROLE wamn_app NOLOGIN NOINHERIT; \
                END IF; \
                 \
-             END $roles$;",
-        )
-        .await
-        .expect("reset package-runner schemas");
-    client
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the production package-owner role");
-    client
-        .batch_execute(
-            "DO $grant$ BEGIN \
+             END $roles$;")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("reset package-runner schemas");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("ensure the production package-owner role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $grant$ BEGIN \
                EXECUTE format(\
                  'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
                ); \
-             END $grant$;",
-        )
+             END $grant$;")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("grant the package-owner role its production-equivalent database authority");
+    sqlx::raw_sql(CATALOG_SCHEMA)
+        .execute(&mut *client)
         .await
-        .expect("grant the package-owner role its production-equivalent database authority");
-    client
-        .batch_execute(CATALOG_SCHEMA)
-        .await
+        .map(drop)
         .expect("install production package catalog schema");
-    client
-        .batch_execute(APP_SCHEMA)
+    sqlx::raw_sql(APP_SCHEMA)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("install production application authorization base grants");
-    client.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ('{FIXTURE_PRINCIPAL}','user','fixture@example.invalid','fixture')"
-    )).await.unwrap();
-    client
-        .batch_execute(
-            "ALTER TABLE catalog.package_migrations \
-               ADD COLUMN apply_effective_role name NOT NULL DEFAULT CURRENT_USER;",
-        )
-        .await
-        .expect("instrument the server-visible role used for trusted record writes");
+    ))).execute(&mut *client).await.map(drop).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("ALTER TABLE catalog.package_migrations \
+               ADD COLUMN apply_effective_role name NOT NULL DEFAULT CURRENT_USER;")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("instrument the server-visible role used for trusted record writes");
 }
 
 fn fixture_root() -> PathBuf {
@@ -101,8 +111,8 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
     use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package = fixture_root().with_file_name(format!("view-access-{}", std::process::id()));
     std::fs::create_dir_all(package.join("migrations")).unwrap();
     std::fs::create_dir_all(package.join("query")).unwrap();
@@ -161,28 +171,21 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
     apply(&url, &package)
         .await
         .expect("apply the authored view migration");
-    let owner: String = client.query_one(
-        "SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.item_report'::regclass",
-        &[],
-    ).await.unwrap().get(0);
+    let owner: String = sqlx::query("SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.item_report'::regclass").fetch_one(&mut client).await.unwrap().get(0);
     assert_eq!(
         owner,
         wamn_control_provision::package_owner_role("view_fixture")
     );
-    let no_history: bool = client
-        .query_one(
-            "SELECT to_regclass('inventory.item_report_history') IS NULL",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let no_history: bool =
+        sqlx::query("SELECT to_regclass('inventory.item_report_history') IS NULL")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     assert!(no_history);
-    client.batch_execute(
-        "INSERT INTO inventory.private_item VALUES ('00000000-0000-4000-8000-000000000001', 'visible', 'private');
+    sqlx::raw_sql("INSERT INTO inventory.private_item VALUES ('00000000-0000-4000-8000-000000000001', 'visible', 'private');
          GRANT SELECT ON inventory.ungranted_report TO wamn_app;
-         GRANT SELECT (private_note) ON inventory.item_report TO wamn_app;",
-    ).await.unwrap();
+         GRANT SELECT (private_note) ON inventory.item_report TO wamn_app;").execute(&mut client).await.map(drop).unwrap();
     let request = || ReconcilePackageDataAccessRequest {
         packages: vec![apply_package::PackageRoot {
             path: package.clone(),
@@ -206,17 +209,18 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
         ("inventory", "wamn_entities"),
         ("inventory", "wamn_cdc_exclusions"),
     ];
-    let catalog = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
+    let catalog = read_catalog_excluding_relations(&mut client, &["inventory"], &excluded)
         .await
         .expect("platform column grants do not refuse view introspection");
     assert_eq!(catalog.views().len(), 2);
-    let guest = connect(&url).await;
-    guest.batch_execute("SET ROLE wamn_app").await.unwrap();
-    let rows = guest
-        .query(
-            "SELECT id FROM inventory.item_report WHERE label = 'visible'",
-            &[],
-        )
+    let mut guest = connect(&url).await;
+    sqlx::raw_sql("SET ROLE wamn_app")
+        .execute(&mut guest)
+        .await
+        .map(drop)
+        .unwrap();
+    let rows = sqlx::query("SELECT id FROM inventory.item_report WHERE label = 'visible'")
+        .fetch_all(&mut guest)
         .await
         .expect("the application reads a view through its owner rights");
     assert_eq!(rows.len(), 1);
@@ -225,11 +229,20 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
         "SELECT private_note FROM inventory.item_report",
         "SELECT id FROM inventory.ungranted_report",
     ] {
-        let error = guest
-            .query(sql, &[])
+        let error = sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
+            .fetch_all(&mut guest)
             .await
             .expect_err("undeclared access refuses");
-        assert_eq!(error.as_db_error().unwrap().code().code(), "42501", "{sql}");
+        assert_eq!(
+            error
+                .as_database_error()
+                .unwrap()
+                .code()
+                .as_deref()
+                .unwrap(),
+            "42501",
+            "{sql}"
+        );
     }
     assert!(
         reconcile_package_data_access(request())
@@ -247,15 +260,23 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
             "REVOKE SELECT (id) ON inventory.item_report FROM PUBLIC",
         ),
     ] {
-        client.batch_execute(grant).await.unwrap();
-        let error = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((grant).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .unwrap();
+        let error = read_catalog_excluding_relations(&mut client, &["inventory"], &excluded)
             .await
             .unwrap_err();
         assert_eq!(
             error.error_type(),
             wamn_schema_introspection::postgres::PostgresIntrospectionErrorType::UnsupportedAcl
         );
-        client.batch_execute(revoke).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((revoke).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .unwrap();
     }
     std::fs::remove_dir_all(package).unwrap();
 }
@@ -265,9 +286,9 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
     use wamn_schema_introspection::postgres::read_views;
 
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
+    let mut client = connect(&url).await;
     for fail in [false, true] {
-        install(&client).await;
+        install(&mut client).await;
         let package =
             fixture_root().with_file_name(format!("view-rebuild-{fail}-{}", std::process::id()));
         copy_base_fixture(&package);
@@ -281,7 +302,7 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
         apply(&url, &package)
             .await
             .expect("apply the table and its view");
-        let predecessor = read_views(&client, &["inventory"]).await.unwrap();
+        let predecessor = read_views(&mut client, &["inventory"]).await.unwrap();
         let predecessor = predecessor
             .iter()
             .find(|view| view.name() == "dock_report")
@@ -309,9 +330,11 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
             let error = outcome.expect_err("the duplicate column fails after the view drop");
             assert!(
                 error.chain().any(|error| error
-                    .downcast_ref::<tokio_postgres::Error>()
-                    .and_then(tokio_postgres::Error::code)
-                    == Some(&tokio_postgres::error::SqlState::DUPLICATE_COLUMN)),
+                    .downcast_ref::<sqlx::Error>()
+                    .and_then(sqlx::Error::as_database_error)
+                    .and_then(|e| e.code())
+                    .as_deref()
+                    == Some("42701")),
                 "{error:#}"
             );
         } else {
@@ -320,7 +343,7 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
                 1
             );
         }
-        let successor = read_views(&client, &["inventory"]).await.unwrap();
+        let successor = read_views(&mut client, &["inventory"]).await.unwrap();
         let successor = successor
             .iter()
             .find(|view| view.name() == "dock_report")
@@ -333,15 +356,12 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
             assert_eq!(column.name(), "report_note");
             assert_eq!(column.column_type().as_str(), "text");
         }
-        let row = client.query_one(
-            "SELECT EXISTS (SELECT FROM information_schema.columns \
+        let row = sqlx::query("SELECT EXISTS (SELECT FROM information_schema.columns \
                 WHERE table_schema='inventory' AND table_name='dock' AND column_name='report_note'), \
              (SELECT count(*) FROM catalog.package_migrations \
-                WHERE project_env_key=$1 AND package_id='wamn_inventory' AND package_version='1.0.0')",
-            &[&PROJECT_ENV_KEY],
-        ).await.unwrap();
-        assert_eq!(row.get::<_, bool>(0), !fail);
-        assert_eq!(row.get::<_, i64>(1), if fail { 1 } else { 2 });
+                WHERE project_env_key=$1 AND package_id='wamn_inventory' AND package_version='1.0.0')").bind(&PROJECT_ENV_KEY).fetch_one(&mut client).await.unwrap();
+        assert_eq!(row.get::<bool, _>(0), !fail);
+        assert_eq!(row.get::<i64, _>(1), if fail { 1 } else { 2 });
         std::fs::remove_dir_all(package).unwrap();
     }
 }
@@ -448,22 +468,21 @@ fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
 
 /// Every user trigger in the inventory schema, as the server renders it, with
 /// the identity of its catalog row.
-async fn inventory_triggers(client: &Client) -> Vec<(String, String)> {
-    client
-        .query(
-            "SELECT pg_catalog.pg_get_triggerdef(t.oid), t.oid::text || ':' || t.xmin::text \
+async fn inventory_triggers(client: &mut Client) -> Vec<(String, String)> {
+    sqlx::query(
+        "SELECT pg_catalog.pg_get_triggerdef(t.oid), t.oid::text || ':' || t.xmin::text \
                FROM pg_catalog.pg_trigger AS t \
                JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
               WHERE n.nspname = 'inventory' AND NOT t.tgisinternal \
               ORDER BY c.relname, t.tgname",
-            &[],
-        )
-        .await
-        .expect("read installed inventory triggers")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect()
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read installed inventory triggers")
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1)))
+    .collect()
 }
 
 /// The record history triggers among `triggers`.
@@ -688,13 +707,11 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     copy_base_fixture_as(&beta, "race_beta", "race_beta");
 
     let mut blocker = connect(url).await;
-    let observer = connect(url).await;
-    let blocker_tx = blocker
-        .transaction()
-        .await
-        .expect("begin grant lock blocker");
-    blocker_tx
-        .query_one(OPERATION_GRANT_LOCK_SQL, &[&RACE_PROJECT_ENV_KEY])
+    let mut observer = connect(url).await;
+    let mut blocker_tx = blocker.begin().await.expect("begin grant lock blocker");
+    sqlx::query(OPERATION_GRANT_LOCK_SQL)
+        .bind(&RACE_PROJECT_ENV_KEY)
+        .fetch_one(&mut *blocker_tx)
         .await
         .expect("hold the shared project grant lock");
 
@@ -718,17 +735,13 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             assert!(!alpha_task.is_finished() && !beta_task.is_finished());
-            let waiting = observer
-                .query_one(
-                    "SELECT count(*) FILTER (WHERE wait_event_type='Lock' AND wait_event='advisory'), \
+            let waiting = sqlx::query("SELECT count(*) FILTER (WHERE wait_event_type='Lock' AND wait_event='advisory'), \
                             count(*) FILTER (WHERE state='idle' AND backend_xmin IS NULL AND backend_xid IS NULL) \
                        FROM pg_stat_activity WHERE datname=current_database() \
-                         AND application_name='schema-grant-race'",
-                    &[],
-                )
+                         AND application_name='schema-grant-race'").fetch_one(&mut observer)
                 .await
                 .expect("observe package grant lock waiters");
-            if (waiting.get::<_, i64>(0), waiting.get::<_, i64>(1)) == (1, 1) {
+            if (waiting.get::<i64, _>(0), waiting.get::<i64, _>(1)) == (1, 1) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -751,33 +764,30 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         .expect("apply beta package");
 
     assert_eq!(
-        observer
-            .query_one(
-                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
-                  ",
-                &[],
-            )
-            .await
-            .expect("read the shared user roles")
-            .get::<_, String>(0),
+        sqlx::query(
+            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
+                  "
+        )
+        .fetch_one(&mut observer)
+        .await
+        .expect("read the shared user roles")
+        .get::<String, _>(0),
         "admin",
         "concurrent packages must leave exactly the built-in admin role"
     );
     assert_eq!(
-        observer
-            .query_one("SELECT count(*) FROM platform.permission ", &[],)
+        sqlx::query("SELECT count(*) FROM platform.permission ")
+            .fetch_one(&mut observer)
             .await
             .expect("read the project permission rows")
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0,
         "admin has no permission rows"
     );
 }
 
-async fn write_identity(client: &Client) -> Vec<String> {
-    client
-        .query(
-            "SELECT identity FROM ( \
+async fn write_identity(client: &mut Client) -> Vec<String> {
+    sqlx::query("SELECT identity FROM ( \
                SELECT 'package:' || xmin::text AS identity \
                  FROM catalog.packages WHERE project_env_key = $1 \
                UNION ALL \
@@ -800,9 +810,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
                UNION ALL \
                SELECT 'permission:' || permission || ':' || xmin::text \
                  FROM platform.permission \
-             ) AS observed ORDER BY identity COLLATE \"C\"",
-            &[&PROJECT_ENV_KEY],
-        )
+             ) AS observed ORDER BY identity COLLATE \"C\"").bind(&PROJECT_ENV_KEY).fetch_all(&mut *client)
         .await
         .expect("read package, migration, and entity-map write identities")
         .into_iter()
@@ -813,10 +821,10 @@ async fn write_identity(client: &Client) -> Vec<String> {
 #[tokio::test]
 async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
+    let mut client = connect(&url).await;
     let package = fixture_root();
     copy_base_fixture(&package);
-    install(&client).await;
+    install(&mut client).await;
 
     let distinct_identity = package.with_file_name(format!(
         "apply-package-distinct-internal-relation-{}",
@@ -830,24 +838,21 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
     );
     let cached =
         br#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#;
-    client.execute(
-        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2", &[&PROJECT_ENV_KEY, &&cached[..]]
-    ).await.expect("cache membership does not establish installation");
+    sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2").bind(&PROJECT_ENV_KEY).bind(&&cached[..]).execute(&mut client).await.map(|result| result.rows_affected()).expect("cache membership does not establish installation");
     apply(&url, &distinct_identity)
         .await
         .expect("apply a relation whose manifest identity differs from its table");
-    let mapping = client
-        .query_one(
-            "SELECT relation_id, table_name FROM inventory.wamn_cdc_exclusions \
+    let mapping = sqlx::query(
+        "SELECT relation_id, table_name FROM inventory.wamn_cdc_exclusions \
               WHERE table_name NOT LIKE '%\\_history'",
-            &[],
-        )
-        .await
-        .expect("read distinct internal relation identity");
-    assert_eq!(mapping.get::<_, String>(0), "rack_command_record");
-    assert_eq!(mapping.get::<_, String>(1), "record_rack_command");
+    )
+    .fetch_one(&mut client)
+    .await
+    .expect("read distinct internal relation identity");
+    assert_eq!(mapping.get::<String, _>(0), "rack_command_record");
+    assert_eq!(mapping.get::<String, _>(1), "record_rack_command");
     std::fs::remove_dir_all(&distinct_identity).expect("remove distinct internal-relation fixture");
-    install(&client).await;
+    install(&mut client).await;
 
     let undeclared = package.with_file_name(format!(
         "apply-package-undeclared-relation-{}",
@@ -864,14 +869,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         .await
         .expect_err("an undeclared created relation must refuse before writes");
     assert!(
-        !client
-            .query_one(
-                "SELECT to_regclass('inventory.undeclared_relation') IS NOT NULL",
-                &[],
-            )
+        !sqlx::query("SELECT to_regclass('inventory.undeclared_relation') IS NOT NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "the undeclared relation reached PostgreSQL"
     );
     std::fs::remove_dir_all(&undeclared).expect("remove undeclared-relation fixture");
@@ -901,19 +903,18 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         .await
         .expect_err("an exclusion absent from migrations must refuse before writes");
     assert_eq!(
-        client
-            .query_one("SELECT count(*) FROM catalog.packages", &[])
+        sqlx::query("SELECT count(*) FROM catalog.packages")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0,
         "a classification refusal wrote a package root"
     );
     std::fs::remove_dir_all(&missing_exclusion).expect("remove missing-exclusion fixture");
 
     assert_concurrent_package_grants_share_one_carrier(&url).await;
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
@@ -925,30 +926,28 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
                  ('clerk', 'wamn-inventory:obsolete/operation'), \
                  ('clerk', 'client-overlay:rack/get'); \
              COMMIT;"
-        ))
-        .await
+        ))).execute(&mut client).await.map(drop)
         .expect("seed an authored role with two selected operations");
 
     apply(&url, &package)
         .await
         .expect("first package apply commits");
     assert!(
-        client
-            .query_one(
-                "SELECT apply_effective_role::text = current_user::text \
+        sqlx::query(
+            "SELECT apply_effective_role::text = current_user::text \
                    FROM catalog.package_migrations \
                   WHERE project_env_key = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.0' AND ordinal = 1",
-                &[&PROJECT_ENV_KEY],
-            )
-            .await
-            .expect("read server-visible authority used for the migration records")
-            .get::<_, bool>(0),
+                    AND package_version = '1.0.0' AND ordinal = 1"
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_one(&mut client)
+        .await
+        .expect("read server-visible authority used for the migration records")
+        .get::<bool, _>(0),
         "apply-package did not RESET ROLE before its trusted migration-record write"
     );
-    let ownership = client
-        .query_one(
-            "SELECT pg_catalog.pg_get_userbyid(namespace.nspowner) = $1, \
+    let ownership = sqlx::query(
+        "SELECT pg_catalog.pg_get_userbyid(namespace.nspowner) = $1, \
                     count(*) FILTER (\
                         WHERE pg_catalog.pg_get_userbyid(relation.relowner) <> $1\
                     ) = 0 \
@@ -959,42 +958,41 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
                 AND relation.relkind = 'r' \
                 AND relation.relname NOT IN ('wamn_entities', 'wamn_cdc_exclusions') \
               GROUP BY namespace.nspowner",
-            &[&wamn_control_provision::package_owner_role(
-                "wamn_inventory",
-            )],
-        )
-        .await
-        .expect("read server-derived package schema and relation owners");
+    )
+    .bind(&wamn_control_provision::package_owner_role(
+        "wamn_inventory",
+    ))
+    .fetch_one(&mut client)
+    .await
+    .expect("read server-derived package schema and relation owners");
     assert!(
-        ownership.get::<_, bool>(0) && ownership.get::<_, bool>(1),
+        ownership.get::<bool, _>(0) && ownership.get::<bool, _>(1),
         "schema creation and exact package DDL must use the package owner"
     );
     // apply-package writes the built-in admin role and no permission row. It
     // leaves the rows of an authored role, which release reconciliation owns.
     assert_eq!(
-        client
-            .query_one(
-                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
-                  ",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
+        sqlx::query(
+            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
+                  "
+        )
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<String, _>(0),
         "admin,clerk"
     );
     assert_eq!(
-        client
-            .query(
-                "SELECT role_name || ' ' || permission FROM platform.permission \
-                   ORDER BY 1",
-                &[],
-            )
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect::<Vec<_>>(),
+        sqlx::query(
+            "SELECT role_name || ' ' || permission FROM platform.permission \
+                   ORDER BY 1"
+        )
+        .fetch_all(&mut client)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<Vec<_>>(),
         [
             "clerk client-overlay:rack/get",
             "clerk wamn-inventory:obsolete/operation"
@@ -1002,27 +1000,26 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         "apply-package changed an authored permission row"
     );
     assert!(
-        client
-            .query_one("SELECT to_regnamespace('inventory') IS NOT NULL", &[])
+        sqlx::query("SELECT to_regnamespace('inventory') IS NOT NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "apply-package creates the manifest-declared schema"
     );
-    let exclusion = client
-        .query_one(
-            "SELECT package_id, relation_id, table_name \
+    let exclusion = sqlx::query(
+        "SELECT package_id, relation_id, table_name \
                FROM inventory.wamn_cdc_exclusions \
               WHERE table_name NOT LIKE '%\\_history'",
-            &[],
-        )
-        .await
-        .expect("read explicit package CDC exclusion");
+    )
+    .fetch_one(&mut client)
+    .await
+    .expect("read explicit package CDC exclusion");
     assert_eq!(
         (
-            exclusion.get::<_, String>(0),
-            exclusion.get::<_, String>(1),
-            exclusion.get::<_, String>(2),
+            exclusion.get::<String, _>(0),
+            exclusion.get::<String, _>(1),
+            exclusion.get::<String, _>(2),
         ),
         (
             "wamn_inventory".into(),
@@ -1031,29 +1028,31 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         )
     );
     assert!(
-        client
-            .query_one("SELECT to_regclass('inventory.panel') IS NOT NULL", &[])
+        sqlx::query("SELECT to_regclass('inventory.panel') IS NOT NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM catalog.package_migrations \
-                 WHERE project_env_key = $1 AND package_id = $2 AND package_version = $3",
-                &[&PROJECT_ENV_KEY, &"wamn_inventory", &"1.0.0"],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
+        sqlx::query(
+            "SELECT count(*) FROM catalog.package_migrations \
+                 WHERE project_env_key = $1 AND package_id = $2 AND package_version = $3"
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .bind(&"wamn_inventory")
+        .bind(&"1.0.0")
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<i64, _>(0),
         1
     );
-    let first_identity = write_identity(&client).await;
+    let first_identity = write_identity(&mut client).await;
     apply(&url, &package)
         .await
         .expect("exact replay observes no pending work");
-    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(write_identity(&mut client).await, first_identity);
 
     let alter_base =
         fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
@@ -1080,19 +1079,18 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
     assert_eq!(alter_error.relation(), Some("panel"));
     assert_eq!(alter_error.definition(), Some("status"));
     assert_eq!(alter_error.owner_package(), Some("wamn_inventory"));
-    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(write_identity(&mut client).await, first_identity);
     assert_eq!(
-        client
-            .query_one(
-                "SELECT column_default FROM information_schema.columns \
+        sqlx::query(
+            "SELECT column_default FROM information_schema.columns \
                   WHERE table_schema = 'inventory' AND table_name = 'panel' \
-                    AND column_name = 'status'",
-                &[],
-            )
-            .await
-            .expect("read base status default after refused alteration")
-            .get::<_, Option<String>>(0)
-            .as_deref(),
+                    AND column_name = 'status'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read base status default after refused alteration")
+        .get::<Option<String>, _>(0)
+        .as_deref(),
         Some("'open'::text")
     );
 
@@ -1118,18 +1116,17 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         apply_package::ApplyPackageErrorType::BaseDefinitionMutation
     );
     assert_eq!(drop_error.definition(), Some("status"));
-    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(write_identity(&mut client).await, first_identity);
     assert!(
-        client
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+        sqlx::query(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                   WHERE table_schema = 'inventory' AND table_name = 'panel' \
-                    AND column_name = 'status')",
-                &[],
-            )
-            .await
-            .expect("read base field after refused removal")
-            .get::<_, bool>(0)
+                    AND column_name = 'status')"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read base field after refused removal")
+        .get::<bool, _>(0)
     );
 
     let nonextensible = fixture_root().with_file_name(format!(
@@ -1155,7 +1152,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         nonextensible_error.error_type(),
         apply_package::ApplyPackageErrorType::RelationNotClientExtensible
     );
-    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(write_identity(&mut client).await, first_identity);
 
     let overlay =
         fixture_root().with_file_name(format!("apply-package-overlay-{}", std::process::id()));
@@ -1164,29 +1161,22 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         .await
         .expect("the client overlay fixture applies after its base fixture");
     let overlay_role = wamn_control_provision::package_owner_role("client_overlay_inventory");
-    let overlay_owner = client.query_one(
-        "SELECT pg_get_userbyid(relowner)::text, has_table_privilege($1::text, 'inventory.rack', 'REFERENCES') FROM pg_class WHERE oid='inventory.quality_inspection'::regclass",
-        &[&overlay_role],
-    ).await.unwrap();
-    assert_eq!(overlay_owner.get::<_, String>(0), overlay_role);
+    let overlay_owner = sqlx::query("SELECT pg_get_userbyid(relowner)::text, has_table_privilege($1::text, 'inventory.rack', 'REFERENCES') FROM pg_class WHERE oid='inventory.quality_inspection'::regclass").bind(&overlay_role).fetch_one(&mut client).await.unwrap();
+    assert_eq!(overlay_owner.get::<String, _>(0), overlay_role);
     assert!(
-        !overlay_owner.get::<_, bool>(1),
+        !overlay_owner.get::<bool, _>(1),
         "migration REFERENCES grants must not survive"
     );
     assert!(
-        client
-            .query_one(
-                "SELECT to_regclass('catalog.event_registrations') IS NULL",
-                &[]
-            )
+        sqlx::query("SELECT to_regclass('catalog.event_registrations') IS NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     assert_eq!(
-        client
-            .query(
-                "SELECT definition_type, definition_name, owner_package_id, \
+        sqlx::query(
+            "SELECT definition_type, definition_name, owner_package_id, \
                         client_field_extensible \
                    FROM catalog.package_definition_owners \
                   WHERE project_env_key = $1 AND schema_name = 'inventory' \
@@ -1196,21 +1186,22 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
                           ('status', 'overlay_inspection_required', 'overlay_quality_status')) \
                       OR (definition_type = 'constraint' AND definition_name = \
                           'panel_overlay_quality_status_check')) \
-                  ORDER BY definition_type, definition_name COLLATE \"C\"",
-                &[&PROJECT_ENV_KEY],
+                  ORDER BY definition_type, definition_name COLLATE \"C\""
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_all(&mut client)
+        .await
+        .expect("read exact base and overlay definition owners")
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<String, _>(0),
+                row.get::<String, _>(1),
+                row.get::<String, _>(2),
+                row.get::<bool, _>(3),
             )
-            .await
-            .expect("read exact base and overlay definition owners")
-            .into_iter()
-            .map(|row| {
-                (
-                    row.get::<_, String>(0),
-                    row.get::<_, String>(1),
-                    row.get::<_, String>(2),
-                    row.get::<_, bool>(3),
-                )
-            })
-            .collect::<Vec<_>>(),
+        })
+        .collect::<Vec<_>>(),
         vec![
             (
                 "constraint".into(),
@@ -1245,72 +1236,73 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         ]
     );
     assert_eq!(
-        client
-            .query_one(
-                "SELECT package_id FROM inventory.wamn_entities \
-                  WHERE entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("read shared relation source identity")
-            .get::<_, String>(0),
+        sqlx::query(
+            "SELECT package_id FROM inventory.wamn_entities \
+                  WHERE entity_id = 'panel'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read shared relation source identity")
+        .get::<String, _>(0),
         "wamn_inventory",
         "definition ownership must not rebind the base CDC entity identity"
     );
-    let overlay_identity = write_identity(&client).await;
+    let overlay_identity = write_identity(&mut client).await;
     apply(&url, &overlay)
         .await
         .expect("exact overlay replay is a no-op");
-    assert_eq!(write_identity(&client).await, overlay_identity);
+    assert_eq!(write_identity(&mut client).await, overlay_identity);
 
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_entities \
+        sqlx::query(
+            "UPDATE inventory.wamn_entities \
                     SET table_name = 'stale_panel' \
-                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("seed stale informational table name"),
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("seed stale informational table name"),
         1
     );
     apply(&url, &package)
         .await
         .expect("same entity identity may converge its informational table name");
     assert_eq!(
-        client
-            .query_one(
-                "SELECT table_name FROM inventory.wamn_entities \
-                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("read converged entity map")
-            .get::<_, String>(0),
+        sqlx::query(
+            "SELECT table_name FROM inventory.wamn_entities \
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read converged entity map")
+        .get::<String, _>(0),
         "panel"
     );
 
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_entities \
+        sqlx::query(
+            "UPDATE inventory.wamn_entities \
                     SET package_id = 'foreign_package' \
-                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("seed an existing OID owned by a different package identity"),
+                  WHERE package_id = 'wamn_inventory' AND entity_id = 'panel'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("seed an existing OID owned by a different package identity"),
         1
     );
     assert_eq!(
-        client
-            .execute(
-                &wamn_control_provision::sql::upsert_entity_map_sql("inventory"),
-                &[&"wamn_inventory", &"panel", &"panel"],
-            )
-            .await
-            .expect("run guarded generated entity-map upsert"),
+        sqlx::query(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::sql::upsert_entity_map_sql("inventory")).to_string()
+        ))
+        .bind(&"wamn_inventory")
+        .bind(&"panel")
+        .bind(&"panel")
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("run guarded generated entity-map upsert"),
         0,
         "the generated upsert must not rebind an existing relation OID"
     );
@@ -1318,113 +1310,109 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         .await
         .expect_err("an existing relation OID cannot be rebound to another package/entity");
     assert_eq!(
-        client
-            .query_one(
-                "SELECT package_id FROM inventory.wamn_entities \
-                  WHERE entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("read refused entity-map rebind")
-            .get::<_, String>(0),
+        sqlx::query(
+            "SELECT package_id FROM inventory.wamn_entities \
+                  WHERE entity_id = 'panel'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read refused entity-map rebind")
+        .get::<String, _>(0),
         "foreign_package"
     );
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_entities \
+        sqlx::query(
+            "UPDATE inventory.wamn_entities \
                     SET package_id = 'wamn_inventory' \
-                  WHERE package_id = 'foreign_package' AND entity_id = 'panel'",
-                &[],
-            )
-            .await
-            .expect("restore package fixture identity"),
+                  WHERE package_id = 'foreign_package' AND entity_id = 'panel'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("restore package fixture identity"),
         1
     );
 
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_cdc_exclusions \
+        sqlx::query(
+            "UPDATE inventory.wamn_cdc_exclusions \
                     SET table_name = 'stale_record_rack_command' \
                   WHERE package_id = 'wamn_inventory' \
-                    AND relation_id = 'record_rack_command'",
-                &[],
-            )
-            .await
-            .expect("seed stale CDC-exclusion table name"),
+                    AND relation_id = 'record_rack_command'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("seed stale CDC-exclusion table name"),
         1
     );
     apply(&url, &package)
         .await
         .expect("same exclusion identity may converge its informational table name");
     assert_eq!(
-        client
-            .query_one(
-                "SELECT table_name FROM inventory.wamn_cdc_exclusions \
+        sqlx::query(
+            "SELECT table_name FROM inventory.wamn_cdc_exclusions \
                   WHERE package_id = 'wamn_inventory' \
-                    AND relation_id = 'record_rack_command'",
-                &[],
-            )
-            .await
-            .expect("read converged CDC exclusion map")
-            .get::<_, String>(0),
+                    AND relation_id = 'record_rack_command'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .expect("read converged CDC exclusion map")
+        .get::<String, _>(0),
         "record_rack_command"
     );
 
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_cdc_exclusions \
+        sqlx::query(
+            "UPDATE inventory.wamn_cdc_exclusions \
                     SET package_id = 'foreign_package', relation_id = 'foreign_relation' \
                   WHERE package_id = 'wamn_inventory' \
-                    AND relation_id = 'record_rack_command'",
-                &[],
-            )
-            .await
-            .expect("seed an exclusion OID owned by another package relation"),
+                    AND relation_id = 'record_rack_command'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("seed an exclusion OID owned by another package relation"),
         1
     );
     assert_eq!(
-        client
-            .execute(
-                &wamn_control_provision::sql::upsert_cdc_exclusion_map_sql("inventory"),
-                &[
-                    &"wamn_inventory",
-                    &"record_rack_command",
-                    &"record_rack_command",
-                ],
-            )
-            .await
-            .expect("run guarded generated CDC-exclusion upsert"),
+        sqlx::query(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::sql::upsert_cdc_exclusion_map_sql("inventory")).to_string()
+        ))
+        .bind(&"wamn_inventory")
+        .bind(&"record_rack_command")
+        .bind(&"record_rack_command")
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("run guarded generated CDC-exclusion upsert"),
         0,
         "the generated upsert must not rebind an existing relation OID"
     );
     apply(&url, &package)
         .await
         .expect_err("an exclusion OID cannot be rebound to another package relation");
-    let refused = client
-        .query_one(
-            "SELECT package_id, relation_id FROM inventory.wamn_cdc_exclusions \
+    let refused = sqlx::query(
+        "SELECT package_id, relation_id FROM inventory.wamn_cdc_exclusions \
               WHERE table_name = 'record_rack_command'",
-            &[],
-        )
-        .await
-        .expect("read refused CDC-exclusion rebind");
-    assert_eq!(refused.get::<_, String>(0), "foreign_package");
-    assert_eq!(refused.get::<_, String>(1), "foreign_relation");
+    )
+    .fetch_one(&mut client)
+    .await
+    .expect("read refused CDC-exclusion rebind");
+    assert_eq!(refused.get::<String, _>(0), "foreign_package");
+    assert_eq!(refused.get::<String, _>(1), "foreign_relation");
     assert_eq!(
-        client
-            .execute(
-                "UPDATE inventory.wamn_cdc_exclusions \
+        sqlx::query(
+            "UPDATE inventory.wamn_cdc_exclusions \
                     SET package_id = 'wamn_inventory', \
                         relation_id = 'record_rack_command' \
                   WHERE package_id = 'foreign_package' \
-                    AND relation_id = 'foreign_relation'",
-                &[],
-            )
-            .await
-            .expect("restore CDC-exclusion fixture identity"),
+                    AND relation_id = 'foreign_relation'"
+        )
+        .execute(&mut client)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("restore CDC-exclusion fixture identity"),
         1
     );
 
@@ -1461,44 +1449,47 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         .await
         .expect_err("a failing statement must roll back its file");
     assert!(
-        !client
-            .query_one(
-                "SELECT EXISTS ( \
+        !sqlx::query(
+            "SELECT EXISTS ( \
                    SELECT 1 FROM information_schema.columns \
                     WHERE table_schema = 'inventory' AND table_name = 'rack' \
-                      AND column_name = 'rollback_probe')",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0)
+                      AND column_name = 'rollback_probe')"
+        )
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<bool, _>(0)
     );
     assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM catalog.package_migrations \
-                 WHERE project_env_key = $1 AND package_id = $2 AND package_version = $3",
-                &[&PROJECT_ENV_KEY, &"wamn_inventory", &"1.0.0"],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
+        sqlx::query(
+            "SELECT count(*) FROM catalog.package_migrations \
+                 WHERE project_env_key = $1 AND package_id = $2 AND package_version = $3"
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .bind(&"wamn_inventory")
+        .bind(&"1.0.0")
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<i64, _>(0),
         1
     );
 
     std::fs::remove_file(package.join("migrations/0002_candidate.sql"))
         .expect("remove rolled-back candidate migration");
     write_build_record(&package);
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
-        )
-        .await
-        .expect("clean package-runner schemas");
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("clean package-runner schemas");
     std::fs::remove_dir_all(package).expect("remove package fixture directory");
     for fixture in [alter_base, drop_base, nonextensible, overlay] {
         std::fs::remove_dir_all(fixture).expect("remove overlay package fixture directory");
@@ -1507,17 +1498,16 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
 
 /// Apply generated history changes only through the explicit SQL owner.
 async fn apply_history_configuration(url: &str, package: &Path) -> anyhow::Result<()> {
-    let client = connect(url).await;
-    let instance: u32 = client
-        .query_one(
-            "SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()",
-            &[],
-        )
-        .await?
-        .get(0);
+    let mut client = connect(url).await;
+    let instance: u32 =
+        sqlx::query("SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()")
+            .fetch_one(&mut client)
+            .await?
+            .get::<sqlx::postgres::types::Oid, _>(0)
+            .0;
     let marker =
         wamn_runtime::local_application::local_target_marker(PROJECT_ENV_KEY, "dev", instance);
-    set_database_comment(&client, Some(&marker)).await;
+    set_database_comment(&mut client, Some(&marker)).await;
     apply_package::apply_local_package_schema(
         ApplyPackageRequest {
             component_source: apply_package::component_source_from_env(None)?,
@@ -1541,8 +1531,8 @@ async fn apply_history_configuration(url: &str, package: &Path) -> anyhow::Resul
 #[tokio::test]
 async fn record_history_triggers_follow_the_declaration() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package = fixture_root().with_file_name(format!(
         "apply-package-record-history-{}",
         std::process::id()
@@ -1554,7 +1544,7 @@ async fn record_history_triggers_follow_the_declaration() {
     apply_history_configuration(&url, &package)
         .await
         .expect("apply a declaration that selects stamp columns");
-    let installed = inventory_triggers(&client).await;
+    let installed = inventory_triggers(&mut client).await;
     assert_eq!(
         trigger_definitions(&installed),
         [
@@ -1573,30 +1563,27 @@ async fn record_history_triggers_follow_the_declaration() {
         "package_migrations",
         "package_definition_owners",
     ] {
-        let row = client.query_one(
-            &format!("SELECT count(*) > 0 AND bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.{table}"),
-            &[&PlatformComponent::ApplyPackage.principal_id().to_string()],
-        ).await.unwrap();
-        assert!(row.get::<_, bool>(0), "{table} stamps wamn:apply-package");
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT count(*) > 0 AND bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.{table}"))).bind(&PlatformComponent::ApplyPackage.principal_id().to_string()).fetch_one(&mut client).await.unwrap();
+        assert!(row.get::<bool, _>(0), "{table} stamps wamn:apply-package");
     }
     // Spec test 11: the admin role row stamps wamn:apply-package.
-    let grant_stamps = client
-        .query_one(
-            "SELECT count(*), count(*) FILTER (WHERE created_by = $1::text::uuid \
+    let grant_stamps = sqlx::query(
+        "SELECT count(*), count(*) FILTER (WHERE created_by = $1::text::uuid \
                                                 AND updated_by = $1::text::uuid) \
                FROM platform.role WHERE name = 'admin'",
-            &[&PlatformComponent::ApplyPackage.principal_id().to_string()],
-        )
-        .await
-        .expect("read the operation grant stamps");
+    )
+    .bind(&PlatformComponent::ApplyPackage.principal_id().to_string())
+    .fetch_one(&mut client)
+    .await
+    .expect("read the operation grant stamps");
     assert!(
-        grant_stamps.get::<_, i64>(0) == 1 && grant_stamps.get::<_, i64>(1) == 1,
+        grant_stamps.get::<i64, _>(0) == 1 && grant_stamps.get::<i64, _>(1) == 1,
         "the admin role row must stamp wamn:apply-package"
     );
     apply_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the installed trigger");
-    assert_eq!(inventory_triggers(&client).await, installed);
+    assert_eq!(inventory_triggers(&mut client).await, installed);
 
     set_audit_log_columns(&package, "panel", &[]);
     set_audit_log_columns(&package, "rack", &["created_at"]);
@@ -1604,7 +1591,7 @@ async fn record_history_triggers_follow_the_declaration() {
         .await
         .expect("explicit SQL moves the trigger with its declaration");
     assert_eq!(
-        trigger_definitions(&inventory_triggers(&client).await),
+        trigger_definitions(&inventory_triggers(&mut client).await),
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel_line FOR EACH ROW \
@@ -1615,7 +1602,7 @@ async fn record_history_triggers_follow_the_declaration() {
         ],
         "the trigger that the declaration no longer needs is removed"
     );
-    let upgraded = inventory_triggers(&client).await;
+    let upgraded = inventory_triggers(&mut client).await;
 
     std::fs::write(
         package.join("migrations/0002_trigger.sql"),
@@ -1634,20 +1621,22 @@ async fn record_history_triggers_follow_the_declaration() {
         Some(MigrationPolicyErrorType::RuledOperation),
         "unexpected migration refusal: {refused:#}"
     );
-    assert_eq!(inventory_triggers(&client).await, upgraded);
+    assert_eq!(inventory_triggers(&mut client).await, upgraded);
     std::fs::remove_file(package.join("migrations/0002_trigger.sql"))
         .expect("remove the refused trigger migration");
     write_build_record(&package);
 
-    client
-        .batch_execute(
-            "CREATE FUNCTION public.record_history_foreign() RETURNS trigger \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE FUNCTION public.record_history_foreign() RETURNS trigger \
                LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
              CREATE TRIGGER foreign_trigger BEFORE INSERT ON inventory.ingot \
-               FOR EACH ROW EXECUTE FUNCTION public.record_history_foreign();",
-        )
-        .await
-        .expect("install a trigger outside the platform shape");
+               FOR EACH ROW EXECUTE FUNCTION public.record_history_foreign();")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("install a trigger outside the platform shape");
     let refused = apply_history_configuration(&url, &package)
         .await
         .expect_err("apply-package refuses a trigger that the declarations do not derive");
@@ -1656,22 +1645,24 @@ async fn record_history_triggers_follow_the_declaration() {
         "unexpected trigger refusal: {refused:#}"
     );
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP FUNCTION public.record_history_foreign();",
-        )
-        .await
-        .expect("clean record-history schemas");
+             DROP FUNCTION public.record_history_foreign();")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("clean record-history schemas");
     std::fs::remove_dir_all(package).expect("remove record-history package fixture");
 }
 
 /// The log triggers in the inventory schema, as the server renders them.
-async fn inventory_log_triggers(client: &Client) -> Vec<String> {
+async fn inventory_log_triggers(client: &mut Client) -> Vec<String> {
     inventory_triggers(client)
         .await
         .into_iter()
@@ -1681,68 +1672,68 @@ async fn inventory_log_triggers(client: &Client) -> Vec<String> {
 }
 
 /// Each history table in the inventory schema with its owner and entry count.
-async fn inventory_history_tables(client: &Client) -> Vec<(String, String, i64)> {
-    let tables = client
-        .query(
-            "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
+async fn inventory_history_tables(client: &mut Client) -> Vec<(String, String, i64)> {
+    let tables = sqlx::query(
+        "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
                FROM pg_catalog.pg_class AS c \
                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
               WHERE n.nspname = 'inventory' AND c.relkind = 'r' \
                 AND c.relname LIKE '%\\_history' \
               ORDER BY c.relname",
-            &[],
-        )
-        .await
-        .expect("read inventory history tables");
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read inventory history tables");
     let mut observed = Vec::new();
     for table in tables {
-        let name = table.get::<_, String>(0);
-        let entries = client
-            .query_one(&format!("SELECT count(*) FROM inventory.{name}"), &[])
-            .await
-            .expect("count history entries")
-            .get::<_, i64>(0);
+        let name = table.get::<String, _>(0);
+        let entries = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM inventory.{name}"
+        )))
+        .fetch_one(&mut *client)
+        .await
+        .expect("count history entries")
+        .get::<i64, _>(0);
         observed.push((name, table.get(1), entries));
     }
     observed
 }
 
 /// Every CDC exclusion row in the inventory schema, with whether its OID names its table.
-async fn inventory_cdc_exclusions(client: &Client) -> Vec<(String, String, String, bool)> {
-    client
-        .query(
-            "SELECT table_name, package_id, relation_id, \
+async fn inventory_cdc_exclusions(client: &mut Client) -> Vec<(String, String, String, bool)> {
+    sqlx::query(
+        "SELECT table_name, package_id, relation_id, \
                     relation_oid = pg_catalog.to_regclass('inventory.' || table_name)::oid \
                FROM inventory.wamn_cdc_exclusions ORDER BY table_name",
-            &[],
-        )
-        .await
-        .expect("read inventory CDC exclusions")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
-        .collect()
+    )
+    .fetch_all(&mut *client)
+    .await
+    .expect("read inventory CDC exclusions")
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+    .collect()
 }
 
 /// The direct grants of the audit retention role in the current database.
-async fn audit_retention_grants(client: &Client) -> Vec<String> {
-    client
-        .query(
-            wamn_control_provision::sql::role_database_grants_sql(),
-            &[&wamn_control_provision::AUDIT_RETENTION_ROLE],
+async fn audit_retention_grants(client: &mut Client) -> Vec<String> {
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::role_database_grants_sql()).to_string(),
+    ))
+    .bind(&wamn_control_provision::AUDIT_RETENTION_ROLE)
+    .fetch_all(&mut *client)
+    .await
+    .expect("read the audit retention grants")
+    .into_iter()
+    .map(|row| {
+        format!(
+            "{} {}.{} {}",
+            row.get::<String, _>("object_type"),
+            row.get::<String, _>("schema_name"),
+            row.get::<String, _>("object_name"),
+            row.get::<String, _>("privilege_type"),
         )
-        .await
-        .expect("read the audit retention grants")
-        .into_iter()
-        .map(|row| {
-            format!(
-                "{} {}.{} {}",
-                row.get::<_, String>("object_type"),
-                row.get::<_, String>("schema_name"),
-                row.get::<_, String>("object_name"),
-                row.get::<_, String>("privilege_type"),
-            )
-        })
-        .collect()
+    })
+    .collect()
 }
 
 /// The history grants of one P<n>D relation and the fixed write log grants.
@@ -1772,8 +1763,8 @@ fn retention_grants_on(history: &str) -> Vec<String> {
 #[tokio::test]
 async fn record_history_log_follows_the_declaration() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package = fixture_root().with_file_name(format!(
         "apply-package-record-history-log-{}",
         std::process::id()
@@ -1786,7 +1777,7 @@ async fn record_history_log_follows_the_declaration() {
         .await
         .expect("apply declarations that keep a log");
     assert_eq!(
-        inventory_log_triggers(&client).await,
+        inventory_log_triggers(&mut client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel FOR EACH ROW \
@@ -1798,7 +1789,7 @@ async fn record_history_log_follows_the_declaration() {
     );
     let owner = wamn_control_provision::package_owner_role("wamn_inventory");
     assert_eq!(
-        inventory_history_tables(&client).await,
+        inventory_history_tables(&mut client).await,
         [
             ("panel_history".to_owned(), owner.clone(), 0),
             ("panel_line_history".to_owned(), owner.clone(), 0),
@@ -1824,16 +1815,16 @@ async fn record_history_log_follows_the_declaration() {
             true,
         ),
     ];
-    assert_eq!(inventory_cdc_exclusions(&client).await, exclusions);
+    assert_eq!(inventory_cdc_exclusions(&mut client).await, exclusions);
     // Spec test 20: the unlimited history table carries no retention grant.
     assert_eq!(
-        audit_retention_grants(&client).await,
+        audit_retention_grants(&mut client).await,
         retention_grants_on("panel_line_history")
     );
 
     // A fixture write binds a test principal and an administrative operation.
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
@@ -1848,21 +1839,25 @@ async fn record_history_log_follows_the_declaration() {
                        '00000000-0000-4000-8000-00000000a001', 5); \
              COMMIT;"
         ))
-        .await
-        .expect("write logged rows as the fixture principal");
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("write logged rows as the fixture principal");
     assert_eq!(
-        inventory_history_tables(&client).await,
+        inventory_history_tables(&mut client).await,
         [
             ("panel_history".to_owned(), owner.clone(), 1),
             ("panel_line_history".to_owned(), owner.clone(), 1),
         ]
     );
 
-    let installed = inventory_triggers(&client).await;
+    let installed = inventory_triggers(&mut client).await;
     apply_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the log triggers and the history tables");
-    assert_eq!(inventory_triggers(&client).await, installed);
+    assert_eq!(inventory_triggers(&mut client).await, installed);
 
     // Spec test 14: a retention of none removes the trigger and keeps the table.
     set_audit_log_retention(&package, "panel", "P90D");
@@ -1871,15 +1866,15 @@ async fn record_history_log_follows_the_declaration() {
         .await
         .expect("local configuration moves the log triggers with the declarations");
     assert_eq!(
-        inventory_log_triggers(&client).await,
+        inventory_log_triggers(&mut client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON inventory.panel FOR EACH ROW \
           EXECUTE FUNCTION wamn_history.inventory__panel_log('P90D')"
         ]
     );
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-history-fixture', true); \
@@ -1887,37 +1882,43 @@ async fn record_history_log_follows_the_declaration() {
               WHERE id = '00000000-0000-4000-8000-00000000a003'; \
              COMMIT;"
         ))
-        .await
-        .expect("write a relation that no longer keeps a log");
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("write a relation that no longer keeps a log");
     assert_eq!(
-        inventory_history_tables(&client).await,
+        inventory_history_tables(&mut client).await,
         [
             ("panel_history".to_owned(), owner.clone(), 1),
             ("panel_line_history".to_owned(), owner.clone(), 1),
         ],
         "the history table and its entries stay, and the relation writes no new entry"
     );
-    assert_eq!(inventory_cdc_exclusions(&client).await, exclusions);
+    assert_eq!(inventory_cdc_exclusions(&mut client).await, exclusions);
     // unlimited to P90D grants, and P30D to none revokes.
     assert_eq!(
-        audit_retention_grants(&client).await,
+        audit_retention_grants(&mut client).await,
         retention_grants_on("panel_history")
     );
 
     // apply-package compares the installed retention with the declaration.
-    client
-        .batch_execute(
-            "CREATE OR REPLACE TRIGGER wamn_record_history_log \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE OR REPLACE TRIGGER wamn_record_history_log \
                AFTER INSERT OR UPDATE OR DELETE ON inventory.panel \
-               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P1D')",
-        )
-        .await
-        .expect("change the installed retention outside apply-package");
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P1D')")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("change the installed retention outside apply-package");
     apply_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the installed retention");
     assert_eq!(
-        inventory_log_triggers(&client).await,
+        inventory_log_triggers(&mut client).await,
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON inventory.panel FOR EACH ROW \
@@ -1926,18 +1927,20 @@ async fn record_history_log_follows_the_declaration() {
     );
 
     // A grant outside the exact set does not survive a replay.
-    client
-        .batch_execute(
-            "GRANT SELECT ON inventory.panel_line_history TO wamn_audit_retention; \
-             GRANT UPDATE (after) ON inventory.panel_history TO wamn_audit_retention;",
-        )
-        .await
-        .expect("widen the audit retention grants outside apply-package");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("GRANT SELECT ON inventory.panel_line_history TO wamn_audit_retention; \
+             GRANT UPDATE (after) ON inventory.panel_history TO wamn_audit_retention;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("widen the audit retention grants outside apply-package");
     apply_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the audit retention grants");
     assert_eq!(
-        audit_retention_grants(&client).await,
+        audit_retention_grants(&mut client).await,
         retention_grants_on("panel_history")
     );
 
@@ -1947,7 +1950,7 @@ async fn record_history_log_follows_the_declaration() {
         .await
         .expect("local unlimited retention revokes the retention grants");
     assert_eq!(
-        audit_retention_grants(&client).await,
+        audit_retention_grants(&mut client).await,
         [
             "column platform.write_log.created_at SELECT",
             "column platform.write_log.result SELECT",
@@ -1972,55 +1975,51 @@ async fn record_history_log_follows_the_declaration() {
         "unexpected history name refusal: {refused:#}"
     );
     assert!(
-        client
-            .query_one(
-                "SELECT pg_catalog.to_regclass('inventory.rack_history') IS NULL",
-                &[],
-            )
+        sqlx::query("SELECT pg_catalog.to_regclass('inventory.rack_history') IS NULL")
+            .fetch_one(&mut client)
             .await
             .expect("read the refused history name")
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "the refused migration left no history name"
     );
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
-        )
-        .await
-        .expect("clean record-history log schemas");
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("clean record-history log schemas");
     std::fs::remove_dir_all(package).expect("remove record-history log package fixture");
 }
 
 /// The full comment of the connected database.
-async fn database_comment(client: &Client) -> Option<String> {
-    client
-        .query_one(
-            "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
+async fn database_comment(client: &mut Client) -> Option<String> {
+    sqlx::query(
+        "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
                FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-            &[],
-        )
-        .await
-        .expect("read the database comment")
-        .get(0)
+    )
+    .fetch_one(&mut *client)
+    .await
+    .expect("read the database comment")
+    .get(0)
 }
 
-async fn set_database_comment(client: &Client, comment: Option<&str>) {
+async fn set_database_comment(client: &mut Client, comment: Option<&str>) {
     let comment = comment.map_or_else(
         || "NULL".to_owned(),
         postgres_protocol::escape::escape_literal,
     );
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DO $comment$ BEGIN \
                EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {comment}::text); \
              END $comment$;"
-        ))
-        .await
+        ))).execute(&mut *client).await.map(drop)
         .expect("write the database comment");
 }
 
@@ -2046,17 +2045,18 @@ fn package_migration_error(
         .error_type()
 }
 
-async fn inventory_column_present(client: &Client, table: &str, column: &str) -> bool {
-    client
-        .query_one(
-            "SELECT EXISTS ( \
+async fn inventory_column_present(client: &mut Client, table: &str, column: &str) -> bool {
+    sqlx::query(
+        "SELECT EXISTS ( \
                SELECT 1 FROM information_schema.columns \
                 WHERE table_schema = 'inventory' AND table_name = $1 AND column_name = $2)",
-            &[&table, &column],
-        )
-        .await
-        .expect("read inventory column")
-        .get(0)
+    )
+    .bind(&table)
+    .bind(&column)
+    .fetch_one(&mut *client)
+    .await
+    .expect("read inventory column")
+    .get(0)
 }
 
 /// Owner rulings 1, 2, and 4 of wamn-ri4b: only a marked local target takes a
@@ -2067,25 +2067,25 @@ async fn inventory_column_present(client: &Client, table: &str, column: &str) ->
 async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     const ENVIRONMENT: &str = "development";
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package =
         fixture_root().with_file_name(format!("apply-package-local-target-{}", std::process::id()));
     copy_base_fixture(&package);
-    let instance: u32 = client
-        .query_one(
-            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-            &[],
-        )
-        .await
-        .expect("read the database instance")
-        .get(0);
+    let instance: u32 = sqlx::query(
+        "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+    )
+    .fetch_one(&mut client)
+    .await
+    .expect("read the database instance")
+    .get::<sqlx::postgres::types::Oid, _>(0)
+    .0;
     let marker = wamn_runtime::local_application::local_target_marker(
         PROJECT_ENV_KEY,
         ENVIRONMENT,
         instance,
     );
-    set_database_comment(&client, Some(&marker)).await;
+    set_database_comment(&mut client, Some(&marker)).await;
     let local_request = || ApplyPackageRequest {
         component_source: apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_broker::Publisher::default(),
@@ -2114,7 +2114,7 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
         .expect("apply the package to the local target");
     let first = manifest_digest(&package);
     assert_eq!(
-        database_comment(&client).await,
+        database_comment(&mut client).await,
         Some(recorded_comment(&first))
     );
 
@@ -2133,33 +2133,31 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
         package_migration_error(&refused),
         wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
     );
-    client
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
             set_config('app.operation', 'admin:seed-local-row', true); \
          INSERT INTO inventory.dock (dock_code) VALUES ('kept'); COMMIT;"
         ))
-        .await
-        .unwrap();
-    let installed: String = client.query_one(
-        "SELECT physical_schema_fingerprint FROM catalog.packages WHERE project_env_key=$1 AND package_id='wamn_inventory'",
-        &[&PROJECT_ENV_KEY],
-    ).await.unwrap().get(0);
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let installed: String = sqlx::query("SELECT physical_schema_fingerprint FROM catalog.packages WHERE project_env_key=$1 AND package_id='wamn_inventory'").bind(&PROJECT_ENV_KEY).fetch_one(&mut client).await.unwrap().get(0);
     let watched = apply_package::apply_local_package(local_request(), ENVIRONMENT)
         .await
         .unwrap();
     assert_eq!(watched.migrations_applied, 0);
-    assert!(!inventory_column_present(&client, "dock", "description").await);
-    assert_eq!(client.query_one(
-        "SELECT physical_schema_fingerprint FROM catalog.packages WHERE project_env_key=$1 AND package_id='wamn_inventory'",
-        &[&PROJECT_ENV_KEY],
-    ).await.unwrap().get::<_, String>(0), installed);
+    assert!(!inventory_column_present(&mut client, "dock", "description").await);
+    assert_eq!(sqlx::query("SELECT physical_schema_fingerprint FROM catalog.packages WHERE project_env_key=$1 AND package_id='wamn_inventory'").bind(&PROJECT_ENV_KEY).fetch_one(&mut client).await.unwrap().get::<String, _>(0), installed);
     assert_eq!(
-        client
-            .query_one("SELECT dock_code FROM inventory.dock", &[])
+        sqlx::query("SELECT dock_code FROM inventory.dock")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "kept"
     );
     let outcome = apply_local()
@@ -2169,32 +2167,29 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     let second = manifest_digest(&package);
     assert_ne!(second, first);
     assert_eq!(
-        database_comment(&client).await,
+        database_comment(&mut client).await,
         Some(recorded_comment(&second))
     );
-    assert!(inventory_column_present(&client, "dock", "description").await);
+    assert!(inventory_column_present(&mut client, "dock", "description").await);
     assert!(
-        client
-            .query_one(
-                "SELECT pg_catalog.to_regclass('inventory.dock_history') IS NOT NULL",
-                &[],
-            )
+        sqlx::query("SELECT pg_catalog.to_regclass('inventory.dock_history') IS NOT NULL")
+            .fetch_one(&mut client)
             .await
             .expect("read the reconciled history table")
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "the local apply reconciles the changed audit_log"
     );
     assert_eq!(
-        client
-            .query_one(
-                "SELECT artifact_digest FROM catalog.packages \
+        sqlx::query(
+            "SELECT artifact_digest FROM catalog.packages \
                   WHERE project_env_key = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.0'",
-                &[&PROJECT_ENV_KEY],
-            )
-            .await
-            .expect("read the recorded schema source")
-            .get::<_, Option<String>>(0),
+                    AND package_version = '1.0.0'"
+        )
+        .bind(&PROJECT_ENV_KEY)
+        .fetch_one(&mut client)
+        .await
+        .expect("read the recorded schema source")
+        .get::<Option<String>, _>(0),
         None,
         "a working-tree install records no artifact digest"
     );
@@ -2215,10 +2210,10 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
         .expect("the local target records another appended migration");
     let third = manifest_digest(&package);
     assert_eq!(
-        database_comment(&client).await,
+        database_comment(&mut client).await,
         Some(recorded_comment(&third))
     );
-    assert!(inventory_column_present(&client, "dock", "note").await);
+    assert!(inventory_column_present(&mut client, "dock", "note").await);
 
     // An edited or removed applied migration still refuses.
     let edited_path = package.join("migrations/0002_dock_description.sql");
@@ -2252,7 +2247,7 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     std::fs::write(&removed_path, removed_bytes).expect("restore the removed migration");
     write_build_record(&package);
     assert_eq!(
-        database_comment(&client).await,
+        database_comment(&mut client).await,
         Some(recorded_comment(&third))
     );
 
@@ -2264,7 +2259,7 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     .expect("append a migration for the unmarked cases");
     write_build_record(&package);
     for comment in [Some("wamn-local-target:"), None] {
-        set_database_comment(&client, comment).await;
+        set_database_comment(&mut client, comment).await;
         apply_local()
             .await
             .expect_err("the local apply requires the full marker");
@@ -2276,18 +2271,20 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
             wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
         );
     }
-    assert!(!inventory_column_present(&client, "dock", "code").await);
+    assert!(!inventory_column_present(&mut client, "dock", "code").await);
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
-        )
-        .await
-        .expect("clean local target schemas");
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("clean local target schemas");
     std::fs::remove_dir_all(package).expect("remove local target package fixture");
 }
 
@@ -2310,8 +2307,8 @@ async fn one_apply_takes_a_created_relation_and_its_later_column_whatever_the_re
 /// then a later migration that adds a column to that relation.
 async fn apply_created_then_added(relation: &str) {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package = fixture_root().with_file_name(format!(
         "apply-package-created-then-added-{relation}-{}",
         std::process::id()
@@ -2335,28 +2332,30 @@ async fn apply_created_then_added(relation: &str) {
         .await
         .expect("apply a stream that creates a relation and then adds to it");
     assert_eq!(outcome.migrations_applied, 2);
-    let owned: bool = client
-        .query_one(
-            "SELECT count(*) = 1 FROM catalog.package_definition_owners \
+    let owned: bool = sqlx::query(
+        "SELECT count(*) = 1 FROM catalog.package_definition_owners \
              WHERE relation_name = $1 AND definition_type = 'field' \
                AND definition_name = 'note' AND owner_package_id = 'wamn_inventory'",
-            &[&relation],
-        )
-        .await
-        .expect("read the recorded field owner")
-        .get(0);
+    )
+    .bind(&relation)
+    .fetch_one(&mut client)
+    .await
+    .expect("read the recorded field owner")
+    .get(0);
     assert!(owned, "the appended column records its definition owner");
 
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
-        )
-        .await
-        .expect("clean created-then-added schemas");
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("clean created-then-added schemas");
     std::fs::remove_dir_all(package).expect("remove created-then-added package fixture");
 }
 
@@ -2364,8 +2363,8 @@ async fn apply_created_then_added(relation: &str) {
 #[tokio::test]
 async fn model_versions_use_wal_without_counter_triggers() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
+    let mut client = connect(&url).await;
+    install(&mut client).await;
     let package =
         fixture_root().with_file_name(format!("apply-package-wal-{}", std::process::id()));
     copy_base_fixture(&package);
@@ -2374,32 +2373,32 @@ async fn model_versions_use_wal_without_counter_triggers() {
         .await
         .expect("a package replay does not recreate counters");
     assert!(
-        client
-            .query_one("SELECT to_regnamespace('wamn_cache') IS NULL", &[])
+        sqlx::query("SELECT to_regnamespace('wamn_cache') IS NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     assert!(
-        inventory_triggers(&client)
+        inventory_triggers(&mut client)
             .await
             .iter()
             .all(|(definition, _)| !definition.contains("wamn_cache"))
     );
 
-    client
-        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('d-1'), ('d-2')")
+    sqlx::raw_sql("INSERT INTO inventory.dock (dock_code) VALUES ('d-1'), ('d-2')")
+        .execute(&mut client)
         .await
+        .map(drop)
         .expect("create separate rows");
-    let first = connect(&url).await;
-    let second = connect(&url).await;
-    first.batch_execute("BEGIN; UPDATE inventory.dock SET dock_code = 'd-1a' WHERE dock_code = 'd-1'; SET CONSTRAINTS ALL IMMEDIATE")
-        .await.expect("the first writer remains open after all triggers");
-    second.batch_execute("BEGIN; SET LOCAL lock_timeout = '1s'; UPDATE inventory.dock SET dock_code = 'd-2b' WHERE dock_code = 'd-2'; COMMIT")
-        .await.expect("a different row of the same table commits without waiting for the first writer");
-    first
-        .batch_execute("COMMIT")
+    let mut first = connect(&url).await;
+    let mut second = connect(&url).await;
+    sqlx::raw_sql("BEGIN; UPDATE inventory.dock SET dock_code = 'd-1a' WHERE dock_code = 'd-1'; SET CONSTRAINTS ALL IMMEDIATE").execute(&mut first).await.map(drop).expect("the first writer remains open after all triggers");
+    sqlx::raw_sql("BEGIN; SET LOCAL lock_timeout = '1s'; UPDATE inventory.dock SET dock_code = 'd-2b' WHERE dock_code = 'd-2'; COMMIT").execute(&mut second).await.map(drop).expect("a different row of the same table commits without waiting for the first writer");
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut first)
         .await
+        .map(drop)
         .expect("the first writer commits");
     std::fs::remove_dir_all(package).expect("remove the WAL fixture");
 }
@@ -2407,10 +2406,9 @@ async fn model_versions_use_wal_without_counter_triggers() {
 #[tokio::test]
 async fn fresh_package_owners_preserve_grants_and_exclude_platform_tables() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
-    let platform_owner: String = client
-        .query_one("SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='platform.setting'::regclass", &[])
+    let mut client = connect(&url).await;
+    install(&mut client).await;
+    let platform_owner: String = sqlx::query("SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='platform.setting'::regclass").fetch_one(&mut client)
         .await
         .unwrap()
         .get(0);
@@ -2421,66 +2419,74 @@ async fn fresh_package_owners_preserve_grants_and_exclude_platform_tables() {
     set_audit_log_retention(&package, "panel", "unlimited");
     apply(&url, &package).await.unwrap();
     let role = wamn_control_provision::package_owner_role("owner_migration");
-    client
-        .batch_execute("GRANT USAGE ON SCHEMA inventory TO wamn_app; GRANT SELECT (id) ON inventory.panel TO wamn_app;")
-        .await
+    sqlx::raw_sql("GRANT USAGE ON SCHEMA inventory TO wamn_app; GRANT SELECT (id) ON inventory.panel TO wamn_app;").execute(&mut client).await.map(drop)
         .unwrap();
     // Reprovisioning preserves existing package grants and ownership.
-    client
-        .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
-            "owner_migration",
-        ))
-        .await
-        .unwrap();
-    let facts = client.query_one(
-        "SELECT pg_get_userbyid(c.relowner)::text, pg_get_userbyid(n.nspowner)::text, \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::sql::ensure_package_owner_role_sql("owner_migration"))
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
+    let facts = sqlx::query("SELECT pg_get_userbyid(c.relowner)::text, pg_get_userbyid(n.nspowner)::text, \
          has_column_privilege('wamn_app', c.oid, 'id', 'SELECT'), \
          (SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.panel_history'::regclass), \
          (SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='platform.setting'::regclass) \
-         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid='inventory.panel'::regclass", &[]
-    ).await.unwrap();
-    assert_eq!(facts.get::<_, String>(0), role);
-    assert_eq!(facts.get::<_, String>(1), role);
-    assert!(facts.get::<_, bool>(2));
-    assert_eq!(facts.get::<_, String>(3), role);
-    assert_eq!(facts.get::<_, String>(4), platform_owner);
-    let generated = client
-        .query_one(
-            "SELECT pg_get_userbyid(p.proowner)::text, pg_get_userbyid(c.relowner)::text \
+         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid='inventory.panel'::regclass").fetch_one(&mut client).await.unwrap();
+    assert_eq!(facts.get::<String, _>(0), role);
+    assert_eq!(facts.get::<String, _>(1), role);
+    assert!(facts.get::<bool, _>(2));
+    assert_eq!(facts.get::<String, _>(3), role);
+    assert_eq!(facts.get::<String, _>(4), platform_owner);
+    let generated = sqlx::query(
+        "SELECT pg_get_userbyid(p.proowner)::text, pg_get_userbyid(c.relowner)::text \
          FROM pg_proc p CROSS JOIN pg_class c \
          WHERE p.oid='wamn_history.inventory__panel_stamp()'::regprocedure \
            AND c.oid=pg_get_serial_sequence('inventory.panel_history','position')::regclass",
-            &[],
-        )
+    )
+    .fetch_one(&mut client)
+    .await
+    .unwrap();
+    assert_eq!(generated.get::<String, _>(0), role);
+    assert_eq!(generated.get::<String, _>(1), role);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET ROLE {role}")))
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    assert_eq!(generated.get::<_, String>(0), role);
-    assert_eq!(generated.get::<_, String>(1), role);
-    client
-        .batch_execute(&format!("SET ROLE {role}"))
+    sqlx::raw_sql("ALTER TABLE inventory.panel ADD COLUMN owner_probe text")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client
-        .batch_execute("ALTER TABLE inventory.panel ADD COLUMN owner_probe text")
+    let denied = sqlx::raw_sql("DELETE FROM platform.setting")
+        .execute(&mut client)
         .await
-        .unwrap();
-    let denied = client
-        .batch_execute("DELETE FROM platform.setting")
-        .await
+        .map(drop)
         .unwrap_err();
     assert_eq!(
-        denied.code(),
-        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
+        denied
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501")
     );
-    client
-        .batch_execute("RESET ROLE; SET ROLE wamn_app")
+    sqlx::raw_sql("RESET ROLE; SET ROLE wamn_app")
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
+    sqlx::query("SELECT id FROM inventory.panel")
+        .fetch_all(&mut client)
         .await
         .unwrap();
-    client
-        .query("SELECT id FROM inventory.panel", &[])
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute("RESET ROLE").await.unwrap();
     std::fs::remove_dir_all(package).unwrap();
 }
 
@@ -2490,18 +2496,20 @@ async fn fresh_package_owners_preserve_grants_and_exclude_platform_tables() {
 #[tokio::test]
 async fn introspection_accepts_only_the_event_admission_reads() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
-    client
-        .batch_execute(
-            "DO $role$ BEGIN \
+    let mut client = connect(&url).await;
+    install(&mut client).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $role$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_executor_platform') THEN \
-                 CREATE ROLE wamn_executor_platform NOLOGIN; \
+                 CREATE ROLE wamn_executor_platform NOLOGIN NOINHERIT; \
                END IF; \
-             END $role$;",
-        )
-        .await
-        .expect("create the executor platform role");
+             END $role$;")
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .expect("create the executor platform role");
     let package = fixture_root().with_file_name(format!(
         "apply-package-executor-reads-{}",
         std::process::id()
@@ -2511,14 +2519,11 @@ async fn introspection_accepts_only_the_event_admission_reads() {
     apply(&url, &package)
         .await
         .expect("apply a declaration that keeps a log");
-    let acl = client
-        .query_one(
-            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'inventory'",
-            &[],
-        )
+    let acl = sqlx::query("SELECT nspacl::text FROM pg_namespace WHERE nspname = 'inventory'")
+        .fetch_one(&mut client)
         .await
         .unwrap()
-        .get::<_, String>(0);
+        .get::<String, _>(0);
     assert!(acl.contains("wamn_executor_platform=U/"), "{acl}");
     wamn_compiler::introspect_package(&url, &package)
         .await
@@ -2548,7 +2553,11 @@ async fn introspection_accepts_only_the_event_admission_reads() {
             "REVOKE SELECT (operation) ON inventory.panel_history FROM wamn_executor_platform",
         ),
     ] {
-        client.batch_execute(grant).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((grant).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .unwrap();
         let error = wamn_compiler::introspect_package(&url, &package)
             .await
             .expect_err(grant);
@@ -2556,7 +2565,11 @@ async fn introspection_accepts_only_the_event_admission_reads() {
             format!("{error:#}").contains("unsupported-acl"),
             "{grant}: {error:#}"
         );
-        client.batch_execute(revoke).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe((revoke).to_string()))
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .unwrap();
     }
     wamn_compiler::introspect_package(&url, &package)
         .await

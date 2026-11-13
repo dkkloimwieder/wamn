@@ -1,7 +1,8 @@
 use super::{installed_environment_fingerprint, load_applied_package};
 use crate::apply_package::{ApplyPackageRequest, apply_package, apply_package_schema};
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 use std::path::Path;
-use tokio_postgres::{Client, NoTls};
 
 const PROJECT_ENV_KEY: &str = "schema-records--dev--fixture";
 
@@ -18,8 +19,8 @@ fn request(root: &Path, database_url: &str) -> ApplyPackageRequest {
 }
 
 async fn state(client: &mut Client) -> wamn_schema_control::AppliedPackage {
-    let tx = client.transaction().await.unwrap();
-    let state = load_applied_package(&tx, PROJECT_ENV_KEY, "wamn_inventory")
+    let mut tx = client.begin().await.unwrap();
+    let state = load_applied_package(&mut tx, PROJECT_ENV_KEY, "wamn_inventory")
         .await
         .unwrap()
         .unwrap();
@@ -36,11 +37,9 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
     ]).unwrap();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(connection);
-    crate::schema_baseline::record_project(&client)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    crate::schema_baseline::record_project(&mut client)
         .await
         .unwrap();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -54,30 +53,32 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         baseline.baseline_fingerprint,
         baseline.physical_schema_fingerprint
     );
-    let environment = installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
+    let environment = installed_environment_fingerprint(&mut client, PROJECT_ENV_KEY)
         .await
         .unwrap();
-    client
-        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+    sqlx::raw_sql("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
 
     // The cache remains byte-identical during schema work. It selects no code.
-    let cache_tx = client.transaction().await.unwrap();
-    crate::apply_package::bind_apply_package_principal(&cache_tx)
+    let mut cache_tx = client.begin().await.unwrap();
+    crate::apply_package::bind_apply_package_principal(&mut cache_tx)
         .await
         .unwrap();
-    cache_tx
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
          SELECT $1, 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea",
-            &[&PROJECT_ENV_KEY],
-        )
-        .await
-        .unwrap();
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .execute(&mut *cache_tx)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     cache_tx.commit().await.unwrap();
-    let cache_before: String = client
-        .query_one("SELECT xmin::text FROM catalog.releases", &[])
+    let cache_before: String = sqlx::query("SELECT xmin::text FROM catalog.releases")
+        .fetch_one(&mut client)
         .await
         .unwrap()
         .get(0);
@@ -130,51 +131,47 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         request(&next, database.url()).package.artifact_digest
     );
     assert_ne!(
-        installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
+        installed_environment_fingerprint(&mut client, PROJECT_ENV_KEY)
             .await
             .unwrap(),
         environment
     );
     assert!(
-        client
-            .query_one(
-                "SELECT to_regclass('inventory.dock_history') IS NOT NULL",
-                &[]
-            )
+        sqlx::query("SELECT to_regclass('inventory.dock_history') IS NOT NULL")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     assert_eq!(
-        client
-            .query_one("SELECT dock_code FROM inventory.dock", &[])
+        sqlx::query("SELECT dock_code FROM inventory.dock")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained-migrated"
     );
     assert!(
-        client
-            .query_one(
-                "SELECT dock.xmin = migration.xmin FROM inventory.dock AS dock \
+        sqlx::query(
+            "SELECT dock.xmin = migration.xmin FROM inventory.dock AS dock \
          CROSS JOIN catalog.package_migrations AS migration \
-         WHERE migration.relative_path = 'migrations/0002_dock_note.sql'",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0)
+         WHERE migration.relative_path = 'migrations/0002_dock_note.sql'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<bool, _>(0)
     );
     assert_eq!(
-        client
-            .query_one("SELECT xmin::text FROM catalog.releases", &[])
+        sqlx::query("SELECT xmin::text FROM catalog.releases")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         cache_before
     );
-    let record_before: String = client
-        .query_one("SELECT xmin::text FROM catalog.packages", &[])
+    let record_before: String = sqlx::query("SELECT xmin::text FROM catalog.packages")
+        .fetch_one(&mut client)
         .await
         .unwrap()
         .get(0);
@@ -186,11 +183,11 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     );
     assert_eq!(state(&mut client).await, installed);
     assert_eq!(
-        client
-            .query_one("SELECT xmin::text FROM catalog.packages", &[])
+        sqlx::query("SELECT xmin::text FROM catalog.packages")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         record_before
     );
     assert!(
@@ -200,11 +197,11 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .changed
     );
     assert_eq!(
-        client
-            .query_one("SELECT dock_code FROM inventory.dock", &[])
+        sqlx::query("SELECT dock_code FROM inventory.dock")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained-migrated"
     );
     // A retry must preserve the recorded paths, checksums and outcomes as well as the data.
@@ -222,11 +219,11 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .is_err()
     );
     assert_eq!(
-        client
-            .query_one("SELECT dock_code FROM inventory.dock", &[])
+        sqlx::query("SELECT dock_code FROM inventory.dock")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained-migrated"
     );
     std::fs::write(data_path, data_sql).unwrap();
@@ -245,14 +242,14 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     );
     assert_eq!(state(&mut client).await, installed);
     assert_eq!(
-        client
-            .query_one("SELECT dock_code FROM inventory.dock", &[])
+        sqlx::query("SELECT dock_code FROM inventory.dock")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained-migrated"
     );
-    assert!(!client.query_one("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='failed')", &[]).await.unwrap().get::<_, bool>(0));
+    assert!(!sqlx::query("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='failed')").fetch_one(&mut client).await.unwrap().get::<bool, _>(0));
 
     // Reconstruct the retained SQL source, even after older code was selected.
     std::fs::remove_file(next.join("migrations/0003_candidate.sql")).unwrap();
@@ -261,9 +258,8 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     let fresh = wamn_platform_identity::test_database::project_platform();
     fresh.execute(&["DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;"]).unwrap();
     apply_package(request(&next, fresh.url())).await.unwrap();
-    let (mut fresh_client, fresh_connection) =
-        tokio_postgres::connect(fresh.url(), NoTls).await.unwrap();
-    tokio::spawn(fresh_connection);
+    let mut fresh_client = wamn_postgres::connect(fresh.url()).await.unwrap();
+
     let replacement = state(&mut fresh_client).await;
     assert_eq!(
         replacement.baseline_fingerprint,
@@ -290,11 +286,9 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
     ]).unwrap();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(connection);
-    crate::schema_baseline::record_project(&client)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    crate::schema_baseline::record_project(&mut client)
         .await
         .unwrap();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -321,7 +315,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .await
             .is_err()
     );
-    let committed = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_inventory")
+    let committed = read_package_migrations(&mut client, PROJECT_ENV_KEY, "wamn_inventory")
         .await
         .unwrap();
     let directory = crate::apply_package::read_package_directory(&root).unwrap();
@@ -344,15 +338,15 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .all(|file| file.outcome == MigrationOutcome::Applied)
     );
     assert!(
-        !client
-            .query_one("SELECT EXISTS (SELECT FROM catalog.packages)", &[])
+        !sqlx::query("SELECT EXISTS (SELECT FROM catalog.packages)")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
-    assert!(client.query_one("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='note')", &[]).await.unwrap().get::<_, bool>(0));
-    let first_index: u32 = client
-        .query_one("SELECT 'inventory.dock_code_idx'::regclass::oid", &[])
+    assert!(sqlx::query("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='note')").fetch_one(&mut client).await.unwrap().get::<bool, _>(0));
+    let first_index: i64 = sqlx::query("SELECT 'inventory.dock_code_idx'::regclass::oid::bigint")
+        .fetch_one(&mut client)
         .await
         .unwrap()
         .get(0);
@@ -362,11 +356,11 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         .unwrap();
     assert_eq!(result.migrations_applied, 0);
     assert_eq!(
-        client
-            .query_one("SELECT 'inventory.dock_code_idx'::regclass::oid", &[])
+        sqlx::query("SELECT 'inventory.dock_code_idx'::regclass::oid::bigint")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, u32>(0),
+            .get::<i64, _>(0),
         first_index
     );
     let installed = state(&mut client).await;
@@ -384,27 +378,25 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         "-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY dock_note_idx ON inventory.dock (note);";
     std::fs::write(root.join(uncertain_path), uncertain_sql).unwrap();
     // Fail the real completion write after PostgreSQL finishes the index.
-    client.batch_execute("CREATE FUNCTION public.fail_migration_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$; CREATE TRIGGER fail_migration_completion BEFORE UPDATE ON catalog.package_migrations FOR EACH ROW EXECUTE FUNCTION public.fail_migration_completion()").await.unwrap();
+    sqlx::raw_sql("CREATE FUNCTION public.fail_migration_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$; CREATE TRIGGER fail_migration_completion BEFORE UPDATE ON catalog.package_migrations FOR EACH ROW EXECUTE FUNCTION public.fail_migration_completion()").execute(&mut client).await.map(drop).unwrap();
     assert!(
         apply_package_schema(request(&root, database.url()), None)
             .await
             .is_err()
     );
-    client.batch_execute("DROP TRIGGER fail_migration_completion ON catalog.package_migrations; DROP FUNCTION public.fail_migration_completion()").await.unwrap();
+    sqlx::raw_sql("DROP TRIGGER fail_migration_completion ON catalog.package_migrations; DROP FUNCTION public.fail_migration_completion()").execute(&mut client).await.map(drop).unwrap();
     assert!(
-        installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
+        installed_environment_fingerprint(&mut client, PROJECT_ENV_KEY)
             .await
             .unwrap()
             .is_none()
     );
-    let initialization: String = client
-        .query_one(
-            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let initialization: String =
+        sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     let source = request(&root, database.url()).package;
     assert!(
         crate::apply_package::adopt_package_schemas(
@@ -426,9 +418,9 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         uncertain.migrations.last().unwrap().outcome,
         MigrationOutcome::Started
     );
-    let row = client.query_one("SELECT 'inventory.dock_note_idx'::regclass::oid, applied_at IS NULL FROM catalog.package_migrations WHERE relative_path=$1", &[&uncertain_path]).await.unwrap();
-    let completed_index: u32 = row.get(0);
-    assert!(row.get::<_, bool>(1));
+    let row = sqlx::query("SELECT 'inventory.dock_note_idx'::regclass::oid::bigint, applied_at IS NULL FROM catalog.package_migrations WHERE relative_path=$1").bind(&uncertain_path).fetch_one(&mut client).await.unwrap();
+    let completed_index: i64 = row.get(0);
+    assert!(row.get::<bool, _>(1));
     assert!(
         apply_package_schema(request(&root, database.url()), None)
             .await
@@ -457,11 +449,11 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         .unwrap();
     assert_eq!(result.migrations_applied, 0);
     assert_eq!(
-        client
-            .query_one("SELECT 'inventory.dock_note_idx'::regclass::oid", &[])
+        sqlx::query("SELECT 'inventory.dock_note_idx'::regclass::oid::bigint")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, u32>(0),
+            .get::<i64, _>(0),
         completed_index
     );
     assert_eq!(
@@ -489,9 +481,10 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         MigrationOutcome::Started
     );
     // The developer repairs the database, then explicitly permits another attempt.
-    client
-        .batch_execute("ALTER TABLE inventory.dock ADD COLUMN repaired text")
+    sqlx::raw_sql("ALTER TABLE inventory.dock ADD COLUMN repaired text")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     assert!(
         apply_package_schema(request(&root, database.url()), None)
@@ -508,7 +501,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .migrations_applied,
         1
     );
-    assert!(client.query_one("SELECT indisvalid FROM pg_index WHERE indexrelid='inventory.dock_repaired_idx'::regclass", &[]).await.unwrap().get::<_, bool>(0));
+    assert!(sqlx::query("SELECT indisvalid FROM pg_index WHERE indexrelid='inventory.dock_repaired_idx'::regclass").fetch_one(&mut client).await.unwrap().get::<bool, _>(0));
     assert!(
         !apply_package_schema(request(&root, database.url()), Some(&retry))
             .await
@@ -528,38 +521,37 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
     ]).unwrap();
-    let mut client = crate::database::connect(database.url()).await.unwrap();
-    crate::schema_baseline::record_project(&client)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    crate::schema_baseline::record_project(&mut client)
         .await
         .unwrap();
-    let initialization: String = client
-        .query_one(
-            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let initialization: String =
+        sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let root = scratch.path().join("application");
     crate::test_support::copy_schema_fixture(&root);
     apply_package(request(&root, database.url())).await.unwrap();
-    client
-        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+    sqlx::raw_sql("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     let baseline = state(&mut client).await;
     let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
         &std::fs::read(root.join("wamn.json")).unwrap(),
     )
     .unwrap();
-    let tx = client.transaction().await.unwrap();
+    let mut tx = client.begin().await.unwrap();
     let mut columns = std::collections::BTreeMap::new();
     for (id, model) in &manifest.models {
         columns.insert(
             id.to_owned(),
             crate::apply_package::record_history::read_relation_columns(
-                &tx,
+                &mut tx,
                 &model.schema,
                 &model.table,
             )
@@ -628,24 +620,19 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         MigrationOutcome::Adopted
     );
     assert!(
-        !client
-            .query_one(
-                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='asserted')",
-                &[]
-            )
+        !sqlx::query("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='asserted')").fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     assert!(
-        client
-            .query_one(
-                "SELECT applied_at IS NULL FROM catalog.package_migrations WHERE outcome='adopted'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0)
+        sqlx::query(
+            "SELECT applied_at IS NULL FROM catalog.package_migrations WHERE outcome='adopted'"
+        )
+        .fetch_one(&mut client)
+        .await
+        .unwrap()
+        .get::<bool, _>(0)
     );
 
     let mut next_manifest = manifest.clone();
@@ -679,14 +666,10 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         MigrationOutcome::Applied
     );
     assert!(
-        client
-            .query_one(
-                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='next')",
-                &[]
-            )
+        sqlx::query("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='next')").fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
 
     // Manual repair changes an accepted input. Ordinary apply refuses its drift.
@@ -741,14 +724,11 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     );
     assert_eq!(state(&mut client).await, repaired);
     assert!(
-        client
-            .query_one(
-                "SELECT EXISTS (SELECT FROM inventory.dock WHERE dock_code='retained')",
-                &[]
-            )
+        sqlx::query("SELECT EXISTS (SELECT FROM inventory.dock WHERE dock_code='retained')")
+            .fetch_one(&mut client)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
     next_manifest.package.version = "3.0.0".into();
     std::fs::write(
@@ -793,18 +773,16 @@ async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
             "../../../../../../deploy/sql/app-schema-baseline.sql"
         )])
         .unwrap();
-    let mut client = crate::database::connect(database.url()).await.unwrap();
-    crate::schema_baseline::record_project(&client)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+    crate::schema_baseline::record_project(&mut client)
         .await
         .unwrap();
-    let initialization: String = client
-        .query_one(
-            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let initialization: String =
+        sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut client)
+            .await
+            .unwrap()
+            .get(0);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
     let source = crate::package_artifact::fixture_package_root(&root).unwrap();
     let result = adopt_package_schemas(
@@ -816,8 +794,8 @@ async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
     )
     .await
     .unwrap();
-    let tx = client.transaction().await.unwrap();
-    let adopted = load_applied_package(&tx, PROJECT_ENV_KEY, "source_fixture")
+    let mut tx = client.begin().await.unwrap();
+    let adopted = load_applied_package(&mut tx, PROJECT_ENV_KEY, "source_fixture")
         .await
         .unwrap()
         .unwrap();
@@ -840,10 +818,11 @@ async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
             .collect::<Vec<_>>()
     );
     assert!(
-        tx.query_one("SELECT to_regclass('inventory.item') IS NULL", &[])
+        sqlx::query("SELECT to_regclass('inventory.item') IS NULL")
+            .fetch_one(&mut *tx)
             .await
             .unwrap()
-            .get::<_, bool>(0)
+            .get::<bool, _>(0)
     );
 }
 
@@ -858,7 +837,7 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
     ]).unwrap();
-    let client = crate::database::connect(database.url()).await.unwrap();
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let path = "migrations/0002_index.sql";
     for name in ["alpha", "beta"] {
@@ -877,10 +856,10 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
                 .is_err()
         );
     }
-    let alpha = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_alpha")
+    let alpha = read_package_migrations(&mut client, PROJECT_ENV_KEY, "wamn_alpha")
         .await
         .unwrap();
-    let beta = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_beta")
+    let beta = read_package_migrations(&mut client, PROJECT_ENV_KEY, "wamn_beta")
         .await
         .unwrap();
     assert_eq!(alpha.last().unwrap().outcome, MigrationOutcome::Started);
@@ -903,9 +882,10 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
         .await
         .is_err()
     );
-    client
-        .batch_execute("ALTER TABLE beta.dock ADD COLUMN missing text")
+    sqlx::raw_sql("ALTER TABLE beta.dock ADD COLUMN missing text")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
     assert_eq!(
         apply_package_schema(
@@ -918,12 +898,12 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
         1
     );
     assert_eq!(
-        read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_alpha")
+        read_package_migrations(&mut client, PROJECT_ENV_KEY, "wamn_alpha")
             .await
             .unwrap(),
         alpha
     );
-    let after = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_beta")
+    let after = read_package_migrations(&mut client, PROJECT_ENV_KEY, "wamn_beta")
         .await
         .unwrap();
     assert_eq!(after.last().unwrap().outcome, MigrationOutcome::Applied);
@@ -951,10 +931,11 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
         &manifest,
         std::fs::read_to_string(&manifest)?.replace("1.0.0", "2.0.0"),
     )?;
-    let client = crate::database::connect(database.url()).await?;
-    client
-        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
-        .await?;
+    let mut client = wamn_postgres::connect(database.url()).await?;
+    sqlx::raw_sql("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
     let path = "migrations/0002_note.sql";
     std::fs::write(
         root.join(path),
@@ -1000,30 +981,19 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
     .await?
     .expect_err("the proxy discards the committed response");
     timeout(Duration::from_secs(2), proxy).await???;
-    let before = client
-        .query_one(
-            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2",
-            &[&PROJECT_ENV_KEY, &path],
-        )
+    let before = sqlx::query("SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2").bind(&PROJECT_ENV_KEY).bind(&path).fetch_one(&mut client)
         .await?;
     let result = apply_package_schema(request(&root, database.url()), None).await?;
     assert_eq!(result.migrations_applied, 0);
-    let after = client
-        .query_one(
-            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2",
-            &[&PROJECT_ENV_KEY, &path],
-        )
+    let after = sqlx::query("SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2").bind(&PROJECT_ENV_KEY).bind(&path).fetch_one(&mut client)
         .await?;
-    assert_eq!(before.get::<_, String>(0), after.get::<_, String>(0));
-    assert_eq!(before.get::<_, String>(1), after.get::<_, String>(1));
+    assert_eq!(before.get::<String, _>(0), after.get::<String, _>(0));
+    assert_eq!(before.get::<String, _>(1), after.get::<String, _>(1));
     assert_eq!(
-        client
-            .query_one(
-                "SELECT dock_code FROM inventory.dock WHERE note IS NULL",
-                &[]
-            )
+        sqlx::query("SELECT dock_code FROM inventory.dock WHERE note IS NULL")
+            .fetch_one(&mut client)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         "retained"
     );
     Ok(())
@@ -1055,12 +1025,13 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
         root.join(path),
         "-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY dock_code_idx ON inventory.dock (dock_code);",
     )?;
-    let observer = crate::database::connect(database.url()).await?;
-    let mut blocker_owner = crate::database::connect(database.url()).await?;
-    let blocker = blocker_owner.transaction().await?;
-    blocker
-        .batch_execute("LOCK TABLE inventory.dock IN SHARE MODE")
-        .await?;
+    let mut observer = wamn_postgres::connect(database.url()).await?;
+    let mut blocker_owner = wamn_postgres::connect(database.url()).await?;
+    let mut blocker = blocker_owner.begin().await?;
+    sqlx::raw_sql("LOCK TABLE inventory.dock IN SHARE MODE")
+        .execute(&mut *blocker)
+        .await
+        .map(drop)?;
     let mut worker_url = url::Url::parse(database.url())?;
     worker_url
         .query_pairs_mut()
@@ -1070,16 +1041,13 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
     timeout(Duration::from_secs(15), async {
         loop {
             assert!(!worker.is_finished());
-            if observer.query_one(
-                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='running-schema-worker' AND wait_event_type='Lock')",
-                &[],
-            ).await?.get::<_, bool>(0) {
+            if sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='running-schema-worker' AND wait_event_type='Lock')").fetch_one(&mut observer).await?.get::<bool, _>(0) {
                 break Ok::<_, anyhow::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await??;
-    let started = read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
+    let started = read_package_migrations(&mut observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
     assert_eq!(started.last().unwrap().outcome, MigrationOutcome::Started);
     worker_url
         .query_pairs_mut()
@@ -1098,17 +1066,14 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
     timeout(Duration::from_secs(15), async {
         loop {
             assert!(!resolution.is_finished());
-            if observer.query_one(
-                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='schema-resolution-worker' AND state='idle' AND backend_xmin IS NULL AND backend_xid IS NULL)",
-                &[],
-            ).await?.get::<_, bool>(0) {
+            if sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='schema-resolution-worker' AND state='idle' AND backend_xmin IS NULL AND backend_xid IS NULL)").fetch_one(&mut observer).await?.get::<bool, _>(0) {
                 break Ok::<_, anyhow::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await??;
     assert_eq!(
-        read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?,
+        read_package_migrations(&mut observer, PROJECT_ENV_KEY, "wamn_inventory").await?,
         started
     );
     blocker.commit().await?;
@@ -1124,12 +1089,20 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
             .migrations_applied,
         0
     );
-    let completed = read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
+    let completed =
+        read_package_migrations(&mut observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
     assert_eq!(
         completed.last().unwrap().sha256,
         started.last().unwrap().sha256
     );
     assert_eq!(completed.last().unwrap().outcome, MigrationOutcome::Applied);
-    assert!(observer.query_one("SELECT indisvalid FROM pg_index WHERE indexrelid='inventory.dock_code_idx'::regclass", &[]).await?.get::<_, bool>(0));
+    assert!(
+        sqlx::query(
+            "SELECT indisvalid FROM pg_index WHERE indexrelid='inventory.dock_code_idx'::regclass"
+        )
+        .fetch_one(&mut observer)
+        .await?
+        .get::<bool, _>(0)
+    );
     Ok(())
 }

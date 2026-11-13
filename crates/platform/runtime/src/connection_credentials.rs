@@ -3,6 +3,7 @@
 //! Secret material never enters guests or stored run facts. An absent reader
 //! is unavailable. A reader with no matching enabled connection returns none.
 
+use sqlx::Row as _;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -11,9 +12,8 @@ use anyhow::Context as _;
 #[derive(Clone)]
 pub struct ConnectionCredentials {
     org: Option<String>,
-    oauth_pool: Option<deadpool_postgres::Pool>,
     store: Option<Arc<dyn wamn_kubernetes::Store>>,
-    database: Option<Arc<tokio_postgres::Client>>,
+    database: Option<sqlx::PgPool>,
 }
 
 impl std::fmt::Debug for ConnectionCredentials {
@@ -27,31 +27,21 @@ impl std::fmt::Debug for ConnectionCredentials {
 
 impl ConnectionCredentials {
     /// Use a dedicated system reader whose login fixes its org and project.
-    pub fn from_database(client: Arc<tokio_postgres::Client>, org: &str) -> Self {
+    pub fn from_database(client: sqlx::PgPool, org: &str) -> Self {
         Self {
             org: Some(org.to_owned()),
-            oauth_pool: None,
             store: None,
             database: Some(client),
         }
     }
 
-    /// Give OAuth transactions dedicated connections under the same reader login.
-    pub fn with_oauth_database_url(mut self, url: &str) -> anyhow::Result<Self> {
-        let manager = deadpool_postgres::Manager::new(url.parse()?, tokio_postgres::NoTls);
-        self.oauth_pool = Some(
-            deadpool_postgres::Pool::builder(manager)
-                .max_size(4)
-                .build()?,
-        );
-        Ok(self)
-    }
-
-    pub(crate) async fn oauth_database(&self) -> anyhow::Result<deadpool_postgres::Object> {
-        self.oauth_pool
+    pub(crate) async fn oauth_database(
+        &self,
+    ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+        self.database
             .as_ref()
             .context("OAuth database unavailable")?
-            .get()
+            .acquire()
             .await
             .context("open OAuth transaction connection")
     }
@@ -70,7 +60,6 @@ impl ConnectionCredentials {
     pub fn empty() -> Self {
         Self {
             org: None,
-            oauth_pool: None,
             store: None,
             database: None,
         }
@@ -87,8 +76,8 @@ impl ConnectionCredentials {
         Ok(handle)
     }
 
-    async fn material(&self, row: &tokio_postgres::Row) -> anyhow::Result<Option<String>> {
-        if row.get::<_, Option<&str>>(0).is_none() {
+    async fn material(&self, row: &sqlx::postgres::PgRow) -> anyhow::Result<Option<String>> {
+        if row.get::<Option<&str>, _>(0).is_none() {
             return Ok(None);
         }
         let reference: String = row.get(1);
@@ -134,11 +123,13 @@ impl ConnectionCredentials {
 /// [`ConnectionCredentials::env_connections`] returns rows that never change
 /// under their keys.
 impl ConnectionCredentials {
-    fn reader(&self) -> anyhow::Result<(&tokio_postgres::Client, &str)> {
+    async fn reader(&self) -> anyhow::Result<(sqlx::pool::PoolConnection<sqlx::Postgres>, &str)> {
         let client = self
             .database
-            .as_deref()
-            .context("connection reader unavailable")?;
+            .as_ref()
+            .context("connection reader unavailable")?
+            .acquire()
+            .await?;
         let org = self
             .org
             .as_deref()
@@ -154,14 +145,17 @@ impl ConnectionCredentials {
         environment: &str,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
-        let (client, org) = self.reader()?;
-        let row = client
-            .query_opt(
-                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT,
-                &[&org, &project, &environment, id],
-            )
-            .await
-            .context("read the connection fact")?;
+        let (mut client, org) = self.reader().await?;
+        let row = sqlx::query(
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT,
+        )
+        .bind(org)
+        .bind(project)
+        .bind(environment)
+        .bind(id)
+        .fetch_optional(&mut *client)
+        .await
+        .context("read the connection fact")?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.get(0),
             status: if row.get(1) {
@@ -186,14 +180,18 @@ impl ConnectionCredentials {
         id: &uuid::Uuid,
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
-        let (client, org) = self.reader()?;
-        let row = client
-            .query_opt(
-                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION,
-                &[&org, &project, &environment, id, &generation],
-            )
-            .await
-            .context("read the connection generation")?;
+        let (mut client, org) = self.reader().await?;
+        let row = sqlx::query(
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION,
+        )
+        .bind(org)
+        .bind(project)
+        .bind(environment)
+        .bind(id)
+        .bind(generation)
+        .fetch_optional(&mut *client)
+        .await
+        .context("read the connection generation")?;
         Ok(row.map(|row| ConnectionGeneration {
             name: row.get(0),
             integration_type: row.get(1),
@@ -211,14 +209,17 @@ impl ConnectionCredentials {
         environment: &str,
         credential: &uuid::Uuid,
     ) -> anyhow::Result<Option<String>> {
-        let (client, org) = self.reader()?;
-        let row = client
-            .query_opt(
-                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET,
-                &[&org, &project, &environment, credential],
-            )
-            .await
-            .context("read the credential reference")?;
+        let (mut client, org) = self.reader().await?;
+        let row = sqlx::query(
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET,
+        )
+        .bind(org)
+        .bind(project)
+        .bind(environment)
+        .bind(credential)
+        .fetch_optional(&mut *client)
+        .await
+        .context("read the credential reference")?;
         match row {
             Some(row) => self.material(&row).await,
             None => Ok(None),
@@ -231,17 +232,19 @@ impl ConnectionCredentials {
         project: &str,
         environment: &str,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
-        let (client, org) = self.reader()?;
-        Ok(client
-            .query(
-                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS,
-                &[&org, &project, &environment],
-            )
-            .await
-            .context("read the environment connections")?
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect())
+        let (mut client, org) = self.reader().await?;
+        Ok(sqlx::query(
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS,
+        )
+        .bind(org)
+        .bind(project)
+        .bind(environment)
+        .fetch_all(&mut *client)
+        .await
+        .context("read the environment connections")?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
     }
 
     /// One published version of an integration type, or its newest one.
@@ -250,14 +253,15 @@ impl ConnectionCredentials {
         integration_type: &str,
         version: Option<i32>,
     ) -> anyhow::Result<Option<IntegrationVersion>> {
-        let (client, _) = self.reader()?;
-        let row = client
-            .query_opt(
-                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION,
-                &[&integration_type, &version],
-            )
-            .await
-            .context("read the integration version")?;
+        let (mut client, _) = self.reader().await?;
+        let row = sqlx::query(
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION,
+        )
+        .bind(integration_type)
+        .bind(version)
+        .fetch_optional(&mut *client)
+        .await
+        .context("read the integration version")?;
         Ok(row.map(|row| IntegrationVersion {
             version: row.get(0),
             digest: row.get(1),
@@ -324,26 +328,21 @@ mod tests {
         assert_eq!(reader.connection_name("org:acme:erp@2").unwrap(), "erp");
         assert!(reader.connection_name("org:other:erp").is_err());
         assert!(reader.connection_name("project:project-a:erp").is_err());
-        let principal: uuid::Uuid = fixture
-            .admin
-            .query_one(
-                "SELECT service_principal_id FROM registry.connection WHERE id=$1",
-                &[&id],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let principal: uuid::Uuid =
+            sqlx::query("SELECT service_principal_id FROM registry.connection WHERE id=$1")
+                .bind(&id)
+                .fetch_one(&mut fixture.admin)
+                .await
+                .unwrap()
+                .get(0);
         assert_eq!(fact.service_principal_id, principal);
         assert!(
-            reader
-                .database
-                .as_ref()
-                .unwrap()
-                .simple_query("SELECT * FROM identity.credential")
+            sqlx::raw_sql("SELECT * FROM identity.credential")
+                .fetch_all(reader.database.as_ref().unwrap())
                 .await
                 .is_err()
         );
-        fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a'; RESET ROLE").await.unwrap();
+        sqlx::raw_sql("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a'; RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
         assert_eq!(
             reader
                 .connection_fact("project-a", "dev", &id)
@@ -426,7 +425,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE").await.unwrap();
+        sqlx::raw_sql("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE").execute(&mut fixture.admin).await.map(drop).unwrap();
         assert_eq!(
             reader
                 .connection_fact("project-a", "dev", &store)
@@ -477,15 +476,12 @@ mod tests {
                 .as_deref(),
             Some(r#"{"client_secret":"first"}"#)
         );
-        let http_only: bool = fixture
-            .admin
-            .query_one(
-                "SELECT http_only FROM registry.auth_type WHERE code='hmac'",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let http_only: bool =
+            sqlx::query("SELECT http_only FROM registry.auth_type WHERE code='hmac'")
+                .fetch_one(&mut fixture.admin)
+                .await
+                .unwrap()
+                .get(0);
         assert!(http_only);
     }
 

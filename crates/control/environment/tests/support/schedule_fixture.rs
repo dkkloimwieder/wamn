@@ -1,19 +1,18 @@
 //! Shared schedule and event fixtures over private PostgreSQL.
 
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 pub use std::collections::BTreeSet;
 pub use std::sync::Arc;
 pub use std::time::Duration;
 
 pub use chrono::{DateTime, Utc};
 pub use serde_json::{Value, json};
-pub use tokio_postgres::{Client, NoTls};
 pub use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, ServingManifest,
     WiringDocument,
 };
-pub use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+pub use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 pub use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 pub use wamn_engine::component_admission::{
     ComponentAdmissionRequest, validate_component_admission,
@@ -155,12 +154,10 @@ pub fn due(text: &str) -> DateTime<Utc> {
 }
 
 pub async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to the disposable database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -183,35 +180,38 @@ pub struct Fixture {
 pub async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
     let url = database.url().to_owned();
-    let admin = connect(&url).await;
+    let mut admin = connect(&url).await;
     let schema = BareSchemaName::new("wamn_run").unwrap();
-    admin
-        .batch_execute("CREATE SCHEMA application_data")
+    sqlx::raw_sql("CREATE SCHEMA application_data")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
-    wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, true)
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true)
         .await
         .expect("install the run plane and the catalog");
-    admin
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut admin)
         .await
+        .map(drop)
         .unwrap();
-    admin
-        .batch_execute(
-            &wamn_control_provision::platform_principals_sql("schedule.invalid").unwrap(),
-        )
-        .await
-        .expect("write the platform principals and the workflow user");
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::platform_principals_sql("schedule.invalid").unwrap()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("write the platform principals and the workflow user");
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-live-fixture', false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await
-        .unwrap();
-    admin
-        .batch_execute(&format!(
+    )
+    .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@schedule.invalid'), \
                ('{ADMIN}', 'user', 'admin@schedule.invalid');
@@ -226,8 +226,7 @@ pub async fn fixture() -> Fixture {
                VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
              INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
                VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
-        ))
-        .await
+        ))).execute(&mut admin).await.map(drop)
         .expect("seed the users, roles, permissions and the environment");
 
     let engine = Arc::new(build_engine(&[]).unwrap());
@@ -270,16 +269,19 @@ pub async fn fixture() -> Fixture {
         .expect("the fixture release loads"),
     );
     let digest = release.release().manifest_digest.as_str().to_owned();
-    admin
-        .execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+    sqlx::query(
+        "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&PROJECT_ENV_KEY, &digest, &served.canonical_bytes()],
-        )
-        .await
-        .expect("install the serving release");
+    )
+    .bind(&PROJECT_ENV_KEY)
+    .bind(&digest)
+    .bind(&served.canonical_bytes())
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("install the serving release");
 
-    let (postgres, executor_url) = targeted_postgres(&admin, &url).await;
+    let (postgres, executor_url) = targeted_postgres(&mut admin, &url).await;
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     Fixture {
         admin,
@@ -299,9 +301,9 @@ pub async fn fixture() -> Fixture {
 /// The host's database access under the targeted logins of its families: the
 /// application login for guest SQL, the executor for admission and the
 /// queue, and the admitter for permission reads. Also the executor login.
-pub async fn targeted_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>, String) {
-    let database: String = admin
-        .query_one("SELECT current_database()", &[])
+pub async fn targeted_postgres(admin: &mut Client, url: &str) -> (Arc<WamnPostgres>, String) {
+    let database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut *admin)
         .await
         .unwrap()
         .get(0);
@@ -331,23 +333,22 @@ pub async fn targeted_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>,
                 database: &database,
             }
         };
-        let role = workload_generation_role(family, target, CredentialGeneration::A).unwrap();
-        admin
-            .batch_execute(&sql::prepare_workload_generation_sql(
-                family,
-                &database,
-                &role,
-                PASSWORD,
-                "2099-01-01T00:00:00Z",
-            ))
-            .await
-            .expect("prepare the targeted login");
-        admin
-            .batch_execute(&format!(
-                "ALTER ROLE \"{role}\" SET search_path = application_data"
-            ))
-            .await
-            .unwrap();
+        let role = workload_login(family, target).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(family, &database, &role, PASSWORD))
+                .to_string(),
+        ))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .expect("prepare the targeted login");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER ROLE \"{role}\" SET search_path = application_data"
+        )))
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .unwrap();
         let mut login = url::Url::parse(url).unwrap();
         login.set_username(&role).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
@@ -463,29 +464,31 @@ impl Fixture {
     }
 
     /// The due moments of the schedule runs of `id`, oldest first.
-    pub async fn dues(&self, id: &str) -> Vec<DateTime<Utc>> {
-        self.admin
-            .query(
-                "SELECT input_json->>'due' FROM wamn_run.runs \
+    pub async fn dues(&mut self, id: &str) -> Vec<DateTime<Utc>> {
+        sqlx::query(
+            "SELECT input_json->>'due' FROM wamn_run.runs \
                   WHERE trigger_source = 'schedule' AND wiring_id = $1 ORDER BY 1",
-                &[&id],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|row| due(&row.get::<_, String>(0)))
-            .collect()
+        )
+        .bind(&id)
+        .fetch_all(&mut self.admin)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| due(&row.get::<String, _>(0)))
+        .collect()
     }
 
-    pub async fn grant_workflow_user(&self, role: &str) {
-        self.admin
-            .execute(
-                "INSERT INTO platform.user_role (user_id, role_name) \
+    pub async fn grant_workflow_user(&mut self, role: &str) {
+        sqlx::query(
+            "INSERT INTO platform.user_role (user_id, role_name) \
                  VALUES ($1::text::uuid, $2)",
-                &[&workflow_user_id().to_string(), &role],
-            )
-            .await
-            .expect("grant the workflow user a role");
+        )
+        .bind(&workflow_user_id().to_string())
+        .bind(&role)
+        .execute(&mut self.admin)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("grant the workflow user a role");
     }
 
     pub async fn admit(&self, id: &str, at: &str) -> ScheduleRunAdmitted {
@@ -513,9 +516,9 @@ impl Fixture {
         }
     }
 
-    pub async fn runs(&self) -> i64 {
-        self.admin
-            .query_one("SELECT count(*) FROM wamn_run.runs", &[])
+    pub async fn runs(&mut self) -> i64 {
+        sqlx::query("SELECT count(*) FROM wamn_run.runs")
+            .fetch_one(&mut self.admin)
             .await
             .unwrap()
             .get(0)
@@ -572,18 +575,16 @@ impl Fixture {
     }
 
     /// `(status, result_json)` of a run.
-    pub async fn outcome(&self, run: &str) -> (String, Option<Value>) {
-        let row = self
-            .admin
-            .query_one(
-                "SELECT status, result_json::text FROM wamn_run.runs WHERE run_id = $1",
-                &[&run],
-            )
-            .await
-            .unwrap();
+    pub async fn outcome(&mut self, run: &str) -> (String, Option<Value>) {
+        let row =
+            sqlx::query("SELECT status, result_json::text FROM wamn_run.runs WHERE run_id = $1")
+                .bind(&run)
+                .fetch_one(&mut self.admin)
+                .await
+                .unwrap();
         (
             row.get(0),
-            row.get::<_, Option<String>>(1)
+            row.get::<Option<String>, _>(1)
                 .map(|text| serde_json::from_str(&text).unwrap()),
         )
     }
@@ -595,13 +596,10 @@ pub fn lifecycle_refusal(result: Result<(), WorkflowLifecycleError>) -> Workflow
 
 pub use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
 
-pub async fn event(fixture: &Fixture, id: &str, sequence: i64, role: Option<&str>) {
+pub async fn event(fixture: &mut Fixture, id: &str, sequence: i64, role: Option<&str>) {
     let graph = workflow(id);
     let execution = if role.is_some() { "role" } else { "invoker" };
-    fixture.admin.execute(
-        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)",
-        &[&PROJECT_ENV_KEY, &ENVIRONMENT, &APP, &id, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str(), &APPLICATION, &sequence, &execution, &role, &ADMIN],
-    ).await.unwrap();
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&ENVIRONMENT).bind(&APP).bind(&id).bind(&serde_json::to_string(&graph).unwrap()).bind(&graph.wiring_hash().as_str()).bind(&APPLICATION).bind(&sequence).bind(&execution).bind(&role).bind(&ADMIN).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
 }
 
 pub fn envelope(op: &str, txid: i64, lsn: u64) -> String {
@@ -637,58 +635,71 @@ pub async fn admit(
         .await
 }
 
-pub async fn changed_order(fixture: &Fixture) -> i64 {
-    let admin = &fixture.admin;
-    admin.batch_execute(
-        "CREATE TABLE application_data.orders (id bigint, at timestamptz, status text, PRIMARY KEY (id, at));
+pub async fn changed_order(fixture: &mut Fixture) -> i64 {
+    let admin = &mut fixture.admin;
+    sqlx::raw_sql("CREATE TABLE application_data.orders (id bigint, at timestamptz, status text, PRIMARY KEY (id, at));
          SELECT wamn_history.create_history_table('application_data', 'orders', false);
          CREATE TRIGGER record_history AFTER INSERT OR UPDATE OR DELETE ON application_data.orders
-         FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');"
-    ).await.unwrap();
-    admin
-        .batch_execute(&sql::ensure_entity_map_sql("application_data"))
-        .await
-        .unwrap();
-    admin
-        .execute(
-            &sql::upsert_entity_map_sql("application_data"),
-            &[&APPLICATION, &"order", &"orders"],
-        )
-        .await
-        .unwrap();
-    admin
-        .batch_execute(&sql::grant_executor_history_reads_sql())
-        .await
-        .unwrap();
+         FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');").execute(&mut *admin).await.map(drop).unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_entity_map_sql("application_data")).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&sql::upsert_entity_map_sql("application_data")).to_string(),
+    ))
+    .bind(&APPLICATION)
+    .bind(&"order")
+    .bind(&"orders")
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_executor_history_reads_sql()).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .unwrap();
 
-    admin
-        .batch_execute("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
+    sqlx::raw_sql("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
+        .execute(&mut *admin)
         .await
+        .map(drop)
         .unwrap();
-    admin
-        .execute("SELECT set_config('app.user_id', $1, true)", &[&READER])
+    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(&READER)
+        .execute(&mut *admin)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
-    admin
-        .batch_execute(
-            "INSERT INTO application_data.orders VALUES (7, '2026-10-25T10:00:00Z', 'open')",
-        )
-        .await
-        .unwrap();
-    let txid: i64 = admin
-        .query_one(
-            "SELECT pg_current_xact_id()::text::bigint % 4294967296",
-            &[],
-        )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO application_data.orders VALUES (7, '2026-10-25T10:00:00Z', 'open')")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .unwrap();
+    let txid: i64 = sqlx::query("SELECT pg_current_xact_id()::text::bigint % 4294967296")
+        .fetch_one(&mut *admin)
         .await
         .unwrap()
         .get(0);
-    admin.batch_execute("COMMIT").await.unwrap();
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut *admin)
+        .await
+        .map(drop)
+        .unwrap();
     txid
 }
 
 pub async fn release_variant(
-    fixture: &Fixture,
+    fixture: &mut Fixture,
     application: &str,
     amount: &[u8; 4],
 ) -> LoadedRelease {
@@ -717,9 +728,6 @@ pub async fn release_variant(
             .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
     )
     .unwrap();
-    fixture.admin.execute(
-            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&PROJECT_ENV_KEY, &release.release().manifest_digest.as_str(), &manifest.canonical_bytes()],
-        ).await.unwrap();
+    sqlx::query("INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&manifest.canonical_bytes()).execute(&mut fixture.admin).await.map(|result| result.rows_affected()).unwrap();
     release
 }

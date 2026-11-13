@@ -1,6 +1,7 @@
 //! Native file transfers against owned PostgreSQL and MinIO fixtures.
 //! Root runs these cases after the three C4 lanes are integrated.
 
+use sqlx::{Connection as _, Row as _};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -84,7 +85,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
 struct FileHost {
     administration_url: String,
     postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
-    writer: tokio_postgres::Client,
+    writer: sqlx::PgConnection,
     routes: Arc<FileRoutes>,
     delivery: HostRouteDelivery,
     blobstore: Arc<WamnBlobstore>,
@@ -111,29 +112,22 @@ impl FileHost {
         minio: files::Minio,
         definition: Value,
     ) -> anyhow::Result<Self> {
-        let registry = files::registry(ORG, PROJECT, definition).await?;
-        let (host, postgres, administration_url) =
+        let mut registry = files::registry(ORG, PROJECT, definition).await?;
+        let (mut host, postgres, administration_url) =
             application_fixture::application_host_with_release(name, Arc::clone(&release)).await?;
-        let writer = application_fixture::connect(&administration_url).await?;
-        writer.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:file-host-fixture',false)", &[&host.first]).await?;
+        let mut writer = application_fixture::connect(&administration_url).await?;
+        sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:file-host-fixture',false)").bind(&host.first).execute(&mut writer).await.map(|result| result.rows_affected())?;
         for action in ["put", "get", "delete", "expose"] {
-            writer.execute("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)",
-                &[&format!("wamn-control:file/{action}")]).await?;
+            sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)").bind(&format!("wamn-control:file/{action}")).execute(&mut writer).await.map(|result| result.rows_affected())?;
         }
         for name in [files::STORE_NAME, "files-no-cdn"] {
-            let row = registry
-                .owner
-                .query_one(
-                    "SELECT c.id::text,i.id::text,i.integration_type,i.name,i.status,CASE WHEN i.status='active' AND c.status='active' THEN 'active' ELSE 'disabled' END FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND c.env='dev' AND i.name=$2",
-                    &[&ORG, &name, &PROJECT],
-                )
+            let row = sqlx::query("SELECT c.id::text,i.id::text,i.integration_type,i.name,i.status,CASE WHEN i.status='active' AND c.status='active' THEN 'active' ELSE 'disabled' END FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND c.env='dev' AND i.name=$2").bind(&ORG).bind(&name).bind(&PROJECT).fetch_one(&mut registry
+                .owner)
                 .await?;
-            writer.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES ($1::text::uuid,$2,$3,$4)",
-                &[&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(3),&row.get::<_,String>(4)]).await?;
-            writer.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)",
-                &[&row.get::<_,String>(0),&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(5)]).await?;
+            sqlx::query("INSERT INTO platform.integration(id,integration_type,name,status) VALUES ($1::text::uuid,$2,$3,$4)").bind(row.get::<String, _>(1)).bind(row.get::<String, _>(2)).bind(row.get::<String, _>(3)).bind(row.get::<String, _>(4)).execute(&mut writer).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)").bind(row.get::<String, _>(0)).bind(row.get::<String, _>(1)).bind(row.get::<String, _>(2)).bind(row.get::<String, _>(5)).execute(&mut writer).await.map(|result| result.rows_affected())?;
         }
-        host.admin.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&release.manifest().canonical_bytes()]).await?;
+        sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&release.manifest().canonical_bytes()).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         let component = release
             .manifest()
             .components
@@ -144,17 +138,17 @@ impl FileHost {
             ("files-read", files::STORE_NAME, "read"),
             ("files-no-cdn", "files-no-cdn", "write"),
         ] {
-            let id: String=host.admin.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1",&[&name]).await?.get(0);
-            host.admin.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)",&[&PROJECT_ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
-            host.admin.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&id]).await?;
-            host.admin.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
+            let id: String=sqlx::query("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1").bind(&name).fetch_one(&mut host.admin).await?.get(0);
+            sqlx::query("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)").bind(&PROJECT_ENV_KEY).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&mode).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
+            sqlx::query("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&component.descriptor.component_digest).bind(&component.package_id).bind(&alias).bind(&id).execute(&mut host.admin).await.map(|result| result.rows_affected())?;
         }
         let credentials = Arc::new(
-            ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG).with_store(
-                Arc::<wamn_test_infrastructure::credentials::MemoryStore>::clone(
-                    &registry.credentials,
-                ),
-            ),
+            ConnectionCredentials::from_database(registry.reader.clone(), ORG).with_store(Arc::<
+                wamn_test_infrastructure::credentials::MemoryStore,
+            >::clone(
+                &registry.credentials,
+            )),
         );
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
@@ -177,7 +171,7 @@ impl FileHost {
             Arc::clone(&postgres),
             Arc::clone(&blobstore),
             Arc::new(RegistryFileConnections {
-                client: Some(Arc::clone(&registry.reader)),
+                client: Some(registry.reader.clone()),
                 release: Arc::clone(&release),
                 facts: Arc::clone(&facts),
                 org: ORG.into(),
@@ -391,17 +385,24 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let generations_sql =
         "SELECT connection_id::text, generation FROM registry.read_file_connection($1,$2,$3)";
     assert!(
-        !fixture
-            .registry
-            .reader
-            .query(generations_sql, &[&ORG, &PROJECT, &"dev"])
+        !sqlx::query(sqlx::AssertSqlSafe((generations_sql).to_string()))
+            .bind(&ORG)
+            .bind(&PROJECT)
+            .bind(&"dev")
+            .fetch_all(&fixture.registry.reader)
             .await?
             .is_empty()
     );
-    for reader in [&fixture.registry.unmapped, &fixture.registry.unenabled] {
+    for reader in [
+        &mut fixture.registry.unmapped,
+        &mut fixture.registry.unenabled,
+    ] {
         assert!(
-            reader
-                .query(generations_sql, &[&ORG, &PROJECT, &"dev"])
+            sqlx::query(sqlx::AssertSqlSafe((generations_sql).to_string()))
+                .bind(&ORG)
+                .bind(&PROJECT)
+                .bind(&"dev")
+                .fetch_all(&mut *reader)
                 .await?
                 .is_empty()
         );
@@ -412,10 +413,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         (ORG, PROJECT, "forged-env"),
     ] {
         assert!(
-            fixture
-                .registry
-                .reader
-                .query(generations_sql, &[&target.0, &target.1, &target.2])
+            sqlx::query(sqlx::AssertSqlSafe((generations_sql).to_string()))
+                .bind(&target.0)
+                .bind(&target.1)
+                .bind(&target.2)
+                .fetch_all(&fixture.registry.reader)
                 .await?
                 .is_empty()
         );
@@ -494,14 +496,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let deleted = fixture.mutate("delete", orphan, "files", None).await?;
     assert_eq!(deleted["value"]["file_id"], json!(orphan));
     assert_eq!(
-        fixture
-            .writer
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&orphan.to_string()]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&orphan.to_string())
+            .fetch_one(&mut fixture.writer)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     backend
@@ -554,18 +553,23 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .registry
         .define_store("unenabled", files::STORE_NAME, &equivalent)
         .await?;
-    let source = fixture.registry.control.transaction().await?;
+    let mut source = fixture.registry.control.begin().await?;
     let mut administration = application_fixture::connect(&fixture.administration_url).await?;
-    let target = administration.transaction().await?;
-    target
-        .execute(
-            "SELECT set_config('app.user_id',$1,true), \
+    let mut target = administration.begin().await?;
+    sqlx::query(
+        "SELECT set_config('app.user_id',$1,true), \
              set_config('app.operation','admin:file-host-fixture',true)",
-            &[&fixture.host.first],
-        )
-        .await?;
+    )
+    .bind(&fixture.host.first)
+    .execute(&mut *target)
+    .await
+    .map(|result| result.rows_affected())?;
     let _ = wamn_platform_identity::connection_projection::project(
-        &source, &target, ORG, PROJECT, "dev",
+        &mut source,
+        &mut target,
+        ORG,
+        PROJECT,
+        "dev",
     )
     .await?;
     target.commit().await?;
@@ -579,19 +583,18 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .file_store(files::STORE_NAME, false)
         .await?;
     let staged = store.stage(fresh, &b"pending row"[..]).await?;
-    fixture.writer.batch_execute("BEGIN").await?;
-    fixture.writer.execute("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,'pending.txt','text/plain',$3,$4,$5,'application')", &[&fresh.to_string(), &fixture.registry.connection_id, &i64::try_from(staged.size)?, &staged.sha256, &staged.blob_key]).await?;
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut fixture.writer)
+        .await
+        .map(drop)?;
+    sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,'pending.txt','text/plain',$3,$4,$5,'application')").bind(&fresh.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     store.finish(fresh).await?;
     assert_eq!(
-        fixture
-            .host
-            .admin
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&fresh.to_string()]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&fresh.to_string())
+            .fetch_one(&mut fixture.host.admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
 
@@ -628,7 +631,10 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         Err(object_store::Error::NotFound { .. })
     ));
     assert_eq!(fixture.routes.collect_orphan_files().await?, 0);
-    fixture.writer.batch_execute("ROLLBACK").await?;
+    sqlx::raw_sql("ROLLBACK")
+        .execute(&mut fixture.writer)
+        .await
+        .map(drop)?;
     for (key, _) in &aged {
         let path = Path::from(format!("generation-one/{key}"));
         if key.ends_with(&orphan.to_string()) || batch_orphans.contains(key) {
@@ -650,14 +656,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"kept bytes");
     assert_eq!(
-        fixture
-            .writer
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&kept.to_string()]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&kept.to_string())
+            .fetch_one(&mut fixture.writer)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     Ok(())
@@ -666,7 +669,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() -> anyhow::Result<()>
 {
-    let fixture = FileHost::start("file_transfer").await?;
+    let mut fixture = FileHost::start("file_transfer").await?;
     let size = 65usize * 1024 * 1024 + 17;
     let stream = futures_util::stream::unfold(size, |remaining| async move {
         if remaining == 0 {
@@ -692,41 +695,37 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
         .as_str()
         .unwrap()
         .parse()?;
-    let row = fixture
-        .host
-        .admin
-        .query_one(
-            "SELECT size,sha256,blob_key FROM platform.file WHERE id=$1::text::uuid",
-            &[&id.to_string()],
-        )
+    let row = sqlx::query("SELECT size,sha256,blob_key FROM platform.file WHERE id=$1::text::uuid")
+        .bind(&id.to_string())
+        .fetch_one(&mut fixture.host.admin)
         .await?;
-    assert_eq!(row.get::<_, i64>(0), i64::try_from(size)?);
+    assert_eq!(row.get::<i64, _>(0), i64::try_from(size)?);
     let mut expected = Sha256::new();
     for count in std::iter::repeat_n(64 * 1024, size / (64 * 1024)).chain([size % (64 * 1024)]) {
         expected.update(vec![42; count]);
     }
-    assert_eq!(row.get::<_, String>(1), hex::encode(expected.finalize()));
+    assert_eq!(row.get::<String, _>(1), hex::encode(expected.finalize()));
     assert_eq!(
-        row.get::<_, String>(2),
+        row.get::<String, _>(2),
         format!("dev/_wamn_files/live/{id}")
     );
     let store = fixture
         .blobstore
         .file_store(files::STORE_NAME, false)
         .await?;
-    let stored = store.get(&row.get::<_, String>(2)).await?.bytes().await?;
+    let stored = store.get(&row.get::<String, _>(2)).await?.bytes().await?;
     assert_eq!(stored.len(), size);
     assert!(stored.iter().all(|byte| *byte == 42));
     assert_eq!(
         hex::encode(Sha256::digest(&stored)),
-        row.get::<_, String>(1)
+        row.get::<String, _>(1)
     );
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyhow::Result<()> {
-    let fixture = FileHost::start("file_legacy_key").await?;
+    let mut fixture = FileHost::start("file_legacy_key").await?;
     let id = Uuid::new_v4();
     let key = format!("_wamn_files/live/{id}");
     fixture
@@ -740,12 +739,8 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
             b"legacy bytes",
         )
         .await?;
-    fixture.writer.execute(
-        "INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,'legacy.txt','text/plain',12,$3,$4)",
-        &[&id.to_string(), &fixture.registry.connection_id,
-          &hex::encode(Sha256::digest(b"legacy bytes")), &key],
-    ).await?;
+    sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,'files',$2::text::uuid,'legacy.txt','text/plain',12,$3,$4)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&hex::encode(Sha256::digest(b"legacy bytes"))).bind(&key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     let read = fixture
         .read("files", id, Some(&fixture.token(false)))
         .await?;
@@ -793,14 +788,11 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
         .mutate("expose", id, "files", Some("public"))
         .await?;
     assert_eq!(
-        fixture
-            .writer
-            .query_one(
-                "SELECT blob_key FROM platform.file WHERE id=$1::text::uuid",
-                &[&id.to_string()],
-            )
+        sqlx::query("SELECT blob_key FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&id.to_string())
+            .fetch_one(&mut fixture.writer)
             .await?
-            .get::<_, String>(0),
+            .get::<String, _>(0),
         key
     );
     let deleted = fixture.mutate("delete", id, "files", None).await?;
@@ -829,7 +821,7 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn application_file_route_requires_its_grant_and_enforces_exposure_and_owner()
 -> anyhow::Result<()> {
-    let fixture = FileHost::start("file_route_access").await?;
+    let mut fixture = FileHost::start("file_route_access").await?;
     let id = fixture.upload("files", b"route bytes").await?;
     let token = fixture.token(false);
     let read = fixture.read("files", id, Some(&token)).await?;
@@ -837,9 +829,9 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
     assert_eq!(read.1["content-type"], "text/plain");
     assert_eq!(read.2, b"route bytes");
     assert_eq!(fixture.read("files", id, None).await?.0, 401);
-    fixture.writer.execute("DELETE FROM platform.permission WHERE role_name='purchase-reader' AND permission='wamn-control:file/get'",&[]).await?;
+    sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader' AND permission='wamn-control:file/get'").execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     assert_eq!(fixture.read("files", id, Some(&token)).await?.0, 403);
-    fixture.writer.execute("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader','wamn-control:file/get')",&[]).await?;
+    sqlx::query("INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader','wamn-control:file/get')").execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     assert_eq!(fixture.read("other", id, Some(&token)).await?.0, 404);
     assert!(
         fixture
@@ -869,13 +861,13 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
 
-    fixture
-        .host
-        .admin
-        .batch_execute(
-            "DELETE FROM catalog.connection_binding; DELETE FROM catalog.release_connection",
-        )
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DELETE FROM catalog.connection_binding; DELETE FROM catalog.release_connection")
+            .to_string(),
+    ))
+    .execute(&mut fixture.host.admin)
+    .await
+    .map(drop)?;
     let read = fixture.read("files", id, Some(&token)).await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
@@ -893,9 +885,9 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
         "binding_refused"
     );
 
-    let tx = fixture.registry.control.transaction().await?;
+    let mut tx = fixture.registry.control.begin().await?;
     wamn_platform_identity::connections::administration::execute(
-        &tx,
+        &mut tx,
         ORG,
         "connection.disable",
         &json!({"project":PROJECT,"env":"dev","name":files::STORE_NAME}).to_string(),
@@ -916,28 +908,21 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() -> anyhow::Result<()>
 {
-    let fixture = FileHost::start("file_crash_repair").await?;
+    let mut fixture = FileHost::start("file_crash_repair").await?;
     let store = fixture
         .blobstore
         .file_store(files::STORE_NAME, false)
         .await?;
     let id = Uuid::new_v4();
     let staged = store.stage(id, &b"committed staging"[..]).await?;
-    fixture.writer.execute(
-        "INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,'crash.txt','text/plain',$3,$4,$5)",
-        &[&id.to_string(),&fixture.registry.connection_id,&i64::try_from(staged.size)?,&staged.sha256,&staged.blob_key],
-    ).await?;
+    sqlx::query("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,'files',$2::text::uuid,'crash.txt','text/plain',$3,$4,$5)").bind(&id.to_string()).bind(&fixture.registry.connection_id).bind(&i64::try_from(staged.size)?).bind(&staged.sha256).bind(&staged.blob_key).execute(&mut fixture.writer).await.map(|result| result.rows_affected())?;
     assert_eq!(
-        fixture
-            .host
-            .admin
-            .query_one(
-                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
-                &[&id.to_string()]
-            )
+        sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
+            .bind(&id.to_string())
+            .fetch_one(&mut fixture.host.admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         1
     );
     assert!(
@@ -1111,16 +1096,12 @@ async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> any
         );
     }
     assert_eq!(client.get(url).send().await?.status(), 404);
-    let row = fixture
-        .host
-        .admin
-        .query_one(
-            "SELECT exposure,url FROM platform.file WHERE id=$1::text::uuid",
-            &[&id.to_string()],
-        )
+    let row = sqlx::query("SELECT exposure,url FROM platform.file WHERE id=$1::text::uuid")
+        .bind(&id.to_string())
+        .fetch_one(&mut fixture.host.admin)
         .await?;
-    assert_eq!(row.get::<_, String>(0), "application");
-    assert!(row.get::<_, Option<String>>(1).is_none());
+    assert_eq!(row.get::<String, _>(0), "application");
+    assert!(row.get::<Option<String>, _>(1).is_none());
     assert_eq!(
         fixture
             .read("files", id, Some(&fixture.token(false)))
@@ -1134,7 +1115,7 @@ async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> any
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() -> anyhow::Result<()>
 {
-    let fixture = FileHost::start("file_binding_denial").await?;
+    let mut fixture = FileHost::start("file_binding_denial").await?;
     let id = fixture.upload("files", b"retained").await?;
     let no_cdn = fixture.upload("files-no-cdn", b"no CDN").await?;
     assert_eq!(
@@ -1172,12 +1153,10 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
         b"retained"
     );
     assert_eq!(
-        fixture
-            .host
-            .admin
-            .query_one("SELECT count(*) FROM platform.file", &[])
+        sqlx::query("SELECT count(*) FROM platform.file")
+            .fetch_one(&mut fixture.host.admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         2
     );
     Ok(())
@@ -1186,32 +1165,33 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_foreign_key()
 -> anyhow::Result<()> {
-    use wamn_control_provision::{
-        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
-    };
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
     let mut fixture = FileHost::start("file_referenced_delete").await?;
     let id = fixture.upload("files", b"referenced bytes").await?;
-    fixture.host.admin.batch_execute(files::DOCUMENTS).await?;
-    fixture.host.admin.batch_execute("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").await?;
-    let role = workload_generation_role(
+    sqlx::raw_sql(files::DOCUMENTS)
+        .execute(&mut fixture.host.admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").execute(&mut fixture.host.admin).await.map(drop)?;
+    let role = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: "file_referenced_delete",
         },
-        CredentialGeneration::A,
     )?;
-    let guest = application_fixture::connect(&application_fixture::login(
+    let mut guest = application_fixture::connect(&application_fixture::login(
         &fixture.administration_url,
         &role,
     )?)
     .await?;
-    guest
-        .execute(
-            "INSERT INTO file_fixture.document(id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
-            &[&id.to_string()],
-        )
-        .await?;
+    sqlx::query(
+        "INSERT INTO file_fixture.document(id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
+    )
+    .bind(&id.to_string())
+    .execute(&mut guest)
+    .await
+    .map(|result| result.rows_affected())?;
     let refusal = fixture.mutate("delete", id, "files", None).await?;
     assert_eq!(refusal["error"]["code"], "file_referenced");
     assert_eq!(
@@ -1225,16 +1205,14 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
         .registry
         .configure("connection.disable", json!({"name":files::STORE_NAME}))
         .await?;
-    fixture
-        .writer
-        .execute(
-            "UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid",
-            &[&fixture.registry.connection_id],
-        )
-        .await?;
-    let row = guest.query_one("SELECT f.id::text,c.status FROM file_fixture.document d JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",&[]).await?;
-    assert_eq!(row.get::<_, String>(0), id.to_string());
-    assert_eq!(row.get::<_, String>(1), "disabled");
+    sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
+        .bind(&fixture.registry.connection_id)
+        .execute(&mut fixture.writer)
+        .await
+        .map(|result| result.rows_affected())?;
+    let row = sqlx::query("SELECT f.id::text,c.status FROM file_fixture.document d JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id").fetch_one(&mut guest).await?;
+    assert_eq!(row.get::<String, _>(0), id.to_string());
+    assert_eq!(row.get::<String, _>(1), "disabled");
     assert_eq!(
         fixture
             .read("files", id, Some(&fixture.token(false)))
@@ -1288,7 +1266,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 
     let package = signed_read::signed_read_fixture(PROJECT_ENV_KEY)?;
-    let fixture =
+    let mut fixture =
         FileHost::start_with_release("package_signed_file", Arc::clone(&package.release)).await?;
     let bytes = b"private bytes returned by the package's signed read";
     let id = fixture.upload("files", bytes).await?;
@@ -1301,20 +1279,17 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     );
     // Grant only the package operation to this caller. The upload grants belong
     // to the fixture setup, and are removed before the signed read begins.
-    fixture
-        .writer
-        .execute(
-            "DELETE FROM platform.permission WHERE role_name='purchase-reader'",
-            &[],
-        )
-        .await?;
-    fixture
-        .writer
-        .execute(
-            "INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)",
-            &[&signed_read::OPERATION.split('@').next().unwrap()],
-        )
-        .await?;
+    sqlx::query("DELETE FROM platform.permission WHERE role_name='purchase-reader'")
+        .execute(&mut fixture.writer)
+        .await
+        .map(|result| result.rows_affected())?;
+    sqlx::query(
+        "INSERT INTO platform.permission(role_name,permission) VALUES ('purchase-reader',$1)",
+    )
+    .bind(&signed_read::OPERATION.split('@').next().unwrap())
+    .execute(&mut fixture.writer)
+    .await
+    .map(|result| result.rows_affected())?;
     let caller = fixture
         .host
         .routing
@@ -1332,7 +1307,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
             Arc::new(ConnectionMemory::default()),
             Publisher::default(),
             Arc::new(ConnectionCredentials::from_database(
-                Arc::clone(&fixture.registry.reader),
+                fixture.registry.reader.clone(),
                 ORG,
             )),
             Arc::clone(&fixture.postgres),

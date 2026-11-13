@@ -1,5 +1,6 @@
 //! Run results retained by failed cluster tests.
 
+use sqlx::Row as _;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -10,21 +11,20 @@ use serde_json::{Value, json};
 pub fn require_success<T>(
     directory: &Path,
     helper: &str,
-    project: &tokio_postgres::Client,
+    project: &mut sqlx::PgConnection,
     execution: impl Future<Output = anyhow::Result<T>>,
 ) -> impl Future<Output = anyhow::Result<T>> {
     Box::pin(require_with_results(directory, helper, execution, async {
-        Ok(project
-            .query_one(
-                "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
+        Ok(sqlx::query(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
                  'run_id', run_id, 'project_env_key', project_env_key, 'package_id', package_id, \
                  'wiring_id', wiring_id, 'status', status, 'fail_type', fail_type, \
                  'result_json', result_json) ORDER BY created_at, run_id), '[]'::jsonb) \
                  FROM wamn_run.runs",
-                &[],
-            )
-            .await?
-            .get(0))
+        )
+        .fetch_one(&mut *project)
+        .await?
+        .get(0))
     }))
 }
 

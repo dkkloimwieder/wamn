@@ -15,15 +15,15 @@ use wamn_release_control::env_policies::env_policy_from_row;
 /// Read an org's whole env-policy set from the system DB, ordered by
 /// `promotion_rank`. Empty for an org with no stamped policies yet.
 pub async fn read_env_policies(
-    client: &tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     org: &str,
 ) -> anyhow::Result<Vec<EnvPolicy>> {
-    let rows = client
-        .query(
-            wamn_registry::sql::select_env_policies_sql().as_str(),
-            &[&org],
-        )
-        .await
-        .context("select env_policies")?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::select_env_policies_sql().as_str()).to_string(),
+    ))
+    .bind(org)
+    .fetch_all(&mut *client)
+    .await
+    .context("select env_policies")?;
     rows.iter().map(env_policy_from_row).collect()
 }

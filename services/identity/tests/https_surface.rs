@@ -1,5 +1,7 @@
 //! Actual identity CLI and HTTPS routes on a disposable test DB.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -9,11 +11,7 @@ use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsage
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::CredentialGeneration;
-use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
-};
+use wamn_control_provision::identity_role::{IDENTITY_ISSUER_ROLE, identity_issuer_login};
 use wamn_control_provision::sql::revoke_public_connect_base_grants_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
@@ -25,8 +23,7 @@ const PASSWORD: &str = "identity-surface-fixture-secret";
 
 #[test]
 fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() {
-    let role =
-        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("targeted role");
+    let role = identity_issuer_login(ISSUER).expect("targeted role");
     let url = format!("postgres://{role}:{PASSWORD}@127.0.0.1/wamn_system");
     for args in [
         vec![
@@ -74,79 +71,84 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn identity_https_has_only_public_jwks_and_health() {
     let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
-    let system = postgres
+    let mut system = postgres
         .create_database("wamn_system")
         .expect("create the wamn_system test database");
     let admin_url = system.url();
-    let (mut admin, admin_driver) = connect(admin_url).await;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(admin_url).await;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await
         .expect("fixture database name")
         .get(0);
     assert_eq!(database, "wamn_system", "never reset another database");
-    let role =
-        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("targeted role");
-    let existing: bool = admin
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = ANY($1::text[]))",
-            &[&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()]],
-        )
-        .await
-        .expect("fixture role absence")
-        .get(0);
+    let role = identity_issuer_login(ISSUER).expect("targeted role");
+    let existing: bool =
+        sqlx::query("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = ANY($1::text[]))")
+            .bind(&vec![role.clone(), IDENTITY_ISSUER_ROLE.to_owned()])
+            .fetch_one(&mut admin)
+            .await
+            .expect("fixture role absence")
+            .get(0);
     assert!(
         !existing,
         "fixture requires absent identity authority roles"
     );
-    admin
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await
-        .expect("record history grants name wamn_db_owner");
-    admin
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("record history grants name wamn_db_owner");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
          DROP SCHEMA IF EXISTS registry CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
          THEN CREATE ROLE wamn_system; END IF; END $$; \
-         GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;",
-        )
+         GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("prepare disposable system schema owner");
+    sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .execute(&mut admin)
         .await
-        .expect("prepare disposable system schema owner");
-    admin
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await
+        .map(drop)
         .expect("production system schema");
-    admin
-        .batch_execute("RESET ROLE")
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .expect("restore fixture admin");
-    admin
-        .batch_execute(revoke_public_connect_base_grants_sql())
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (revoke_public_connect_base_grants_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("production CONNECT minimum");
+    sqlx::raw_sql("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
+        .execute(&mut admin)
         .await
-        .expect("production CONNECT minimum");
-    admin
-        .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
-        .await
+        .map(drop)
         .expect("production TEMPORARY minimum");
-    admin
-        .batch_execute(
-            &prepare_identity_issuer_generation_sql(
-                ISSUER,
-                CredentialGeneration::A,
-                PASSWORD,
-                "2100-01-01T00:00:00Z",
-            )
-            .expect("targeted credential SQL"),
-        )
-        .await
-        .expect("provision narrow identity credential");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::issuer_login_sql(ISSUER, PASSWORD)
+            .expect("targeted credential SQL"))
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("provision narrow identity credential");
     let mut targeted = url::Url::parse(admin_url).expect("fixture URL shape");
     targeted.set_username(&role).expect("targeted login");
     targeted
         .set_password(Some(PASSWORD))
         .expect("fixture password");
-    targeted.set_query(None);
     targeted.set_fragment(None);
     let targeted = targeted.to_string();
 
@@ -296,15 +298,15 @@ async fn identity_https_has_only_public_jwks_and_health() {
     );
     // A restarted server ends every session. Identity opens its connection
     // again and serves without a restart of its own (wamn-fwzc).
-    let ended: i64 = admin
-        .query_one(
-            "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+    let ended: i64 = sqlx::query(
+        "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
              WHERE usename = $1) ended",
-            &[&role],
-        )
-        .await
-        .expect("end the service's sessions")
-        .get(0);
+    )
+    .bind(&role)
+    .fetch_one(&mut admin)
+    .await
+    .expect("end the service's sessions")
+    .get(0);
     assert!(ended > 0, "the service holds sessions to end");
     let mut status = 0;
     for _ in 0..50 {
@@ -330,13 +332,17 @@ async fn identity_https_has_only_public_jwks_and_health() {
             .status(),
         200
     );
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "REVOKE SELECT ON identity.session_keys FROM {}",
             escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
-        .await
-        .expect("authoritative read refusal control");
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("authoritative read refusal control");
     let failure = trusted
         .get(format!("{endpoint}/.well-known/jwks.json"))
         .send()
@@ -355,31 +361,27 @@ async fn identity_https_has_only_public_jwks_and_health() {
             .is_cancelled()
     );
     drop(trusted);
-    admin.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
-        .await.expect("remove owned disposable schemas");
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;").execute(&mut admin).await.map(drop).expect("remove owned disposable schemas");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
             role = escape_identifier(&role),
             stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
-        .await
-        .expect("remove exact fixture authority roles");
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("remove exact fixture authority roles");
     drop(admin);
-    admin_driver.abort();
 }
 
-async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+async fn connect(url: &str) -> Client {
+    wamn_postgres::connect(url)
         .await
         .map_err(|_| ())
-        .expect("connect disposable PostgreSQL without disclosing URL");
-    (
-        client,
-        tokio::spawn(async move {
-            let _ = connection.await;
-        }),
-    )
+        .expect("connect disposable PostgreSQL")
 }
 
 async fn cli(url: &str, args: &[&str]) -> Value {
@@ -456,7 +458,7 @@ fn certificates() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 fn dotenv_loading_precedence_and_secret_redaction() {
     let directory = std::env::temp_dir().join(format!("wamn-a045-dotenv-{}", std::process::id()));
     std::fs::create_dir(&directory).expect("private fixture directory");
-    let role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A).unwrap();
+    let role = identity_issuer_login(ISSUER).unwrap();
     let url = format!("postgres://{role}:fixture@127.0.0.1/wamn_system");
     let run = |key: Option<&str>, flag: Option<&str>| {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-identity"));

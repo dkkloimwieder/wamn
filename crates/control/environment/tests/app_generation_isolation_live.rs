@@ -30,12 +30,11 @@
 //! The test runs on the PostgreSQL server of its own test process and holds the
 //! process lock of that server, because it creates cluster-global roles.
 
-use tokio_postgres::error::SqlState;
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, sql,
-    workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, workload_login,
 };
 use wamn_environment_control::provision_project_env::{privilege_sql, role_posture_sql};
 use wamn_test_infrastructure::locked_database;
@@ -58,12 +57,10 @@ const GENERATION_PROBE_PASSWORD: &str = "app-generation-probe";
 const NEVER_EXPIRES: &str = "2100-01-01T00:00:00Z";
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect the disposable server as superuser");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
@@ -72,77 +69,68 @@ async fn connect(url: &str) -> Client {
 /// It returns the server's own error, so the refusal arm reads a SQLSTATE
 /// instead of matching text. A helper that panicked on failure cannot assert the
 /// outcome this test exists for.
-async fn dial(
-    url: &str,
-    database: &str,
-    role: &str,
-    password: &str,
-) -> Result<Client, tokio_postgres::Error> {
-    let mut config: tokio_postgres::Config = url.parse().expect("parse the server URL");
-    config.dbname(database).user(role).password(password);
-    let (client, connection) = config.connect(NoTls).await?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+async fn dial(url: &str, database: &str, role: &str, password: &str) -> anyhow::Result<Client> {
+    let mut config: sqlx::postgres::PgConnectOptions = url.parse().expect("parse the server URL");
+    config = config.database(database).username(role).password(password);
+    let client = wamn_postgres::connect(config.clone()).await?;
+
     Ok(client)
 }
 
 /// `CREATE DATABASE` is forbidden inside a transaction block, and a
 /// multi-statement simple query is one. Every statement here goes alone.
-async fn run_alone(superuser: &Client, statement: &str) {
-    superuser
-        .batch_execute(statement)
+async fn run_alone(superuser: &mut Client, statement: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
+        .execute(&mut *superuser)
         .await
+        .map(drop)
         .unwrap_or_else(|error| panic!("{statement}: {error}"));
 }
 
 #[tokio::test]
 async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_database() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let superuser = connect(&url).await;
+    let mut superuser = connect(&url).await;
 
     let home = project_env_database_name(ORG, PROJECT, HOME_ENVIRONMENT, INSTANCE);
     let neighbour = project_env_database_name(ORG, PROJECT, NEIGHBOUR_ENVIRONMENT, INSTANCE);
 
     // Step 1 of the runbook, then step 2 and step 3 for each environment, with
     // the SAME text the verb emits.
-    run_alone(&superuser, &role_posture_sql()).await;
-    run_alone(&superuser, &sql::drain_app_role_sessions_sql()).await;
+    run_alone(&mut superuser, &role_posture_sql()).await;
     for database in [&home, &neighbour] {
-        run_alone(&superuser, &format!("CREATE DATABASE \"{database}\"")).await;
-        run_alone(&superuser, &privilege_sql(database)).await;
+        run_alone(&mut superuser, &format!("CREATE DATABASE \"{database}\"")).await;
+        run_alone(&mut superuser, &privilege_sql(database)).await;
     }
 
     // One generation, minted for the HOME database only, through the builder
     // `--prepare-guest-generation` calls.
-    let generation = workload_generation_role(
+    let generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &home,
         },
-        CredentialGeneration::A,
     )
     .expect("the App family takes a project target");
     run_alone(
-        &superuser,
-        &sql::prepare_workload_generation_sql(
+        &mut superuser,
+        &wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::App,
             &home,
             &generation,
             GENERATION_PROBE_PASSWORD,
-            NEVER_EXPIRES,
         ),
     )
     .await;
 
     // THE POSITIVE CONTROL. It runs first and it uses the same credential, so a
     // refusal below cannot be a broken password or a missing role.
-    let session = dial(&url, &home, &generation, GENERATION_PROBE_PASSWORD)
+    let mut session = dial(&url, &home, &generation, GENERATION_PROBE_PASSWORD)
         .await
         .expect("the minted generation must open a session on its OWN database");
-    let who: String = session
-        .query_one("SELECT current_user::text", &[])
+    let who: String = sqlx::query("SELECT current_user::text")
+        .fetch_one(&mut session)
         .await
         .expect("read the authenticated role")
         .get(0);
@@ -160,8 +148,13 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
              database, which is a live project-isolation defect",
         );
     assert_eq!(
-        refusal.code(),
-        Some(&SqlState::INSUFFICIENT_PRIVILEGE),
+        refusal
+            .downcast_ref::<sqlx::Error>()
+            .unwrap()
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501"),
         "the neighbour refused with the wrong SQLSTATE. A wrong password \
          (28P01) or an absent database (3D000) establishes nothing about \
          reach: {refusal:?}"

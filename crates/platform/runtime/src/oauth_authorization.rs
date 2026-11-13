@@ -9,7 +9,7 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use tokio_postgres::{Client, Transaction};
+use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -108,7 +108,7 @@ impl Authorization {
     /// The caller holds the active connection row and its ProjectAdmin transaction.
     pub async fn authorize(
         &self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         context: &Value,
         caller: uuid::Uuid,
     ) -> Result<String, Error> {
@@ -143,9 +143,8 @@ impl Authorization {
             .encrypt(verifier.as_bytes())
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
-        tx.execute("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')",
-            &[&state,&connection,&generation,&encrypted.ciphertext,&encrypted.wrapped_key,&encrypted.nonce,&encrypted.key_id,&caller])
+        sqlx::query("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(caller).execute(&mut **tx)
             .await.map_err(|error| failed("authorization state write failed", error))?;
         Ok(url.into())
     }
@@ -153,15 +152,15 @@ impl Authorization {
     /// Roll back every refusal, including expired and stale-generation states.
     pub async fn callback(
         &self,
-        database: &mut Client,
+        database: &mut sqlx::PgConnection,
         org: &str,
         query: &str,
     ) -> Result<(), Error> {
-        let tx = database
-            .transaction()
+        let mut tx = database
+            .begin()
             .await
             .map_err(|error| failed("callback transaction failed", error))?;
-        match self.exchange(&tx, org, query).await {
+        match self.exchange(&mut tx, org, query).await {
             Ok(()) => tx
                 .commit()
                 .await
@@ -175,7 +174,12 @@ impl Authorization {
         }
     }
 
-    async fn exchange(&self, tx: &Transaction<'_>, org: &str, query: &str) -> Result<(), Error> {
+    async fn exchange(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        org: &str,
+        query: &str,
+    ) -> Result<(), Error> {
         let query: Callback = callback_parameters(query)?;
         if let Some(error) = query.error {
             return Err(refused(format!("provider refused authorization: {error}")));
@@ -190,10 +194,10 @@ impl Authorization {
                 .filter(|code| !code.is_empty())
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
-        let row = tx.query_opt("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,expires_at>clock_timestamp() AS unexpired \
-            FROM identity.oauth_authorization WHERE state=$1 FOR UPDATE", &[&state]).await
+        let row = sqlx::query("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,expires_at>clock_timestamp() AS unexpired \
+            FROM identity.oauth_authorization WHERE state=$1 FOR UPDATE").bind(&state).fetch_optional(&mut **tx).await
             .map_err(|error| failed("authorization state read failed", error))?.ok_or_else(|| refused("unknown or replayed state"))?;
-        if !row.get::<_, bool>("unexpired") {
+        if !row.get::<bool, _>("unexpired") {
             return Err(refused("expired state"));
         }
         let connection: uuid::Uuid = row.get("connection_id");
@@ -211,12 +215,11 @@ impl Authorization {
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("connection authentication type changed"));
         }
-        tx.execute(
-            "DELETE FROM identity.oauth_authorization WHERE state=$1",
-            &[&state],
-        )
-        .await
-        .map_err(|error| failed("authorization state delete failed", error))?;
+        sqlx::query("DELETE FROM identity.oauth_authorization WHERE state=$1")
+            .bind(&state)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| failed("authorization state delete failed", error))?;
         let verifier = self
             .envelope
             .decrypt(&Encrypted {

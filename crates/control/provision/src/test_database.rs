@@ -74,13 +74,12 @@ mod tests {
                 &seed_org_project_env_sql("other", "orders", "dev"),
             ])
             .unwrap();
-        let login = crate::workload_generation_role(
+        let login = crate::workload_login(
             crate::WorkloadRoleFamily::Control,
             crate::WorkloadRoleIdentity::Org {
                 org: "acme",
                 database: database.name(),
             },
-            crate::CredentialGeneration::A,
         )
         .unwrap();
         database.execute(&[&format!(
@@ -105,4 +104,59 @@ mod tests {
              RESET SESSION AUTHORIZATION; DROP ROLE {login};"
         )]).unwrap();
     }
+}
+
+/// Install a role for an isolated database interface test. Production roles belong to CNPG.
+pub fn login_sql(
+    family: crate::WorkloadRoleFamily,
+    database: &str,
+    role: &str,
+    password: &str,
+) -> String {
+    use postgres_protocol::escape::{escape_identifier, escape_literal};
+    format!(
+        "{} CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; {} {}",
+        crate::sql::ensure_workload_acl_role_sql(family),
+        escape_identifier(role),
+        escape_literal(password),
+        membership_sql(family, role, true),
+        crate::sql::grant_workload_login_sql(family, database, role)
+    )
+}
+
+/// Set one role membership for a database authority test.
+pub fn membership_sql(family: crate::WorkloadRoleFamily, role: &str, active: bool) -> String {
+    use postgres_protocol::escape::escape_identifier;
+    let role = escape_identifier(role);
+    let acl = escape_identifier(family.acl_role());
+    if active {
+        format!("GRANT {acl} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE")
+    } else {
+        format!("REVOKE {acl} FROM {role}")
+    }
+}
+
+/// Install the issuer role for a service interface test.
+pub fn issuer_login_sql(issuer: &str, password: &str) -> anyhow::Result<String> {
+    use postgres_protocol::escape::{escape_identifier, escape_literal};
+    let role = crate::identity_role::identity_issuer_login(issuer)?;
+    Ok(format!(
+        "{} CREATE ROLE {} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {};",
+        crate::identity_role::grant_identity_issuer_surface_sql(),
+        escape_identifier(&role),
+        escape_literal(password),
+        escape_identifier(&role),
+        escape_identifier(&role)
+    ))
+}
+
+/// Install an isolated replication fixture. CNPG owns production logins.
+pub fn replication_login_sql(role: &str, password: &str) -> String {
+    use postgres_protocol::escape::{escape_identifier, escape_literal};
+    format!(
+        "DO $fixture$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={name}) THEN CREATE ROLE {role} LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD {password}; END IF; END $fixture$;",
+        name = escape_literal(role),
+        role = escape_identifier(role),
+        password = escape_literal(password)
+    )
 }

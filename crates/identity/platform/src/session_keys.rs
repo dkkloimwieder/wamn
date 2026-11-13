@@ -10,7 +10,8 @@ use ring::{
     rand::SystemRandom,
     signature::{Ed25519KeyPair, KeyPair as _},
 };
-use tokio_postgres::{Client, GenericClient};
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _};
 
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
@@ -31,20 +32,26 @@ pub async fn publish_session_key(
         IdentityError::new(IdentityErrorType::Entropy, "generate session signing key")
     })?;
     let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| corrupt_key())?;
-    let transaction = client.transaction().await.map_err(key_database_error)?;
-    bind_provisioning(&transaction).await?;
-    transaction.execute(
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
+    bind_provisioning(&mut transaction).await?;
+    sqlx::query(
         "INSERT INTO identity.session_signing_state (issuer) VALUES ($1) ON CONFLICT DO NOTHING",
-        &[&issuer],
-    ).await.map_err(key_database_error)?;
-    let row = transaction
-        .query_one(
-            "INSERT INTO identity.session_keys (issuer, public_key, private_pkcs8) \
+    )
+    .bind(issuer)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(key_database_error)?;
+    let row = sqlx::query(
+        "INSERT INTO identity.session_keys (issuer, public_key, private_pkcs8) \
          VALUES ($1, $2, $3) RETURNING kid::text",
-            &[&issuer, &pair.public_key().as_ref(), &document.as_ref()],
-        )
-        .await
-        .map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .bind(pair.public_key().as_ref())
+    .bind(document.as_ref())
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(key_database_error)?;
     let key = PublicSessionKey::new(row.get(0), pair.public_key().as_ref());
     transaction.commit().await.map_err(key_database_error)?;
     Ok(key)
@@ -59,54 +66,50 @@ pub async fn activate_session_key(
     issuer: &str,
     kid: &str,
 ) -> Result<(), IdentityError> {
-    let transaction = client.transaction().await.map_err(key_database_error)?;
-    bind_provisioning(&transaction).await?;
-    let active = lock_issuer(&transaction, issuer).await?;
-    let row = transaction
-        .query_opt(
-            "SELECT signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
+    bind_provisioning(&mut transaction).await?;
+    let active = lock_issuer(&mut transaction, issuer).await?;
+    let row = sqlx::query(
+        "SELECT signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
          FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
-            &[&issuer, &kid],
-        )
-        .await
-        .map_err(key_database_error)?;
-    if !row.is_some_and(|row| row.get::<_, bool>(0)) {
+    )
+    .bind(issuer)
+    .bind(kid)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(key_database_error)?;
+    if !row.is_some_and(|row| row.get::<bool, _>(0)) {
         return Err(invalid(
             "session activation requires an unretired published key",
         ));
     }
     if active.as_deref() != Some(kid) {
-        transaction.execute(
-            "UPDATE identity.session_keys SET signing_cutoff = clock_timestamp(), private_pkcs8 = NULL \
-             WHERE issuer = $1 AND kid::text = $2",
-            &[&issuer, &active],
-        ).await.map_err(key_database_error)?;
-        transaction.execute(
-            "UPDATE identity.session_signing_state SET active_kid = $2::text::uuid WHERE issuer = $1",
-            &[&issuer, &kid],
-        ).await.map_err(key_database_error)?;
+        sqlx::query("UPDATE identity.session_keys SET signing_cutoff = clock_timestamp(), private_pkcs8 = NULL \
+             WHERE issuer = $1 AND kid::text = $2").bind(issuer).bind(&active).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
+        sqlx::query("UPDATE identity.session_signing_state SET active_kid = $2::text::uuid WHERE issuer = $1").bind(issuer).bind(kid).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
     }
     transaction.commit().await.map_err(key_database_error)
 }
 
 /// Read only the public projection, excluding keys at their retirement deadline.
 pub async fn session_jwks(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     issuer: &str,
 ) -> Result<SessionJwks, IdentityError> {
     validate_issuer(issuer)?;
-    let rows = client
-        .query(
-            "SELECT kid::text, public_key FROM identity.session_keys \
+    let rows = sqlx::query(
+        "SELECT kid::text, public_key FROM identity.session_keys \
          WHERE issuer = $1 AND (signing_cutoff IS NULL OR \
              clock_timestamp() < signing_cutoff + ($2::bigint * interval '1 second')) ORDER BY kid",
-            &[&issuer, &KEY_RETENTION_SECONDS],
-        )
-        .await
-        .map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .bind(KEY_RETENTION_SECONDS)
+    .fetch_all(&mut *client)
+    .await
+    .map_err(key_database_error)?;
     let mut keys = Vec::with_capacity(rows.len());
     for row in rows {
-        let key = PublicSessionKey::new(row.get(0), row.get::<_, &[u8]>(1));
+        let key = PublicSessionKey::new(row.get(0), row.get::<&[u8], _>(1));
         decode_public_key(&key).map_err(|_| corrupt_key())?;
         keys.push(key);
     }
@@ -122,41 +125,46 @@ pub async fn remove_compromised_session_key(
     issuer: &str,
     kid: &str,
 ) -> Result<bool, IdentityError> {
-    let transaction = client.transaction().await.map_err(key_database_error)?;
-    bind_provisioning(&transaction).await?;
-    lock_issuer(&transaction, issuer).await?;
-    transaction
-        .execute(
-            "UPDATE identity.session_signing_state SET active_kid = NULL \
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
+    bind_provisioning(&mut transaction).await?;
+    lock_issuer(&mut transaction, issuer).await?;
+    sqlx::query(
+        "UPDATE identity.session_signing_state SET active_kid = NULL \
          WHERE issuer = $1 AND active_kid::text = $2",
-            &[&issuer, &kid],
-        )
-        .await
-        .map_err(key_database_error)?;
-    let removed = transaction
-        .execute(
-            "DELETE FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
-            &[&issuer, &kid],
-        )
-        .await
-        .map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .bind(kid)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(key_database_error)?;
+    let removed =
+        sqlx::query("DELETE FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2")
+            .bind(issuer)
+            .bind(kid)
+            .execute(&mut *transaction)
+            .await
+            .map(|result| result.rows_affected())
+            .map_err(key_database_error)?;
     transaction.commit().await.map_err(key_database_error)?;
     Ok(removed != 0)
 }
 
 /// Delete expired retiring generations; their public projection already excludes them.
 pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u64, IdentityError> {
-    let transaction = client.transaction().await.map_err(key_database_error)?;
-    bind_provisioning(&transaction).await?;
-    lock_issuer(&transaction, issuer).await?;
-    let removed = transaction
-        .execute(
-            "DELETE FROM identity.session_keys WHERE issuer = $1 AND \
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
+    bind_provisioning(&mut transaction).await?;
+    lock_issuer(&mut transaction, issuer).await?;
+    let removed = sqlx::query(
+        "DELETE FROM identity.session_keys WHERE issuer = $1 AND \
          clock_timestamp() >= signing_cutoff + ($2::bigint * interval '1 second')",
-            &[&issuer, &KEY_RETENTION_SECONDS],
-        )
-        .await
-        .map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .bind(KEY_RETENTION_SECONDS)
+    .execute(&mut *transaction)
+    .await
+    .map(|result| result.rows_affected())
+    .map_err(key_database_error)?;
     transaction.commit().await.map_err(key_database_error)?;
     Ok(removed)
 }
@@ -164,26 +172,30 @@ pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u6
 // Only this module reads private material. The synchronous message builder runs
 // after the shared lock is acquired, so iat is not sampled before a lock wait.
 pub(crate) async fn sign_message(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     issuer: &str,
     message: impl FnOnce(&str, &jsonwebtoken::EncodingKey) -> Result<String, IdentityError>,
 ) -> Result<String, IdentityError> {
-    let row = transaction.query_opt(
+    let row = sqlx::query(
         "SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = $1 FOR SHARE",
-        &[&issuer],
-    ).await.map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(key_database_error)?;
     let kid = row
-        .and_then(|row| row.get::<_, Option<String>>(0))
+        .and_then(|row| row.get::<Option<String>, _>(0))
         .ok_or_else(|| invalid("issuer has no active session signing key"))?;
     let token = {
-        let row = transaction
-            .query_one(
-                "SELECT private_pkcs8 FROM identity.session_keys \
+        let row = sqlx::query(
+            "SELECT private_pkcs8 FROM identity.session_keys \
              WHERE issuer = $1 AND kid::text = $2 AND signing_cutoff IS NULL",
-                &[&issuer, &kid],
-            )
-            .await
-            .map_err(key_database_error)?;
+        )
+        .bind(issuer)
+        .bind(&kid)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(key_database_error)?;
         let document: Option<&[u8]> = row.get(0);
         let key = jsonwebtoken::EncodingKey::from_ed_der(document.ok_or_else(corrupt_key)?);
         message(&kid, &key)?
@@ -193,29 +205,33 @@ pub(crate) async fn sign_message(
 
 /// Bind `wamn:provisioning` as the stamp actor of `transaction`.
 async fn bind_provisioning(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), IdentityError> {
-    transaction
-        .execute(
-            "SELECT set_config('app.user_id', $1, true)",
-            &[&wamn_identity_protocol::PlatformComponent::Provisioning
+    sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(
+            wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
-                .to_string()],
+                .to_string(),
         )
+        .execute(&mut **transaction)
         .await
+        .map(|result| result.rows_affected())
         .map_err(key_database_error)?;
     Ok(())
 }
 
 async fn lock_issuer(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     issuer: &str,
 ) -> Result<Option<String>, IdentityError> {
     validate_issuer(issuer)?;
-    let row = transaction.query_opt(
+    let row = sqlx::query(
         "SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = $1 FOR UPDATE",
-        &[&issuer],
-    ).await.map_err(key_database_error)?;
+    )
+    .bind(issuer)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(key_database_error)?;
     row.map(|row| row.get(0)).ok_or_else(|| {
         IdentityError::new(
             IdentityErrorType::NotFound,
@@ -242,7 +258,7 @@ pub(crate) fn corrupt_key() -> IdentityError {
     clippy::needless_pass_by_value,
     reason = "map_err consumes the database error; only SQLSTATE leaves this boundary"
 )]
-pub(crate) fn key_database_error(error: tokio_postgres::Error) -> IdentityError {
+pub(crate) fn key_database_error(error: sqlx::Error) -> IdentityError {
     // PostgreSQL DETAIL can contain rejected row values, including private
     // PKCS#8 bytes. Retain only the safe SQLSTATE, never the database message.
     IdentityError::new(
@@ -250,8 +266,10 @@ pub(crate) fn key_database_error(error: tokio_postgres::Error) -> IdentityError 
         format!(
             "session key database operation failed (SQLSTATE {})",
             error
-                .code()
-                .map_or("unavailable", tokio_postgres::error::SqlState::code),
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref()
+                .unwrap_or("unavailable"),
         ),
     )
 }

@@ -1,6 +1,7 @@
 //! Receiving dev tests and helpers.
 
 use super::*;
+use sqlx::Row as _;
 
 mod local_delivery;
 mod scheduler_outage;
@@ -225,24 +226,24 @@ pub(super) fn declared_dev_data_access_grants()
 }
 
 pub(super) async fn verify_dev_target_package_and_acl_state(
-    project: &Client,
+    project: &mut Client,
 ) -> anyhow::Result<()> {
-    let packages = project
-        .query(
-            "SELECT package_id, package_version, artifact_digest \
+    let packages = sqlx::query(
+        "SELECT package_id, package_version, artifact_digest \
              FROM catalog.packages WHERE project_env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"",
-            &[&identity().project_env_key().as_str()],
-        )
-        .await
-        .context("read product-command target package coordinates")?;
+    )
+    .bind(&identity().project_env_key().as_str())
+    .fetch_all(&mut *project)
+    .await
+    .context("read product-command target package coordinates")?;
     let observed_packages = packages
         .iter()
         .map(|row| {
             (
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, Option<String>>(2),
+                row.get::<String, _>(0),
+                row.get::<String, _>(1),
+                row.get::<Option<String>, _>(2),
             )
         })
         .collect::<Vec<_>>();
@@ -261,24 +262,24 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         "wamn dev installed the wrong exact package coordinates: {observed_packages:?}"
     );
 
-    let migrations = project
-        .query(
-            "SELECT package_id, package_version, ordinal, relative_path, sha256 \
+    let migrations = sqlx::query(
+        "SELECT package_id, package_version, ordinal, relative_path, sha256 \
              FROM catalog.package_migrations WHERE project_env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", ordinal",
-            &[&identity().project_env_key().as_str()],
-        )
-        .await
-        .context("read product-command target migration records")?;
+    )
+    .bind(&identity().project_env_key().as_str())
+    .fetch_all(&mut *project)
+    .await
+    .context("read product-command target migration records")?;
     let observed_migrations = migrations
         .iter()
         .map(|row| {
             (
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, i32>(2),
-                row.get::<_, String>(3),
-                row.get::<_, String>(4),
+                row.get::<String, _>(0),
+                row.get::<String, _>(1),
+                row.get::<i32, _>(2),
+                row.get::<String, _>(3),
+                row.get::<String, _>(4),
             )
         })
         .collect::<Vec<_>>();
@@ -297,68 +298,60 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
 
     verify_journey_operation_grants(project).await?;
 
-    let observed_column_grants = project
-        .query(
-            "SELECT table_schema::text, table_name::text, column_name::text, privilege_type::text \
+    let observed_column_grants = sqlx::query(
+        "SELECT table_schema::text, table_name::text, column_name::text, privilege_type::text \
              FROM information_schema.column_privileges \
              WHERE grantee = 'wamn_app' AND table_schema = 'receiving' \
              ORDER BY table_schema COLLATE \"C\", table_name COLLATE \"C\", \
                       column_name COLLATE \"C\", privilege_type COLLATE \"C\"",
-            &[],
+    )
+    .fetch_all(&mut *project)
+    .await
+    .context("read the installed package data-access union")?
+    .into_iter()
+    .map(|row| {
+        (
+            row.get::<String, _>(0),
+            row.get::<String, _>(1),
+            row.get::<String, _>(2),
+            row.get::<String, _>(3),
         )
-        .await
-        .context("read the installed package data-access union")?
-        .into_iter()
-        .map(|row| {
-            (
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, String>(2),
-                row.get::<_, String>(3),
-            )
-        })
-        .collect::<BTreeSet<_>>();
+    })
+    .collect::<BTreeSet<_>>();
     let expected_column_grants = declared_dev_data_access_grants()?;
     anyhow::ensure!(
         observed_column_grants == expected_column_grants,
         "wamn dev installed the wrong exact column-privilege union: {observed_column_grants:?}"
     );
-    let table_grant_count: i64 = project
-        .query_one(
-            "SELECT count(*) FROM information_schema.table_privileges \
+    let table_grant_count: i64 = sqlx::query(
+        "SELECT count(*) FROM information_schema.table_privileges \
              WHERE grantee = 'wamn_app' AND table_schema = 'receiving'",
-            &[],
-        )
-        .await
-        .context("read package application table-level privilege residue")?
-        .get(0);
+    )
+    .fetch_one(&mut *project)
+    .await
+    .context("read package application table-level privilege residue")?
+    .get(0);
     anyhow::ensure!(
         table_grant_count == 0,
         "wamn dev left {table_grant_count} table-level package privilege grants"
     );
-    let schema_usage: bool = project
-        .query_one(
-            "SELECT pg_catalog.has_schema_privilege('wamn_app', 'receiving', 'USAGE')",
-            &[],
-        )
-        .await
-        .context("read package application schema usage")?
-        .get(0);
+    let schema_usage: bool =
+        sqlx::query("SELECT pg_catalog.has_schema_privilege('wamn_app', 'receiving', 'USAGE')")
+            .fetch_one(&mut *project)
+            .await
+            .context("read package application schema usage")?
+            .get(0);
     anyhow::ensure!(schema_usage, "wamn dev omitted receiving schema USAGE");
     Ok(())
 }
 
 /// The entries are sorted, because a recreated database can list the same entries in another order.
 pub(super) async fn current_database_acl(
-    client: &Client,
+    client: &mut Client,
 ) -> anyhow::Result<(String, Option<String>)> {
-    let row = client
-        .query_one(
-            "SELECT datname::text, \
+    let row = sqlx::query("SELECT datname::text, \
                     (SELECT array_agg(entry::text ORDER BY entry::text) FROM unnest(datacl) AS entry)::text \
-             FROM pg_catalog.pg_database WHERE datname = current_database()",
-            &[],
-        )
+             FROM pg_catalog.pg_database WHERE datname = current_database()").fetch_one(&mut *client)
         .await
         .context("read the current database ACL sentinel")?;
     Ok((row.get(0), row.get(1)))
@@ -389,7 +382,7 @@ pub(super) async fn assert_dev_command(
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
-    let (admin, admin_task) = connect(system_url).await?;
+    let mut admin = connect(system_url).await?;
     std::fs::write(
         root.join("environment.k"),
         include_str!(concat!(
@@ -399,7 +392,7 @@ pub(super) async fn assert_dev_command(
     )?;
     let environment = wamn_dev_control::dev::environment::provision(
         system_url,
-        admin.as_ref(),
+        &mut admin,
         root,
         PLATFORM_DOMAIN,
         &wamn_environment_control::environment::document::EnvironmentDocument::compile(
@@ -407,11 +400,11 @@ pub(super) async fn assert_dev_command(
         )?,
     )
     .await?;
-    let (project, project_task) = connect(&environment.route.database_url).await?;
-    let system_acl_before = current_database_acl(admin.as_ref()).await?;
-    let durable_acl_before = current_database_acl(project.as_ref()).await?;
+    let mut project = connect(&environment.route.database_url).await?;
+    let system_acl_before = current_database_acl(&mut admin).await?;
+    let durable_acl_before = current_database_acl(&mut project).await?;
     // The first run recreates the target, which closes this connection.
-    project_task.abort();
+
     let event_target = wamn_registry::Triple {
         org: environment.identity.org.clone(),
         project: environment.identity.project.clone(),
@@ -436,8 +429,8 @@ pub(super) async fn assert_dev_command(
         &environment.identity,
     )?;
 
-    let pat_count: i64 = admin
-        .query_one("SELECT count(*) FROM identity.pats", &[])
+    let pat_count: i64 = sqlx::query("SELECT count(*) FROM identity.pats")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
     let command_result = async {
@@ -457,17 +450,17 @@ pub(super) async fn assert_dev_command(
             .set_modified(std::time::SystemTime::now())?;
         let rebuilt = run_dev_product_command(inputs, &config).await?;
         verify_dev_command_output(&rebuilt)?;
-        let after: i64 = admin
-            .query_one("SELECT count(*) FROM identity.pats", &[])
+        let after: i64 = sqlx::query("SELECT count(*) FROM identity.pats")
+            .fetch_one(&mut admin)
             .await?
             .get(0);
         anyhow::ensure!(
             after == pat_count,
             "the development lifecycle created a PAT"
         );
-        let (project, project_task) = connect(&environment.route.database_url).await?;
-        let system_acl_after = current_database_acl(admin.as_ref()).await?;
-        let durable_acl_after = current_database_acl(project.as_ref()).await?;
+        let mut project = connect(&environment.route.database_url).await?;
+        let system_acl_after = current_database_acl(&mut admin).await?;
+        let durable_acl_after = current_database_acl(&mut project).await?;
         anyhow::ensure!(
             system_acl_after == system_acl_before,
             "wamn dev changed the system database ACL: \
@@ -478,14 +471,14 @@ pub(super) async fn assert_dev_command(
             "wamn dev changed the durable database ACL: \
              before={durable_acl_before:?} after={durable_acl_after:?}"
         );
-        verify_dev_target_package_and_acl_state(project.as_ref()).await?;
-        project_task.abort();
+        verify_dev_target_package_and_acl_state(&mut project).await?;
+
         Ok::<_, anyhow::Error>(())
     }
     .await;
 
-    let stopped = environment.issuer.stop().await;
-    admin_task.abort();
+    let stopped = environment.issuer.stop();
+
     command_result?;
     stopped?;
     Ok(())

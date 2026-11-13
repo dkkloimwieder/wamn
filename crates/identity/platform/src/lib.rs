@@ -13,10 +13,11 @@
 //! stamps. A caller that writes them binds `app.user_id` in the same
 //! transaction. Without a bound actor, the write fails with SQLSTATE `55000`.
 
+use sqlx::Row as _;
+use sqlx::postgres::PgRow as Row;
 use std::fmt;
 use std::time::Duration;
 
-use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 use wamn_identity_protocol::secret::PatToken;
 use wamn_identity_protocol::{PrincipalId, RoleName};
 
@@ -507,7 +508,7 @@ impl From<wamn_identity_protocol::SessionError> for IdentityError {
 /// row of every project this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
 pub async fn create_user(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     subject: &str,
     email: &str,
     display_name: &str,
@@ -515,8 +516,11 @@ pub async fn create_user(
     let subject = canonical_subject(subject)?;
     let email = require_email(email)?;
     let display_name = require_display_name(display_name)?;
-    let row = client
-        .query_one(INSERT_USER_SQL, &[&subject, &email, &display_name])
+    let row = sqlx::query(INSERT_USER_SQL)
+        .bind(&subject)
+        .bind(&email)
+        .bind(&display_name)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
     decode_principal(&row)
@@ -538,22 +542,24 @@ pub struct UserAccount {
 /// its display name. A disabled user is refused. The caller binds the actor
 /// in the same transaction.
 pub async fn create_or_reuse_user(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     email: &str,
     display_name: &str,
 ) -> Result<UserAccount, IdentityError> {
     let email = require_email(email)?;
     let subject = canonical_subject(&email)?;
     let display_name = require_display_name(display_name)?;
-    client
-        .execute(
-            INSERT_USER_IF_ABSENT_SQL,
-            &[&subject, &email, &display_name],
-        )
+    sqlx::query(INSERT_USER_IF_ABSENT_SQL)
+        .bind(&subject)
+        .bind(&email)
+        .bind(&display_name)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
-    let row = client
-        .query_opt(SELECT_USER_BY_EMAIL_SQL, &[&email])
+    let row = sqlx::query(SELECT_USER_BY_EMAIL_SQL)
+        .bind(&email)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
@@ -563,7 +569,7 @@ pub async fn create_or_reuse_user(
             )
         })?;
     let principal_id: PrincipalId = row
-        .try_get::<_, String>(0)
+        .try_get::<String, _>(0)
         .map_err(|error| database_error(&error))?
         .parse()?;
     let status: String = row.try_get(1).map_err(|error| database_error(&error))?;
@@ -582,15 +588,17 @@ pub async fn create_or_reuse_user(
 /// Create a service principal. Machine authentication is supplied by a later
 /// presenter.
 pub async fn create_service(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     subject: &str,
     display_name: &str,
     drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
     let display_name = require_display_name(display_name)?;
-    let row = client
-        .query_one(INSERT_SERVICE_SQL, &[&subject, &display_name])
+    let row = sqlx::query(INSERT_SERVICE_SQL)
+        .bind(&subject)
+        .bind(&display_name)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
     let principal = decode_principal(&row)?;
@@ -600,11 +608,12 @@ pub async fn create_service(
 
 /// Resolve a principal by its opaque ID without authenticating the caller.
 pub async fn resolve_principal(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     id: &PrincipalId,
 ) -> Result<Option<Principal>, IdentityError> {
-    client
-        .query_opt(SELECT_PRINCIPAL_BY_ID_SQL, &[&id.to_string().as_str()])
+    sqlx::query(SELECT_PRINCIPAL_BY_ID_SQL)
+        .bind(id.to_string().as_str())
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .as_ref()
@@ -615,16 +624,15 @@ pub async fn resolve_principal(
 /// Resolve a principal by type and normalized subject without authenticating
 /// the caller.
 pub async fn resolve_subject(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     type_: PrincipalType,
     subject: &str,
 ) -> Result<Option<Principal>, IdentityError> {
     let subject = canonical_subject(subject)?;
-    client
-        .query_opt(
-            SELECT_PRINCIPAL_BY_SUBJECT_SQL,
-            &[&type_.as_str(), &subject],
-        )
+    sqlx::query(SELECT_PRINCIPAL_BY_SUBJECT_SQL)
+        .bind(type_.as_str())
+        .bind(&subject)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .as_ref()
@@ -634,12 +642,13 @@ pub async fn resolve_subject(
 
 /// Disable a principal. Repeated calls are idempotent and retain identity data.
 pub async fn disable_principal(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
-    let row = client
-        .query_opt(DISABLE_PRINCIPAL_SQL, &[&id.to_string().as_str()])
+    let row = sqlx::query(DISABLE_PRINCIPAL_SQL)
+        .bind(id.to_string().as_str())
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
@@ -655,7 +664,7 @@ pub async fn disable_principal(
 /// authorized the request. It reads only the principal ID the caller resolved.
 /// A missing, disabled or non-service principal is `NotFound`.
 pub async fn issue_pat(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     label: &str,
     ttl: Duration,
@@ -665,17 +674,13 @@ pub async fn issue_pat(
     let token = PatToken::mint()?;
     let prefix = token.lookup();
     let token_hash = token.digest();
-    let row = client
-        .query_opt(
-            INSERT_PAT_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &prefix,
-                &token_hash,
-                &label,
-                &ttl_seconds,
-            ],
-        )
+    let row = sqlx::query(INSERT_PAT_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(prefix)
+        .bind(&token_hash)
+        .bind(&label)
+        .bind(ttl_seconds)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
@@ -697,15 +702,16 @@ pub async fn issue_pat(
 /// infrastructure failure is an `Err`, so a transport may map every refusal to
 /// one generic response without leaking which predicate failed.
 pub async fn authenticate_pat(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     token: &str,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     let Ok(parsed) = token.parse::<PatToken>() else {
         return Ok(None);
     };
     let prefix = parsed.lookup();
-    let row = client
-        .query_opt(SELECT_PAT_BY_PREFIX_SQL, &[&prefix])
+    let row = sqlx::query(SELECT_PAT_BY_PREFIX_SQL)
+        .bind(prefix)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
     decide_pat(row, &parsed)
@@ -751,13 +757,14 @@ fn decide_pat(
 /// Repeated calls keep the first revocation instant, so a replayed revoke is
 /// harmless. An unknown prefix is `NotFound`.
 pub async fn revoke_pat(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     prefix: &str,
     drops: &mut AuthDrops,
 ) -> Result<PatRecord, IdentityError> {
     let prefix = require_pat_prefix(prefix)?;
-    let row = client
-        .query_opt(REVOKE_PAT_SQL, &[&prefix])
+    let row = sqlx::query(REVOKE_PAT_SQL)
+        .bind(prefix)
+        .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
@@ -769,11 +776,12 @@ pub async fn revoke_pat(
 /// Read a principal's tokens, newest first. Only non-secret metadata is stored,
 /// so no token material can be returned here.
 pub async fn list_pats(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
 ) -> Result<Vec<PatRecord>, IdentityError> {
-    let rows = client
-        .query(SELECT_PATS_SQL, &[&principal_id.to_string().as_str()])
+    let rows = sqlx::query(SELECT_PATS_SQL)
+        .bind(principal_id.to_string().as_str())
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
     rows.iter().map(decode_pat).collect()
@@ -781,7 +789,7 @@ pub async fn list_pats(
 
 /// Assign one opaque role slug to a principal in a registered project.
 pub async fn assign_project_role(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -789,22 +797,21 @@ pub async fn assign_project_role(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = require_target_segment("org", org)?;
-    let service: bool = client.query_one(
-        "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
-        &[&principal_id.to_string().as_str()],
-    ).await.map_err(|error| database_error(&error))?.get(0);
+    let service: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')").bind(principal_id.to_string().as_str()).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
     if !service {
         org::active_member(client, principal_id, &org).await?;
     }
 
     let project = require_target_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
-    let written = client
-        .execute(
-            ASSIGN_PROJECT_ROLE_SQL,
-            &[&principal_id.to_string().as_str(), &org, &project, &role],
-        )
+    let written = sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .bind(&role)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     if written > 0 {
         drops.identity(principal_id.to_string().as_str());
@@ -814,18 +821,18 @@ pub async fn assign_project_role(
 
 /// Read a principal's role slugs in stable lexical order for one project.
 pub async fn project_roles(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
 ) -> Result<Vec<RoleName>, IdentityError> {
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
-    let rows = client
-        .query(
-            SELECT_PROJECT_ROLES_SQL,
-            &[&principal_id.to_string().as_str(), &org, &project],
-        )
+    let rows = sqlx::query(SELECT_PROJECT_ROLES_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?;
     decode_project_roles(rows)
@@ -845,7 +852,7 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> 
 /// Repeated grants are harmless. The database rejects service principals and
 /// missing environments. Membership does not create project users or assign roles.
 pub async fn grant_project_env_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -854,12 +861,14 @@ pub async fn grant_project_env_membership(
     let org = org::active_member(client, principal_id, org).await?;
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
-    client
-        .execute(
-            GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.to_string().as_str(), &org, &project, &env],
-        )
+    sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .bind(&env)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
@@ -869,7 +878,7 @@ pub async fn grant_project_env_membership(
 /// Credential authentication must separately verify that the principal is active.
 /// Project management roles and memberships in other environments do not count.
 pub async fn has_project_env_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -878,11 +887,12 @@ pub async fn has_project_env_membership(
     let org = require_target_segment("org", org)?;
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
-    client
-        .query_one(
-            SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.to_string().as_str(), &org, &project, &env],
-        )
+    sqlx::query(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .bind(&env)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .try_get(0)
@@ -891,7 +901,7 @@ pub async fn has_project_env_membership(
 
 /// Revoke membership, returning whether an explicit grant was removed.
 pub async fn revoke_project_env_membership(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -902,78 +912,49 @@ pub async fn revoke_project_env_membership(
     org::lock_membership(client, principal_id, &org).await?;
     let project = require_target_segment("project", project)?;
     let env = require_target_segment("env", env)?;
-    let removed = client
-        .execute(
-            REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.to_string().as_str(), &org, &project, &env],
-        )
+    let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(&org)
+        .bind(&project)
+        .bind(&env)
+        .execute(&mut *client)
         .await
+        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     drops.identity(principal_id.to_string().as_str());
     Ok(removed != 0)
 }
 
-/// The identity query used by route authentication, prepared once.
+/// Authenticate a route PAT and its system target in one round trip.
 ///
-/// The free functions above hand `query`/`query_opt` a `&str`. `tokio-postgres`
-/// converts a `&str` through `prepare::prepare` on every call and never caches
-/// it (`prepare_cached` belongs to `deadpool_postgres::Object`, and the route's
-/// identity reader is a bare `Client`), so each read cost a Parse+Describe round
-/// trip before its Bind+Execute. The PAT and project-role reads were measured
-/// at 1.184 ms and 0.709 ms per request against a 0.30 ms single round trip: see
-/// the measurement record in commit `b40a1714b8a0`.
-///
-/// Holding the `Statement` handle moves that Parse to process start. The
-/// handle is bound to the connection it was prepared on, so this type must
-/// be used only with the client it was prepared from; a different connection
-/// would refuse the statement name.
-///
-/// Route authentication uses [`Self::authenticate_route_pat`] to read both
-/// the PAT and its project role or environment membership in one statement.
-#[derive(Clone, Debug)]
-pub struct PreparedIdentityReads {
-    route_pat: Statement,
-}
-
-impl PreparedIdentityReads {
-    /// Parse the identity statement on `client`, once.
-    pub async fn prepare(client: &(impl GenericClient + Sync)) -> Result<Self, IdentityError> {
-        Ok(Self {
-            route_pat: client
-                .prepare(SELECT_ROUTE_PAT_SQL)
-                .await
-                .map_err(|error| database_error(&error))?,
-        })
-    }
-
-    /// Authenticate a route PAT and its system target in one round trip.
-    ///
-    /// Services need one of the accepted project roles. The caller must still
-    /// enforce the configured service identity and read operation permissions.
-    pub async fn authenticate_route_pat(
-        &self,
-        client: &(impl GenericClient + Sync),
-        token: &str,
-        org: &str,
-        project: &str,
-        accepted_roles: &[&str],
-    ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-        let Ok(parsed) = token.parse::<PatToken>() else {
-            return Ok(None);
-        };
-        let prefix = parsed.lookup();
-        let org = require_target_segment("org", org)?;
-        let project = require_target_segment("project", project)?;
-        let roles = accepted_roles
-            .iter()
-            .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        let row = client
-            .query_opt(&self.route_pat, &[&prefix, &org, &project, &roles])
-            .await
-            .map_err(|error| database_error(&error))?;
-        decide_pat(row, &parsed)
-    }
+/// Services need one of the accepted project roles. The caller must still
+/// enforce the configured service identity and read operation permissions.
+pub async fn authenticate_route_pat(
+    client: &mut sqlx::PgConnection,
+    token: &str,
+    org: &str,
+    project: &str,
+    accepted_roles: &[&str],
+) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+    let Ok(parsed) = token.parse::<PatToken>() else {
+        return Ok(None);
+    };
+    let prefix = parsed.lookup();
+    let org = require_target_segment("org", org)?;
+    let project = require_target_segment("project", project)?;
+    let roles = accepted_roles
+        .iter()
+        .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let row = sqlx::query(SELECT_ROUTE_PAT_SQL)
+        .bind(prefix)
+        .bind(&org)
+        .bind(&project)
+        .bind(&roles)
+        .fetch_optional(&mut *client)
+        .await
+        .map_err(|error| database_error(&error))?;
+    decide_pat(row, &parsed)
 }
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
@@ -1129,19 +1110,23 @@ fn require_target_segment(name: &'static str, value: &str) -> Result<String, Ide
     Ok(value.to_owned())
 }
 
-fn database_error(error: &tokio_postgres::Error) -> IdentityError {
-    let type_ = match error.code() {
-        Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorType::Conflict,
-        Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorType::NotFound,
+fn database_error(error: &sqlx::Error) -> IdentityError {
+    let type_ = match error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .as_deref()
+    {
+        Some("23505") => IdentityErrorType::Conflict,
+        Some("23503") => IdentityErrorType::NotFound,
         _ => IdentityErrorType::Database,
     };
-    // `tokio_postgres::Error` displays as the bare string "db error", so the
+    // `sqlx::Error` displays as the bare string "db error", so the
     // readable half is taken from its database error. That value's own Display
     // carries PostgreSQL's DETAIL, which repeats the offending key, so the
     // message and the constraint name are read directly instead. An operator
     // learns which rule refused the write, and the row's data stays out of the
     // log.
-    let reason = error.as_db_error().map_or_else(
+    let reason = error.as_database_error().map_or_else(
         || error.to_string(),
         |database| match database.constraint() {
             Some(constraint) => format!("{} ({constraint})", database.message()),

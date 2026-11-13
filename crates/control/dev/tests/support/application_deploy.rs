@@ -1,5 +1,6 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
+use sqlx::Row as _;
 #[path = "../../../../../services/ctl/src/route_request.rs"]
 mod route_request;
 
@@ -313,14 +314,14 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .build()?;
     let endpoint = format!("https://{identity_host}:{}", identity.port);
     let apply = get(run, "platform", "secret", "wamn-apply").await?;
-    let admin = get(run, "platform", "secret", "wamn-pg-superuser").await?;
+    let mut admin = get(run, "platform", "secret", "wamn-pg-superuser").await?;
     let apply_url = forwarded(&String::from_utf8(secret(&apply, "url")?)?, postgres.port)?;
     let mut admin_url = url::Url::parse(&format!(
         "postgresql://postgres@127.0.0.1:{}/wamn_system",
         postgres.port
     ))?;
     admin_url
-        .set_password(Some(&String::from_utf8(secret(&admin, "password")?)?))
+        .set_password(Some(&String::from_utf8(secret(&mut admin, "password")?)?))
         .map_err(|()| anyhow::anyhow!("administrator password"))?;
     let mut variables = BTreeMap::from([
         ("WAMN_APPLY_DATABASE_URL".into(), apply_url.clone()),
@@ -362,27 +363,27 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         std::fs::write(&path, secret(&certificate, key)?)?;
         variables.insert(name.into(), path.to_string_lossy().into_owned());
     }
-    let system =
-        wamn_package_control::database::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
-    system
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
-    let enrolled: bool = system
-        .query_one(
-            "SELECT EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) \
+    let mut system = wamn_postgres::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    let enrolled: bool = sqlx::query(
+        "SELECT EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) \
              FROM identity.principals p WHERE p.email=$1",
-            &[&run.document.owner_email],
-        )
-        .await?
-        .get(0);
+    )
+    .bind(&run.document.owner_email)
+    .fetch_one(&mut system)
+    .await?
+    .get(0);
     if run.document.provider == Provider::Gcp {
-        let exists: bool = system
-            .query_one(
-                "SELECT EXISTS(SELECT FROM registry.projects WHERE org=$1 AND id=$2)",
-                &[&run.document.org, &project],
-            )
-            .await?
-            .get(0);
+        let exists: bool =
+            sqlx::query("SELECT EXISTS(SELECT FROM registry.projects WHERE org=$1 AND id=$2)")
+                .bind(&run.document.org)
+                .bind(&project)
+                .fetch_one(&mut system)
+                .await?
+                .get(0);
         ensure!(
             !exists,
             "GKE journey project already exists; use a fresh disposable platform"
@@ -416,7 +417,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             &edge_tls, "ca.crt",
         )?)?);
     }
-    let client = client
+    let mut client = client
         .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&isolated_host, ([127, 0, 0, 1], edge.port).into())
@@ -434,7 +435,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         isolated_host: &isolated_host,
         variables: &variables,
         token: &token,
-        client: &client,
+        client: &mut client,
         edge: &edge_url,
     };
     let control_url = match run.document.provider {
@@ -736,13 +737,13 @@ async fn application_recovery(
         .apply("install-alpha", &mut journey.deploy(&artifacts["a0"]))
         .await?;
     let rows = data(journey).await?;
-    let database = observer(journey).await?;
-    let baseline = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let baseline = stored(journey, &mut database).await?;
     recovery(
         journey,
         &artifacts["a1"],
         &artifacts["a0"],
-        &database,
+        &mut database,
         &baseline,
     )
     .await?;
@@ -782,20 +783,19 @@ async fn first_install(
     journey: &Journey<'_>,
     digest: &str,
 ) -> anyhow::Result<std::process::Output> {
-    let system =
-        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
-            .await?;
-    system
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
+    let mut system = wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let environment_sql = "SELECT jsonb_build_object('instance_suffix',instance_suffix,'created_at',created_at) FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
     let org = &journey.run.document.org;
     ensure!(
-        system
-            .query_opt(
-                environment_sql,
-                &[org, &journey.project, &journey.environment]
-            )
+        sqlx::query(sqlx::AssertSqlSafe((environment_sql).to_string()))
+            .bind(org)
+            .bind(&journey.project)
+            .bind(&journey.environment)
+            .fetch_optional(&mut system)
             .await?
             .is_none(),
         "interrupted first install requires an absent environment"
@@ -888,14 +888,15 @@ async fn first_install(
                     {
                         break Ok::<_, anyhow::Error>(release["metadata"].clone());
                     }
-                } else if let Some(row) = system
-                    .query_opt(
-                        environment_sql,
-                        &[org, &journey.project, &journey.environment],
-                    )
-                    .await?
+                } else if let Some(row) =
+                    sqlx::query(sqlx::AssertSqlSafe((environment_sql).to_string()))
+                        .bind(org)
+                        .bind(&journey.project)
+                        .bind(&journey.environment)
+                        .fetch_optional(&mut system)
+                        .await?
                 {
-                    break Ok(row.get::<_, Value>(0));
+                    break Ok(row.get::<Value, _>(0));
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -961,8 +962,8 @@ async fn first_install(
             );
         }
     }
-    let database = observer(journey).await?;
-    let baseline = stored(journey, &database).await?;
+    let mut database = observer(journey).await?;
+    let baseline = stored(journey, &mut database).await?;
     let output = journey
         .run("install-beta", &mut journey.deploy(digest))
         .await?;
@@ -971,18 +972,18 @@ async fn first_install(
         "interrupted first install did not recover"
     );
     ensure!(
-        system
-            .query_one(
-                environment_sql,
-                &[org, &journey.project, &journey.environment]
-            )
+        sqlx::query(sqlx::AssertSqlSafe((environment_sql).to_string()))
+            .bind(org)
+            .bind(&journey.project)
+            .bind(&journey.environment)
+            .fetch_one(&mut system)
             .await?
-            .get::<_, Value>(0)
+            .get::<Value, _>(0)
             == environment,
         "first-install retry replaced the environment instance"
     );
     ensure!(
-        stored(journey, &database).await? == baseline,
+        stored(journey, &mut database).await? == baseline,
         "first-install retry replayed SQL initialization"
     );
     let status = journey.status().await?;
@@ -1162,15 +1163,14 @@ fn version(root: &Path, previous: &str, next: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn observer(journey: &Journey<'_>) -> anyhow::Result<tokio_postgres::Client> {
-    let system =
-        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
-            .await?;
-    system
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
+async fn observer(journey: &Journey<'_>) -> anyhow::Result<sqlx::PgConnection> {
+    let mut system = wamn_postgres::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let document = EnvironmentDocument::compile(&journey.file)?;
-    let row = system.query_one("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3", &[&document.org, &document.project, &document.env]).await?;
+    let row = sqlx::query("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3").bind(&document.org).bind(&document.project).bind(&document.env).fetch_one(&mut system).await?;
     let suffix: String = row.get(0);
     let name = wamn_control_provision::project_env_database_name(
         &document.org,
@@ -1180,35 +1180,39 @@ async fn observer(journey: &Journey<'_>) -> anyhow::Result<tokio_postgres::Clien
     );
     let mut url = url::Url::parse(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])?;
     url.set_path(&name);
-    let client = wamn_package_control::database::connect(url.as_str()).await?;
-    let owner: String = client
-        .query_one(
-            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
-            &[],
-        )
-        .await?
-        .get(0);
-    client
-        .batch_execute(&format!(
+    let mut client = wamn_postgres::connect(url.as_str()).await?;
+    let owner: String = sqlx::query(
+        "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+    )
+    .fetch_one(&mut client)
+    .await?
+    .get(0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "SET ROLE {}",
             postgres_protocol::escape::escape_identifier(&owner)
         ))
-        .await?;
-    client
-        .batch_execute("SET default_transaction_read_only = on")
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
+    sqlx::raw_sql("SET default_transaction_read_only = on")
+        .execute(&mut client)
+        .await
+        .map(drop)?;
     Ok(client)
 }
 
-async fn query(client: &tokio_postgres::Client, sql: &str) -> anyhow::Result<Value> {
-    Ok(client
-        .query_one(sql, &[])
+async fn query(client: &mut sqlx::PgConnection, sql: &str) -> anyhow::Result<Value> {
+    Ok(sqlx::query(sqlx::AssertSqlSafe((sql).to_string()))
+        .fetch_one(&mut *client)
         .await
         .with_context(|| format!("observe {sql}"))?
         .get(0))
 }
 
-async fn stored(journey: &Journey<'_>, client: &tokio_postgres::Client) -> anyhow::Result<Value> {
+async fn stored(journey: &Journey<'_>, client: &mut sqlx::PgConnection) -> anyhow::Result<Value> {
     let status = journey.status().await?;
     let identity = json!({
         "cluster": get(journey.run, "platform", "cluster.postgresql.cnpg.io", "wamn-pg").await?["metadata"]["uid"],
@@ -1278,7 +1282,7 @@ async fn recovery(
     journey: &Journey<'_>,
     candidate: &str,
     running: &str,
-    database: &tokio_postgres::Client,
+    database: &mut sqlx::PgConnection,
     baseline: &Value,
 ) -> anyhow::Result<()> {
     // Exhausting pod quota prevents a replacement while preserving the running pod.

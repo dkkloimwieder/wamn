@@ -1,7 +1,9 @@
 //! Plan or apply image-owned SQL in one explicitly selected database.
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{Client, GenericClient, Transaction};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_control_provision::schema_migrations::{self, MigrationDatabase};
 use wamn_package_control::migrations::{self, MigrationHooks, MigrationResolution, MigrationTable};
 use wamn_schema_control::{MigrationSource, SqlStatement, Value};
@@ -40,7 +42,7 @@ fn report(
 
 /// Describe known SQL consumers without imposing a compatibility condition.
 async fn warnings(
-    client: &impl GenericClient,
+    client: &mut sqlx::PgConnection,
     planned: &PlatformMigrationPlan,
     database: MigrationDatabase,
 ) -> anyhow::Result<Vec<String>> {
@@ -51,12 +53,12 @@ async fn warnings(
         MigrationDatabase::System => "control and identity",
         MigrationDatabase::Project => "platform and application",
     };
-    let namespaces = client
-        .query("SELECT nspname::text FROM pg_namespace", &[])
+    let namespaces = sqlx::query("SELECT nspname::text FROM pg_namespace")
+        .fetch_all(&mut *client)
         .await?;
     let schemas = namespaces
         .iter()
-        .map(|row| row.get::<_, &str>(0))
+        .map(|row| row.get::<&str, _>(0))
         .collect::<Vec<_>>();
     let mut warnings = Vec::new();
     for (file, sql) in planned
@@ -108,19 +110,20 @@ async fn warnings(
                 "{} removes {type_} {relation}{member}. Inspect {consumers} consumers.",
                 file.relative_path
             ));
-            for row in client
-                .query(
-                    "SELECT DISTINCT pg_describe_object(classid, objid, objsubid) FROM pg_depend \
+            for row in sqlx::query(
+                "SELECT DISTINCT pg_describe_object(classid, objid, objsubid) FROM pg_depend \
                  WHERE refclassid = 'pg_class'::regclass AND refobjid = to_regclass($1) \
                    AND ($2::text IS NULL OR refobjsubid = (SELECT attnum FROM pg_attribute \
                      WHERE attrelid = to_regclass($1) AND attname = $2)) ORDER BY 1",
-                    &[&relation, &column],
-                )
-                .await?
+            )
+            .bind(&relation)
+            .bind(column)
+            .fetch_all(&mut *client)
+            .await?
             {
                 warnings.push(format!(
                     "known SQL reference to {relation}: {}",
-                    row.get::<_, String>(0)
+                    row.get::<String, _>(0)
                 ));
             }
         }
@@ -140,7 +143,7 @@ pub async fn apply_reported(
 }
 
 async fn report_result(
-    client: &Client,
+    client: &mut Client,
     database: MigrationDatabase,
     sources: &[MigrationSource],
     result: anyhow::Result<usize>,
@@ -168,9 +171,15 @@ pub(crate) async fn initialize_project(
     client: &mut Client,
     sources: &[MigrationSource],
 ) -> anyhow::Result<usize> {
-    client.batch_execute("SET ROLE wamn_db_owner").await?;
+    sqlx::raw_sql("SET ROLE wamn_db_owner")
+        .execute(&mut *client)
+        .await
+        .map(drop)?;
     let result = restore_project(client, sources).await;
-    let reset = client.batch_execute("RESET ROLE").await;
+    let reset = sqlx::raw_sql("RESET ROLE")
+        .execute(&mut *client)
+        .await
+        .map(drop);
     let count = result?;
     reset?;
     Ok(count)
@@ -201,9 +210,10 @@ pub async fn run(
         MigrationDatabase::Project => "Platform and application",
     };
     if !apply {
-        client
-            .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .await?;
+        sqlx::raw_sql("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *client)
+            .await
+            .map(drop)?;
     }
     let planned = plan(client, database, sources).await?;
     write!(output, "{}", report(database, &planned, sources))?;
@@ -248,7 +258,10 @@ pub async fn run(
         let completed = plan(client, database, sources).await?;
         write!(output, "{}", report(database, &completed, sources))?;
     } else {
-        client.batch_execute("ROLLBACK").await?;
+        sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *client)
+            .await
+            .map(drop)?;
     }
     output.flush()?;
     Ok(())
@@ -288,14 +301,15 @@ async fn apply_target(
     };
     let key = migrations::lock_session(client, lock_sql, &[]).await?;
     let result = apply_locked(client, database, sources, resolution).await;
-    let unlock = client
-        .query_one("SELECT pg_advisory_unlock($1)", &[&key])
+    let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(key)
+        .fetch_one(&mut *client)
         .await;
     let count = result?;
     ensure!(
         unlock
             .context("release schema session lock")?
-            .get::<_, bool>(0),
+            .get::<bool, _>(0),
         "schema session lock disappeared"
     );
     Ok(count)
@@ -356,36 +370,48 @@ struct PlatformHooks {
 }
 
 impl MigrationHooks for PlatformHooks {
-    async fn begin<'a>(&mut self, client: &'a mut Client) -> anyhow::Result<Transaction<'a>> {
+    async fn begin<'a>(
+        &mut self,
+        client: &'a mut Client,
+    ) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Postgres>> {
         crate::provision_project_env::provisioning_transaction(client).await
     }
 
-    async fn initialize(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
+    async fn initialize(
+        &mut self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> anyhow::Result<()> {
         if self.adoption {
-            tx.batch_execute(&schema_migrations::history_sql(self.database))
-                .await
-                .context("adopt initialization with empty migration history")?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(schema_migrations::history_sql(
+                self.database,
+            )))
+            .execute(&mut **tx)
+            .await
+            .map(drop)
+            .context("adopt initialization with empty migration history")?;
         }
         Ok(())
     }
 
     async fn transactional(
         &mut self,
-        tx: &Transaction<'_>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         sql: &SqlStatement,
     ) -> anyhow::Result<()> {
-        tx.batch_execute(&sql.sql)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.sql.clone()))
+            .execute(&mut **tx)
             .await
+            .map(drop)
             .with_context(|| sql.summary.clone())
     }
 
     async fn nontransactional(
         &mut self,
-        client: &Client,
+        client: &mut Client,
         file: &wamn_schema_control::PendingMigration,
         sql: &SqlStatement,
     ) -> anyhow::Result<()> {
-        client.batch_execute(&sql.sql).await.with_context(|| format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.sql.clone())).execute(&mut *client).await.map(drop).with_context(|| format!(
             "migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path))
     }
 }
@@ -400,7 +426,7 @@ pub struct ProjectReset {
 impl ProjectReset {
     /// Refuse uncertain history before pinning or changing the serving database.
     pub async fn read(
-        client: &impl GenericClient,
+        client: &mut sqlx::PgConnection,
         sources: &[MigrationSource],
     ) -> anyhow::Result<Self> {
         let planned = plan(client, MigrationDatabase::Project, sources).await?;

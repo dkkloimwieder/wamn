@@ -1,5 +1,6 @@
 //! The SQL Job's native worker waits for deployment before resolving reset inputs.
 
+use sqlx::Row as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -15,12 +16,14 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let system = postgres.create_database("wamn_system")?;
-    let admin = wamn_package_control::database::connect(system.url()).await?;
-    admin
-        .batch_execute(
-            "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE wamn_system OWNER TO wamn_system",
-        )
-        .await?;
+    let mut admin = wamn_postgres::connect(system.url()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE ROLE wamn_system NOLOGIN NOINHERIT; ALTER DATABASE wamn_system OWNER TO wamn_system")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     wamn_environment_control::provision_system::provision_system(
         &wamn_environment_control::provision_system::ProvisionSystemRequest {
             system_database_url: system.url().into(),
@@ -28,13 +31,16 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         },
     )
     .await?;
-    admin.batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true; COMMIT;",
         wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
-    )).await?;
-    admin
-        .batch_execute(&wamn_environment_control::provision_project_env::role_posture_sql())
-        .await?;
+    ))).execute(&mut admin).await.map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_environment_control::provision_project_env::role_posture_sql()).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev",
         "applications":{"a":{"current":"none", "hostname":"a.invalid", "packages":["a"]}}
@@ -46,12 +52,16 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     .await?;
     let name = wamn_control_provision::project_env_database_name("acme", "apps", "dev", &instance);
     // CNPG supplies the database itself; this test exercises its native SQL worker.
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
             postgres_protocol::escape::escape_identifier(&name)
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     let mut project_url = url::Url::parse(system.url())?;
     project_url.set_path(&name);
     let platform = Platform {
@@ -77,19 +87,18 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         events: None,
         auth_nats: None,
     };
-    ensure::ensure_project_database(&platform, &document, &[], &admin, system.url()).await?;
-    let project_admin = wamn_package_control::database::connect(project_url.as_str()).await?;
+    ensure::ensure_project_database(&platform, &document, &[], &mut admin, system.url()).await?;
+    let mut project_admin = wamn_postgres::connect(project_url.as_str()).await?;
     // Validation must see the state after the deploying application releases its lock.
-    let baseline: String = project_admin
-        .query_one("SELECT sha256 FROM platform.schema_baseline", &[])
+    let baseline: String = sqlx::query("SELECT sha256 FROM platform.schema_baseline")
+        .fetch_one(&mut project_admin)
         .await?
         .get(0);
-    project_admin
-        .execute(
-            "UPDATE platform.schema_baseline SET sha256=$1",
-            &[&format!("sha256:{}", "0".repeat(64))],
-        )
-        .await?;
+    sqlx::query("UPDATE platform.schema_baseline SET sha256=$1")
+        .bind(&format!("sha256:{}", "0".repeat(64)))
+        .execute(&mut project_admin)
+        .await
+        .map(|result| result.rows_affected())?;
     let file = scratch.path().join("environment.json");
     let expected = scratch.path().join("database.json");
     std::fs::write(&file, document.canonical_json()?)?;
@@ -126,20 +135,17 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             assert!(worker.try_wait()?.is_none());
-            let waiting: bool = admin.query_one(
-                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='reset-worker-lock-test' AND query LIKE '%pg_try_advisory_lock(%')", &[],
-            ).await?.get(0);
+            let waiting: bool = sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='reset-worker-lock-test' AND query LIKE '%pg_try_advisory_lock(%')").fetch_one(&mut admin).await?.get(0);
             if waiting { break Ok::<_, anyhow::Error>(()); }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }).await.context("wait for the worker's exclusive lock attempt")??;
-    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
-    project_admin
-        .execute(
-            "UPDATE platform.schema_baseline SET sha256=$1",
-            &[&baseline],
-        )
-        .await?;
+    assert!(sqlx::query("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get::<bool, _>(0));
+    sqlx::query("UPDATE platform.schema_baseline SET sha256=$1")
+        .bind(&baseline)
+        .execute(&mut project_admin)
+        .await
+        .map(|result| result.rows_affected())?;
     deploy.release().await;
     let output = tokio::time::timeout(Duration::from_secs(15), worker.wait_with_output()).await??;
     assert!(
@@ -147,12 +153,13 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let pinned: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get(0);
+    let pinned: serde_json::Value = sqlx::query("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'").fetch_one(&mut admin).await?.get(0);
     assert_eq!(
         pinned["inputs"]["substrate"]["initialization_sha256"],
         baseline
     );
-    let installed = wamn_package_control::schema_baseline::observe_project(&project_admin).await?;
+    let installed =
+        wamn_package_control::schema_baseline::observe_project(&mut project_admin).await?;
     assert_eq!(
         pinned["inputs"]["substrate"]["applied"],
         serde_json::to_value(installed.installed)?

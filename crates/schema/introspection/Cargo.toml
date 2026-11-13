@@ -6,11 +6,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-scalar.workspace = true
 wamn-catalog = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio-postgres.workspace = true
 wamn-record-history = { workspace = true }
 
 [dev-dependencies]

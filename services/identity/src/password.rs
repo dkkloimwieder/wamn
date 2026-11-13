@@ -1,5 +1,6 @@
 //! Password endpoints share bounded work, database throttling, and session authority.
 
+use sqlx::{Connection as _, Row as _};
 use wamn_identity_protocol::PrincipalId;
 
 use std::net::IpAddr;
@@ -15,10 +16,10 @@ use hyper::{
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use sqlx::PgConnection as Client;
 use tokio::sync::Semaphore;
-use tokio_postgres::Client;
 use wamn_broker::auth_changes::AuthDrops;
-use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
+use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{
     IdentityErrorType,
     control::{control_audience, control_audience_org, control_orgs_page},
@@ -52,15 +53,12 @@ const RENEWAL_COOKIE: &str = "__Secure-wamn-renewal";
 #[derive(Debug)]
 pub(super) struct State {
     mail: Mailer,
-    connection: IdentityIssuerConnection,
+    connection: String,
     work: PasswordWork,
     requests: Semaphore,
 }
 impl State {
-    pub(super) fn new(
-        mail: MailConfig,
-        connection: IdentityIssuerConnection,
-    ) -> Result<Self, IdentityServiceError> {
+    pub(super) fn new(mail: MailConfig, connection: String) -> Result<Self, IdentityServiceError> {
         Ok(Self {
             mail: Mailer::new(mail)?,
             connection,
@@ -275,7 +273,7 @@ async fn handle(
     started_at: i64,
 ) -> Response<Full<Bytes>> {
     // Each admitted request owns its connection. Cancellation closes outstanding DB work.
-    let Ok(mut database) = connect_database(state.connection.url()).await else {
+    let Ok(mut database) = connect_database(&state.connection).await else {
         return unavailable();
     };
     let source = match source {
@@ -320,7 +318,7 @@ async fn handle(
                 return invalid();
             };
             let principal = request.principal_id;
-            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'", &[&principal.to_string().as_str()]).await else { return unavailable(); };
+            let Ok(row) = sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'").bind(principal.to_string().as_str()).fetch_optional(&mut database.client).await else { return unavailable(); };
             let Some(row) = row else {
                 tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
                 return invalid();
@@ -350,14 +348,13 @@ async fn handle(
                 // A failed or uncertain send must never report delivery success.
                 // Consume only this invitation; earlier operator invitations stay valid.
                 let hash = Sha256::digest(invitation.secret().as_bytes()).to_vec();
-                if let Ok(tx) = database.client.transaction().await {
-                    let _ = tx
-                        .execute(
-                            "SELECT set_config('app.user_id', $1, true)",
-                            &[&actor.to_string().as_str()],
-                        )
-                        .await;
-                    if tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL", &[&hash]).await.is_ok() { let _ = tx.commit().await; }
+                if let Ok(mut tx) = database.client.begin().await {
+                    let _ = sqlx::query("SELECT set_config('app.user_id', $1, true)")
+                        .bind(actor.to_string().as_str())
+                        .execute(&mut *tx)
+                        .await
+                        .map(|result| result.rows_affected());
+                    if sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL").bind(&hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 return unavailable();
             }
@@ -378,7 +375,7 @@ async fn handle(
             let password = match Password::new(request.password) {
                 Ok(value) => value,
                 Err(error) => {
-                    return enrollment_refusal(&database.client, &principal, &error).await;
+                    return enrollment_refusal(&mut database.client, &principal, &error).await;
                 }
             };
             let bucket = format!("enroll:{principal}");
@@ -397,7 +394,7 @@ async fn handle(
             .await
             {
                 Ok(()) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
-                Err(error) => enrollment_refusal(&database.client, &principal, &error).await,
+                Err(error) => enrollment_refusal(&mut database.client, &principal, &error).await,
             }
         }
         "/password/session" | "/password/environments" => {
@@ -445,31 +442,32 @@ async fn handle(
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
-            let Ok(tx) = database.client.transaction().await else {
+            let Ok(mut tx) = database.client.begin().await else {
                 return unavailable();
             };
-            let Ok(row) = tx
-                .query_opt(
-                    "SELECT id::text FROM identity.principals WHERE email=$1 AND type='user'",
-                    &[&email],
-                )
-                .await
+            let Ok(row) = sqlx::query(
+                "SELECT id::text FROM identity.principals WHERE email=$1 AND type='user'",
+            )
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await
             else {
                 return unavailable();
             };
             if let Some(row) = row {
-                let Ok(id) = row.get::<_, String>(0).parse::<PrincipalId>() else {
+                let Ok(id) = row.get::<String, _>(0).parse::<PrincipalId>() else {
                     return unavailable();
                 };
-                if password_login::lock_principal(&tx, &id).await.is_err() {
+                if password_login::lock_principal(&mut tx, &id).await.is_err() {
                     return unavailable();
                 }
             }
-            let principal = match authenticate_password(&tx, &state.work, &email, password).await {
-                Ok(Some(value)) => value,
-                Ok(None) => return session::unauthorized(),
-                Err(error) => return password_failure(&error),
-            };
+            let principal =
+                match authenticate_password(&mut tx, &state.work, &email, password).await {
+                    Ok(Some(value)) => value,
+                    Ok(None) => return session::unauthorized(),
+                    Err(error) => return password_failure(&error),
+                };
             let Some(audience) = audience else {
                 let Ok(page) = discovery_page(&paging, principal.principal().id(), &filter) else {
                     return invalid();
@@ -477,7 +475,7 @@ async fn handle(
                 let orgs = match control_window(&page) {
                     None => Vec::new(),
                     Some((after_org, limit)) => match control_orgs_page(
-                        &tx,
+                        &mut tx,
                         principal.principal().id(),
                         filter.org.as_deref(),
                         after_org,
@@ -545,18 +543,17 @@ async fn handle(
             let Some(target) = session::audience(inner, &audience) else {
                 return session::unauthorized();
             };
-            if tx
-                .execute(
-                    "SELECT set_config('app.user_id',$1,true)",
-                    &[&principal.principal().id().to_string().as_str()],
-                )
+            if sqlx::query("SELECT set_config('app.user_id',$1,true)")
+                .bind(principal.principal().id().to_string().as_str())
+                .execute(&mut *tx)
                 .await
+                .map(|result| result.rows_affected())
                 .is_err()
             {
                 return unavailable();
             }
             let renewal = match password_login::create_login(
-                &tx,
+                &mut tx,
                 principal.principal().id(),
                 &inner.issuer,
                 &audience,
@@ -573,14 +570,13 @@ async fn handle(
                     Err(_) => return unavailable(),
                 },
             );
-            let claims = match session::claims_for_audience(
-                inner, &tx, &principal, &target, authority,
-            )
-            .await
-            {
-                Ok(claims) => claims,
-                Err(error) => return authority_failure(&error),
-            };
+            let claims =
+                match session::claims_for_audience(inner, &mut tx, &principal, &target, authority)
+                    .await
+                {
+                    Ok(claims) => claims,
+                    Err(error) => return authority_failure(&error),
+                };
             finish_session(tx, claims, renewal, started_at, carrier).await
         }
         "/password/recover" | "/password/reset" => {
@@ -613,12 +609,12 @@ async fn handle(
             // No mail task outlives the request or performs automatic retries.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
-                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'", &[&email]).await else { return unavailable(); };
+                let Ok(row) = sqlx::query("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'").bind(&email).fetch_optional(&mut database.client).await else { return unavailable(); };
                 let Some(row) = row else {
                     tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();
                 };
-                let Ok(principal) = row.get::<_, String>(0).parse::<PrincipalId>() else {
+                let Ok(principal) = row.get::<String, _>(0).parse::<PrincipalId>() else {
                     return unavailable();
                 };
                 if let Some((secret, password)) = reset {
@@ -663,9 +659,9 @@ async fn handle(
                     .is_err()
                 {
                     let hash = Sha256::digest(token.secret().as_bytes()).to_vec();
-                    if let Ok(tx) = database.client.transaction().await
-                        && tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor.to_string().as_str()]).await.is_ok()
-                        && tx.execute("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL", &[&hash]).await.is_ok() { let _ = tx.commit().await; }
+                    if let Ok(mut tx) = database.client.begin().await
+                        && sqlx::query("SELECT set_config('app.user_id',$1,true)").bind(actor.to_string().as_str()).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
+                        && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(&hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
             };
@@ -692,12 +688,12 @@ async fn handle(
                 }
                 _ => return invalid(),
             };
-            let Ok(tx) = database.client.transaction().await else {
+            let Ok(mut tx) = database.client.begin().await else {
                 return unavailable();
             };
             let mut drops = AuthDrops::default();
             let Ok(principal) = password_login::authenticate_renewal(
-                &tx,
+                &mut tx,
                 &inner.issuer,
                 &request.aud,
                 &secret,
@@ -721,10 +717,11 @@ async fn handle(
             };
             if parts.uri.path() != "/password/renew" {
                 let result = if parts.uri.path() == "/password/logout-all" {
-                    password_login::revoke_all(&tx, principal.principal().id(), &mut drops).await
+                    password_login::revoke_all(&mut tx, principal.principal().id(), &mut drops)
+                        .await
                 } else {
                     password_login::revoke_login(
-                        &tx,
+                        &mut tx,
                         &inner.issuer,
                         &request.aud,
                         &secret,
@@ -742,7 +739,7 @@ async fn handle(
                 return session::unauthorized();
             };
             let renewal = match password_login::rotate_login(
-                &tx,
+                &mut tx,
                 &inner.issuer,
                 &request.aud,
                 &secret,
@@ -766,14 +763,13 @@ async fn handle(
                     Err(_) => return unavailable(),
                 },
             );
-            let claims = match session::claims_for_audience(
-                inner, &tx, &principal, &target, authority,
-            )
-            .await
-            {
-                Ok(claims) => claims,
-                Err(error) => return authority_failure(&error),
-            };
+            let claims =
+                match session::claims_for_audience(inner, &mut tx, &principal, &target, authority)
+                    .await
+                {
+                    Ok(claims) => claims,
+                    Err(error) => return authority_failure(&error),
+                };
             finish_session(tx, claims, renewal, started_at, request.carrier).await
         }
         _ => invalid(),
@@ -788,7 +784,7 @@ fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> 
 }
 
 async fn finish_session(
-    tx: tokio_postgres::Transaction<'_>,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
     mut claims: wamn_identity_protocol::token::SessionClaims,
     renewal: password_login::Renewal,
     started_at: i64,
@@ -807,9 +803,13 @@ async fn finish_session(
             Some(csrf)
         }
     };
-    let Ok(token) =
-        sign_session_token_in_transaction(&tx, claims, started_at, Some(renewal.login.expires_at))
-            .await
+    let Ok(token) = sign_session_token_in_transaction(
+        &mut tx,
+        claims,
+        started_at,
+        Some(renewal.login.expires_at),
+    )
+    .await
     else {
         return unavailable();
     };
@@ -933,16 +933,19 @@ async fn admit(
     buckets: &[(&str, i32)],
     issuer: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let tx = client.transaction().await?;
+    let mut tx = client.begin().await?;
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor])
-        .await?;
+    sqlx::query("SELECT set_config('app.user_id',$1,true)")
+        .bind(&actor)
+        .execute(&mut *tx)
+        .await
+        .map(|result| result.rows_affected())?;
 
     // Fixed-window resets do not extend on refused attempts. Global admission
     // bounds source/account row creation; pruning retains at most two minutes.
     let mut allowed = true;
     for (bucket, limit) in buckets {
-        let count: i32 = tx.query_one("INSERT INTO identity.password_attempts (bucket, started_at, attempts) VALUES ($1, clock_timestamp(), 1) ON CONFLICT (bucket) DO UPDATE SET attempts = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN 1 ELSE LEAST(identity.password_attempts.attempts + 1, $2 + 1) END, started_at = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN EXCLUDED.started_at ELSE identity.password_attempts.started_at END RETURNING attempts", &[bucket, limit]).await?.get(0);
+        let count: i32 = sqlx::query("INSERT INTO identity.password_attempts (bucket, started_at, attempts) VALUES ($1, clock_timestamp(), 1) ON CONFLICT (bucket) DO UPDATE SET attempts = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN 1 ELSE LEAST(identity.password_attempts.attempts + 1, $2 + 1) END, started_at = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN EXCLUDED.started_at ELSE identity.password_attempts.started_at END RETURNING attempts").bind(bucket).bind(limit).fetch_one(&mut *tx).await?.get(0);
         if count > *limit {
             allowed = false;
             break;
@@ -950,8 +953,8 @@ async fn admit(
     }
     if buckets.first().is_some_and(|(key, _)| *key == "global") {
         // Cleanup is service-owned and bounded independently of submitted credentials.
-        password_login::prune_expired(&tx, issuer).await?;
-        tx.execute("DELETE FROM identity.password_attempts WHERE started_at < clock_timestamp() - interval '120 seconds'", &[]).await?;
+        password_login::prune_expired(&mut tx, issuer).await?;
+        sqlx::query("DELETE FROM identity.password_attempts WHERE started_at < clock_timestamp() - interval '120 seconds'").execute(&mut *tx).await.map(|result| result.rows_affected())?;
     }
     tx.commit().await?;
     Ok(allowed)
@@ -976,20 +979,18 @@ fn log_refusal(error: &PasswordError, email: &str) {
 /// An enrollment request names a principal, not an email, so look the email up
 /// for the log line.
 async fn enrollment_refusal(
-    client: &Client,
+    client: &mut Client,
     principal: &PrincipalId,
     error: &PasswordError,
 ) -> Response<Full<Bytes>> {
     if let Some(cause) = error.cause() {
-        match client
-            .query_opt(
-                "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-                &[&principal.to_string().as_str()],
-            )
+        match sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
+            .bind(principal.to_string().as_str())
+            .fetch_optional(&mut *client)
             .await
         {
             Ok(Some(row)) => {
-                return refusal(error, row.get::<_, &str>(0));
+                return refusal(error, row.get::<&str, _>(0));
             }
             _ => {
                 tracing::info!(principal = %principal, cause = %cause, "password request refused");
@@ -1014,17 +1015,19 @@ async fn create_user(
     changes: &wamn_broker::Publisher,
 ) -> Response<Full<Bytes>> {
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    let Ok(tx) = client.transaction().await else {
+    let Ok(mut tx) = client.begin().await else {
         return unavailable();
     };
-    if tx
-        .execute("SELECT set_config('app.user_id', $1, true)", &[&actor])
+    if sqlx::query("SELECT set_config('app.user_id', $1, true)")
+        .bind(&actor)
+        .execute(&mut *tx)
         .await
+        .map(|result| result.rows_affected())
         .is_err()
     {
         return unavailable();
     }
-    let account = match create_or_reuse_user(&tx, &request.email, &request.display_name).await {
+    let account = match create_or_reuse_user(&mut tx, &request.email, &request.display_name).await {
         Ok(account) => account,
         Err(error) => {
             let status = match error.error_type() {
@@ -1083,10 +1086,7 @@ mod tests {
     use std::convert::Infallible;
     use std::sync::Arc;
     use tokio::net::TcpListener;
-    use wamn_control_provision::CredentialGeneration;
-    use wamn_control_provision::identity_issuer::{
-        identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
-    };
+    use wamn_control_provision::identity_role::identity_issuer_login;
 
     #[test]
     fn a_filter_lists_only_its_org_and_project() {
@@ -1228,15 +1228,13 @@ mod tests {
     async fn admission_stamps_every_bucket_as_the_platform_principal() {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
-        let (mut client, connection) =
-            tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-                .await
-                .unwrap();
-        tokio::spawn(connection);
-        client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").await.unwrap();
-        client
-            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+        sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+            .execute(&mut client)
             .await
+            .map(drop)
             .unwrap();
         for buckets in [
             vec![("global", 10)],
@@ -1255,7 +1253,7 @@ mod tests {
         }
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
         wamn_test_infrastructure::record_history::assert_stamp(
-            &client,
+            &mut client,
             "identity.password_attempts",
             "true",
             &actor,
@@ -1263,22 +1261,19 @@ mod tests {
         )
         .await;
         assert_eq!(
-            client
-                .query_one("SELECT count(*) FROM identity.password_attempts", &[])
+            sqlx::query("SELECT count(*) FROM identity.password_attempts")
+                .fetch_one(&mut client)
                 .await
                 .unwrap()
-                .get::<_, i64>(0),
+                .get::<i64, _>(0),
             3
         );
         assert!(
-            client
-                .query_one(
-                    "SELECT nullif(current_setting('app.user_id', true), '') IS NULL",
-                    &[]
-                )
+            sqlx::query("SELECT nullif(current_setting('app.user_id', true), '') IS NULL")
+                .fetch_one(&mut client)
                 .await
                 .unwrap()
-                .get::<_, bool>(0)
+                .get::<bool, _>(0)
         );
     }
 
@@ -1326,56 +1321,61 @@ mod tests {
     async fn operator_invitation_delivery_failure_and_shared_admission() {
         let mut pg = wamn_test_postgres::start(&[]).expect("owned PostgreSQL");
         let db = pg.create_database("wamn_system").unwrap();
-        let admin = connect_database(db.url()).await.unwrap();
-        admin
-            .client
-            .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        let mut admin = connect_database(db.url()).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (wamn_control_provision::sql::ensure_db_owner_role_sql()).to_string(),
+        ))
+        .execute(&mut admin.client)
+        .await
+        .map(drop)
+        .unwrap();
+        sqlx::raw_sql("CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system").execute(&mut admin.client).await.map(drop).unwrap();
+        sqlx::raw_sql(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+            .execute(&mut admin.client)
             .await
+            .map(drop)
             .unwrap();
-        admin.client.batch_execute("CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system").await.unwrap();
-        admin
-            .client
-            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        sqlx::raw_sql("RESET ROLE")
+            .execute(&mut admin.client)
             .await
+            .map(drop)
             .unwrap();
-        admin.client.batch_execute("RESET ROLE").await.unwrap();
         let issuer = "https://password-fixture.invalid";
-        admin
-            .client
-            .batch_execute(
-                &prepare_identity_issuer_generation_sql(
-                    issuer,
-                    CredentialGeneration::A,
-                    "fixture-password",
-                    "2100-01-01T00:00:00Z",
-                )
-                .unwrap(),
-            )
-            .await
-            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::issuer_login_sql(issuer, "fixture-password")
+                .unwrap())
+                .to_string(),
+        ))
+        .execute(&mut admin.client)
+        .await
+        .map(drop)
+        .unwrap();
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
-        admin
-            .client
-            .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
+        sqlx::query("SELECT set_config('app.user_id', $1, false)")
+            .bind(&actor)
+            .execute(&mut admin.client)
             .await
+            .map(|result| result.rows_affected())
             .unwrap();
         let alice = wamn_platform_identity::create_user(
-            &admin.client,
+            &mut admin.client,
             "alice",
             "alice@example.invalid",
             "Alice",
         )
         .await
         .unwrap();
-        let bob =
-            wamn_platform_identity::create_user(&admin.client, "bob", "bob@example.invalid", "Bob")
-                .await
-                .unwrap();
-        let mut url = url::Url::parse(db.url()).unwrap();
-        url.set_username(
-            &identity_issuer_generation_role(issuer, CredentialGeneration::A).unwrap(),
+        let bob = wamn_platform_identity::create_user(
+            &mut admin.client,
+            "bob",
+            "bob@example.invalid",
+            "Bob",
         )
+        .await
         .unwrap();
+        let mut url = url::Url::parse(db.url()).unwrap();
+        url.set_username(&identity_issuer_login(issuer).unwrap())
+            .unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
@@ -1485,15 +1485,12 @@ mod tests {
             received.recv().await.unwrap()["to"][0],
             "bob@example.invalid"
         );
-        let remaining: i64 = admin
-            .client
-            .query_one(
-                "SELECT count(*) FROM identity.password_tokens WHERE consumed_at IS NULL",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let remaining: i64 =
+            sqlx::query("SELECT count(*) FROM identity.password_tokens WHERE consumed_at IS NULL")
+                .fetch_one(&mut admin.client)
+                .await
+                .unwrap()
+                .get(0);
         assert_eq!(remaining, 0);
         // `/users` creates a user once, folds its email into the subject and
         // reports whether it has a password credential.
@@ -1536,15 +1533,14 @@ mod tests {
                 ),
             ]
         );
-        let row = admin
-            .client
-            .query_one(
-                "SELECT subject, email, display_name, updated_by::text \
+        let row = sqlx::query(
+            "SELECT subject, email, display_name, updated_by::text \
                  FROM identity.principals WHERE id = $1::text::uuid",
-                &[&carol],
-            )
-            .await
-            .unwrap();
+        )
+        .bind(&carol)
+        .fetch_one(&mut admin.client)
+        .await
+        .unwrap();
         assert_eq!(
             (0..4).map(|index| row.get(index)).collect::<Vec<String>>(),
             [
@@ -1555,7 +1551,7 @@ mod tests {
             ]
         );
         wamn_platform_identity::disable_principal(
-            &admin.client,
+            &mut admin.client,
             bob.id(),
             &mut wamn_broker::auth_changes::AuthDrops::default(),
         )

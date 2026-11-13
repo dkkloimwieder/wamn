@@ -90,8 +90,7 @@ The [database contract](data-access.md) owns SQL-specific authorization and tran
 
 `wamn:postgres` binds no connection instance, so it has no connection generation.
 The host selects the one project-environment database from its trusted project.
-Each authority class logs in to that database as its own A/B credential generation, read from its own Secret.
-Rotation is the `wamn-ctl provision-project-env` sequence: prepare the new generation, publish its Secret, roll the workloads, and retire the old generation.
+Each authority class uses one login and one basic-auth Secret. CloudNativePG manages the login. The cluster, its consumers and its Secrets share the org namespace. Component configuration names the database, login, host and Secret references. The shared SQLx constructor verifies the server certificate with the cluster CA.
 
 ## Outbound HTTP
 

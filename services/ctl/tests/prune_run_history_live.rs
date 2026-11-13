@@ -19,10 +19,11 @@
 //! 4. The `wamn_platform` arm still lets the generation read those three columns
 //!    of another project. No grant can close that, so the case asserts it.
 
-use tokio_postgres::{Client, NoTls};
+use sqlx::PgConnection as Client;
+use sqlx::Row as _;
+
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, compose_url, sql,
-    workload_generation_role,
+    APP_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
 };
 use wamn_test_infrastructure::ctl_process;
 use wamn_test_infrastructure::locked_database;
@@ -43,40 +44,38 @@ const GENERATION_PASSWORD: &str = "run-retention-test-generation";
 const APP_PASSWORD: &str = "run-retention-test-app";
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to disposable PostgreSQL");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
 /// Install the run plane on the project base grants, with one effective release for each project.
-async fn provision(admin: &Client) {
-    admin
-        .batch_execute(RUN_STATE_SQL)
+async fn provision(admin: &mut Client) {
+    sqlx::raw_sql(RUN_STATE_SQL)
+        .execute(&mut *admin)
         .await
+        .map(drop)
         .expect("apply run-state.sql");
-    admin
-        .batch_execute(RUN_QUEUE_SQL)
+    sqlx::raw_sql(RUN_QUEUE_SQL)
+        .execute(&mut *admin)
         .await
+        .map(drop)
         .expect("apply run-queue.sql");
-    admin
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
              INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ('{PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}'), \
                     ('{OTHER_PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}');",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
-        ))
-        .await
+        ))).execute(&mut *admin).await.map(drop)
         .expect("seed the releases");
 }
 
-async fn drop_generation_role(admin: &Client, role: &str) {
-    admin
-        .batch_execute(&format!(
+async fn drop_generation_role(admin: &mut Client, role: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DO $run_retention$ BEGIN \
                IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') THEN \
                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
@@ -84,40 +83,48 @@ async fn drop_generation_role(admin: &Client, role: &str) {
                END IF; \
              END $run_retention$;"
         ))
-        .await
-        .expect("drop the generation role");
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("drop the generation role");
 }
 
 /// Mint the generation through the production builders: the prepare builder
 /// for the login and the platform group builder for the `wamn_platform` edge.
 /// Without that edge, FORCE RLS on `runs` gives the generation zero rows.
-async fn mint(admin: &Client, database: &str, role: &str) {
+async fn mint(admin: &mut Client, database: &str, role: &str) {
     drop_generation_role(admin, role).await;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
             WorkloadRoleFamily::Retention,
             database,
             role,
             GENERATION_PASSWORD,
-            "2100-01-01T00:00:00Z",
         ))
-        .await
-        .expect("prepare the run retention generation");
-    admin
-        .batch_execute(&sql::platform_group_membership_sql(
-            WorkloadRoleFamily::Retention,
-        ))
-        .await
-        .expect("converge the run retention platform group edge");
-    let clean: bool = admin
-        .query_one(
-            "SELECT NOT (rolsuper OR rolbypassrls) AND rolcanlogin AND rolinherit \
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("prepare the run retention generation");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::platform_group_membership_sql(WorkloadRoleFamily::Retention)).to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .expect("converge the run retention platform group edge");
+    let clean: bool = sqlx::query(
+        "SELECT NOT (rolsuper OR rolbypassrls) AND rolcanlogin AND rolinherit \
                FROM pg_catalog.pg_roles WHERE rolname = $1",
-            &[&role],
-        )
-        .await
-        .expect("read the generation attributes")
-        .get(0);
+    )
+    .bind(&role)
+    .fetch_one(&mut *admin)
+    .await
+    .expect("read the generation attributes")
+    .get(0);
     assert!(
         clean,
         "the {role} generation is superuser, BYPASSRLS, cannot log in, or does not inherit"
@@ -126,50 +133,48 @@ async fn mint(admin: &Client, database: &str, role: &str) {
 
 /// Insert a run created `age_days` days ago, and its queue row.
 async fn seed_run(
-    admin: &Client,
+    admin: &mut Client,
     project_env_key: &str,
     run_id: &str,
     status: &str,
     age_days: i64,
 ) {
-    admin
-        .execute(
-            &format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {SCHEMA}.runs ( \
                    project_env_key, run_id, wiring_id,wiring_version,wiring_hash,binding_world_json, package_id, manifest_digest, \
                    environment, status, input_json, created_at \
                  ) VALUES ($1, $2, 'fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
                            jsonb_build_object('payload', $1::text), \
                            now() - ($4::bigint * interval '1 day'))"
-            ),
-            &[&project_env_key, &run_id, &status, &age_days],
-        )
-        .await
+            ))).bind(&project_env_key).bind(&run_id).bind(&status).bind(&age_days).execute(&mut *admin).await.map(|result| result.rows_affected())
         .expect("seed a run");
-    admin
-        .execute(
-            &format!("INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ($1, $2)"),
-            &[&project_env_key, &run_id],
-        )
-        .await
-        .expect("seed a queue row");
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!("INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ($1, $2)"))
+            .to_string(),
+    ))
+    .bind(&project_env_key)
+    .bind(&run_id)
+    .execute(&mut *admin)
+    .await
+    .map(|result| result.rows_affected())
+    .expect("seed a queue row");
 }
 
 /// The `project/run` keys of `relation`, in order.
-async fn keys(admin: &Client, relation: &str) -> Vec<String> {
-    admin
-        .query(
-            &format!(
-                "SELECT project_env_key || '/' || run_id FROM {SCHEMA}.{relation} \
+async fn keys(admin: &mut Client, relation: &str) -> Vec<String> {
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&format!(
+            "SELECT project_env_key || '/' || run_id FROM {SCHEMA}.{relation} \
                   ORDER BY project_env_key, run_id"
-            ),
-            &[],
-        )
-        .await
-        .expect("read the post-state")
-        .iter()
-        .map(|row| row.get(0))
-        .collect()
+        ))
+            .to_string(),
+    ))
+    .fetch_all(&mut *admin)
+    .await
+    .expect("read the post-state")
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
 fn prune_argv<'a>(url: &'a str, project_env_key: &'a str) -> [&'a str; 13] {
@@ -199,29 +204,23 @@ async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
 fn replace_role(url: &str, role: &str, password: &str) -> String {
-    let config: tokio_postgres::Config = url.parse().expect("parse the connection URL");
-    let host = match config.get_hosts() {
-        [tokio_postgres::config::Host::Tcp(host)] => host.clone(),
-        hosts => panic!("the run history retention test needs one TCP host, got {hosts:?}"),
-    };
-    let port = *config
-        .get_ports()
-        .first()
-        .expect("the connection URL names a port");
-    let database = config
-        .get_dbname()
-        .expect("the connection URL names a database");
-    compose_url(role, password, &host, port, database)
+    let mut input = url::Url::parse(url).expect("parse fixture input");
+    input.set_username(role).unwrap();
+    input.set_password(Some(password)).unwrap();
+    input.into()
 }
 
 /// Whether the generation may run `statement`.
-async fn allowed(credential: &Client, statement: &str) -> bool {
-    credential.query(statement, &[]).await.is_ok()
+async fn allowed(credential: &mut Client, statement: &str) -> bool {
+    sqlx::query(sqlx::AssertSqlSafe((statement).to_string()))
+        .fetch_all(&mut *credential)
+        .await
+        .is_ok()
 }
 
 /// What the `wamn_platform` arm gives the generation, read from the server as
 /// the generation. The grants confine it, and the arm is `USING (true)`.
-async fn assert_authority(credential: &Client) {
+async fn assert_authority(credential: &mut Client) {
     assert!(
         allowed(
             credential,
@@ -242,24 +241,25 @@ async fn assert_authority(credential: &Client) {
     }
 
     // The grant bounds who may delete, and the trigger bounds what.
-    let error = credential
-        .execute(
-            &format!("DELETE FROM {SCHEMA}.runs WHERE project_env_key = $1 AND status = 'running'"),
-            &[&PROJECT_ENV_KEY],
-        )
-        .await
-        .expect_err("the trigger refuses a raw non-terminal delete");
+    let error = sqlx::query(sqlx::AssertSqlSafe(
+        (&format!("DELETE FROM {SCHEMA}.runs WHERE project_env_key = $1 AND status = 'running'"))
+            .to_string(),
+    ))
+    .bind(&PROJECT_ENV_KEY)
+    .execute(&mut *credential)
+    .await
+    .map(|result| result.rows_affected())
+    .expect_err("the trigger refuses a raw non-terminal delete");
     assert_eq!(
         error
-            .as_db_error()
-            .map(tokio_postgres::error::DbError::message),
+            .as_database_error()
+            .map(sqlx::error::DatabaseError::message),
         Some("run-delete-nonterminal"),
         "the refusal of the raw non-terminal delete: {error:?}"
     );
 
-    let stray: i64 = credential
-        .query_one(
-            "SELECT count(*) FROM pg_catalog.pg_class c \
+    let stray: i64 = sqlx::query(
+        "SELECT count(*) FROM pg_catalog.pg_class c \
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
                CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE', \
                                        'REFERENCES','TRIGGER']) p \
@@ -267,25 +267,25 @@ async fn assert_authority(credential: &Client) {
                 AND n.nspname NOT IN ('pg_catalog','information_schema') \
                 AND c.relname <> 'runs' \
                 AND pg_catalog.has_table_privilege('wamn_run_retention', c.oid, p)",
-            &[],
-        )
-        .await
-        .expect("sweep the stable run retention role for table privileges")
-        .get(0);
+    )
+    .fetch_one(&mut *credential)
+    .await
+    .expect("sweep the stable run retention role for table privileges")
+    .get(0);
     assert_eq!(
         stray, 0,
         "the run retention role holds privileges outside runs"
     );
 
     // The residual: the platform arm still shows the other project's three columns.
-    let foreign: i64 = credential
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE project_env_key = $1"),
-            &[&OTHER_PROJECT_ENV_KEY],
-        )
-        .await
-        .expect("read the other project's rows under the platform arm")
-        .get(0);
+    let foreign: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {SCHEMA}.runs WHERE project_env_key = $1"
+    )))
+    .bind(&OTHER_PROJECT_ENV_KEY)
+    .fetch_one(&mut *credential)
+    .await
+    .expect("read the other project's rows under the platform arm")
+    .get(0);
     assert!(
         foreign > 0,
         "the platform arm no longer exposes the other project's predicate columns"
@@ -295,47 +295,47 @@ async fn assert_authority(credential: &Client) {
 #[tokio::test]
 async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key() {
     let url = locked_database::database(wamn_catalog::test_database::project);
-    let admin = connect(&url).await;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
+    let mut admin = connect(&url).await;
+    let database: String = sqlx::query("SELECT current_database()::text")
+        .fetch_one(&mut admin)
         .await
         .expect("read the target database name")
         .get(0);
-    provision(&admin).await;
+    provision(&mut admin).await;
 
     // An old completed run, a recent completed run, an old running run, and an
     // old completed run of the other project.
-    seed_run(&admin, PROJECT_ENV_KEY, "old-done", "completed", 40).await;
-    seed_run(&admin, PROJECT_ENV_KEY, "recent-done", "completed", 1).await;
-    seed_run(&admin, PROJECT_ENV_KEY, "old-running", "running", 40).await;
+    seed_run(&mut admin, PROJECT_ENV_KEY, "old-done", "completed", 40).await;
+    seed_run(&mut admin, PROJECT_ENV_KEY, "recent-done", "completed", 1).await;
+    seed_run(&mut admin, PROJECT_ENV_KEY, "old-running", "running", 40).await;
     seed_run(
-        &admin,
+        &mut admin,
         OTHER_PROJECT_ENV_KEY,
         "foreign-done",
         "completed",
         40,
     )
     .await;
-    let seeded_runs = keys(&admin, "runs").await;
-    let seeded_queue = keys(&admin, "run_queue").await;
+    let seeded_runs = keys(&mut admin, "runs").await;
+    let seeded_queue = keys(&mut admin, "run_queue").await;
 
-    let generation_role = workload_generation_role(
+    let generation_role = workload_login(
         WorkloadRoleFamily::Retention,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("derive the run retention generation identity");
-    mint(&admin, &database, &generation_role).await;
+    mint(&mut admin, &database, &generation_role).await;
     let credential_url = replace_role(&url, &generation_role, GENERATION_PASSWORD);
-    admin
-        .batch_execute(&format!(
-            "ALTER ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'"
-        ))
-        .await
-        .expect("let the shared wamn_app role log in");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("let the shared wamn_app role log in");
     let app_url = replace_role(&url, APP_ROLE, APP_PASSWORD);
 
     // The refusals run first, against the populated store.
@@ -353,13 +353,16 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
     .await;
     assert_refused(&app_url, PROJECT_ENV_KEY, "wamn_app login").await;
     assert_eq!(
-        (keys(&admin, "runs").await, keys(&admin, "run_queue").await),
+        (
+            keys(&mut admin, "runs").await,
+            keys(&mut admin, "run_queue").await
+        ),
         (seeded_runs, seeded_queue),
         "the refusals left the run history untouched"
     );
 
-    let credential = connect(&credential_url).await;
-    assert_authority(&credential).await;
+    let mut credential = connect(&credential_url).await;
+    assert_authority(&mut credential).await;
     drop(credential);
 
     let pruned = ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
@@ -376,16 +379,19 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key(
         format!("{PROJECT_ENV_KEY}/old-running"),
         format!("{PROJECT_ENV_KEY}/recent-done"),
     ];
-    assert_eq!(keys(&admin, "runs").await, kept, "the retained runs");
+    assert_eq!(keys(&mut admin, "runs").await, kept, "the retained runs");
     assert_eq!(
-        keys(&admin, "run_queue").await,
+        keys(&mut admin, "run_queue").await,
         kept,
         "the queue row of the pruned run cascaded, and the others stayed"
     );
 
-    admin
-        .batch_execute(&format!("ALTER ROLE {APP_ROLE} NOLOGIN PASSWORD NULL"))
-        .await
-        .expect("restore the shared wamn_app role");
-    drop_generation_role(&admin, &generation_role).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER ROLE {APP_ROLE} NOLOGIN PASSWORD NULL"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("restore the shared wamn_app role");
+    drop_generation_role(&mut admin, &generation_role).await;
 }

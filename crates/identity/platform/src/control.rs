@@ -6,7 +6,7 @@
 //! org role `org-admin`, or the project role `project-admin` in a project of
 //! the org, grants control authority in that org.
 
-use tokio_postgres::GenericClient;
+use sqlx::Row as _;
 use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
 use crate::org::ORG_ADMIN_ROLE;
@@ -79,7 +79,7 @@ pub fn control_audience_org(audience: &str) -> Option<&str> {
 /// The projects of `org` where the active user principal is
 /// `project-admin`. An empty list means no control authority in the org.
 pub async fn control_projects(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<Vec<String>, IdentityError> {
@@ -88,7 +88,7 @@ pub async fn control_projects(
 
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn control_projects_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     after: Option<&str>,
@@ -97,17 +97,13 @@ pub async fn control_projects_page(
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    Ok(client
-        .query(
-            CONTROL_PROJECTS_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &org,
-                &PROJECT_ADMIN_ROLE,
-                &after,
-                &limit,
-            ],
-        )
+    Ok(sqlx::query(CONTROL_PROJECTS_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(org)
+        .bind(PROJECT_ADMIN_ROLE)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -117,18 +113,18 @@ pub async fn control_projects_page(
 
 /// Whether the active user principal holds `org-admin` in `org`.
 pub async fn is_org_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<bool, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    client
-        .query_one(
-            ORG_ADMIN_SQL,
-            &[&principal_id.to_string().as_str(), &org, &ORG_ADMIN_ROLE],
-        )
+    sqlx::query(ORG_ADMIN_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(org)
+        .bind(ORG_ADMIN_ROLE)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .try_get(0)
@@ -138,7 +134,7 @@ pub async fn is_org_admin(
 /// Whether the active user principal holds `project-admin` in `project` of
 /// `org`.
 pub async fn is_project_admin(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
@@ -148,17 +144,13 @@ pub async fn is_project_admin(
         return Err(invalid_org());
     }
     let project = crate::require_target_segment("project", project)?;
-    client
-        .query_one(
-            PROJECT_ADMIN_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &org,
-                &project,
-                &PROJECT_ADMIN_ROLE,
-                &environment,
-            ],
-        )
+    sqlx::query(PROJECT_ADMIN_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(org)
+        .bind(&project)
+        .bind(PROJECT_ADMIN_ROLE)
+        .bind(environment)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .try_get(0)
@@ -176,7 +168,7 @@ pub struct ProjectSummary {
 
 /// Every project of `org`, which an `org-admin` administers.
 pub async fn org_projects(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
 ) -> Result<Vec<ProjectSummary>, IdentityError> {
     org_projects_page(client, org, None, None).await
@@ -184,7 +176,7 @@ pub async fn org_projects(
 
 /// Read a keyset page, or all rows when the limit is absent.
 pub async fn org_projects_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     org: &str,
     after: Option<&str>,
     limit: Option<i64>,
@@ -192,8 +184,11 @@ pub async fn org_projects_page(
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    Ok(client
-        .query(ORG_PROJECTS_SQL, &[&org, &after, &limit])
+    Ok(sqlx::query(ORG_PROJECTS_SQL)
+        .bind(org)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -207,7 +202,7 @@ pub async fn org_projects_page(
 /// Every registered org where the active user principal holds control
 /// authority.
 pub async fn control_orgs(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
 ) -> Result<Vec<String>, IdentityError> {
     control_orgs_page(client, principal_id, None, None, None).await
@@ -215,24 +210,20 @@ pub async fn control_orgs(
 
 /// Authorized orgs after a key, restricted by the discovery filter.
 pub async fn control_orgs_page(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
     org: Option<&str>,
     after: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<String>, IdentityError> {
-    Ok(client
-        .query(
-            CONTROL_ORGS_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &PROJECT_ADMIN_ROLE,
-                &ORG_ADMIN_ROLE,
-                &org,
-                &after,
-                &limit,
-            ],
-        )
+    Ok(sqlx::query(CONTROL_ORGS_SQL)
+        .bind(principal_id.to_string().as_str())
+        .bind(PROJECT_ADMIN_ROLE)
+        .bind(ORG_ADMIN_ROLE)
+        .bind(org)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -247,26 +238,22 @@ pub async fn control_orgs_page(
 /// Signature and exact audience verification must precede this read. A
 /// control session never comes from a PAT.
 pub async fn control_session_is_active(
-    client: &(impl GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     claims: &SessionClaims,
 ) -> Result<bool, IdentityError> {
     let SessionAuthority::Login(login) = &claims.authority;
     if control_audience_org(&claims.aud) != Some(claims.org.as_str()) {
         return Ok(false);
     }
-    client
-        .query_one(
-            CONTROL_SESSION_ACTIVE_SQL,
-            &[
-                &claims.sub.to_string(),
-                &claims.org,
-                &PROJECT_ADMIN_ROLE,
-                &login.to_string(),
-                &claims.iss,
-                &claims.aud,
-                &ORG_ADMIN_ROLE,
-            ],
-        )
+    sqlx::query(CONTROL_SESSION_ACTIVE_SQL)
+        .bind(claims.sub.to_string())
+        .bind(&claims.org)
+        .bind(PROJECT_ADMIN_ROLE)
+        .bind(login.to_string())
+        .bind(&claims.iss)
+        .bind(&claims.aud)
+        .bind(ORG_ADMIN_ROLE)
+        .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .try_get(0)

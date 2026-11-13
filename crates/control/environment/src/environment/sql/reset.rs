@@ -1,12 +1,14 @@
 //! Reconstruct a disposable environment under its existing CNPG database name.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wamn_compiler::manifest::PackageManifest;
-use wamn_package_control::{apply_package, database::connect};
+use wamn_package_control::apply_package;
+use wamn_postgres::connect;
 
 use super::super::{Platform, analyse, document::EnvironmentDocument, ensure, stage};
 use super::schema::{self, Candidate, SchemaSource};
@@ -154,10 +156,11 @@ async fn prepare_inputs(
         "active database changed during input resolution"
     );
     registry::record_reset(&mut system, &document.triple(), &active, &inputs).await?;
-    connect(admin_url)
-        .await?
-        .batch_execute(&crate::provision_project_env::role_posture_sql())
-        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        crate::provision_project_env::role_posture_sql(),
+    ))
+    .execute(&mut connect(admin_url).await?)
+    .await?;
     Ok(())
 }
 
@@ -167,13 +170,13 @@ async fn recorded_substrate(
     sources: &[wamn_schema_control::MigrationSource],
 ) -> anyhow::Result<crate::platform_migrations::ProjectReset> {
     let url = ensure::project_url(platform, &document.triple()).await?;
-    let project = analyse::connect_project(&url).await?;
-    crate::platform_migrations::ProjectReset::read(&project, sources).await
+    let mut project = analyse::connect_project(&url).await?;
+    crate::platform_migrations::ProjectReset::read(&mut project, sources).await
 }
 
 /// Select only pinned applied files during reset initialization and retries.
 pub(crate) async fn migration_sources(
-    system: &impl tokio_postgres::GenericClient,
+    system: &mut sqlx::PgConnection,
     triple: &wamn_registry::Triple,
     sources: &[wamn_schema_control::MigrationSource],
 ) -> anyhow::Result<Option<Vec<wamn_schema_control::MigrationSource>>> {
@@ -216,13 +219,13 @@ async fn read_pending(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Pending> {
-    let system = connect(&platform.system_database_url).await?;
-    let row = analyse::read_row(&system, document)
+    let mut system = connect(&platform.system_database_url).await?;
+    let row = analyse::read_row(&mut system, document)
         .await?
         .context("environment is not recorded")?;
     ensure!(row.disposable, "environment is not disposable");
     let pending: Pending = serde_json::from_value(
-        registry::pending_database(&system, &document.triple())
+        registry::pending_database(&mut system, &document.triple())
             .await?
             .context("no pending database")?,
     )?;
@@ -252,7 +255,7 @@ async fn resolve_releases(
         Vec<PackageManifest>,
     )>,
 > {
-    let system = connect(&platform.system_database_url).await?;
+    let mut system = connect(&platform.system_database_url).await?;
     let mut releases = Vec::new();
     for (application, selection) in &document.applications {
         if let super::super::document::DeclaredRelease::Digest(digest) = &selection.current {
@@ -268,7 +271,7 @@ async fn resolve_releases(
             );
             ensure!(refusals.is_empty(), "{}", refusals.join("; "));
             let (packages, _) = analyse::read_release_packages(platform, &manifest).await?;
-            super::super::bindings::analyse(&system, &selected, &packages).await?;
+            super::super::bindings::analyse(&mut system, &selected, &packages).await?;
             releases.push((application.clone(), digest.clone(), manifest, packages));
         }
     }
@@ -330,38 +333,34 @@ pub async fn initialize_with_migrations(
     let (packages, order) = validate_candidates(document, &candidates, &pending.inputs.sources)?;
     let releases = resolve_releases(platform, document).await?;
     let database = database(document, &instance);
-    let mut project_url = url::Url::parse(&platform.system_database_url)?;
-    project_url.set_path(&database);
-    let project_url = project_url.to_string();
-    let mut target_admin = url::Url::parse(admin_url)?;
-    target_admin.set_path(&database);
-    let target = connect(target_admin.as_str()).await?;
-    if target
-        .query_one(
-            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL",
-            &[],
-        )
+    let project_url =
+        wamn_postgres::database_configuration(&platform.system_database_url, &database)?;
+    let target_admin = wamn_postgres::database_configuration(admin_url, &database)?;
+    let mut target = connect(&target_admin).await?;
+    if sqlx::query("SELECT to_regclass('platform.schema_baseline') IS NOT NULL")
+        .fetch_one(&mut target)
         .await?
-        .get::<_, bool>(0)
+        .get::<bool, _>(0)
     {
-        let identity: String = target
-            .query_one(
-                "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-                &[],
-            )
-            .await?
-            .get(0);
+        let identity: String =
+            sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+                .fetch_one(&mut target)
+                .await?
+                .get(0);
         ensure!(
             identity == pending.initialization_identity,
             "database has not been recreated for this reset"
         );
     }
-    let admin = connect(admin_url).await?;
-    admin
-        .batch_execute(&crate::provision_project_env::privilege_sql(&database))
-        .await?;
+    let mut admin = connect(admin_url).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        crate::provision_project_env::privilege_sql(&database),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
     ensure::ensure_project_database_with_migrations(
-        platform, document, &packages, &admin, admin_url, migrations,
+        platform, document, &packages, &mut admin, admin_url, migrations,
     )
     .await?;
     let changes = platform.auth_changes().await?;
@@ -449,8 +448,8 @@ async fn prepare_deployed(
     document: &EnvironmentDocument,
     candidate: Option<(&str, &str)>,
 ) -> anyhow::Result<Pending> {
-    let system = connect(&platform.system_database_url).await?;
-    if registry::pending_database(&system, &document.triple())
+    let mut system = connect(&platform.system_database_url).await?;
+    if registry::pending_database(&mut system, &document.triple())
         .await?
         .is_none()
     {
@@ -641,39 +640,29 @@ pub async fn needs_recreation(
 ) -> anyhow::Result<bool> {
     let pending = read_pending(platform, document).await?;
     let project_url = ensure::project_url(platform, &document.triple()).await?;
-    let name = url::Url::parse(&project_url)?
-        .path()
-        .trim_start_matches('/')
-        .to_owned();
-    let system = connect(&platform.system_database_url).await?;
+    let name = wamn_postgres::identity(&project_url)?.1;
+    let mut system = connect(&platform.system_database_url).await?;
     // An interrupted absent operation leaves the owned database closed to connections.
-    let database = system
-        .query_opt(
-            "SELECT datallowconn FROM pg_database WHERE datname=$1",
-            &[&name],
-        )
+    let database = sqlx::query("SELECT datallowconn FROM pg_database WHERE datname=$1")
+        .bind(&name)
+        .fetch_optional(&mut system)
         .await?;
-    if database.is_none_or(|row| !row.get::<_, bool>(0)) {
+    if database.is_none_or(|row| !row.get::<bool, _>(0)) {
         return Ok(true);
     }
-    let project = connect(&project_url).await?;
-    if !project
-        .query_one(
-            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL",
-            &[],
-        )
+    let mut project = connect(&project_url).await?;
+    if !sqlx::query("SELECT to_regclass('platform.schema_baseline') IS NOT NULL")
+        .fetch_one(&mut project)
         .await?
-        .get::<_, bool>(0)
+        .get::<bool, _>(0)
     {
         return Ok(true);
     }
-    let identity: String = project
-        .query_one(
-            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
-            &[],
-        )
-        .await?
-        .get(0);
+    let identity: String =
+        sqlx::query("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton")
+            .fetch_one(&mut project)
+            .await?
+            .get(0);
     Ok(identity != pending.initialization_identity)
 }
 
@@ -706,9 +695,8 @@ async fn recreate(
                 == document.triple().to_string(),
         "Database resource has different ownership"
     );
-    let mut postgres = url::Url::parse(admin_url)?;
-    postgres.set_path("postgres");
-    let admin = connect(postgres.as_str()).await?;
+    let postgres = wamn_postgres::database_configuration(admin_url, "postgres")?;
+    let mut admin = connect(&postgres).await?;
     let capture = wamn_control_provision::cdc_object_name(
         &document.org,
         &document.project,
@@ -730,23 +718,27 @@ async fn recreate(
         None,
     )
     .await?;
-    if admin
-        .query_one(
-            "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
-            &[&name],
-        )
+    if sqlx::query("SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)")
+        .bind(&name)
+        .fetch_one(&mut admin)
         .await?
-        .get::<_, bool>(0)
+        .get::<bool, _>(0)
     {
-        admin
-            .batch_execute(&format!(
-                "ALTER DATABASE {} ALLOW_CONNECTIONS false",
-                postgres_protocol::escape::escape_identifier(&name)
-            ))
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER DATABASE {} ALLOW_CONNECTIONS false",
+            postgres_protocol::escape::escape_identifier(&name)
+        )))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
     }
-    admin.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()", &[&name]).await?;
-    admin.query("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1", &[&capture]).await?;
+    sqlx::query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()").bind(&name).fetch_all(&mut admin).await?;
+    sqlx::query(
+        "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1",
+    )
+    .bind(&capture)
+    .fetch_all(&mut admin)
+    .await?;
     for (desired, exists) in [("absent", false), ("present", true)] {
         let patch =
             serde_json::json!({"spec":{"ensure":desired,"allowConnections":exists}}).to_string();
@@ -760,13 +752,12 @@ async fn recreate(
         ensure::wait_applied(platform, "database", &name).await?;
         tokio::time::timeout(std::time::Duration::from_secs(120), async {
             loop {
-                let found: bool = admin
-                    .query_one(
-                        "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
-                        &[&name],
-                    )
-                    .await?
-                    .get(0);
+                let found: bool =
+                    sqlx::query("SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)")
+                        .bind(&name)
+                        .fetch_one(&mut admin)
+                        .await?
+                        .get(0);
                 if found == exists {
                     break Ok::<_, anyhow::Error>(());
                 }
@@ -790,13 +781,15 @@ pub async fn reconnect_capture_gap(
     document: &EnvironmentDocument,
     admin_url: &str,
 ) -> anyhow::Result<()> {
-    let mut owner_url = url::Url::parse(admin_url)?;
-    owner_url.set_path(url::Url::parse(&platform.system_database_url)?.path());
+    let owner_url = wamn_postgres::database_configuration(
+        admin_url,
+        &wamn_postgres::identity(&platform.system_database_url)?.1,
+    )?;
     crate::capture_gap::close_open_capture_gap(&crate::capture_gap::CloseCaptureGapRequest {
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
-        system_database_url: owner_url.into(),
+        system_database_url: owner_url,
     })
     .await
 }
@@ -816,15 +809,14 @@ async fn reconnect(
     .await?;
     let name = database(document, &instance);
     let mut system = connect(&platform.system_database_url).await?;
-    let mut project_admin = url::Url::parse(admin_url)?;
-    project_admin.set_path(&name);
+    let project_admin = wamn_postgres::database_configuration(admin_url, &name)?;
     // The installed SQL image owns the substrate. Reconnect uses the current
     // credential owner even when that image predates credential restoration.
     ensure::restore_project_database_access(platform, document, project_admin.as_str()).await?;
     ensure::prepare_cdc(
         platform,
         document,
-        &connect(admin_url).await?,
+        &mut connect(admin_url).await?,
         project_admin.as_str(),
     )
     .await?;

@@ -4,6 +4,7 @@ use super::*;
 use base64::Engine as _;
 use http_body_util::{BodyExt as _, Full};
 use sha2::{Digest as _, Sha256};
+use sqlx::{Connection as _, Row as _};
 use wash_runtime::host::http::{
     HostHandler as _, Ingress, IngressRoute, NormalizedPathPrefix, RouteScope, ServiceHttpJob,
 };
@@ -16,8 +17,8 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_oauth_authorization")?;
     let mut admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
-    let (logins, _billing, _shop) = environments(&admin, database.url(), "oauth").await?;
+    let control_url = install(&mut admin, database.url()).await?;
+    let (logins, _billing, _shop) = environments(&mut admin, database.url(), "oauth").await?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let key = scratch.path().join("oauth.key");
     std::fs::write(&key, [9_u8; 32])?;
@@ -61,16 +62,16 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             })).await.unwrap();
         }
     });
-    admin.batch_execute(&format!("SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id())).await?;
-    let tx = admin.transaction().await?;
-    wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
-    wamn_test_infrastructure::credentials::define(&tx, ORG, &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id()))).execute(&mut admin).await.map(drop)?;
+    let mut tx = admin.begin().await?;
+    wamn_test_infrastructure::credentials::define(&mut tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
+    wamn_test_infrastructure::credentials::define(&mut tx, ORG, &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;
     tx.commit().await?;
-    let boss = create_or_reuse_user(&admin, "oauth-admin@example.test", "OAuth admin")
+    let boss = create_or_reuse_user(&mut admin, "oauth-admin@example.test", "OAuth admin")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &boss,
         ORG,
         &MemberGrants {
@@ -79,11 +80,11 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         },
     )
     .await?;
-    let outsider = create_or_reuse_user(&admin, "oauth-other@example.test", "Other admin")
+    let outsider = create_or_reuse_user(&mut admin, "oauth-other@example.test", "Other admin")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &outsider,
         ORG,
         &MemberGrants {
@@ -138,7 +139,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer,
             identity: None,
             administration: Some(logins.clone()),
@@ -162,10 +163,10 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         .starts_with("permission denied")
     );
     assert_eq!(
-        admin
-            .query_one("SELECT count(*) FROM identity.oauth_authorization", &[])
+        sqlx::query("SELECT count(*) FROM identity.oauth_authorization")
+            .fetch_one(&mut admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
     let metadata = call(
@@ -193,13 +194,13 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     assert_eq!(query["scope"], "read+ write");
     *challenge.lock().unwrap() = Some(query["code_challenge"].clone());
     let state = &query["state"];
-    let row = admin.query_one("SELECT created_by,expires_at>clock_timestamp()+interval '9 minutes' AS recent,code_verifier FROM identity.oauth_authorization WHERE state=$1",&[state]).await?;
+    let row = sqlx::query("SELECT created_by,expires_at>clock_timestamp()+interval '9 minutes' AS recent,code_verifier FROM identity.oauth_authorization WHERE state=$1").bind(state).fetch_one(&mut admin).await?;
     assert_eq!(
-        row.get::<_, uuid::Uuid>("created_by").to_string(),
+        row.get::<uuid::Uuid, _>("created_by").to_string(),
         boss.to_string().as_str()
     );
-    assert!(row.get::<_, bool>("recent"));
-    assert_ne!(row.get::<_, Vec<u8>>("code_verifier").len(), 43);
+    assert!(row.get::<bool, _>("recent"));
+    assert_ne!(row.get::<Vec<u8>, _>("code_verifier").len(), 43);
     let client = reqwest::Client::new();
     let callback_url = format!("{}?state={state}&code=accepted-code", oauth.redirect_uri());
     assert_eq!(client.post(&callback_url).send().await?.status(), 405);
@@ -235,19 +236,18 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     assert_eq!(replay.status(), 400);
     assert!(replay.text().await?.contains("replayed state"));
     assert_eq!(
-        admin
-            .query_one("SELECT count(*) FROM identity.oauth_authorization", &[])
+        sqlx::query("SELECT count(*) FROM identity.oauth_authorization")
+            .fetch_one(&mut admin)
             .await?
-            .get::<_, i64>(0),
+            .get::<i64, _>(0),
         0
     );
-    let row = admin
-        .query_one(
-            "SELECT ciphertext,wrapped_key,nonce,key_id,refresh_status FROM identity.oauth_token",
-            &[],
-        )
-        .await?;
-    assert_eq!(row.get::<_, String>("refresh_status"), "ok");
+    let row = sqlx::query(
+        "SELECT ciphertext,wrapped_key,nonce,key_id,refresh_status FROM identity.oauth_token",
+    )
+    .fetch_one(&mut admin)
+    .await?;
+    assert_eq!(row.get::<String, _>("refresh_status"), "ok");
     let envelope = wamn_runtime::oauth_encryption::Envelope::from_file(&key)?;
     let plaintext = envelope
         .decrypt(&wamn_runtime::oauth_encryption::Encrypted {

@@ -1,5 +1,6 @@
 //! Immutable component requirements prepared independently of package SQL.
 
+use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::exported_interfaces;
 pub use plan::require_imports;
@@ -7,11 +8,10 @@ pub use plan::require_imports;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::Transaction;
 use wamn_compiler::manifest::PackageManifest;
 
 pub(crate) async fn install(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     root: &Path,
     manifest: &PackageManifest,
@@ -33,7 +33,7 @@ pub(crate) async fn install(
 
 /// Prepare requirements only for components in the selected release, without installing SQL.
 pub async fn prepare_release(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     release: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
@@ -81,7 +81,7 @@ pub async fn prepare_release(
 
 /// Insert or reuse exact requirements from digest-verified component bytes.
 pub async fn write(
-    tx: &Transaction<'_>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     manifest: &PackageManifest,
     digest: &str,
@@ -130,22 +130,10 @@ pub async fn write(
             wamn_compiler::manifest::ConnectionMode::Read => "read",
             wamn_compiler::manifest::ConnectionMode::Write => "write",
         };
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
-            &project_env_key,
-            &digest,
-            &manifest.package.id,
-            &name,
-            &interface,
-            &mode,
-        ];
-        written += tx.execute(
-            "INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
-             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
-        ).await?;
-        let exact: bool = tx.query_one(
-            "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 \
-             AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)", &params,
-        ).await?.get(0);
+        written += sqlx::query("INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(project_env_key).bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).execute(&mut **tx).await.map(|result| result.rows_affected())?;
+        let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 \
+             AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)").bind(project_env_key).bind(digest).bind(&manifest.package.id).bind(name).bind(&interface).bind(mode).fetch_one(&mut **tx).await?.get(0);
         ensure!(
             exact,
             "package {} connection {name} differs from its installed requirement",

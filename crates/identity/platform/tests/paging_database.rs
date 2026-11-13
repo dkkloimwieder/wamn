@@ -1,69 +1,68 @@
 //! Keyset queries against an owned, disposable PostgreSQL server.
 
+use sqlx::{Connection as _, Row as _, Statement as _};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{control, create_or_reuse_user, org};
 
 #[tokio::test]
 async fn sql_pages_keep_order_filter_and_current_authority() {
     let server = wamn_test_postgres::start(&[]).expect("start disposable PostgreSQL");
-    let database = server.database("postgres").unwrap();
-    let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut database = server.database("postgres").unwrap();
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("CREATE ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    let driver = tokio::spawn(connection);
-    client
-        .batch_execute("CREATE ROLE wamn_system")
+    sqlx::raw_sql(SYSTEM_SCHEMA_SQL)
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    client.batch_execute(SYSTEM_SCHEMA_SQL).await.unwrap();
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(&PlatformComponent::Provisioning.principal_id().to_string())
+        .execute(&mut client)
         .await
+        .map(|result| result.rows_affected())
         .unwrap();
-    client
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
+    sqlx::raw_sql("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES
            ('acme', 'pooled', 'wamn-pg'), ('other', 'pooled', 'wamn-pg');
          INSERT INTO registry.projects (org, id) VALUES
            ('acme', 'a'), ('acme', 'b'), ('acme', 'c'), ('other', 'a');
          INSERT INTO registry.env_policies
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
            VALUES ('acme', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18');
-         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','a','dev'),('acme','b','dev'),('acme','c','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','a','a','s1','aaaaaaa1'),('acme','a','b','s2','aaaaaaa2'),('acme','a','c','s3','aaaaaaa3');",
-        )
-        .await
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','a','dev'),('acme','b','dev'),('acme','c','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','a','a','s1','aaaaaaa1'),('acme','a','b','s2','aaaaaaa2'),('acme','a','c','s3','aaaaaaa3');").execute(&mut client).await.map(drop)
         .unwrap();
     let mut principals = Vec::new();
     for email in ["c@example.test", "a@example.test", "b@example.test"] {
-        let principal = create_or_reuse_user(&client, email, email)
+        let principal = create_or_reuse_user(&mut client, email, email)
             .await
             .unwrap()
             .principal_id;
-        org::activate_org_membership(&client, &principal, "acme")
+        org::activate_org_membership(&mut client, &principal, "acme")
             .await
             .unwrap();
-        org::grant_project_admin(&client, &principal, "acme", "a")
+        org::grant_project_admin(&mut client, &principal, "acme", "a")
             .await
             .unwrap();
         principals.push(principal);
     }
     let caller = &principals[0];
-    org::activate_org_membership(&client, caller, "other")
+    org::activate_org_membership(&mut client, caller, "other")
         .await
         .unwrap();
-    org::grant_project_admin(&client, caller, "other", "a")
+    org::grant_project_admin(&mut client, caller, "other", "a")
         .await
         .unwrap();
     for project in ["b", "c"] {
-        org::grant_project_admin(&client, caller, "acme", project)
+        org::grant_project_admin(&mut client, caller, "acme", project)
             .await
             .unwrap();
     }
 
-    let projects = control::org_projects(&client, "acme").await.unwrap();
+    let projects = control::org_projects(&mut client, "acme").await.unwrap();
     assert_eq!(
         projects
             .iter()
@@ -72,24 +71,24 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a", "b", "c"]
     );
     assert_eq!(
-        control::org_projects_page(&client, "acme", None, Some(2))
+        control::org_projects_page(&mut client, "acme", None, Some(2))
             .await
             .unwrap(),
         projects[..2]
     );
     assert_eq!(
-        control::org_projects_page(&client, "acme", Some("b"), Some(2))
+        control::org_projects_page(&mut client, "acme", Some("b"), Some(2))
             .await
             .unwrap(),
         projects[2..]
     );
     assert!(
-        control::org_projects_page(&client, "acme", Some("c"), Some(2))
+        control::org_projects_page(&mut client, "acme", Some("c"), Some(2))
             .await
             .unwrap()
             .is_empty()
     );
-    let environments = org::project_envs(&client, "acme", "a").await.unwrap();
+    let environments = org::project_envs(&mut client, "acme", "a").await.unwrap();
     assert_eq!(
         environments
             .iter()
@@ -98,25 +97,25 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a", "b", "c"]
     );
     assert_eq!(
-        org::project_envs_page(&client, "acme", "a", None, Some(2))
+        org::project_envs_page(&mut client, "acme", "a", None, Some(2))
             .await
             .unwrap(),
         environments[..2]
     );
     assert_eq!(
-        org::project_envs_page(&client, "acme", "a", Some("b"), Some(2))
+        org::project_envs_page(&mut client, "acme", "a", Some("b"), Some(2))
             .await
             .unwrap(),
         environments[2..]
     );
     assert!(
-        org::project_envs_page(&client, "other", "a", None, Some(2))
+        org::project_envs_page(&mut client, "other", "a", None, Some(2))
             .await
             .unwrap()
             .is_empty()
     );
 
-    let users = org::org_users(&client, "acme").await.unwrap();
+    let users = org::org_users(&mut client, "acme").await.unwrap();
     assert_eq!(
         users
             .iter()
@@ -125,14 +124,14 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         ["a@example.test", "b@example.test", "c@example.test"]
     );
     assert_eq!(
-        org::org_users_page(&client, "acme", None, None, Some(2))
+        org::org_users_page(&mut client, "acme", None, None, Some(2))
             .await
             .unwrap(),
         users[..2]
     );
     assert_eq!(
         org::org_users_page(
-            &client,
+            &mut client,
             "acme",
             Some(&users[1].email),
             Some(&users[1].principal_id),
@@ -143,22 +142,26 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         users[2..]
     );
     // project-admin made every user a member of every environment; b@ leaves `b`.
-    client
-        .execute(
-            "DELETE FROM identity.project_env_memberships \
+    sqlx::query(
+        "DELETE FROM identity.project_env_memberships \
              WHERE principal_id = $1::text::uuid AND env = 'b'",
-            &[&principals[2].to_string().as_str()],
-        )
+    )
+    .bind(&principals[2].to_string().as_str())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
+    let members = org::project_members(&mut client, "acme", "a")
         .await
         .unwrap();
-    let members = org::project_members(&client, "acme", "a").await.unwrap();
     assert_eq!(members.len(), 3);
     assert_eq!(members[0].environments, ["a", "b", "c"]);
     // The filter applies before the keyset and the limit, and narrows
     // `environments` to the one environment.
-    let filtered = org::project_members_page(&client, "acme", "a", Some("b"), None, None, Some(1))
-        .await
-        .unwrap();
+    let filtered =
+        org::project_members_page(&mut client, "acme", "a", Some("b"), None, None, Some(1))
+            .await
+            .unwrap();
     assert_eq!(
         filtered
             .iter()
@@ -167,7 +170,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         [("a@example.test", vec!["b".to_owned()])]
     );
     let rest = org::project_members_page(
-        &client,
+        &mut client,
         "acme",
         "a",
         Some("b"),
@@ -184,25 +187,25 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
         [("c@example.test", vec!["b".to_owned()])]
     );
     assert!(
-        org::project_members_page(&client, "acme", "a", Some("zzz"), None, None, Some(2))
+        org::project_members_page(&mut client, "acme", "a", Some("zzz"), None, None, Some(2))
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        org::project_members_page(&client, "acme", "a", Some(""), None, None, Some(2))
+        org::project_members_page(&mut client, "acme", "a", Some(""), None, None, Some(2))
             .await
             .is_err()
     );
     assert_eq!(
-        org::project_members_page(&client, "acme", "a", None, None, None, Some(2))
+        org::project_members_page(&mut client, "acme", "a", None, None, None, Some(2))
             .await
             .unwrap(),
         members[..2]
     );
     assert_eq!(
         org::project_members_page(
-            &client,
+            &mut client,
             "acme",
             "a",
             None,
@@ -217,7 +220,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     // An equal email still advances by UUID, without skipping the greater UUID.
     assert_eq!(
         org::project_members_page(
-            &client,
+            &mut client,
             "acme",
             "a",
             None,
@@ -231,47 +234,47 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     );
 
     assert_eq!(
-        control::control_projects(&client, caller, "acme")
+        control::control_projects(&mut client, caller, "acme")
             .await
             .unwrap(),
         ["a", "b", "c"]
     );
     assert_eq!(
-        control::control_projects_page(&client, caller, "acme", None, Some(2))
+        control::control_projects_page(&mut client, caller, "acme", None, Some(2))
             .await
             .unwrap(),
         ["a", "b"]
     );
     assert_eq!(
-        control::control_projects_page(&client, caller, "acme", Some("b"), Some(2))
+        control::control_projects_page(&mut client, caller, "acme", Some("b"), Some(2))
             .await
             .unwrap(),
         ["c"]
     );
     assert_eq!(
-        control::control_orgs(&client, caller).await.unwrap(),
+        control::control_orgs(&mut client, caller).await.unwrap(),
         ["acme", "other"]
     );
     assert_eq!(
-        control::control_orgs_page(&client, caller, None, None, Some(1))
+        control::control_orgs_page(&mut client, caller, None, None, Some(1))
             .await
             .unwrap(),
         ["acme"]
     );
     assert_eq!(
-        control::control_orgs_page(&client, caller, None, Some("acme"), Some(2))
+        control::control_orgs_page(&mut client, caller, None, Some("acme"), Some(2))
             .await
             .unwrap(),
         ["other"]
     );
     assert_eq!(
-        control::control_orgs_page(&client, caller, Some("acme"), None, Some(2))
+        control::control_orgs_page(&mut client, caller, Some("acme"), None, Some(2))
             .await
             .unwrap(),
         ["acme"]
     );
     org::revoke_project_admin(
-        &client,
+        &mut client,
         caller,
         "acme",
         "c",
@@ -280,11 +283,10 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
     .await
     .unwrap();
     assert!(
-        control::control_projects_page(&client, caller, "acme", Some("b"), Some(2))
+        control::control_projects_page(&mut client, caller, "acme", Some("b"), Some(2))
             .await
             .unwrap()
             .is_empty()
     );
     drop(client);
-    driver.await.unwrap().unwrap();
 }

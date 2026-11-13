@@ -1,18 +1,18 @@
-//! PostgreSQL bind projection for pure schema-control statements.
-
-use tokio_postgres::types::ToSql;
+//! Native binds for schema-control statements.
+use sqlx::{Postgres, postgres::PgArguments, query::Query};
 use wamn_schema_control::Value;
 
-pub fn as_postgres(values: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
-    values
-        .iter()
-        .map(|value| -> &(dyn ToSql + Sync) {
-            match value {
-                Value::Text(value) => value,
-                Value::Int(value) => value,
-                Value::NullableInt(value) => value,
-                Value::Bool(value) => value,
-            }
-        })
-        .collect()
+pub fn bind<'a>(
+    mut query: Query<'a, Postgres, PgArguments>,
+    values: &'a [Value],
+) -> Query<'a, Postgres, PgArguments> {
+    for value in values {
+        query = match value {
+            Value::Text(value) => query.bind(value),
+            Value::Int(value) => query.bind(value),
+            Value::NullableInt(value) => query.bind(value),
+            Value::Bool(value) => query.bind(value),
+        };
+    }
+    query
 }

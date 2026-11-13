@@ -2,14 +2,12 @@
 
 use super::{QUEUE_LEASE_INVOCATION, QueueTarget, drain_one};
 use serde_json::json;
+use sqlx::Row as _;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio_postgres::NoTls;
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
@@ -105,34 +103,38 @@ enum Mode {
 async fn run_current(mode: Mode) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (mut admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
-    tokio::spawn(connection);
+    let mut admin = wamn_postgres::connect(database.url()).await?;
+
     let schema = BareSchemaName::new("wamn_run")?;
-    admin
-        .batch_execute("CREATE SCHEMA application_data")
-        .await?;
-    wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
+    sqlx::raw_sql("CREATE SCHEMA application_data")
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, true).await?;
     let converged =
-        wamn_environment_control::reconcile_run_plane::reconcile(&admin, &schema, false).await?;
+        wamn_environment_control::reconcile_run_plane::reconcile(&mut admin, &schema, false)
+            .await?;
     assert!(
         converged.actions.is_empty(),
         "run schema did not converge: {converged:?}"
     );
-    admin
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(&wamn_control_provision::platform_principals_sql(
-            "automation.invalid",
-        )?)
-        .await?;
-    admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
+    sqlx::raw_sql(wamn_control_provision::APP_SCHEMA_SQL)
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::platform_principals_sql("automation.invalid")?).to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)?;
+    sqlx::query("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)").bind(&PlatformComponent::Provisioning.principal_id().to_string()).execute(&mut admin).await.map(|result| result.rows_affected())?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.role (name) VALUES ('automation');
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
       INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
       INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('{PROJECT_ENV_KEY}','test');
-      INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
+      INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');"))).execute(&mut admin).await.map(drop)?;
     let engine = Arc::new(build_engine(&[])?);
     let bytes = match mode {
         Mode::Shutdown => shutdown::component_bytes(),
@@ -171,14 +173,17 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         "routes":[],"attachments":{},"host-routes":["application"]
     }))?;
     let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
-    admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')", &[&workflow_user]).await?;
-    admin.execute("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&PROJECT_ENV_KEY, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
+    sqlx::query(
+        "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')",
+    )
+    .bind(&workflow_user)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&document)?).bind(&graph_hash.as_str()).bind(&workflow_user).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut manual = document;
     manual.wiring_id = "echo-manual".into();
-    admin.execute(
-        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)",
-        &[&PROJECT_ENV_KEY, &serde_json::to_string(&manual)?, &manual.wiring_hash().as_str(), &SERVICE],
-    ).await?;
+    sqlx::query("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)").bind(&PROJECT_ENV_KEY).bind(&serde_json::to_string(&manual)?).bind(&manual.wiring_hash().as_str()).bind(&SERVICE).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -195,11 +200,10 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 .into(),
             ),
     )?);
-    admin.execute("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
-        &[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    sqlx::query("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&PROJECT_ENV_KEY).bind(&release.release().manifest_digest.as_str()).bind(&canonical).execute(&mut admin).await.map(|result| result.rows_affected())?;
     let mut credentials = ClassCredentials::default();
-    let db_name: String = admin
-        .query_one("SELECT current_database()", &[])
+    let db_name: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut admin)
         .await?
         .get(0);
     for (family, class) in [
@@ -226,22 +230,26 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 database: &db_name,
             }
         };
-        let role = workload_generation_role(family, role_target, CredentialGeneration::A)?;
-        admin
-            .batch_execute(&sql::prepare_workload_generation_sql(
+        let role = workload_login(family, role_target)?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::login_sql(
                 family,
                 &db_name,
                 &role,
                 "automation-test-only",
-                "2099-01-01T00:00:00Z",
             ))
-            .await?;
+                .to_string(),
+        ))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
         // Ambient application lookup must not select the queue's storage.
-        admin
-            .batch_execute(&format!(
-                "ALTER ROLE \"{role}\" SET search_path = application_data"
-            ))
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER ROLE \"{role}\" SET search_path = application_data"
+        )))
+        .execute(&mut admin)
+        .await
+        .map(drop)?;
         let mut url = url::Url::parse(database.url())?;
         url.set_username(&role).unwrap();
         url.set_password(Some("automation-test-only")).unwrap();
@@ -325,8 +333,8 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         environment: "test".to_owned(),
     };
     let jetstream = Arc::new(WamnJetstream::from_env());
-    let (client, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
-    tokio::spawn(connection);
+    let client = wamn_postgres::connect(database.url()).await?;
+
     let workflows = WorkflowsFixture {
         runs: PostgresWorkflows::new(client, schema.as_str(), PROJECT_ENV_KEY, "test"),
         postgres: Arc::clone(&postgres),
@@ -367,7 +375,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         }
         Mode::Event => {
             event_run(
-                &admin, &workflows, &release, &driver, &postgres, &target, &jetstream,
+                &mut admin, &workflows, &release, &driver, &postgres, &target, &jetstream,
             )
             .await
         }
@@ -448,7 +456,7 @@ impl WorkflowsFixture {
 }
 
 async fn event_run(
-    admin: &tokio_postgres::Client,
+    admin: &mut sqlx::PgConnection,
     workflows: &WorkflowsFixture,
     release: &LoadedRelease,
     driver: &RouterDriver,
@@ -475,11 +483,8 @@ async fn event_run(
     postgres
         .admit_event_batch(&target.project, release, &admission)
         .await?;
-    let runs = admin
-        .query(
-            "SELECT run_id FROM wamn_run.runs WHERE trigger_source = 'event'",
-            &[],
-        )
+    let runs = sqlx::query("SELECT run_id FROM wamn_run.runs WHERE trigger_source = 'event'")
+        .fetch_all(&mut *admin)
         .await?;
     assert_eq!(runs.len(), 1, "redelivery admits no second run");
     let run: String = runs[0].get(0);
@@ -512,24 +517,24 @@ async fn event_run(
         drain_one(driver, postgres, jetstream, target, 30_000, &liveness).await?,
         "the queue leases the released event run"
     );
-    let stored = admin
-        .query_one(
-            "SELECT status, result_json::text, trigger_source, execution_principal_id::text, \
+    let stored = sqlx::query(
+        "SELECT status, result_json::text, trigger_source, execution_principal_id::text, \
                     service_principal_id IS NULL FROM wamn_run.runs WHERE run_id = $1",
-            &[&run],
-        )
-        .await?;
-    assert_eq!(stored.get::<_, String>(0), "completed");
-    let result: serde_json::Value = serde_json::from_str(&stored.get::<_, String>(1))?;
+    )
+    .bind(&run)
+    .fetch_one(&mut *admin)
+    .await?;
+    assert_eq!(stored.get::<String, _>(0), "completed");
+    let result: serde_json::Value = serde_json::from_str(&stored.get::<String, _>(1))?;
     assert_eq!(result["new"]["id"], json!("m-2"));
     assert_eq!(result["new"]["value"], json!(7));
-    assert_eq!(stored.get::<_, String>(2), "event");
+    assert_eq!(stored.get::<String, _>(2), "event");
     assert_eq!(
-        stored.get::<_, String>(3),
+        stored.get::<String, _>(3),
         wamn_identity_protocol::workflow_user_id().to_string()
     );
     assert!(
-        stored.get::<_, bool>(4),
+        stored.get::<bool, _>(4),
         "an event run has no service principal"
     );
     assert_eq!(

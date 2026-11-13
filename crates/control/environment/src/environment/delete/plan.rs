@@ -1,10 +1,10 @@
 use super::{
-    CredentialGeneration, Triple, WorkloadRoleFamily, WorkloadRoleIdentity,
-    WorkloadRoleIdentityType, cdc_object_name, project_env_database_name, workload_generation_role,
+    Triple, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, cdc_object_name,
+    project_env_database_name, workload_login,
 };
 use anyhow::Context as _;
 
-/// The families whose generation roles name the instance's database: a
+/// The families whose logins name the instance's database: a
 /// control or org family's target names the control database, so its roles
 /// stay with the triple or the org.
 pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
@@ -16,8 +16,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
     })
 }
 
-/// The roles of one instance: the CDC role, then `a` and `b` of each
-/// instance family.
+/// The roles of one instance: capture and one login per workload family.
 ///
 /// # Errors
 ///
@@ -47,12 +46,10 @@ pub fn instance_roles(
                 database: &database,
             },
         };
-        for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-            roles.push(
-                workload_generation_role(family, target, generation)
-                    .with_context(|| format!("derive the {family:?} generation role"))?,
-            );
-        }
+        roles.push(
+            workload_login(family, target)
+                .with_context(|| format!("derive the {family:?} login"))?,
+        );
     }
     Ok(roles)
 }

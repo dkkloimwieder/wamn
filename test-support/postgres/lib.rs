@@ -364,6 +364,21 @@ impl OwnedPostgres {
             String::from_utf8_lossy(&initialized.stderr)
         );
         fs::remove_file(password_file)?;
+        let certificate =
+            rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
+        private_file(&self.directory.join("server.key"))?
+            .write_all(certificate.signing_key.serialize_pem().as_bytes())?;
+        private_file(&self.directory.join("server.crt"))?
+            .write_all(certificate.cert.pem().as_bytes())?;
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(self.directory.join("data/postgresql.conf"))?;
+        writeln!(
+            config,
+            "ssl=on\nssl_cert_file='{}'\nssl_key_file='{}'",
+            self.directory.join("server.crt").display(),
+            self.directory.join("server.key").display()
+        )?;
         // PostgreSQL owns the port after this reservation closes. A collision
         // makes startup fail; the runner never adopts an existing listener.
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
@@ -445,6 +460,15 @@ impl OwnedPostgres {
     /// Return the superuser coordinate of a database of this server.
     pub fn database(&self, name: &str) -> anyhow::Result<OwnedDatabase> {
         let mut url = Url::parse("postgresql://postgres@127.0.0.1/postgres")?;
+        url.query_pairs_mut()
+            .append_pair("sslmode", "verify-full")
+            .append_pair(
+                "sslrootcert",
+                self.directory
+                    .join("server.crt")
+                    .to_str()
+                    .context("test certificate path is not UTF-8")?,
+            );
         url.set_port(Some(self.port))
             .expect("PostgreSQL URLs accept a port");
         url.set_password(Some(&self.password))

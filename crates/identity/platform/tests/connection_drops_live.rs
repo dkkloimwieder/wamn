@@ -3,6 +3,7 @@
 //! Each writer runs once on real PostgreSQL, its caller deletes the drops it
 //! recorded from a private bucket, and the test tests the keys that went.
 
+use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 use wamn_broker::Publisher;
@@ -43,22 +44,29 @@ impl Store for RecordingStore {
 
 /// Run one writer in its own transaction and return its result and drops.
 async fn execute(
-    client: &mut tokio_postgres::Client,
+    client: &mut sqlx::PgConnection,
     operation: &str,
     request: Value,
 ) -> (Value, ConnectionDrops) {
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
+    let mut tx = client.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+            .to_string(),
     ))
+    .execute(&mut *tx)
     .await
+    .map(drop)
     .unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
+    sqlx::raw_sql("SET LOCAL ROLE wamn_control")
+        .execute(&mut *tx)
         .await
+        .map(drop)
         .unwrap();
     let mut drops = ConnectionDrops::default();
     let result = administration::execute_with_store(
-        &tx,
+        &mut tx,
         "acme",
         operation,
         &request.to_string(),
@@ -96,31 +104,34 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
     let publisher = Publisher::new(broker);
 
     let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("BEGIN; SET LOCAL ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    tokio::spawn(driver);
-    client
-        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
-        .await
-        .unwrap();
-    client
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await
-        .unwrap();
+            .to_string(),
+    ))
+    .execute(&mut client)
+    .await
+    .map(drop)
+    .unwrap();
     for env in ["dev", "prod"] {
-        client
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", "app", env,
-                ),
-            )
-            .await
-            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", env))
+                .to_string(),
+        ))
+        .execute(&mut client)
+        .await
+        .map(drop)
+        .unwrap();
     }
-    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    sqlx::raw_sql("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").execute(&mut client).await.map(drop).unwrap();
     // A new integration has no connection, so it deletes no key.
     let (_, drops) = execute(
         &mut client,

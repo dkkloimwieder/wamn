@@ -43,13 +43,23 @@ pub(in crate::environment) fn host_group(
                 .any(|entry| entry["name"].as_str() == Some(variable)),
             "the platform host group sets {variable}, which apply derives from the coordinate"
         );
-        let secret =
-            wamn_control_provision::workload_secret_name(credential.family, org, project, env);
         variables.push(serde_yaml::from_str(&format!(
-            "{{name: {variable}, valueFrom: {{secretKeyRef: {{name: {secret}, key: url, optional: false}}}}}}"
+            "{{name: {variable}, value: /etc/wamn/postgres/{}.json}}",
+            credential.family.component_stem()
         ))?);
     }
     let mut group = serde_json::to_value(group)?;
+    if let Some(volumes) = group["volumes"].as_array_mut() {
+        volumes.retain(|volume| volume["name"] != "postgres-configuration");
+    }
+    if !group["volumes"].is_array() {
+        group["volumes"] = serde_json::json!([]);
+    }
+    group["volumes"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "configMap":{"name":wamn_control_provision::project_env_secret_name(org, project, env)}}));
+    if !group["volumeMounts"].is_array() {
+        group["volumeMounts"] = serde_json::json!([]);
+    }
+    group["volumeMounts"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "mountPath":"/etc/wamn/postgres", "readOnly":true}));
     let encryption = group["env"]
         .as_array()
         .and_then(|env| {

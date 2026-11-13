@@ -2,52 +2,6 @@
 
 use super::{escape_identifier, escape_literal};
 
-// --- CDC capture provisioning (wamn-l5i9.9, D19 v3 §4) -----------------------
-//
-// The per-project-env CDC substrate: a REPLICATION role (the R8b credential
-// tier above `wamn_app` query creds and the dispatch role), a publication over
-// the app data schema, and a failover-enabled logical replication slot. The
-// publication and the slot are DATABASE-BOUND — apply their SQL connected to
-// the project-env database; the role is cluster-global. Pass the shared
-// `cdc_object_name` (`wamn_cdc_<org>__<project>__<env>__<instance>`) as the role /
-// publication / slot name.
-
-/// Idempotently bootstrap a per-project-env **replication** role: `REPLICATION
-/// LOGIN`, otherwise least-privilege (`NOSUPERUSER NOCREATEDB NOCREATEROLE
-/// NOINHERIT NOBYPASSRLS` — `NOINHERIT` matches every other role this crate
-/// mints; the role holds no memberships, so it is exactness, not a live
-/// change). One role per project-env names the intended capture target; it does
-/// not limit a leaked credential to one registration. `REPLICATION` itself is
-/// CLUSTER-WIDE in Postgres: any replication role can read any database's WAL
-/// on that cluster. The accepted T3 boundary is compound: production HBA has
-/// no physical-replication entry; PUBLIC CONNECT is revoked and this role gets
-/// CONNECT only on its own database; ordinary DML remains denied; and each
-/// reader is configured with its own slot and publication. The M1 condition shows
-/// those production-shaped legs.
-///
-/// An existing role gets the same password and attributes through `ALTER
-/// ROLE`, so every run leaves the role holding the password of the Secret it
-/// emits (finding wamn-fipl). The statement states the role and compares
-/// nothing.
-pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
-    format!(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
-           ELSE \
-             ALTER ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
-               NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
-             {nosuperuser} \
-           END IF; \
-         END $$;",
-        role = escape_identifier(role),
-        role_lit = escape_literal(role),
-        pw = escape_literal(password),
-        nosuperuser = super::revoke_superuser_sql(&escape_literal(role)),
-    )
-}
-
 /// `CREATE SCHEMA IF NOT EXISTS "<schema>"` — the eager guard that makes the
 /// CDC SQL order-robust: `FOR TABLES IN SCHEMA` auto-includes tables created
 /// later, so the publication may be created BEFORE catalog-publish fills the

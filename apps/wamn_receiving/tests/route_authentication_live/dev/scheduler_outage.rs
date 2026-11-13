@@ -145,7 +145,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
-    let (admin, admin_task) = connect(&system_url).await?;
+    let mut admin = connect(&system_url).await?;
     std::fs::write(
         root.join("environment.k"),
         include_str!(concat!(
@@ -155,7 +155,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     )?;
     let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
-        admin.as_ref(),
+        &mut admin,
         root,
         PLATFORM_DOMAIN,
         &wamn_environment_control::environment::document::EnvironmentDocument::compile(
@@ -189,9 +189,8 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let mut watch = Watch::start(&inputs.wamn_binary, &repository, &config)?;
     let result = async {
         let endpoint = watch.served().await?;
-        let (project, task) = connect(&environment.route.database_url).await?;
-        super::super::environment::seed_receiving_business_rows(project.as_ref()).await?;
-        task.abort();
+        let mut project = connect(&environment.route.database_url).await?;
+        super::super::environment::seed_receiving_business_rows(&mut project).await?;
         let outage = async {
         let route = Route {
             http: reqwest::Client::builder()
@@ -265,7 +264,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         )
     });
     drop(watch);
-    admin_task.abort();
+
     provisioning.drain().await?;
     drop(scheduler);
     result?;

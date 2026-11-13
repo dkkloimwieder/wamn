@@ -7,6 +7,7 @@
 //! successful Helm revision and the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
+use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub(crate) use plan::notices;
 pub use plan::{application_refusals, refusals};
@@ -17,9 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use wamn_catalog::ServingManifest;
-use wamn_package_control::database::connect;
+use wamn_postgres::connect;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
@@ -196,9 +197,9 @@ pub async fn analyse(
         .next()
         .expect("one application");
     let release_name = application_release_name(document, application)?;
-    let system = connect(&platform.system_database_url).await?;
-    let policy = read_policy(&system, &document.org, &document.policy).await?;
-    let row = read_row(&system, document).await?;
+    let mut system = connect(&platform.system_database_url).await?;
+    let policy = read_policy(&mut system, &document.org, &document.policy).await?;
+    let row = read_row(&mut system, document).await?;
     let project = match &row {
         Some(row) => {
             read_project(
@@ -229,10 +230,15 @@ pub async fn analyse(
         Some(release) => read_release_packages(platform, &release.manifest).await?,
         None => (Vec::new(), BTreeMap::new()),
     };
-    let binding_system = connect(&platform.system_database_url).await?;
-    let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
-    let replica_refusals =
-        replica_refusals(&system, document, &bindings, platform.host_group.as_deref()).await?;
+    let mut binding_system = connect(&platform.system_database_url).await?;
+    let bindings = super::bindings::analyse(&mut binding_system, document, &packages).await?;
+    let replica_refusals = replica_refusals(
+        &mut system,
+        document,
+        &bindings,
+        platform.host_group.as_deref(),
+    )
+    .await?;
     let connections = bindings
         .iter()
         .filter_map(|binding| {
@@ -270,15 +276,13 @@ pub async fn analyse(
     }
     let plan = plan(document, &authorities);
     let mut notices = notices(document, application, &authorities, &fingerprints);
-    let report = wamn_package_control::schema_baseline::observe_system(&system).await?;
+    let report = wamn_package_control::schema_baseline::observe_system(&mut system).await?;
     if !report.warnings.is_empty() {
         notices.push(Notice {
             application: application.clone(),
             identity: format!(
                 "{}/registry.schema_baseline",
-                url::Url::parse(&platform.system_database_url)?
-                    .path()
-                    .trim_start_matches('/')
+                wamn_postgres::identity(&platform.system_database_url)?.1
             ),
             observed: Observation::PlatformSchema { report },
             next_action:
@@ -334,32 +338,36 @@ fn actor() -> String {
 }
 
 pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
-    let client = connect(url).await?;
-    let owner: String = client
-        .query_one(
-            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
-            &[],
-        )
-        .await?
-        .get(0);
-    client
-        .batch_execute(&format!(
-            "SET ROLE {}",
-            postgres_protocol::escape::escape_identifier(&owner)
-        ))
-        .await?;
+    let mut client = connect(url).await?;
+    let owner: String = sqlx::query(
+        "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+    )
+    .fetch_one(&mut client)
+    .await?
+    .get(0);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SET ROLE {}",
+        postgres_protocol::escape::escape_identifier(&owner)
+    )))
+    .execute(&mut client)
+    .await
+    .map(drop)?;
     Ok(client)
 }
 
-pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyhow::Result<Policy> {
-    let row = system
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY,
-            &[&org, &name],
-        )
-        .await
-        .context("read the environment policy")?
-        .with_context(|| format!("refused: org {org} has no environment policy {name}"))?;
+pub(crate) async fn read_policy(
+    system: &mut Client,
+    org: &str,
+    name: &str,
+) -> anyhow::Result<Policy> {
+    let row =
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY)
+            .bind(org)
+            .bind(name)
+            .fetch_optional(&mut *system)
+            .await
+            .context("read the environment policy")?
+            .with_context(|| format!("refused: org {org} has no environment policy {name}"))?;
     Ok(Policy {
         name: name.to_owned(),
         readiness_budget_seconds: row.get(0),
@@ -368,22 +376,24 @@ pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyho
 }
 
 pub(crate) async fn read_row(
-    system: &Client,
+    system: &mut Client,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Option<EnvironmentRow>> {
-    Ok(system
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW,
-            &[&document.org, &document.project, &document.env],
-        )
-        .await
-        .context("read the environment row")?
-        .map(|row| EnvironmentRow {
-            instance_suffix: row.get(0),
-            route_host: row.get(1),
-            policy_name: row.get(2),
-            disposable: row.get(3),
-        }))
+    Ok(
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW)
+            .bind(&document.org)
+            .bind(&document.project)
+            .bind(&document.env)
+            .fetch_optional(&mut *system)
+            .await
+            .context("read the environment row")?
+            .map(|row| EnvironmentRow {
+                instance_suffix: row.get(0),
+                route_host: row.get(1),
+                policy_name: row.get(2),
+                disposable: row.get(3),
+            }),
+    )
 }
 
 /// Read installed SQL and release bindings as the project database owner.
@@ -396,34 +406,31 @@ pub async fn read_project(
         Ok(client) => client,
         Err(error)
             if error
-                .downcast_ref::<tokio_postgres::Error>()
-                .and_then(tokio_postgres::Error::code)
-                == Some(&tokio_postgres::error::SqlState::INVALID_CATALOG_NAME) =>
+                .downcast_ref::<sqlx::Error>()
+                .and_then(|error| error.as_database_error())
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref()
+                == Some("3D000") =>
         {
             return Ok(None);
         }
         Err(error) => return Err(error.context("project database state is unknown")),
     };
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the project read")?;
-    transaction
-        .query_one(
-            "SELECT set_config('app.project_env_key', $1, true)",
-            &[&project_env_key],
-        )
+    let mut transaction = client.begin().await.context("begin the project read")?;
+    sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+        .bind(project_env_key)
+        .fetch_one(&mut *transaction)
         .await
         .context("bind the project identity")?;
     let mut installed = BTreeMap::<String, Installed>::new();
-    for row in transaction
-        .query(
-            "SELECT package_id, package_version, physical_schema_fingerprint FROM catalog.packages \
+    for row in sqlx::query(
+        "SELECT package_id, package_version, physical_schema_fingerprint FROM catalog.packages \
               WHERE project_env_key = $1",
-            &[&project_env_key],
-        )
-        .await
-        .context("read the installed packages")?
+    )
+    .bind(project_env_key)
+    .fetch_all(&mut *transaction)
+    .await
+    .context("read the installed packages")?
     {
         installed.insert(
             row.get(0),
@@ -433,19 +440,19 @@ pub async fn read_project(
             },
         );
     }
-    let bindings = transaction
-        .query(
-            "SELECT manifest_digest, component_digest, name, connection_id::text \
+    let bindings = sqlx::query(
+        "SELECT manifest_digest, component_digest, name, connection_id::text \
                FROM catalog.connection_binding WHERE project_env_key = $1",
-            &[&project_env_key],
-        )
-        .await
-        .context("read the connection bindings")?
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
-        .collect();
+    )
+    .bind(project_env_key)
+    .fetch_all(&mut *transaction)
+    .await
+    .context("read the connection bindings")?
+    .into_iter()
+    .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+    .collect();
     let schema_report =
-        Some(wamn_package_control::schema_baseline::observe_project(&transaction).await?);
+        Some(wamn_package_control::schema_baseline::observe_project(&mut transaction).await?);
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
@@ -775,7 +782,7 @@ pub(crate) use wamn_kubernetes::environment_state::live_set;
 ///
 /// When the target or the host group body cannot be read.
 pub async fn replica_refusals(
-    system: &(impl tokio_postgres::GenericClient + Sync),
+    system: &mut sqlx::PgConnection,
     document: &EnvironmentDocument,
     bindings: &[super::bindings::Binding],
     path: Option<&std::path::Path>,
@@ -783,14 +790,14 @@ pub async fn replica_refusals(
     if !bindings.iter().any(|binding| binding.exclusive) {
         return Ok(Vec::new());
     }
-    let cloud: bool = system
-        .query_one(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS,
-            &[&document.target],
-        )
-        .await
-        .context("read the environment target type")?
-        .get(0);
+    let cloud: bool = sqlx::query(
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS,
+    )
+    .bind(&document.target)
+    .fetch_one(&mut *system)
+    .await
+    .context("read the environment target type")?
+    .get(0);
     if !cloud {
         return Ok(Vec::new());
     }

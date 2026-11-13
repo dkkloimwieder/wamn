@@ -10,6 +10,7 @@
 //! A signature policy verifies the raw body with the bound connection's
 //! credential and returns its active service principal.
 
+use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ use wamn_engine::flow_http_routing::{
 };
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::verifier::SessionVerifier;
-use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
+use wamn_platform_identity::PrincipalType;
 
 use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::ConnectionStatus;
@@ -57,12 +58,13 @@ const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, us
 /// principal is an active service, and its permissions are the rows of every
 /// role it holds.
 pub async fn queued_run_caller(
-    client: &(impl tokio_postgres::GenericClient + Sync),
+    client: &mut sqlx::PgConnection,
     principal_id: &str,
     role: Option<&str>,
 ) -> anyhow::Result<AuthenticatedCaller> {
-    let rows = client
-        .query(QUEUED_RUN_CALLER_SQL, &[&principal_id])
+    let rows = sqlx::query(QUEUED_RUN_CALLER_SQL)
+        .bind(principal_id)
+        .fetch_all(&mut *client)
         .await?;
     let first = rows
         .first()
@@ -71,10 +73,10 @@ pub async fn queued_run_caller(
     let principal_type: String = first.try_get(1)?;
     let mut held: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for row in &rows {
-        if let Some(role) = row.try_get::<_, Option<String>>(2)? {
+        if let Some(role) = row.try_get::<Option<String>, _>(2)? {
             held.entry(role)
                 .or_default()
-                .extend(row.try_get::<_, Option<String>>(3)?);
+                .extend(row.try_get::<Option<String>, _>(3)?);
         }
     }
     if let Some(role) = role {
@@ -118,10 +120,9 @@ pub fn role_caller(
 
 /// Trusted dependencies and target for PAT-backed route authentication.
 pub struct RouteAuthentication {
-    identity_reader: Arc<tokio_postgres::Client>,
+    identity_reader: sqlx::PgPool,
     /// The identity statement, parsed once at construction rather than on
     /// every request. See [`PreparedIdentityReads`].
-    prepared: PreparedIdentityReads,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     org: Box<str>,
     project: Box<str>,
@@ -142,27 +143,21 @@ impl RouteAuthentication {
     /// Bind the two read authorities to trusted package coordinates.
     ///
     /// Environment and project remain single-sourced from the loaded release.
-    /// Async because it parses the identity statements on `identity_reader`
-    /// here, once, instead of on every request. A reader that cannot parse them
-    /// cannot authenticate anything, so this fails at startup rather than on the
-    /// first request.
-    pub async fn new(
-        identity_reader: Arc<tokio_postgres::Client>,
+    pub fn new(
+        identity_reader: sqlx::PgPool,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         org: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         expected_subject: impl Into<Box<str>>,
-    ) -> Result<Self, wamn_platform_identity::IdentityError> {
-        let prepared = PreparedIdentityReads::prepare(identity_reader.as_ref()).await?;
-        postgres.set_hierarchy_reader(Arc::clone(&identity_reader));
-        Ok(Self {
+    ) -> Self {
+        postgres.set_hierarchy_reader(identity_reader.clone());
+        Self {
             identity_reader,
-            prepared,
             postgres,
             org: org.into(),
             project: project.into(),
             expected_subject: expected_subject.into(),
-        })
+        }
     }
 }
 
@@ -204,7 +199,7 @@ impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusRead
 
 /// Session authentication with current identity and project permission reads.
 pub struct SessionRouteAuthentication {
-    identity_reader: Arc<tokio_postgres::Client>,
+    identity_reader: sqlx::PgPool,
     verifier: SessionVerifier<IssuerKeys>,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     project: Box<str>,
@@ -223,11 +218,11 @@ impl SessionRouteAuthentication {
     /// Bind the configured verifier to the host's existing permission authority.
     pub fn new(
         verifier: SessionVerifier<IssuerKeys>,
-        identity_reader: Arc<tokio_postgres::Client>,
+        identity_reader: sqlx::PgPool,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         project: impl Into<Box<str>>,
     ) -> Self {
-        postgres.set_hierarchy_reader(Arc::clone(&identity_reader));
+        postgres.set_hierarchy_reader(identity_reader.clone());
         Self {
             identity_reader,
             verifier,
@@ -395,7 +390,11 @@ impl PlatformRouteAuthenticator {
             let active = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 wamn_platform_identity::session_token::session_is_active(
-                    authentication.identity_reader.as_ref(),
+                    &mut *authentication
+                        .identity_reader
+                        .acquire()
+                        .await
+                        .map_err(|_| authentication_unavailable())?,
                     session.claims(),
                     &authentication.project,
                     environment,
@@ -524,22 +523,24 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 principal
             } else {
                 let ticket = cache.identity_ticket();
-                let principal = authentication
-                    .prepared
-                    .authenticate_route_pat(
-                        authentication.identity_reader.as_ref(),
-                        token,
-                        &authentication.org,
-                        &authentication.project,
-                        &[ADMIN_ROLE],
-                    )
-                    .instrument(tracing::info_span!("wamn.auth.identity"))
-                    .await
-                    .map_err(|error| {
-                        tracing::warn!(error = %error, "route PAT authentication unavailable");
-                        authentication_unavailable()
-                    })?
-                    .ok_or_else(unauthorized)?;
+                let principal = wamn_platform_identity::authenticate_route_pat(
+                    &mut *authentication
+                        .identity_reader
+                        .acquire()
+                        .await
+                        .map_err(|_| authentication_unavailable())?,
+                    token,
+                    &authentication.org,
+                    &authentication.project,
+                    &[ADMIN_ROLE],
+                )
+                .instrument(tracing::info_span!("wamn.auth.identity"))
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "route PAT authentication unavailable");
+                    authentication_unavailable()
+                })?
+                .ok_or_else(unauthorized)?;
                 cache.keep_pat(ticket, token, principal.clone());
                 principal
             };
@@ -614,7 +615,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
 /// application role and no operation grant.
 pub struct ControlRouteAuthenticator {
     verifier: SessionVerifier<IssuerKeys>,
-    control: Arc<tokio_postgres::Client>,
+    control: sqlx::PgPool,
 }
 
 impl std::fmt::Debug for ControlRouteAuthenticator {
@@ -627,10 +628,7 @@ impl std::fmt::Debug for ControlRouteAuthenticator {
 
 impl ControlRouteAuthenticator {
     /// `verifier` is bound to the org and its control audience.
-    pub fn new(
-        verifier: SessionVerifier<IssuerKeys>,
-        control: Arc<tokio_postgres::Client>,
-    ) -> Self {
+    pub fn new(verifier: SessionVerifier<IssuerKeys>, control: sqlx::PgPool) -> Self {
         Self { verifier, control }
     }
 }
@@ -659,7 +657,11 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
         let active = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             wamn_platform_identity::control::control_session_is_active(
-                self.control.as_ref(),
+                &mut *self
+                    .control
+                    .acquire()
+                    .await
+                    .map_err(|_| authentication_unavailable())?,
                 session.claims(),
             ),
         )

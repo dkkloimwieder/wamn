@@ -1,1146 +1,478 @@
-//! Workload credential preparation, authentication, retirement, and abort.
+//! CNPG role credentials and non-secret component connection configuration.
 
-pub(super) mod plan;
-pub(super) use plan::{is_workload_generation_role, workload_lifecycle};
-use plan::{workload_action_identity, workload_expires_at};
+use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Context as _;
-use ring::rand::SecureRandom as _;
-
-use super::grants::{
-    RoleAclExpectation, stable_grant_set, verify_public_base_grants, verify_role_grants,
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use ring::rand::{SecureRandom as _, SystemRandom};
+use serde_json::{Value, json};
+use wamn_control_provision::connection::{ManagedRole, managed_role};
+use wamn_control_provision::{
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, sql, workload_login,
 };
-use super::{
-    CredentialGeneration, DateTime, GenericClient, OrgWorkloadActionRequest, PLATFORM_GROUP_ROLE,
-    PgConfig, SecondsFormat, SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome,
-    WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily,
-    WorkloadRoleIdentity, WorkloadRoleIdentityType, WorkloadSecretBody, WorkloadSecretBodyType,
-    connect_config, database_host, ensure_secret_path, exact_project_database_config,
-    named_database_config, project_env_database_name, project_key, read_project_env_instance,
-    read_project_env_policy, render_org_workload_secret_manifest, render_workload_secret_manifest,
-    resolve_cluster, role_sql, sql, validate_project_env, validate_session_project_env_key,
-    workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
-    workload_url, write_output, write_secret_json,
-};
+use wamn_kubernetes::{kubectl, secret};
+use wamn_postgres::{ConnectionConfig, SecretRef};
+use wamn_registry::Triple;
 
-use wamn_control_provision::render_control_administration_patch;
+use crate::environment::{Platform, document::EnvironmentDocument};
 
-const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
-
-/// The password fingerprints in `registry.generation_passwords` of the system
-/// database.
-///
-/// PostgreSQL shows a password only to a superuser, and the provisioner is not
-/// one (`docs/plan/platform-ui.md` §4.10). A prepare records the SHA-256 of the
-/// password that it sets, and a retirement removes the record. A generation is
-/// active only with a record.
-pub(super) struct GenerationPasswords {
-    client: tokio_postgres::Client,
-}
-
-impl GenerationPasswords {
-    pub(super) async fn connect(system: &PgConfig) -> anyhow::Result<Self> {
-        let (client, _task) = connect_config(system, "system database").await?;
-        Ok(Self { client })
-    }
-
-    async fn recorded(&self, role: &str) -> anyhow::Result<bool> {
-        Ok(self
-            .client
-            .query_one(sql::generation_password_recorded_sql(), &[&role])
-            .await
-            .context("read a generation password fingerprint")?
-            .get(0))
-    }
-
-    async fn record(&mut self, role: &str, password: &str) -> anyhow::Result<()> {
-        let sha256 = hex::encode(ring::digest::digest(
-            &ring::digest::SHA256,
-            password.as_bytes(),
-        ));
-        let transaction = super::provisioning_transaction(&mut self.client).await?;
-        transaction
-            .execute(sql::record_generation_password_sql(), &[&role, &sha256])
-            .await
-            .context("record a generation password fingerprint")?;
-        transaction.commit().await?;
+/// Reconcile one basic-auth Secret and one entry in CNPG's role declarations.
+/// A resource-version comparison preserves other environments' role declarations.
+pub(crate) async fn reconcile(
+    kubeconfig: &Path,
+    context: &str,
+    namespace: &str,
+    cluster: &str,
+    declaration: &ManagedRole,
+) -> anyhow::Result<()> {
+    let username = declaration.name.as_str();
+    let secret_name = declaration.password_secret.name.as_str();
+    secret::update(kubeconfig, context, namespace, secret_name, |secret| {
+        if secret.metadata.resource_version.is_none() {
+            let mut bytes = [0u8; 32];
+            SystemRandom::new()
+                .fill(&mut bytes)
+                .map_err(|_| anyhow::anyhow!("generate database credential"))?;
+            *secret =
+                secret::Secret::basic_auth(namespace, secret_name, username, &hex::encode(bytes));
+        } else {
+            anyhow::ensure!(
+                secret.content_type == "kubernetes.io/basic-auth",
+                "old database Secret shape refused"
+            );
+            let user = secret
+                .data
+                .get("username")
+                .context("database Secret has no username")?;
+            anyhow::ensure!(
+                STANDARD.decode(user)? == username.as_bytes()
+                    && secret.data.contains_key("password"),
+                "database Secret names another role"
+            );
+        }
         Ok(())
-    }
+    })
+    .await?;
+    let role = serde_json::to_value(declaration)?;
+    edit_roles(kubeconfig, context, namespace, cluster, |roles| {
+        if let Some(existing) = roles.iter_mut().find(|entry| entry["name"] == username) {
+            *existing = role.clone();
+        } else {
+            roles.push(role.clone());
+        }
+    })
+    .await
+}
 
-    async fn forget(&mut self, role: &str) -> anyhow::Result<()> {
-        let transaction = super::provisioning_transaction(&mut self.client).await?;
-        transaction
-            .execute(sql::forget_generation_password_sql(), &[&role])
-            .await
-            .context("remove a generation password fingerprint")?;
-        transaction.commit().await?;
-        Ok(())
+/// Stop managing logins before their owning environment drops them.
+pub(crate) async fn remove_roles(
+    kubeconfig: &Path,
+    context: &str,
+    namespace: &str,
+    cluster: &str,
+    names: &[String],
+) -> anyhow::Result<()> {
+    edit_roles(kubeconfig, context, namespace, cluster, |roles| {
+        roles.retain(|role| {
+            role["name"]
+                .as_str()
+                .is_none_or(|name| !names.iter().any(|entry| entry == name))
+        });
+    })
+    .await
+}
+
+async fn edit_roles(
+    kubeconfig: &Path,
+    context: &str,
+    namespace: &str,
+    cluster: &str,
+    edit: impl Fn(&mut Vec<Value>),
+) -> anyhow::Result<()> {
+    for attempt in 0..5 {
+        let object: Value = kubectl::get(
+            kubeconfig,
+            context,
+            namespace,
+            "cluster.postgresql.cnpg.io",
+            cluster,
+        )
+        .await?
+        .context("CNPG cluster is absent from the org namespace")?;
+        let mut managed = object["spec"]["managed"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        let mut roles = managed
+            .get("roles")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let previous = roles.clone();
+        edit(&mut roles);
+        if previous == roles {
+            return Ok(());
+        }
+        managed.insert("roles".into(), roles.into());
+        let patch = json!([
+            {"op":"test", "path":"/metadata/resourceVersion", "value":object["metadata"]["resourceVersion"]},
+            {"op":"add", "path":"/spec/managed", "value":managed}
+        ]).to_string();
+        let result = kubectl::kubectl(
+            kubeconfig,
+            context,
+            namespace,
+            &[
+                "patch",
+                "cluster.postgresql.cnpg.io",
+                cluster,
+                "--type=json",
+                "-p",
+                &patch,
+            ],
+            None,
+        )
+        .await;
+        match result {
+            Ok(_) => return Ok(()),
+            Err(error) if attempt < 4 && error.is::<kubectl::Conflict>() => {}
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("last role declaration update returns its result")
+}
+
+pub(crate) fn configuration(
+    namespace: &str,
+    cluster: &str,
+    host: String,
+    port: u16,
+    database: String,
+    username: String,
+    secret: String,
+) -> ConnectionConfig {
+    ConnectionConfig {
+        host,
+        port,
+        database,
+        username,
+        credentials: SecretRef {
+            namespace: namespace.into(),
+            name: secret,
+        },
+        server_ca: SecretRef {
+            namespace: namespace.into(),
+            name: format!("{cluster}-ca"),
+        },
     }
 }
 
-use plan::WorkloadRoleState;
-
-pub(super) use plan::WorkloadLifecycle;
-
-impl<'a> WorkloadLifecycle<'a> {
-    pub(super) fn database(self) -> &'a str {
-        self.target.database()
-    }
-
-    pub(super) fn role(self, generation: CredentialGeneration) -> String {
-        workload_generation_role(self.family, self.target, generation)
-            .expect("the lifecycle constructor pairs each family with its exact target")
-    }
-
-    pub(super) fn family_lock_key(self) -> String {
-        format!("wamn.workload-family.v1:{}", self.family.acl_role())
-    }
-
-    pub(super) fn label(self) -> String {
-        self.family.label()
+pub(crate) async fn wait_role(
+    connection: &mut sqlx::PgConnection,
+    username: &str,
+) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let present: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin)",
+        )
+        .bind(username)
+        .fetch_one(&mut *connection)
+        .await?;
+        if present {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            tokio::time::Instant::now() < deadline,
+            "CNPG did not reconcile the database login"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-pub(super) use plan::WorkloadActionIdentity;
+/// Provision every role once and publish only public connection facts in a ConfigMap.
+pub(crate) async fn provision(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    cluster: &str,
+    project_input: &str,
+    control_input: &str,
+) -> anyhow::Result<()> {
+    let namespace = document.org.as_str();
+    let mut project = wamn_postgres::connect(project_input).await?;
+    let mut control = wamn_postgres::connect(control_input).await?;
+    let project_options = wamn_postgres::connect_options(project_input).await?;
+    let control_options = wamn_postgres::connect_options(control_input).await?;
+    let project_database = project_options
+        .get_database()
+        .context("project database is absent")?;
+    let control_database = control_options
+        .get_database()
+        .context("control database is absent")?;
+    let control_cluster = control_options
+        .get_host()
+        .split('.')
+        .next()
+        .context("control database host is absent")?
+        .trim_end_matches("-rw");
+    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
+    let triple = document.triple();
+    let mut data = serde_json::Map::new();
+    let mut application = None;
+    let mut dynamic = None;
+    for family in WorkloadRoleFamily::project_env_families() {
+        let is_control = family.identity_type() == WorkloadRoleIdentityType::Control;
+        let database = if is_control {
+            control_database
+        } else {
+            project_database
+        };
+        let role_cluster = if is_control { control_cluster } else { cluster };
+        let identity = match family.identity_type() {
+            WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: &key,
+                database,
+            },
+            WorkloadRoleIdentityType::ProjectEnvironment => {
+                WorkloadRoleIdentity::ProjectEnvironment {
+                    org: &document.org,
+                    project: &document.project,
+                    environment: &document.env,
+                    database,
+                }
+            }
+            WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
+                org: &document.org,
+                project: &document.project,
+                environment: &document.env,
+                database,
+            },
+            WorkloadRoleIdentityType::Org => unreachable!("org roles are not project credentials"),
+        };
+        let username = workload_login(family, identity)?;
+        let secret = wamn_control_provision::workload_secret_name(
+            family,
+            &document.org,
+            &document.project,
+            &document.env,
+        );
+        let connection = if is_control {
+            &mut control
+        } else {
+            &mut project
+        };
+        let surface = sql::stable_surface_sql(family)
+            .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+            .execute(&mut *connection)
+            .await?;
+        reconcile(
+            &platform.target.kubeconfig,
+            &platform.target.context,
+            namespace,
+            role_cluster,
+            &managed_role(username.clone(), family.acl_role(), secret.clone()),
+        )
+        .await?;
+        wait_role(connection, &username).await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
+            family, database, &username,
+        )))
+        .execute(&mut *connection)
+        .await?;
+        if is_control {
+            let mapped: Option<String> =
+                sqlx::query_scalar(sql::upsert_control_author_project_env_key_mapping_sql())
+                    .bind(&username)
+                    .bind(&key)
+                    .bind(&document.org)
+                    .bind(&document.project)
+                    .bind(&document.env)
+                    .fetch_optional(&mut *connection)
+                    .await?;
+            anyhow::ensure!(
+                mapped.as_deref() == Some(key.as_str()),
+                "control login maps to another environment"
+            );
+        }
+        let host = if is_control {
+            control_options.get_host().to_owned()
+        } else {
+            platform
+                .database_host
+                .clone()
+                .unwrap_or_else(|| format!("{role_cluster}-rw.{namespace}.svc.cluster.local"))
+        };
+        let config = configuration(
+            namespace,
+            role_cluster,
+            host,
+            platform.database_port,
+            database.into(),
+            username,
+            secret,
+        );
+        if family == WorkloadRoleFamily::App {
+            application = Some(serde_json::to_value(&config)?);
+        }
+        if family == WorkloadRoleFamily::Query {
+            dynamic = Some(serde_json::to_value(&config)?);
+        }
+        if family == WorkloadRoleFamily::SessionRoleReader {
+            let instance =
+                super::read_project_env_instance(&platform.system_database_url, &triple).await?;
+            let target = wamn_control_provision::session_target::SessionTarget::new(
+                &triple,
+                &instance,
+                &key,
+                &config.to_json()?,
+            )?;
+            data.insert("session-target.json".into(), target.to_json()?.into());
+        }
+        if family == WorkloadRoleFamily::Administration {
+            let name = wamn_registry::name::control_administration_secret_name(&document.org);
+            let key = wamn_control_provision::control_administration_key(
+                &document.project,
+                &document.env,
+            );
+            let patch = json!({"data":{key:config.to_json()?}}).to_string();
+            kubectl::kubectl(
+                &platform.target.kubeconfig,
+                &platform.target.context,
+                namespace,
+                &["patch", "configmap", &name, "--type=merge", "-p", &patch],
+                None,
+            )
+            .await?;
+        }
+        data.insert(
+            format!("{}.json", family.component_stem()),
+            config.to_json()?.into(),
+        );
+    }
+    data.insert("app.json".into(), json!({"compiled":application.context("application login is absent")?, "dynamic":dynamic.context("query login is absent")?}).to_string().into());
+    let name = wamn_control_provision::project_env_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let config_map = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":data});
+    kubectl::apply(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        &config_map,
+    )
+    .await?;
+    Ok(())
+}
 
-/// Restore database-local grants without changing an existing credential.
+/// Restore grants for existing managed logins after replacing a project database.
 pub(crate) async fn restore_database_access(
-    system_url: &str,
-    admin_url: &str,
+    system_input: &str,
+    input: &str,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let instance = read_project_env_instance(system_url, triple).await?;
-    let database = project_env_database_name(&triple.org, &triple.project, &triple.env, &instance);
-    let admin_config = exact_project_database_config(admin_url, &database)?;
-    let (mut admin, _task) =
-        connect_config(&admin_config, "restore workload database access").await?;
-    let passwords =
-        GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
-            .await?;
-    let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    let instance = super::read_project_env_instance(system_input, triple).await?;
+    let mut database = wamn_control_provision::project_env_database_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &instance,
+    );
+    let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    let mut connection = wamn_postgres::connect(input).await?;
     for family in WorkloadRoleFamily::project_env_families()
         .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
     {
-        let lifecycle = workload_lifecycle(
-            family,
-            WorkloadActionIdentity {
+        let identity = if family.identity_type() == WorkloadRoleIdentityType::ProjectEnvKey {
+            WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: &key,
+                database: &mut database,
+            }
+        } else {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: &triple.org,
                 project: &triple.project,
                 environment: &triple.env,
-            },
-            &project_env_key,
-            &database,
-        );
-        lock_workload_family(&admin, lifecycle).await?;
-        let transaction = super::provisioning_transaction(&mut admin).await?;
-        for generation in [CredentialGeneration::A, CredentialGeneration::B] {
-            let role = lifecycle.role(generation);
-            let Some(state) =
-                read_workload_role_state(&transaction, &passwords, &role, &lifecycle.label())
-                    .await?
-            else {
-                continue;
-            };
-            if state.is_inactive() {
-                continue;
+                database: &mut database,
             }
-            anyhow::ensure!(
-                state.is_active_for(family, &database) || state.lost_database_access(family),
-                "refuse to restore database access for malformed workload credential {role}"
-            );
-            if let Some(surface) = sql::stable_surface_sql(family) {
-                transaction.batch_execute(&surface).await?;
-            }
-            transaction
-                .batch_execute(&format!(
-                    "GRANT CONNECT ON DATABASE {} TO {}",
-                    postgres_protocol::escape::escape_identifier(&database),
-                    postgres_protocol::escape::escape_identifier(&role)
-                ))
-                .await?;
-        }
-        transaction.commit().await?;
-    }
-    Ok(())
-}
-
-async fn converge_workload_generation_state(
-    client: &(impl GenericClient + Sync),
-    passwords: &mut GenerationPasswords,
-    lifecycle: WorkloadLifecycle<'_>,
-    role: &str,
-) -> anyhow::Result<Option<WorkloadRoleState>> {
-    let state = read_workload_role_state(client, passwords, role, &lifecycle.label()).await?;
-    let Some(found) = state.as_ref() else {
-        return Ok(None);
-    };
-    let active =
-        if found.is_active_for(lifecycle.family, lifecycle.database()) || found.is_inactive() {
-            return Ok(state);
-        } else if found.is_migratable_active_for(lifecycle.family, lifecycle.database()) {
-            true
-        } else if found.is_migratable_inactive() {
-            false
-        } else {
-            return Ok(state);
         };
-    client
-        .batch_execute(&sql::normalize_workload_generation_membership_sql(
-            lifecycle.family,
-            role,
-            active,
-        ))
-        .await
-        .with_context(|| {
-            format!(
-                "normalize legacy {} generation membership",
-                lifecycle.label()
-            )
-        })?;
-    read_workload_role_state(client, passwords, role, &lifecycle.label()).await
-}
-
-async fn converge_stable_workload_memberships(
-    client: &(impl GenericClient + Sync),
-    passwords: &mut GenerationPasswords,
-    admin_config: &PgConfig,
-    lifecycle: WorkloadLifecycle<'_>,
-) -> anyhow::Result<()> {
-    let Some(stable) = read_workload_role_state(
-        client,
-        passwords,
-        lifecycle.family.acl_role(),
-        &lifecycle.label(),
-    )
-    .await?
-    else {
-        return Ok(());
-    };
-    // Only the generations of this target: the stable role is cluster-wide, and
-    // the members of another environment can belong to a role that made them
-    // and that the provisioner cannot change (owner ruling of 2026-10-03 on
-    // wamn-zua8.3).
-    let own = [
-        lifecycle.role(CredentialGeneration::A),
-        lifecycle.role(CredentialGeneration::B),
-    ];
-    for role in stable.member_roles {
-        anyhow::ensure!(
-            is_workload_generation_role(lifecycle.family, &role),
-            "stable {} ACL role has a member outside its generation family",
-            lifecycle.label()
-        );
-        if !own.contains(&role) {
-            continue;
-        }
-        client
-            .batch_execute(&sql::normalize_workload_generation_membership_sql(
-                lifecycle.family,
-                &role,
-                true,
-            ))
-            .await
-            .with_context(|| {
-                format!(
-                    "normalize {} stable-role generation member",
-                    lifecycle.label()
-                )
-            })?;
-        let child = read_workload_role_state(client, passwords, &role, &lifecycle.label())
+        let username = workload_login(family, identity)?;
+        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1)")
+            .bind(&username)
+            .fetch_one(&mut connection)
             .await?
-            .with_context(|| {
-                format!(
-                    "{} stable-role generation member disappeared",
-                    lifecycle.label()
-                )
-            })?;
-        let [database] = child.connect_databases.as_slice() else {
-            anyhow::bail!(
-                "{} stable-role generation member does not carry exactly one direct database CONNECT grant",
-                lifecycle.label()
-            );
-        };
-        anyhow::ensure!(
-            child.is_active_for(lifecycle.family, database),
-            "{} stable-role generation member is not an exact active credential",
-            lifecycle.label()
-        );
-        verify_role_grants(
-            admin_config,
-            &role,
-            RoleAclExpectation::Generation { database },
-        )
-        .await?;
+        {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
+                family, &database, &username,
+            )))
+            .execute(&mut connection)
+            .await?;
+        }
     }
     Ok(())
 }
 
-/// ONE workload generation action, for any family (`wamn-0h0g.22.16`).
-///
-/// Replaces four copy-pasted `run_*_action` functions and the dispatch chain
-/// that chose between them. Everything this needs is DERIVED from the family:
-/// its target grain picks the identity inputs, the admin database and the
-/// lifecycle target; its label names the action in every message; its declared
-/// Secret body shape picks what the published Secret carries. What is
-/// deliberately NOT derived is the GRANT SET, which is where a family's
-/// authority actually lives.
-pub async fn run_workload_action(
-    args: &WorkloadActionRequest,
-) -> anyhow::Result<WorkloadActionOutcome> {
-    let admin_url = args
-        .system_database_url
-        .as_deref()
-        .context("system database URL is required")?;
-    run_workload_action_with_admin(args, admin_url).await
-}
-
-/// Prepare credentials with separate system data and administration connections.
-pub(crate) async fn run_workload_action_with_admin(
-    args: &WorkloadActionRequest,
-    admin_url: &str,
-) -> anyhow::Result<WorkloadActionOutcome> {
-    let WorkloadGenerationAction {
+/// Create a managed control-database login and publish its public configuration.
+pub async fn provision_control_role(
+    input: &str,
+    namespace: &str,
+    family: WorkloadRoleFamily,
+) -> anyhow::Result<()> {
+    let options = wamn_postgres::connect_options(input).await?;
+    let database = options
+        .get_database()
+        .context("control database is absent")?;
+    let cluster = options
+        .get_host()
+        .split('.')
+        .next()
+        .context("control host is absent")?
+        .trim_end_matches("-rw");
+    let username = workload_login(
         family,
-        verb,
-        generation,
-    } = args.action;
-    let label = family.label();
-    anyhow::ensure!(
-        family.is_project_env_provisioned(),
-        "{label} is an org credential; provision-org mints it"
-    );
-    let emits_app_retirement_sql =
-        family == WorkloadRoleFamily::App && verb == WorkloadActionVerb::Prepare;
-    anyhow::ensure!(
-        args.emit_role_sql.is_none() || emits_app_retirement_sql,
-        "{label} generation actions cannot render ordinary provisioning or PAT artifacts; only \
-         App prepare may emit the canonical shared-login retirement role SQL"
-    );
-    // The control host of the org holds the same administration login as the
-    // application host, so each prepare, the first one and every rotation,
-    // writes the patch that reaches it.
-    let control_patch =
-        if family == WorkloadRoleFamily::Administration && verb == WorkloadActionVerb::Prepare {
-            let path = args.control_administration_patch.as_deref().with_context(|| {
-            format!(
-                "--{} requires --emit-control-administration-patch PATH: the control host of \
-                 the org holds the same login",
-                workload_action_flag(family, verb)
-            )
-        })?;
-            ensure_secret_path(path, "--emit-control-administration-patch")?;
-            Some(path)
-        } else {
-            anyhow::ensure!(
-                args.control_administration_patch.is_none(),
-                "only an administration prepare emits the control host's patch"
-            );
-            None
-        };
-    let project_env_key = wamn_registry::project_env_key(&args.org, &args.project, &args.env);
-    let project_env_key = project_env_key.as_str();
-    let identity = workload_action_identity(args)?;
-    let WorkloadActionIdentity {
-        org,
-        project,
-        environment,
-    } = identity;
-    if family == WorkloadRoleFamily::SessionRoleReader {
-        validate_session_project_env_key(project_env_key)?;
-    }
-    let triple = Triple::new(org, environment, project);
-    let system_url = args
-        .system_database_url
-        .as_deref()
-        .with_context(|| format!("{label} generation actions require --system-database-url"))?;
-
-    // A CONTROL-targeted family addresses the control database the system URL
-    // already names; every other family addresses the project environment's own
-    // database, whose instance suffix is READ from the registry rather than
-    // typed. One derivation over the target grain, not a branch per family.
-    let (admin_url, database, admin_config, instance) = if family.identity_type()
-        == WorkloadRoleIdentityType::Control
-    {
-        anyhow::ensure!(
-            args.target_admin_database_url.is_none(),
-            "--target-admin-database-url is not a {label} input: this family addresses the control database"
-        );
-        let config = named_database_config(admin_url, &format!("{label} admin"))?;
-        let database = config
-            .get_dbname()
-            .expect("named_database_config requires a database name")
-            .to_string();
-        (admin_url, database, config, None)
-    } else {
-        let instance = read_project_env_instance(system_url, &triple).await?;
-        let database = project_env_database_name(org, project, environment, &instance);
-        let admin_url = args.target_admin_database_url.as_deref().with_context(|| {
-            format!("{label} generation actions require --target-admin-database-url")
-        })?;
-        let config = exact_project_database_config(admin_url, &database)?;
-        (admin_url, database, config, Some(instance))
-    };
-    let lifecycle = workload_lifecycle(family, identity, project_env_key, &database);
-    let mut passwords =
-        GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
-            .await?;
-    let db_host = match (&args.db_host, &args.cluster) {
-        (Some(host), _) => std::borrow::Cow::Borrowed(host.as_str()),
-        (None, Some(cluster)) => database_host(None, cluster, &args.cluster_namespace),
-        (None, None) => {
-            let policy = read_project_env_policy(system_url, &triple).await?;
-            let cluster = resolve_cluster(system_url, org, &policy).await?;
-            database_host(None, &cluster, &args.cluster_namespace)
-        }
-    };
-
-    match verb {
-        WorkloadActionVerb::Prepare => {
-            let secret_path = args.secret.as_deref().with_context(|| {
-                format!(
-                    "--{} requires --{} PATH",
-                    workload_action_flag(family, verb),
-                    workload_secret_flag(family)
-                )
-            })?;
-            ensure_secret_path(secret_path, &format!("--{}", workload_secret_flag(family)))?;
-            let expires_at = workload_expires_at(Utc::now());
-            // The key the RLS predicate computes, taken from the ONE Rust
-            // definition rather than re-derived here — the Secret's label must
-            // name the same project the role name's digest does.
-            let key = project_key(project_env_key, &database);
-            prepare_workload_generation(
-                &admin_config,
-                &mut passwords,
-                lifecycle,
-                generation,
-                &expires_at,
-                |role, password| {
-                    let credential_url =
-                        workload_url(admin_url, &db_host, args.db_port, role, password, &database)?;
-                    let secret = match family.secret_body_type() {
-                        WorkloadSecretBodyType::Url => render_workload_secret_manifest(
-                            family,
-                            &triple,
-                            &args.namespace,
-                            WorkloadSecretBody::Url(&credential_url),
-                        ),
-                        WorkloadSecretBodyType::ProjectEnvKeyUrl => {
-                            anyhow::ensure!(
-                                role.contains(&key),
-                                "the minted {label} login does not carry the project key the RLS \
-                                 predicate computes, so every guest read would refuse"
-                            );
-                            render_workload_secret_manifest(
-                                family,
-                                &triple,
-                                &args.namespace,
-                                WorkloadSecretBody::ProjectEnvKeyUrl {
-                                    project_env_key,
-                                    project_key: &key,
-                                    url: &credential_url,
-                                },
-                            )
-                        }
-                        WorkloadSecretBodyType::SessionTarget => {
-                            let target = SessionTarget::new(
-                                &triple,
-                                instance
-                                    .as_deref()
-                                    .expect("session readers use project-environment target"),
-                                project_env_key,
-                                &credential_url,
-                            )?;
-                            render_workload_secret_manifest(
-                                family,
-                                &triple,
-                                &args.namespace,
-                                WorkloadSecretBody::SessionTarget(&target),
-                            )
-                        }
-                    };
-                    write_secret_json(secret_path, &secret)
-                        .with_context(|| format!("write authenticated {label} Secret"))?;
-                    if let Some(path) = control_patch {
-                        write_secret_json(
-                            path,
-                            &render_control_administration_patch(&triple, Some(&credential_url)),
-                        )
-                        .context("write the control host's administration patch")?;
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-            let app_retirement_role_sql =
-                if family == WorkloadRoleFamily::App && args.emit_role_sql.is_some() {
-                    let retirement_sql = role_sql();
-                    write_output(args.emit_role_sql.as_deref(), &retirement_sql)?;
-                    Some(retirement_sql)
-                } else {
-                    None
-                };
-            Ok(WorkloadActionOutcome::Prepared {
-                secret: secret_path.to_path_buf(),
-                app_retirement_role_sql,
-            })
-        }
-        WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, &mut passwords, lifecycle, generation)
-                .await?;
-            Ok(WorkloadActionOutcome::Retired)
-        }
-        WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, &mut passwords, lifecycle, generation).await?;
-            Ok(WorkloadActionOutcome::Aborted)
-        }
-    }
-}
-
-/// ONE org-targeted generation action (`wamn-a40n.2`), run by `provision-org`.
-///
-/// The same lifecycle as [`run_workload_action`]: an org family addresses the
-/// control database the system URL names, and its Secret carries one `url`.
-pub async fn run_org_workload_action(
-    args: &OrgWorkloadActionRequest,
-) -> anyhow::Result<WorkloadActionOutcome> {
-    let WorkloadGenerationAction {
-        family,
-        verb,
-        generation,
-    } = args.action;
-    let label = family.label();
-    anyhow::ensure!(
-        family.identity_type() == WorkloadRoleIdentityType::Org,
-        "{label} is not an org credential; provision-project-env mints it"
-    );
-    let admin_config = named_database_config(&args.system_database_url, &format!("{label} admin"))?;
-    let database = admin_config
-        .get_dbname()
-        .expect("named_database_config requires a database name")
-        .to_string();
-    let lifecycle = WorkloadLifecycle {
-        family,
-        target: WorkloadRoleIdentity::Org {
-            org: &args.org,
-            database: &database,
+        WorkloadRoleIdentity::Org {
+            org: namespace,
+            database,
         },
-        control_project_env_key: None,
-    };
-    let mut passwords = GenerationPasswords::connect(&admin_config).await?;
-    match verb {
-        WorkloadActionVerb::Prepare => {
-            let secret_path = args.secret.as_deref().with_context(|| {
-                format!("--prepare-{label}-generation requires --emit-{label}-secret PATH")
-            })?;
-            ensure_secret_path(secret_path, &format!("--emit-{label}-secret"))?;
-            let db_host = args
-                .db_host
-                .as_deref()
-                .with_context(|| format!("--prepare-{label}-generation requires --db-host"))?;
-            let expires_at = workload_expires_at(Utc::now());
-            prepare_workload_generation(
-                &admin_config,
-                &mut passwords,
-                lifecycle,
-                generation,
-                &expires_at,
-                |role, password| {
-                    let credential_url = workload_url(
-                        &args.system_database_url,
-                        db_host,
-                        args.db_port,
-                        role,
-                        password,
-                        &database,
-                    )?;
-                    let secret = render_org_workload_secret_manifest(
-                        family,
-                        &args.org,
-                        &args.namespace,
-                        &credential_url,
-                    );
-                    write_secret_json(secret_path, &secret)
-                        .with_context(|| format!("write authenticated {label} Secret"))
-                },
-            )
-            .await?;
-            Ok(WorkloadActionOutcome::Prepared {
-                secret: secret_path.to_path_buf(),
-                app_retirement_role_sql: None,
-            })
-        }
-        WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, &mut passwords, lifecycle, generation)
-                .await?;
-            Ok(WorkloadActionOutcome::Retired)
-        }
-        WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, &mut passwords, lifecycle, generation).await?;
-            Ok(WorkloadActionOutcome::Aborted)
-        }
-    }
-}
-
-/// Prepare one generation, then verify it and publish its Secret.
-///
-/// **A REFUSED PREPARE IS NOT ATOMIC, deliberately (`wamn-0h0g.12.179`).** The
-/// prepare transaction COMMITS before the post-commit tests run, because the
-/// generation must be authenticated over a real connection — which no
-/// uncommitted role can accept. A refusal after that point therefore leaves,
-/// and is contracted to leave, exactly two things behind:
-///
-/// * the stable ACL role converged to its NOLOGIN, password-free shape by
-///   `ensure_workload_acl_role_sql`, which is idempotent and is the shape every
-///   subsequent prepare wants anyway; and
-/// * the target generation role, rolled back by
-///   [`rollback_prepared_workload_generation`] to the INACTIVE shape — no
-///   `LOGIN`, no password, no membership, no `CONNECT`, `VALID UNTIL 'epoch'`.
-///
-/// Nothing else survives, and no Secret is published. A retry meets precisely
-/// the inactive target a prepare requires, so the partial state is recoverable
-/// rather than wedging; what it is NOT is a clean cluster, and a live arm that
-/// assumes a refusal left no role behind will find a healthy object sitting
-/// inside `prepare_workload_generation_sql`'s `IF NOT EXISTS` guard. Live arms
-/// must drop the roles themselves, not rely on a failed run to have done it.
-async fn prepare_workload_generation<F>(
-    admin_config: &PgConfig,
-    passwords: &mut GenerationPasswords,
-    lifecycle: WorkloadLifecycle<'_>,
-    generation: CredentialGeneration,
-    expires_at: &str,
-    publish: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce(&str, &str) -> anyhow::Result<()>,
-{
-    let database = lifecycle.database();
-    let role = lifecycle.role(generation);
-    let other_role = lifecycle.role(generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
-    lock_workload_family(&admin, lifecycle).await?;
-    let transaction = super::provisioning_transaction(&mut admin)
-        .await
-        .with_context(|| format!("begin {} generation prepare", lifecycle.label()))?;
-    transaction
-        .batch_execute(sql::revoke_public_connect_base_grants_sql())
-        .await
-        .context("converge cluster PUBLIC CONNECT base grants")?;
-    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
-    let desired =
-        converge_workload_generation_state(&transaction, passwords, lifecycle, &role).await?;
-    let other =
-        converge_workload_generation_state(&transaction, passwords, lifecycle, &other_role).await?;
-    let recovering_active = match (generation, desired.as_ref(), other.as_ref()) {
-        (CredentialGeneration::A, desired, None)
-            if desired.is_none_or(WorkloadRoleState::is_inactive) =>
-        {
-            false
-        }
-        (CredentialGeneration::A, Some(desired), None)
-            if desired.is_active_for(lifecycle.family, database) && desired.sessions == 0 =>
-        {
-            true
-        }
-        (_, desired, Some(other))
-            if desired.is_none_or(WorkloadRoleState::is_inactive)
-                && other.is_active_for(lifecycle.family, database) =>
-        {
-            false
-        }
-        (_, Some(desired), Some(other))
-            if desired.is_active_for(lifecycle.family, database)
-                && desired.sessions == 0
-                && other.is_active_for(lifecycle.family, database) =>
-        {
-            true
-        }
-        (CredentialGeneration::B, None, None) => {
-            anyhow::bail!(
-                "initial {} credential generation must be a",
-                lifecycle.label()
-            )
-        }
-        _ => anyhow::bail!(
-            "{} generation prepare requires an inactive target, or an exact zero-session active target recovered after failed Secret publication",
-            lifecycle.label()
-        ),
-    };
-    let desired_acl = if recovering_active {
-        RoleAclExpectation::Generation { database }
-    } else {
-        RoleAclExpectation::None
-    };
-    verify_role_grants(admin_config, &role, desired_acl).await?;
-    if other.is_some() {
-        verify_role_grants(
-            admin_config,
-            &other_role,
-            RoleAclExpectation::Generation { database },
-        )
+    )?;
+    let secret = wamn_control_provision::org_workload_secret_name(family, namespace);
+    let kubeconfig = std::env::var_os("KUBECONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let mut connection = wamn_postgres::connect(input).await?;
+    let surface = sql::stable_surface_sql(family)
+        .unwrap_or_else(|| sql::ensure_workload_acl_role_sql(family));
+    sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+        .execute(&mut connection)
         .await?;
-    }
-    // Pre-validated ONLY for a family whose stable grant set is converged
-    // elsewhere. A family whose grant set THIS batch applies has nothing to
-    // assert yet on a first prepare, so the condition is the absence of a
-    // stable surface, not a family name.
-    if sql::stable_surface_sql(lifecycle.family).is_none()
-        && let Some(grant_set) = stable_grant_set(lifecycle.family)
-        && read_workload_role_state(
-            &transaction,
-            passwords,
-            lifecycle.family.acl_role(),
-            &lifecycle.label(),
-        )
-        .await?
-        .is_some()
-    {
-        verify_role_grants(
-            admin_config,
-            lifecycle.family.acl_role(),
-            RoleAclExpectation::StableGrantSet {
-                grant_set,
-                required_database: database,
-            },
-        )
-        .await?;
-    }
-    let password = random_lower_hex(32)?;
-    transaction
-        .batch_execute(&sql::prepare_workload_generation_sql(
-            lifecycle.family,
-            database,
-            &role,
-            &password,
-            expires_at,
-        ))
-        .await
-        .with_context(|| format!("prepare {} credential generation", lifecycle.label()))?;
-    passwords.record(&role, &password).await?;
-    if let (
-        Some(project_env_key),
-        WorkloadRoleIdentity::Control {
-            org,
-            project,
-            environment,
-            ..
-        },
-    ) = (lifecycle.control_project_env_key, lifecycle.target)
-    {
-        let mapping = super::provisioning_transaction(&mut passwords.client).await?;
-        let mapped: Option<String> = mapping
-            .query_opt(
-                sql::upsert_control_author_project_env_key_mapping_sql(),
-                &[&role, &project_env_key, &org, &project, &environment],
-            )
-            .await
-            .context("record control-author login project mapping")?
-            .map(|row| row.get("project_env_key"));
-        anyhow::ensure!(
-            mapped.as_deref() == Some(project_env_key),
-            "control-author login identity already maps to a different project"
-        );
-        mapping.commit().await?;
-    }
-    if let Err(error) = transaction.commit().await {
-        // The role never received the password, so its fingerprint goes too.
-        // A forget that fails here leaves a fingerprint on an inactive role,
-        // which the inactive shape ignores.
-        let _ = passwords.forget(&role).await;
-        return Err(error)
-            .with_context(|| format!("commit {} generation prepare", lifecycle.label()));
-    }
-
-    // App prepare has now made the stable role NOLOGIN, so old credentials
-    // cannot reconnect. Do not drain its existing sessions here: they bridge
-    // the interval in which the authenticated generation Secret is published
-    // and workloads roll. The explicit retirement step owns the final bounded
-    // native drain after that cutover.
-
-    let publish_result = async {
-        let credential_config = workload_config(admin_config, &role, &password, database);
-        authenticate_workload_generation(&credential_config, lifecycle, &role)
-            .await
-            .with_context(|| format!("authenticate prepared {} generation", lifecycle.label()))?;
-
-        let prepared = read_workload_role_state(&admin, passwords, &role, &lifecycle.label())
-            .await?
-            .with_context(|| format!("prepared {} generation disappeared", lifecycle.label()))?;
-        anyhow::ensure!(
-            prepared.is_active_for(lifecycle.family, database),
-            "prepared {} generation did not have the exact active ACL",
-            lifecycle.label()
-        );
-        anyhow::ensure!(
-            prepared.valid_until.as_deref() == Some(expires_at),
-            "prepared {} generation VALID UNTIL does not match credential expires-at",
-            lifecycle.label()
-        );
-        verify_role_grants(
-            admin_config,
-            &role,
-            RoleAclExpectation::Generation { database },
-        )
-        .await?;
-        verify_stable_workload_role(&admin, passwords, admin_config, lifecycle).await?;
-        publish(&role, &password)?;
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    if let Err(error) = publish_result {
-        let rollback = rollback_prepared_workload_generation(
-            &admin,
-            passwords,
-            admin_config,
-            lifecycle,
-            &role,
-        )
-        .await;
-        drop(admin);
-        let _ = admin_task.await;
-        if let Err(rollback_error) = rollback {
-            anyhow::bail!(
-                "{} prepare failed after LOGIN was enabled: {error:#}; rollback also failed: {rollback_error:#}",
-                lifecycle.label()
-            );
-        }
-        return Err(error);
-    }
-    drop(admin);
-    let _ = admin_task.await;
-    Ok(())
-}
-
-/// Undo the authority a committed prepare granted, back to the INACTIVE shape.
-///
-/// It does NOT drop the role, and does not undo the stable ACL role's
-/// convergence — see [`prepare_workload_generation`] for the contract on what a
-/// refused prepare leaves behind.
-async fn rollback_prepared_workload_generation(
-    admin: &(impl GenericClient + Sync),
-    passwords: &mut GenerationPasswords,
-    admin_config: &PgConfig,
-    lifecycle: WorkloadLifecycle<'_>,
-    role: &str,
-) -> anyhow::Result<()> {
-    admin
-        .batch_execute(&sql::retire_workload_generation_sql(
-            lifecycle.family,
-            lifecycle.database(),
-            role,
-        ))
-        .await
-        .with_context(|| format!("revoke prepared {} generation authority", lifecycle.label()))?;
-    passwords.forget(role).await?;
-    admin
-        .batch_execute(&sql::terminate_workload_generation_sessions_sql(role))
-        .await
-        .with_context(|| {
-            format!(
-                "terminate prepared {} generation sessions",
-                lifecycle.label()
-            )
-        })?;
-    let state = read_workload_role_state(admin, passwords, role, &lifecycle.label())
-        .await?
-        .with_context(|| format!("rolled-back {} generation disappeared", lifecycle.label()))?;
-    anyhow::ensure!(
-        state.is_inactive(),
-        "rolled-back {} generation did not converge to inactive",
-        lifecycle.label()
-    );
-    verify_role_grants(admin_config, role, RoleAclExpectation::None).await
-}
-
-async fn retire_workload_generation(
-    admin_config: &PgConfig,
-    passwords: &mut GenerationPasswords,
-    lifecycle: WorkloadLifecycle<'_>,
-    generation: CredentialGeneration,
-) -> anyhow::Result<()> {
-    let database = lifecycle.database();
-    let old_role = lifecycle.role(generation);
-    let replacement_role = lifecycle.role(generation.other());
-    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
-    lock_workload_family(&admin, lifecycle).await?;
-    let transaction = admin
-        .transaction()
-        .await
-        .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
-    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
-    let old = converge_workload_generation_state(&transaction, passwords, lifecycle, &old_role)
-        .await?
-        .with_context(|| format!("old {} generation does not exist", lifecycle.label()))?;
-    let replacement =
-        converge_workload_generation_state(&transaction, passwords, lifecycle, &replacement_role)
-            .await?
-            .with_context(|| {
-                format!(
-                    "replacement {} generation does not exist",
-                    lifecycle.label()
-                )
-            })?;
-    anyhow::ensure!(
-        old.is_active_for(lifecycle.family, database),
-        "old {} generation is not the exact active credential",
-        lifecycle.label()
-    );
-    anyhow::ensure!(
-        replacement.is_active_for(lifecycle.family, database),
-        "replacement {} generation is not LOGIN-capable with exact ACL",
-        lifecycle.label()
-    );
-    anyhow::ensure!(
-        replacement.sessions > 0,
-        "replacement {} generation has no verified live private-pool session",
-        lifecycle.label()
-    );
-    verify_role_grants(
-        admin_config,
-        &old_role,
-        RoleAclExpectation::Generation { database },
+    reconcile(
+        &kubeconfig,
+        "",
+        namespace,
+        cluster,
+        &managed_role(username.clone(), family.acl_role(), secret.clone()),
     )
     .await?;
-    verify_role_grants(
-        admin_config,
-        &replacement_role,
-        RoleAclExpectation::Generation { database },
-    )
+    wait_role(&mut connection, &username).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
+        family, database, &username,
+    )))
+    .execute(&mut connection)
     .await?;
-    transaction
-        .batch_execute(&sql::retire_workload_generation_sql(
-            lifecycle.family,
-            database,
-            &old_role,
-        ))
-        .await
-        .with_context(|| format!("retire old {} credential generation", lifecycle.label()))?;
-    transaction
-        .commit()
-        .await
-        .with_context(|| format!("commit {} generation retirement", lifecycle.label()))?;
-    passwords.forget(&old_role).await?;
-    admin
-        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&old_role))
-        .await
-        .with_context(|| {
-            format!(
-                "terminate retired {} generation sessions",
-                lifecycle.label()
-            )
-        })?;
-    let retired = read_workload_role_state(&admin, passwords, &old_role, &lifecycle.label())
-        .await?
-        .with_context(|| format!("retired {} generation disappeared", lifecycle.label()))?;
-    anyhow::ensure!(
-        retired.is_inactive(),
-        "old {} generation did not converge to inactive",
-        lifecycle.label()
+    let config = configuration(
+        namespace,
+        cluster,
+        options.get_host().into(),
+        options.get_port(),
+        database.into(),
+        username,
+        secret,
     );
-    drop(admin);
-    let _ = admin_task.await;
+    let name = wamn_registry::name::control_administration_secret_name(namespace);
+    let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":{"control.json":config.to_json()?}});
+    kubectl::apply(&kubeconfig, "", namespace, &object).await?;
     Ok(())
-}
-
-async fn abort_workload_generation(
-    admin_config: &PgConfig,
-    passwords: &mut GenerationPasswords,
-    lifecycle: WorkloadLifecycle<'_>,
-    generation: CredentialGeneration,
-) -> anyhow::Result<()> {
-    let database = lifecycle.database();
-    let role = lifecycle.role(generation);
-    let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
-    lock_workload_family(&admin, lifecycle).await?;
-    let transaction = admin
-        .transaction()
-        .await
-        .with_context(|| format!("begin {} generation abort", lifecycle.label()))?;
-    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
-    let prepared = converge_workload_generation_state(&transaction, passwords, lifecycle, &role)
-        .await?
-        .with_context(|| format!("prepared {} generation does not exist", lifecycle.label()))?;
-    let other_role = lifecycle.role(generation.other());
-    let _ =
-        converge_workload_generation_state(&transaction, passwords, lifecycle, &other_role).await?;
-    anyhow::ensure!(
-        prepared.is_active_for(lifecycle.family, database),
-        "prepared {} generation is not the exact active credential",
-        lifecycle.label()
-    );
-    anyhow::ensure!(
-        prepared.sessions == 0,
-        "published or in-use {} generation cannot be aborted",
-        lifecycle.label()
-    );
-    verify_role_grants(
-        admin_config,
-        &role,
-        RoleAclExpectation::Generation { database },
-    )
-    .await?;
-    verify_stable_workload_role(&transaction, passwords, admin_config, lifecycle).await?;
-    transaction
-        .batch_execute(&sql::retire_workload_generation_sql(
-            lifecycle.family,
-            database,
-            &role,
-        ))
-        .await
-        .with_context(|| {
-            format!(
-                "abort unpublished {} credential generation",
-                lifecycle.label()
-            )
-        })?;
-    transaction
-        .commit()
-        .await
-        .with_context(|| format!("commit {} generation abort", lifecycle.label()))?;
-    passwords.forget(&role).await?;
-    admin
-        .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
-        .await
-        .with_context(|| {
-            format!(
-                "terminate aborted {} generation sessions",
-                lifecycle.label()
-            )
-        })?;
-    let aborted = read_workload_role_state(&admin, passwords, &role, &lifecycle.label())
-        .await?
-        .with_context(|| format!("aborted {} generation disappeared", lifecycle.label()))?;
-    anyhow::ensure!(
-        aborted.is_inactive(),
-        "aborted {} generation did not converge to inactive",
-        lifecycle.label()
-    );
-    verify_role_grants(admin_config, &role, RoleAclExpectation::None).await?;
-    drop(admin);
-    let _ = admin_task.await;
-    Ok(())
-}
-
-fn random_lower_hex(bytes: usize) -> anyhow::Result<String> {
-    let mut material = vec![0_u8; bytes];
-    SystemRandom::new()
-        .fill(&mut material)
-        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
-    Ok(hex::encode(material))
-}
-
-async fn authenticate_workload_generation(
-    config: &PgConfig,
-    lifecycle: WorkloadLifecycle<'_>,
-    role: &str,
-) -> anyhow::Result<()> {
-    let (client, task) = connect_config(config, &lifecycle.label()).await?;
-    let row = client
-        .query_one(
-            "SELECT current_user::text, current_database()::text, \
-                    has_database_privilege(current_user, current_database(), 'TEMPORARY')",
-            &[],
-        )
-        .await
-        .with_context(|| format!("probe prepared {} generation", lifecycle.label()))?;
-    let current_user: String = row.get(0);
-    let current_database: String = row.get(1);
-    let can_create_temporary: bool = row.get(2);
-    anyhow::ensure!(
-        current_user == role,
-        "prepared generation authenticated as wrong role"
-    );
-    anyhow::ensure!(
-        current_database == lifecycle.database(),
-        "prepared generation authenticated to wrong database"
-    );
-    anyhow::ensure!(
-        !can_create_temporary,
-        "prepared generation inherited TEMPORARY on its database"
-    );
-    drop(client);
-    task.await
-        .with_context(|| format!("join {} authentication connection", lifecycle.label()))??;
-    Ok(())
-}
-
-async fn lock_workload_family(
-    client: &(impl GenericClient + Sync),
-    lifecycle: WorkloadLifecycle<'_>,
-) -> anyhow::Result<()> {
-    let family_key = lifecycle.family_lock_key();
-    client
-        .query_one(sql::workload_identity_lock_sql(), &[&family_key])
-        .await
-        .with_context(|| format!("acquire {} family rotation lock", lifecycle.label()))?;
-    Ok(())
-}
-
-async fn verify_stable_workload_role(
-    client: &(impl GenericClient + Sync),
-    passwords: &mut GenerationPasswords,
-    admin_config: &PgConfig,
-    lifecycle: WorkloadLifecycle<'_>,
-) -> anyhow::Result<()> {
-    let role = lifecycle.family.acl_role();
-    let state = read_workload_role_state(client, passwords, role, &lifecycle.label())
-        .await?
-        .with_context(|| format!("stable {} ACL role does not exist", lifecycle.label()))?;
-    anyhow::ensure!(
-        state.is_acl_role(lifecycle.family),
-        "stable {} ACL role is not a connection-free NOLOGIN role with exact generation members",
-        lifecycle.label()
-    );
-    if let Some(grant_set) = stable_grant_set(lifecycle.family) {
-        verify_role_grants(
-            admin_config,
-            role,
-            RoleAclExpectation::StableGrantSet {
-                grant_set,
-                required_database: lifecycle.database(),
-            },
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn read_workload_role_state(
-    client: &(impl GenericClient + Sync),
-    passwords: &GenerationPasswords,
-    role: &str,
-    label: &str,
-) -> anyhow::Result<Option<WorkloadRoleState>> {
-    let row = client
-        .query_opt(sql::workload_generation_state_sql(), &[&role])
-        .await
-        .with_context(|| format!("read {label} generation state"))?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let password_set = passwords.recorded(role).await?;
-    Ok(Some(WorkloadRoleState {
-        login: row.get("rolcanlogin"),
-        superuser: row.get("rolsuper"),
-        inherit: row.get("rolinherit"),
-        create_role: row.get("rolcreaterole"),
-        create_db: row.get("rolcreatedb"),
-        replication: row.get("rolreplication"),
-        bypass_rls: row.get("rolbypassrls"),
-        password_set,
-        valid_until: row.get("valid_until"),
-        valid_until_finite: row.get("valid_until_finite"),
-        memberships: row.get("memberships"),
-        membership_options_exact: row.get("membership_options_exact"),
-        membership_options_migratable: row.get("membership_options_migratable"),
-        member_roles: row.get("member_roles"),
-        member_options_exact: row.get("member_options_exact"),
-        generation_children_exact: row.get("generation_children_exact"),
-        connect_databases: row.get("connect_databases"),
-        sessions: row.get("sessions"),
-        owned_objects: row.get("owned_objects"),
-    }))
 }

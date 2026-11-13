@@ -304,7 +304,6 @@ async fn assert_deadline(case: Case) {
         );
         assert_eq!(engine.guest_memory().in_use(), PAGE);
         let abort_started = Instant::now();
-        task.abort();
         assert!(
             timeout_at(abort_started + CLEANUP_BUDGET, task)
                 .await

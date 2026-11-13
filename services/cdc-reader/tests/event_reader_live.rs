@@ -25,6 +25,7 @@
 //!   resync_at, and capture resumes in the same process (wamn-59z6);
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
 
+use sqlx::{Connection as _, Row as _};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -34,12 +35,10 @@ use async_nats::jetstream;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use futures_util::StreamExt as _;
-use tokio_postgres::NoTls;
 
 use wamn_cdc_reader::{EventReaderArgs, ReaderShutdown, run_with_shutdown};
 use wamn_control_provision::{
-    CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, sql,
-    system_reader_generation_role,
+    SystemReader, WorkloadRoleFamily, cdc_object_name, sql, system_reader_login,
 };
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 use wamn_registry::sql::{
@@ -79,23 +78,14 @@ fn role_url(super_url: &str, role: &str, password: &str) -> String {
 
 /// This condition's registry-reader generation-A login (`wamn-0h0g.12.116`).
 fn registry_reader_role() -> String {
-    system_reader_generation_role(
-        SystemReader::Registry,
-        ORG,
-        PROJECT,
-        ENV,
-        DB,
-        CredentialGeneration::A,
-    )
+    system_reader_login(SystemReader::Registry, ORG, PROJECT, ENV, DB)
 }
 
-async fn connect(url: &str) -> tokio_postgres::Client {
-    let (client, conn) = tokio_postgres::connect(url, NoTls)
+async fn connect(url: &str) -> sqlx::PgConnection {
+    let client = wamn_postgres::connect(url)
         .await
         .unwrap_or_else(|e| panic!("connect {url}: {e}"));
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+
     client
 }
 
@@ -167,7 +157,6 @@ fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReader
         nats_tls_ca: None,
         nats_tls_cert: None,
         nats_tls_key: None,
-        sslmode: "disable".into(),
         stream_replicas: 1,
         dup_window_secs: 120,
         feedback_secs: 1,
@@ -246,18 +235,19 @@ async fn wait_for_count(js: &jetstream::Context, name: &str, want: u64, secs: u6
 }
 
 /// Poll until the slot's confirmed_flush_lsn is at/past `lsn` (text form).
-async fn wait_confirmed_past(sys: &tokio_postgres::Client, slot: &str, lsn: &str, secs: u64) {
+async fn wait_confirmed_past(sys: &mut sqlx::PgConnection, slot: &str, lsn: &str, secs: u64) {
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
-        let caught_up: bool = sys
-            .query_one(
-                "SELECT confirmed_flush_lsn >= $2::text::pg_lsn \
+        let caught_up: bool = sqlx::query(
+            "SELECT confirmed_flush_lsn >= $2::text::pg_lsn \
                  FROM pg_replication_slots WHERE slot_name = $1",
-                &[&slot, &lsn],
-            )
-            .await
-            .expect("read confirmed_flush_lsn")
-            .get(0);
+        )
+        .bind(&slot)
+        .bind(&lsn)
+        .fetch_one(&mut *sys)
+        .await
+        .expect("read confirmed_flush_lsn")
+        .get(0);
         if caught_up {
             return;
         }
@@ -266,18 +256,18 @@ async fn wait_confirmed_past(sys: &tokio_postgres::Client, slot: &str, lsn: &str
     panic!("confirmed_flush_lsn never reached {lsn} (LSN-advance-on-ack broken?)");
 }
 
-async fn confirmed_lsn(sys: &tokio_postgres::Client, slot: &str) -> String {
-    sys.query_one(
-        "SELECT confirmed_flush_lsn::text FROM pg_replication_slots WHERE slot_name = $1",
-        &[&slot],
-    )
-    .await
-    .expect("read confirmed_flush_lsn")
-    .get(0)
+async fn confirmed_lsn(sys: &mut sqlx::PgConnection, slot: &str) -> String {
+    sqlx::query("SELECT confirmed_flush_lsn::text FROM pg_replication_slots WHERE slot_name = $1")
+        .bind(&slot)
+        .fetch_one(&mut *sys)
+        .await
+        .expect("read confirmed_flush_lsn")
+        .get(0)
 }
 
-async fn insert_lsn(sys: &tokio_postgres::Client) -> String {
-    sys.query_one("SELECT pg_current_wal_insert_lsn()::text", &[])
+async fn insert_lsn(sys: &mut sqlx::PgConnection) -> String {
+    sqlx::query("SELECT pg_current_wal_insert_lsn()::text")
+        .fetch_one(&mut *sys)
         .await
         .unwrap()
         .get(0)
@@ -310,214 +300,294 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let stream_name = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------
-    let admin = connect(&super_url).await;
+    let mut admin = connect(&super_url).await;
     // A crashed prior run can leave its walsender ATTACHED — an active slot
     // can't be dropped and blocks DROP DATABASE.
-    let _ = admin
-        .execute(
-            "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots \
+    let _ = sqlx::query(
+        "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots \
              WHERE slot_name = $1 AND active",
-            &[&cdc_name],
-        )
-        .await;
-    let _ = admin
-        .execute(
-            "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots \
+    )
+    .bind(&cdc_name)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected());
+    let _ = sqlx::query(
+        "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots \
              WHERE slot_name = $1",
-            &[&cdc_name],
-        )
-        .await;
-    admin
-        .batch_execute(&format!("DROP DATABASE IF EXISTS {DB} WITH (FORCE)"))
-        .await
-        .expect("drop leftover db");
-    admin
-        .batch_execute(&format!("DROP ROLE IF EXISTS {cdc_name}"))
-        .await
-        .expect("drop leftover role");
+    )
+    .bind(&cdc_name)
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected());
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {DB} WITH (FORCE)"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("drop leftover db");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP ROLE IF EXISTS {cdc_name}"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("drop leftover role");
     // Roles are CLUSTER-wide, so `DROP DATABASE` does not reach them and a
     // leftover HEALTHY reader would satisfy the builder's `IF NOT EXISTS` and
     // mask a mutated one. `DROP OWNED BY` precedes `DROP ROLE` so a dependency
     // left in another database cannot refuse the drop.
     for role in [
         registry_reader_role(),
-        system_reader_generation_role(
-            SystemReader::Registry,
-            ORG,
-            PROJECT,
-            ENV,
-            DB,
-            CredentialGeneration::B,
-        ),
+        system_reader_login(SystemReader::Registry, ORG, PROJECT, ENV, DB),
         WorkloadRoleFamily::RegistryReader.acl_role().to_owned(),
     ] {
-        admin
-            .batch_execute(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&format!(
                 "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
                    EXECUTE 'DROP OWNED BY \"{role}\"'; \
                    EXECUTE 'DROP ROLE \"{role}\"'; \
                  END IF; END $$"
             ))
-            .await
-            .expect("drop leftover registry-reader role");
-    }
-    admin
-        .batch_execute(&format!("CREATE DATABASE {DB}"))
+                .to_string(),
+        ))
+        .execute(&mut admin)
         .await
+        .map(drop)
+        .expect("drop leftover registry-reader role");
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {DB}")))
+        .execute(&mut admin)
+        .await
+        .map(drop)
         .expect("create db");
 
     // --- the REAL substrate, via the real builders --------------------------
-    let sys = connect(&swap_db(&super_url, DB)).await;
-    sys.batch_execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-         THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$",
-    )
+    let mut sys = connect(&swap_db(&super_url, DB)).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
+         THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$")
+            .to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
     .expect("wamn_system role (the schema's owner-grants target)");
-    sys.batch_execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
          THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
-           NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$",
-    )
+           NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$")
+            .to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
     .expect("wamn_app role (the minimum + catalog schema's grant target)");
-    sys.batch_execute(SYSTEM_SCHEMA)
+    sqlx::raw_sql(SYSTEM_SCHEMA)
+        .execute(&mut sys)
         .await
+        .map(drop)
         .expect("apply deploy/sql/system-schema.sql");
-    sys.batch_execute(CATALOG_SCHEMA)
+    sqlx::raw_sql(CATALOG_SCHEMA)
+        .execute(&mut sys)
         .await
+        .map(drop)
         .expect("apply the complete catalog bootstrap (the package/effective-release store)");
-    sys.execute(
-        "SELECT set_config('app.user_id', $1, false)",
-        &[&wamn_control_provision::PlatformComponent::Provisioning
-            .principal_id()
-            .to_string()],
-    )
-    .await
-    .expect("bind the provisioning actor");
+    sqlx::query("SELECT set_config('app.user_id', $1, false)")
+        .bind(
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .execute(&mut sys)
+        .await
+        .map(|result| result.rows_affected())
+        .expect("bind the provisioning actor");
     // The registration read's own credential, minted through the REAL builders
     // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
-    // batch also runs inside `prepare_workload_generation_sql`; applying it
+    // batch also runs inside `test_database::login_sql`; applying it
     // first shows the convergent step is a no-op on replay rather than a
     // one-shot.
-    sys.batch_execute(&sql::grant_registry_reader_surface_sql())
-        .await
-        .expect("converge the registry reader's grant set");
-    sys.batch_execute(&sql::prepare_workload_generation_sql(
-        WorkloadRoleFamily::RegistryReader,
-        DB,
-        &registry_reader_role(),
-        READER_PW,
-        "2099-01-01T00:00:00Z",
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_registry_reader_surface_sql()).to_string(),
     ))
+    .execute(&mut sys)
     .await
+    .map(drop)
+    .expect("converge the registry reader's grant set");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::login_sql(
+            WorkloadRoleFamily::RegistryReader,
+            DB,
+            &registry_reader_role(),
+            READER_PW,
+        ))
+            .to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
     .expect("prepare the registry-reader generation");
-    sys.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
+    sqlx::query(sqlx::AssertSqlSafe((upsert_org_sql()).to_string()))
+        .bind(&ORG)
+        .bind(&"pooled")
+        .bind(&"wamn-pg")
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("org row");
-    sys.execute(upsert_project_sql(), &[&ORG, &PROJECT])
+    sqlx::query(sqlx::AssertSqlSafe((upsert_project_sql()).to_string()))
+        .bind(&ORG)
+        .bind(&PROJECT)
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("project row");
-    sys.execute(
-        wamn_registry::sql::stamp_env_policy_sql(),
-        &[
-            &ORG,
-            &ENV,
-            &r#"{"type":"pool"}"#,
-            &0i32,
-            &1i32,
-            &"1Gi",
-            &"250m",
-            &"256Mi",
-            &"postgres:18",
-            &"",
-            &"",
-            &"off",
-            &"standard",
-        ],
-    )
+    sqlx::query(sqlx::AssertSqlSafe(
+        (wamn_registry::sql::stamp_env_policy_sql()).to_string(),
+    ))
+    .bind(&ORG)
+    .bind(&ENV)
+    .bind(&r#"{"type":"pool"}"#)
+    .bind(&0i32)
+    .bind(&1i32)
+    .bind(&"1Gi")
+    .bind(&"250m")
+    .bind(&"256Mi")
+    .bind(&"postgres:18")
+    .bind(&"")
+    .bind(&"")
+    .bind(&"off")
+    .bind(&"standard")
+    .execute(&mut sys)
     .await
+    .map(|result| result.rows_affected())
     .expect("env-policy row (the project_envs FK target)");
-    sys.execute(
-        upsert_project_env_with_policy_sql(),
-        &[
-            &ORG,
-            &PROJECT,
-            &ENV,
-            &"wamn-db-rl0--dev--app",
-            &None::<&str>,
-            &INSTANCE,
-            &false,
-            &ENV,
-            &Option::<String>::None,
-        ],
-    )
+    sqlx::query(sqlx::AssertSqlSafe(
+        (upsert_project_env_with_policy_sql()).to_string(),
+    ))
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&ENV)
+    .bind(&"wamn-db-rl0--dev--app")
+    .bind(&None::<&str>)
+    .bind(&INSTANCE)
+    .bind(&false)
+    .bind(&ENV)
+    .bind(&Option::<String>::None)
+    .execute(&mut sys)
     .await
+    .map(|result| result.rows_affected())
     .expect("project-env row");
     let secret = wamn_registry::name::project_env_cdc_secret_name(ORG, PROJECT, ENV);
     let register = |enabled: bool, schema: Option<&'static str>| {
-        let (sys, cdc, stream, secret) = (&sys, &cdc_name, &stream_name, &secret);
+        let (cdc, stream, secret) = (&cdc_name, &stream_name, &secret);
+        let input = swap_db(&super_url, DB);
         async move {
-            sys.execute(
-                upsert_event_reader_sql(),
-                &[
-                    &ORG,
-                    &PROJECT,
-                    &ENV,
-                    cdc,
-                    cdc,
-                    stream,
-                    secret,
-                    &None::<&str>,
-                    &enabled,
-                    &schema.map(|schema| vec![schema]),
-                ],
-            )
-            .await
-            .expect("event_readers row");
+            let mut sys = connect(&input).await;
+            sqlx::query("SELECT set_config('app.user_id',$1,false)")
+                .bind(
+                    wamn_control_provision::PlatformComponent::Provisioning
+                        .principal_id()
+                        .to_string(),
+                )
+                .execute(&mut sys)
+                .await
+                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe((upsert_event_reader_sql()).to_string()))
+                .bind(&ORG)
+                .bind(&PROJECT)
+                .bind(&ENV)
+                .bind(cdc)
+                .bind(cdc)
+                .bind(stream)
+                .bind(secret)
+                .bind(&None::<&str>)
+                .bind(&enabled)
+                .bind(&schema.map(|schema| vec![schema]))
+                .execute(&mut sys)
+                .await
+                .map(|result| result.rows_affected())
+                .expect("event_readers row");
         }
     };
     register(false, Some("app")).await;
 
-    sys.batch_execute(&sql::ensure_schema_sql("app"))
-        .await
-        .expect("schema");
-    sys.batch_execute(
-        "CREATE TABLE app.widgets (id bigint PRIMARY KEY, val text, big text, note text); \
-         CREATE TABLE app.command_record (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
-         ALTER TABLE app.widgets ALTER COLUMN big SET STORAGE EXTERNAL",
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_schema_sql("app")).to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
+    .expect("schema");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("CREATE TABLE app.widgets (id bigint PRIMARY KEY, val text, big text, note text); \
+         CREATE TABLE app.command_record (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
+         ALTER TABLE app.widgets ALTER COLUMN big SET STORAGE EXTERNAL")
+            .to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
     .expect("table");
-    sys.batch_execute(&sql::ensure_replication_role_sql(&cdc_name, CDC_PW))
-        .await
-        .expect("replication role");
-    sys.batch_execute(&sql::create_publication_sql(&cdc_name, "app"))
-        .await
-        .expect("publication");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::replication_login_sql(&cdc_name, CDC_PW))
+            .to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("replication role");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::create_publication_sql(&cdc_name, "app")).to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("publication");
     // Both classification maps precede the grants (the enable-cdc bundle
     // order), so the reader can resolve publish and exclude dispositions.
-    sys.batch_execute(&sql::ensure_entity_map_sql("app"))
-        .await
-        .expect("entity map");
-    sys.batch_execute(&sql::ensure_cdc_exclusion_map_sql("app"))
-        .await
-        .expect("CDC exclusion map");
-    sys.execute(
-        &sql::upsert_entity_map_sql("app"),
-        &[&"platform_fixture", &"widget", &"widgets"],
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_entity_map_sql("app")).to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
+    .expect("entity map");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::ensure_cdc_exclusion_map_sql("app")).to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("CDC exclusion map");
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&sql::upsert_entity_map_sql("app")).to_string(),
+    ))
+    .bind(&"platform_fixture")
+    .bind(&"widget")
+    .bind(&"widgets")
+    .execute(&mut sys)
+    .await
+    .map(|result| result.rows_affected())
     .expect("widget entity mapping");
-    sys.execute(
-        &sql::upsert_cdc_exclusion_map_sql("app"),
-        &[&"platform_fixture", &"widget_command", &"command_record"],
-    )
+    sqlx::query(sqlx::AssertSqlSafe(
+        (&sql::upsert_cdc_exclusion_map_sql("app")).to_string(),
+    ))
+    .bind(&"platform_fixture")
+    .bind(&"widget_command")
+    .bind(&"command_record")
+    .execute(&mut sys)
     .await
+    .map(|result| result.rows_affected())
     .expect("command record CDC exclusion");
-    sys.batch_execute(&sql::grant_replication_access_sql(DB, &cdc_name, "app"))
-        .await
-        .expect("grants");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::grant_replication_access_sql(DB, &cdc_name, "app")).to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("grants");
     // The slot is deliberately NOT created yet — the incident probe needs its absence.
 
     // --- NATS hygiene + the severable proxy ---------------------------------
@@ -604,11 +674,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         !gap_reader.is_finished(),
         "a missing slot stops capture; the reader does not exit"
     );
-    let slots: i64 = sys
-        .query_one(
-            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1",
-            &[&cdc_name],
-        )
+    let slots: i64 = sqlx::query("SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1")
+        .bind(&cdc_name)
+        .fetch_one(&mut sys)
         .await
         .unwrap()
         .get(0);
@@ -621,9 +689,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("a stopped reader shuts down cleanly");
 
     // --- slot (the real builder), then the reader ---------------------------
-    sys.batch_execute(&sql::create_failover_slot_sql(&cdc_name))
-        .await
-        .expect("failover slot");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::create_failover_slot_sql(&cdc_name)).to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("failover slot");
     let shutdown = ReaderShutdown::new();
     let handle = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
@@ -632,14 +704,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // The walsender attaching shows the session opened with the CDC role.
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        let active: bool = sys
-            .query_one(
-                "SELECT active FROM pg_replication_slots WHERE slot_name = $1",
-                &[&cdc_name],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let active: bool =
+            sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name = $1")
+                .bind(&cdc_name)
+                .fetch_one(&mut sys)
+                .await
+                .unwrap()
+                .get(0);
         if active {
             break;
         }
@@ -656,22 +727,27 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // writes are schema-selection facts, not application events: show the
     // reader stays healthy while publishing nothing.
     let map_stream_count = stream_count(&js, &stream_name).await;
-    sys.batch_execute("BEGIN")
+    sqlx::raw_sql("BEGIN")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .expect("begin entity-map exclusion probe");
     assert_eq!(
-        sys.execute(
+        sqlx::query(
             "UPDATE app.wamn_entities SET table_name = table_name \
-              WHERE relation_oid = 'app.widgets'::regclass::oid",
-            &[],
+              WHERE relation_oid = 'app.widgets'::regclass::oid"
         )
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("write the control-owned entity map"),
         1,
         "the exclusion probe must exercise a real entity-map row write"
     );
-    sys.batch_execute("COMMIT")
+    sqlx::raw_sql("COMMIT")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .expect("commit entity-map exclusion probe");
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(
@@ -688,56 +764,72 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let mut expected: Vec<(Op, String)> = Vec::new();
     // A mixed transaction shows the internal command table is counted but
     // never published while its sibling domain row reaches the stream.
-    sys.batch_execute(
-        "BEGIN; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("BEGIN; \
          INSERT INTO app.command_record VALUES (1, decode('deadbeef', 'hex')); \
          INSERT INTO app.widgets (id, val) VALUES (1, 'v1'); \
-         COMMIT",
-    )
+         COMMIT")
+            .to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
     .expect("commit one excluded row beside one publishable row");
     expected.push((Op::Insert, "1".into()));
     for id in 2..=20i64 {
-        sys.execute(
-            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
-            &[&id, &format!("v{id}")],
-        )
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO app.widgets (id, val) VALUES ($1, $2)")
+            .bind(&id)
+            .bind(&format!("v{id}"))
+            .execute(&mut sys)
+            .await
+            .map(|result| result.rows_affected())
+            .unwrap();
         expected.push((Op::Insert, id.to_string()));
     }
-    sys.batch_execute(
-        "BEGIN; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("BEGIN; \
          INSERT INTO app.widgets (id, val) VALUES (21, 'v21'); \
          INSERT INTO app.widgets (id, val) VALUES (22, 'v22'); \
          INSERT INTO app.widgets (id, val) VALUES (23, 'v23'); \
-         COMMIT",
-    )
+         COMMIT")
+            .to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
     .unwrap();
     expected.extend([21, 22, 23].map(|id| (Op::Insert, id.to_string())));
-    sys.batch_execute("UPDATE app.widgets SET val = 'u5' WHERE id = 5")
+    sqlx::raw_sql("UPDATE app.widgets SET val = 'u5' WHERE id = 5")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .unwrap();
     expected.push((Op::Update, "5".into()));
-    sys.batch_execute("DELETE FROM app.widgets WHERE id = 6")
+    sqlx::raw_sql("DELETE FROM app.widgets WHERE id = 6")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .unwrap();
     expected.push((Op::Delete, "6".into()));
     // 22.4KB out-of-line value; the follow-up update must NOT re-ship it.
-    sys.batch_execute(
-        "INSERT INTO app.widgets (id, val, big) \
-         SELECT 30, 'v30', string_agg(md5(i::text), '') FROM generate_series(1, 700) i",
-    )
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("INSERT INTO app.widgets (id, val, big) \
+         SELECT 30, 'v30', string_agg(md5(i::text), '') FROM generate_series(1, 700) i")
+            .to_string(),
+    ))
+    .execute(&mut sys)
     .await
+    .map(drop)
     .unwrap();
     expected.push((Op::Insert, "30".into()));
     // The advance target: a position BEFORE the last txn — the last commit's
     // end_lsn (where confirmed parks) is necessarily past it, while trailing
     // non-txn WAL records keep the *after* position unreachable forever.
-    let wal_a = insert_lsn(&sys).await;
-    sys.batch_execute("UPDATE app.widgets SET val = 'u30' WHERE id = 30")
+    let wal_a = insert_lsn(&mut sys).await;
+    sqlx::raw_sql("UPDATE app.widgets SET val = 'u30' WHERE id = 30")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .unwrap();
     expected.push((Op::Update, "30".into()));
 
@@ -806,7 +898,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert_eq!(update30.get("val").unwrap(), "u30");
 
     // --- phase B: confirmed LSN advanced on ack -----------------------------
-    wait_confirmed_past(&sys, &cdc_name, &wal_a, 75).await;
+    wait_confirmed_past(&mut sys, &cdc_name, &wal_a, 75).await;
 
     // --- phase C: crash → restart resumes from the confirmed LSN ------------
     handle.abort();
@@ -814,14 +906,15 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let mut wal_c = String::new();
     for id in 40..=44i64 {
         if id == 44 {
-            wal_c = insert_lsn(&sys).await; // before the phase's last txn
+            wal_c = insert_lsn(&mut sys).await; // before the phase's last txn
         }
-        sys.execute(
-            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
-            &[&id, &format!("v{id}")],
-        )
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO app.widgets (id, val) VALUES ($1, $2)")
+            .bind(&id)
+            .bind(&format!("v{id}"))
+            .execute(&mut sys)
+            .await
+            .map(|result| result.rows_affected())
+            .unwrap();
         expected.push((Op::Insert, id.to_string()));
     }
     let shutdown2 = ReaderShutdown::new();
@@ -839,48 +932,52 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         expected,
         "crash+restart: no gaps, no dupes (dedupe absorbed any redelivery), order kept"
     );
-    wait_confirmed_past(&sys, &cdc_name, &wal_c, 75).await;
+    wait_confirmed_past(&mut sys, &cdc_name, &wal_c, 75).await;
 
     // --- phase C2: an idle database's slot follows the WAL (wamn-59z6) ------
     // Only another database writes. The reader has nothing to publish, and it
     // confirms the keepalive position, so its slot does not hold that WAL.
-    admin
-        .batch_execute(
-            "DROP TABLE IF EXISTS public.reader_live_other; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP TABLE IF EXISTS public.reader_live_other; \
              CREATE TABLE public.reader_live_other (id bigint PRIMARY KEY, pad text); \
              INSERT INTO public.reader_live_other \
-               SELECT g, repeat('x', 1000) FROM generate_series(1, 2000) g",
-        )
-        .await
-        .expect("another database writes");
-    let wal_other = insert_lsn(&admin).await;
+               SELECT g, repeat('x', 1000) FROM generate_series(1, 2000) g")
+            .to_string(),
+    ))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("another database writes");
+    let wal_other = insert_lsn(&mut admin).await;
     let count_idle = stream_count(&js, &stream_name).await;
-    wait_confirmed_past(&sys, &cdc_name, &wal_other, 75).await;
+    wait_confirmed_past(&mut sys, &cdc_name, &wal_other, 75).await;
     assert_eq!(
         stream_count(&js, &stream_name).await,
         count_idle,
         "another database's writes publish nothing"
     );
-    admin
-        .batch_execute("DROP TABLE public.reader_live_other")
+    sqlx::raw_sql("DROP TABLE public.reader_live_other")
+        .execute(&mut admin)
         .await
+        .map(drop)
         .expect("drop the other database's table");
 
     // --- phase D: JetStream down ⇒ the LSN holds ⇒ delayed, never lost ------
-    let c0 = confirmed_lsn(&sys, &cdc_name).await;
+    let c0 = confirmed_lsn(&mut sys, &cdc_name).await;
     proxy.sever();
     let count_before = stream_count(&js, &stream_name).await;
     let mut wal_d = String::new();
     for id in 50..=54i64 {
         if id == 54 {
-            wal_d = insert_lsn(&sys).await; // before the phase's last txn
+            wal_d = insert_lsn(&mut sys).await; // before the phase's last txn
         }
-        sys.execute(
-            "INSERT INTO app.widgets (id, val) VALUES ($1, $2)",
-            &[&id, &format!("v{id}")],
-        )
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO app.widgets (id, val) VALUES ($1, $2)")
+            .bind(&id)
+            .bind(&format!("v{id}"))
+            .execute(&mut sys)
+            .await
+            .map(|result| result.rows_affected())
+            .unwrap();
         expected.push((Op::Insert, id.to_string()));
     }
     // Past a full idle-keepalive feedback cycle (~30s): a reader that advanced
@@ -888,15 +985,16 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // advance reach the server by now — while the real reader, stuck inside
     // the publish retry, sends no feedback at all and the LSN provably holds.
     tokio::time::sleep(Duration::from_secs(40)).await;
-    let held: bool = sys
-        .query_one(
-            "SELECT confirmed_flush_lsn = $2::text::pg_lsn \
+    let held: bool = sqlx::query(
+        "SELECT confirmed_flush_lsn = $2::text::pg_lsn \
              FROM pg_replication_slots WHERE slot_name = $1",
-            &[&cdc_name, &c0],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    )
+    .bind(&cdc_name)
+    .bind(&c0)
+    .fetch_one(&mut sys)
+    .await
+    .unwrap()
+    .get(0);
     assert!(held, "JetStream unreachable ⇒ the confirmed LSN must HOLD");
     assert_eq!(
         stream_count(&js, &stream_name).await,
@@ -905,7 +1003,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     );
     proxy.restore();
     wait_for_count(&js, &stream_name, expected.len() as u64, 40).await;
-    wait_confirmed_past(&sys, &cdc_name, &wal_d, 75).await;
+    wait_confirmed_past(&mut sys, &cdc_name, &wal_d, 75).await;
     let delivered = read_all(&js, &stream_name, expected.len()).await;
     assert_eq!(
         delivered
@@ -925,42 +1023,32 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // rolled-back txn that emitted one publishes nothing (transactional).
     let base = stream_count(&js, &stream_name).await;
     // message-at-BEGIN: the frame precedes the rows.
-    sys.batch_execute(
-        "BEGIN; \
+    sqlx::raw_sql("BEGIN; \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-100\",\"root\":\"root-a\",\"depth\":0}'); \
          INSERT INTO app.widgets (id, val) VALUES (100, 'c100'); \
          INSERT INTO app.widgets (id, val) VALUES (101, 'c101'); \
-         COMMIT",
-    )
-    .await
+         COMMIT").execute(&mut sys).await.map(drop)
     .expect("causation txn: message at BEGIN");
     // message-PRE-COMMIT: the frame FOLLOWS the rows — the order-robustness
     // This tests that buffer-per-txn stamps rows seen before the message arrived.
-    sys.batch_execute(
-        "BEGIN; \
+    sqlx::raw_sql("BEGIN; \
          INSERT INTO app.widgets (id, val) VALUES (102, 'c102'); \
          INSERT INTO app.widgets (id, val) VALUES (103, 'c103'); \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-200\",\"root\":\"root-b\",\"depth\":1}'); \
-         COMMIT",
-    )
-    .await
+         COMMIT").execute(&mut sys).await.map(drop)
     .expect("causation txn: message before COMMIT");
     // a plain txn, no emit → causation ABSENT.
-    sys.execute(
-        "INSERT INTO app.widgets (id, val) VALUES (104, 'c104')",
-        &[],
-    )
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO app.widgets (id, val) VALUES (104, 'c104')")
+        .execute(&mut sys)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
     // a ROLLED-BACK txn that emitted + wrote → NOTHING publishes: the
     // transactional message never reaches the stream, the row is aborted.
-    sys.batch_execute(
-        "BEGIN; \
+    sqlx::raw_sql("BEGIN; \
          SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"r-rolled\",\"root\":\"root-x\",\"depth\":9}'); \
          INSERT INTO app.widgets (id, val) VALUES (105, 'c105'); \
-         ROLLBACK",
-    )
-    .await
+         ROLLBACK").execute(&mut sys).await.map(drop)
     .expect("causation txn: rolled back");
 
     wait_for_count(&js, &stream_name, base + 5, 30).await;
@@ -1024,14 +1112,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     ));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        let active: bool = sys
-            .query_one(
-                "SELECT active FROM pg_replication_slots WHERE slot_name = $1",
-                &[&cdc_name],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let active: bool =
+            sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name = $1")
+                .bind(&cdc_name)
+                .fetch_one(&mut sys)
+                .await
+                .unwrap()
+                .get(0);
         if active {
             break;
         }
@@ -1047,11 +1134,15 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     let before_unmapped = stream_count(&js, &stream_name).await;
-    sys.batch_execute("CREATE TABLE app.unmapped_probe (id bigint PRIMARY KEY)")
+    sqlx::raw_sql("CREATE TABLE app.unmapped_probe (id bigint PRIMARY KEY)")
+        .execute(&mut sys)
         .await
+        .map(drop)
         .expect("create an unmapped application relation");
-    sys.execute("INSERT INTO app.unmapped_probe VALUES (1)", &[])
+    sqlx::query("INSERT INTO app.unmapped_probe VALUES (1)")
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("write an unmapped application relation");
     let joined = tokio::time::timeout(Duration::from_secs(30), handle3)
         .await
@@ -1076,42 +1167,38 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         "DROP TABLE IF EXISTS public.reader_live_other",
         "CREATE TABLE public.reader_live_other (id bigint PRIMARY KEY, pad text)",
     ] {
-        admin
-            .batch_execute(statement)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
+            .execute(&mut admin)
             .await
+            .map(drop)
             .expect("a 1 MB slot limit");
     }
     let mut lost = false;
     for round in 0..20i64 {
-        admin
-            .execute(
-                "INSERT INTO public.reader_live_other \
-                 SELECT g, repeat('x', 1000) FROM generate_series($1::bigint * 10000 + 1, $1::bigint * 10000 + 10000) g",
-                &[&round],
-            )
-            .await
+        sqlx::query("INSERT INTO public.reader_live_other \
+                 SELECT g, repeat('x', 1000) FROM generate_series($1::bigint * 10000 + 1, $1::bigint * 10000 + 10000) g").bind(&round).execute(&mut admin).await.map(|result| result.rows_affected())
             .expect("write WAL past the limit");
         for statement in ["SELECT pg_switch_wal()", "CHECKPOINT"] {
-            admin
-                .batch_execute(statement)
+            sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
+                .execute(&mut admin)
                 .await
+                .map(drop)
                 .expect("switch and checkpoint");
         }
-        let status: Option<String> = sys
-            .query_one(
-                "SELECT wal_status::text FROM pg_replication_slots WHERE slot_name = $1",
-                &[&cdc_name],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let status: Option<String> =
+            sqlx::query("SELECT wal_status::text FROM pg_replication_slots WHERE slot_name = $1")
+                .bind(&cdc_name)
+                .fetch_one(&mut sys)
+                .await
+                .unwrap()
+                .get(0);
         if status.as_deref() == Some("lost") {
             lost = true;
             break;
         }
     }
     assert!(lost, "the slot was never invalidated");
-    let lost_confirmed = confirmed_lsn(&sys, &cdc_name).await;
+    let lost_confirmed = confirmed_lsn(&mut sys, &cdc_name).await;
     let shutdown_i = ReaderShutdown::new();
     let handle_i = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
@@ -1123,28 +1210,40 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         "an invalidated slot does not end the reader"
     );
     // The recovery, as recover-capture-gap writes it: a new slot, then the row.
-    sys.execute("SELECT pg_drop_replication_slot($1)", &[&cdc_name])
+    sqlx::query("SELECT pg_drop_replication_slot($1)")
+        .bind(&cdc_name)
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("drop the lost slot");
-    sys.batch_execute(&sql::create_failover_slot_sql(&cdc_name))
-        .await
-        .expect("the new slot");
-    sys.execute(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::create_failover_slot_sql(&cdc_name)).to_string(),
+    ))
+    .execute(&mut sys)
+    .await
+    .map(drop)
+    .expect("the new slot");
+    sqlx::query(
         "INSERT INTO registry.capture_gap \
            (org, project, env, slot, start_lsn, start_at, reason, end_lsn) \
          SELECT $1, $2, $3, $4, $5::text::pg_lsn, now(), 'wal_removed', confirmed_flush_lsn \
          FROM pg_replication_slots WHERE slot_name::text = $4",
-        &[&ORG, &PROJECT, &ENV, &cdc_name, &lost_confirmed],
     )
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&ENV)
+    .bind(&cdc_name)
+    .bind(&lost_confirmed)
+    .execute(&mut sys)
     .await
+    .map(|result| result.rows_affected())
     .expect("the open gap row");
     let before_gap = stream_count(&js, &stream_name).await;
-    sys.execute(
-        "INSERT INTO app.widgets (id, val) VALUES (900, 'after the gap')",
-        &[],
-    )
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO app.widgets (id, val) VALUES (900, 'after the gap')")
+        .execute(&mut sys)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
     tokio::time::sleep(Duration::from_secs(40)).await;
     assert_eq!(
         stream_count(&js, &stream_name).await,
@@ -1155,12 +1254,16 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         !handle_i.is_finished(),
         "the stopped reader is still running"
     );
-    sys.execute(
+    sqlx::query(
         "UPDATE registry.capture_gap SET resync_at = now() \
          WHERE org = $1 AND project = $2 AND env = $3",
-        &[&ORG, &PROJECT, &ENV],
     )
+    .bind(&ORG)
+    .bind(&PROJECT)
+    .bind(&ENV)
+    .execute(&mut sys)
     .await
+    .map(|result| result.rows_affected())
     .expect("close the gap");
     wait_for_count(&js, &stream_name, before_gap + 1, 45).await;
     assert!(
@@ -1178,9 +1281,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         "SELECT pg_reload_conf()",
         "DROP TABLE public.reader_live_other",
     ] {
-        admin
-            .batch_execute(statement)
+        sqlx::raw_sql(sqlx::AssertSqlSafe((statement).to_string()))
+            .execute(&mut admin)
             .await
+            .map(drop)
             .expect("restore the slot limit");
     }
 
@@ -1189,14 +1293,13 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     let _ = js.delete_stream(&advisory_name).await;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let active: bool = sys
-            .query_one(
-                "SELECT active FROM pg_replication_slots WHERE slot_name = $1",
-                &[&cdc_name],
-            )
-            .await
-            .unwrap()
-            .get(0);
+        let active: bool =
+            sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name = $1")
+                .bind(&cdc_name)
+                .fetch_one(&mut sys)
+                .await
+                .unwrap()
+                .get(0);
         if !active {
             break;
         }
@@ -1206,25 +1309,31 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    sys.execute("SELECT pg_drop_replication_slot($1)", &[&cdc_name])
+    sqlx::query("SELECT pg_drop_replication_slot($1)")
+        .bind(&cdc_name)
+        .execute(&mut sys)
         .await
+        .map(|result| result.rows_affected())
         .expect("drop the slot (never leave one behind)");
     drop(sys);
-    admin
-        .batch_execute(&format!("DROP DATABASE {DB} WITH (FORCE)"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {DB} WITH (FORCE)"
+    )))
+    .execute(&mut admin)
+    .await
+    .map(drop)
+    .expect("drop db");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP ROLE {cdc_name}")))
+        .execute(&mut admin)
         .await
-        .expect("drop db");
-    admin
-        .batch_execute(&format!("DROP ROLE {cdc_name}"))
-        .await
+        .map(drop)
         .expect("drop role");
-    let slots_left: i64 = admin
-        .query_one(
-            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1",
-            &[&cdc_name],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let slots_left: i64 =
+        sqlx::query("SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1")
+            .bind(&cdc_name)
+            .fetch_one(&mut admin)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(slots_left, 0, "zero residue: the slot is gone");
 }

@@ -3,6 +3,7 @@
 //! Uses the same local host and prepared screen as `local_feed`.
 //! Each case uses fresh PostgreSQL databases.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -115,11 +116,10 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         attachments: &attachments,
     })
     .await?;
-    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    let (identity, identity_connection) =
-        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
-    let identity_connection = tokio::spawn(identity_connection);
+    let mut admin = wamn_postgres::connect(project.url()).await?;
+
+    let mut identity = wamn_postgres::connect(system.url()).await?;
+
     let result = async {
         let target = crate::environment::identity();
         let subject = wamn_platform_identity::operator_subject(
@@ -128,7 +128,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             &target.environment,
         )?;
         let user = wamn_platform_identity::resolve_subject(
-            &identity,
+            &mut identity,
             wamn_platform_identity::PrincipalType::Service,
             &subject,
         )
@@ -140,9 +140,9 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             &wamn_registry::Triple::new(target.org.clone(), target.environment.as_str(), target.project.clone()),
             "localapp",
         )?;
-        crate::business_fixture::seed_fixture(&admin, 1).await?;
+        crate::business_fixture::seed_fixture(&mut admin, 1).await?;
         if scenario == "take-offline" {
-            super::local_take_offline::seed(&admin).await?;
+            super::local_take_offline::seed(&mut admin).await?;
         }
         let bench = app.join("../../web/sync-bench").canonicalize()?;
         if scenario == "old-entry" {
@@ -204,11 +204,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             1
         };
         anyhow::ensure!(ids.len() == expected, "created ids: {outcome}");
-        let rows = admin
-            .query(
-                "SELECT id::text, packaging_code, row_version, location_id::text FROM wms.packaging WHERE id::text <> $1",
-                &[&PACKAGING_ID],
-            )
+        let rows = sqlx::query("SELECT id::text, packaging_code, row_version, location_id::text FROM wms.packaging WHERE id::text <> $1").bind(&PACKAGING_ID).fetch_all(&mut admin)
             .await?;
         anyhow::ensure!(rows.len() == expected, "exactly {expected} new database rows");
         for row in rows {
@@ -236,9 +232,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
     }
     .await;
     drop(admin);
-    connection.abort();
     drop(identity);
-    identity_connection.abort();
     application.shutdown().await?;
     result
 }

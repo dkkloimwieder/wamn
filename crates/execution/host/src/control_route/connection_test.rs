@@ -1,5 +1,6 @@
 //! Read-only candidate testing under the connection writer's authority.
 
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -56,11 +57,11 @@ impl ControlRoutes<'_> {
         let env = request["env"].as_str().unwrap();
         let context = {
             let mut writer = self.writer.lock().await;
-            let transaction = self
+            let mut transaction = self
                 .begin_in_environment(&mut writer, attachment, caller, Some(project), Some(env))
                 .await?;
             let context = administration::configure(
-                &transaction,
+                &mut transaction,
                 self.org,
                 "connection.test",
                 &json!({"project":project,"env":env,"name":request["name"]}),
@@ -86,26 +87,28 @@ impl ControlRoutes<'_> {
             .and_then(|version| i32::try_from(version).ok());
         if let Some(connection) = context["id"].as_str() {
             let logins = self.logins(&[(project.into(), env.into())])?;
-            let (mut client, driver) =
-                tokio_postgres::connect(&logins[0], tokio_postgres::NoTls).await?;
-            tokio::spawn(driver);
-            let transaction = client.transaction().await?;
+            let mut client = wamn_postgres::connect(&logins[0]).await?;
+
+            let mut transaction = client.begin().await?;
             let published = Value::Object(
                 versions
                     .iter()
                     .map(|(version, value)| (version.clone(), value["parameter_schema"].clone()))
                     .collect(),
             );
-            for schema in
-                administration::required_connection_versions(&transaction, connection, &published)
-                    .await?
+            for schema in administration::required_connection_versions(
+                &mut transaction,
+                connection,
+                &published,
+            )
+            .await?
             {
                 administration::validate_version_parameters(&request["parameters"], &schema)?;
             }
             if selected.is_none() {
                 let status = self.status.read(self.org, project, env).await?;
                 if let Some(digest) = status["digest"].as_str() {
-                    selected = transaction.query_opt("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid", &[&wamn_registry::project_env_key(self.org,project,env),&digest,&connection]).await?.map(|row|row.get(0));
+                    selected = sqlx::query("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid").bind(wamn_registry::project_env_key(self.org,project,env)).bind(digest).bind(connection).fetch_optional(&mut *transaction).await?.map(|row|row.get(0));
                 }
             }
             transaction.rollback().await?;

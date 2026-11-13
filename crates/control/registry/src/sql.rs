@@ -399,18 +399,6 @@ pub fn control_provision_src_sql_grant_connection_reader_surface_sql(role: &str)
     )
 }
 
-/// crates/control/provision/src/sql/credentials.rs::forget_generation_password_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CREDENTIALS_FORGET_GENERATION_PASSWORD_SQL: &str =
-    "DELETE FROM registry.generation_passwords WHERE role = $1";
-
-/// crates/control/provision/src/sql/credentials.rs::generation_password_recorded_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CREDENTIALS_GENERATION_PASSWORD_RECORDED_SQL: &str =
-    "SELECT EXISTS (SELECT FROM registry.generation_passwords WHERE role = $1)";
-
-/// crates/control/provision/src/sql/credentials.rs::record_generation_password_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SQL_CREDENTIALS_RECORD_GENERATION_PASSWORD_SQL: &str = "INSERT INTO registry.generation_passwords (role, sha256) VALUES ($1, $2) \
-     ON CONFLICT (role) DO UPDATE SET sha256 = EXCLUDED.sha256, recorded_at = now()";
-
 /// crates/control/environment/src/enable_cdc_project_env.rs::pause_event_reader registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER: &str =
     "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3";
@@ -503,10 +491,3 @@ pub const IDENTITY_SRC_SESSION_REGISTERED_ORG_SQL: &str =
 
 /// Every project deployment affected by an environment lifecycle change.
 pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
-
-/// Add system credential state to a role observation.
-pub fn system_generation_state(observation: &str) -> String {
-    format!(
-        "SELECT state.*, EXISTS (SELECT FROM registry.generation_passwords p WHERE p.role=$1::text) AS password_set FROM ({observation}) state"
-    )
-}

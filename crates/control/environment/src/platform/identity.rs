@@ -10,21 +10,17 @@ use wamn_kubernetes::kubectl;
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
-use super::bootstrap::{SecretData, database_host, secret_text};
+use super::bootstrap::{SecretData, secret_text};
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use wamn_kubernetes::job::Secret;
 
 /// The platform broker Service used by in-cluster clients.
 pub(crate) const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 
-pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
+pub(super) fn issuer(namespace: &str) -> String {
+    format!("https://identity.{namespace}.svc.cluster.local")
+}
 const LOCAL_MAIL: &str = "/var/run/wamn-identity/mail/outbox";
-const OWNER_STATE: &str = "SELECT EXISTS (
-    SELECT FROM identity.principals p WHERE p.type = 'user' AND p.email = lower(btrim(:'owner'))
-    AND (EXISTS (SELECT FROM identity.password_credentials c WHERE c.principal_id = p.id)
-      OR EXISTS (SELECT FROM identity.password_tokens t WHERE t.principal_id = p.id
-        AND t.purpose = 'invitation' AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp()))
-);";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
 const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --secret identity-resend --project <project> must print a nonempty key with no whitespace; see gcp.md section 1";
 const CURL_IMAGE: &str =
@@ -102,12 +98,12 @@ fn resend(secret: Option<&SecretData>) -> anyhow::Result<()> {
 }
 
 /// The cluster Secret that carries a key read from the provider's key store.
-fn resend_secret(key: &str) -> anyhow::Result<Value> {
+fn resend_secret(namespace: &str, key: &str) -> anyhow::Result<Value> {
     ensure!(valid_key(key), "owner input: {RESEND_SECRET_MANAGER}");
     Ok(json!({
         "apiVersion": "v1",
         "kind": "Secret",
-        "metadata": {"name": "identity-resend", "namespace": "identity"},
+        "metadata": {"name": "identity-resend", "namespace": namespace},
         "type": "Opaque",
         "stringData": {"api-key": key},
     }))
@@ -129,15 +125,15 @@ pub async fn mail(target: &Target, document: &ClusterDocument) -> anyhow::Result
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
-                "identity",
-                &resend_secret(&key)?,
+                &document.org,
+                &resend_secret(&document.org, &key)?,
             )
             .await?;
         }
         let owner = kubectl::get(
             &target.kubeconfig,
             &target.context,
-            "identity",
+            &document.org,
             "secret",
             "identity-resend",
         )
@@ -156,31 +152,22 @@ pub async fn initialize(
     let identity = Target {
         kubeconfig: target.kubeconfig.clone(),
         context: target.context.clone(),
-        namespace: "identity".into(),
+        namespace: document.org.clone(),
     };
-    let superuser: SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        "wamn-pg-superuser",
-    )
-    .await?
-    .context("missing Secret platform/wamn-pg-superuser")?;
     let image = chart.image("identity")?;
-    let active = keys(target, &identity, directory, &superuser, image).await?;
+    let active = keys(&identity, directory, image).await?;
     let ca: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        "identity",
+        &document.org,
         "secret",
         "identity-tls",
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?);
+    let (mut probe, files) = endpoint_job(&secret_text(&ca, "ca.crt")?, &document.org);
     let hosts = Target {
-        namespace: "hosts".into(),
+        namespace: document.org.clone(),
         ..identity
     };
     let result = job::run(&hosts, directory, &mut probe, &mut [files]).await?;
@@ -191,7 +178,7 @@ pub async fn initialize(
             .any(|key| key["kid"] == active["kid"] && key["x"] == active["x"])),
         "identity does not serve its active session key"
     );
-    invite_owner(target, document, chart, directory, &superuser, &ca).await?;
+    invite_owner(target, document, chart, directory, &ca).await?;
     if document.provider == Provider::Kind {
         println!(
             "Local access: run kind export kubeconfig --name {} first.\nLocal invitation file (no email delivery): kubectl --context '{}' -n identity exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
@@ -207,53 +194,34 @@ async fn invite_owner(
     document: &ClusterDocument,
     chart: &SelectedChart,
     directory: &Path,
-    superuser: &SecretData,
     ca: &SecretData,
 ) -> anyhow::Result<()> {
     let platform = Target {
-        namespace: "platform".into(),
+        namespace: document.org.clone(),
         ..target.clone()
     };
-    let cluster: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "cluster.postgresql.cnpg.io",
-        "wamn-pg",
-    )
-    .await?
-    .context("missing Cluster platform/wamn-pg")?;
-    let (mut probe, files) = owner_state_job(
-        document,
-        cluster["spec"]["imageName"]
-            .as_str()
-            .context("PostgreSQL Cluster has no image")?,
-    );
-    let password = job::credential(
-        &mut probe,
-        "platform-owner-probe",
-        "PGPASSWORD",
-        "password",
-        &secret_text(superuser, "password")?,
-    );
-    let result = job::run(&platform, directory, &mut probe, &mut [password, files]).await?;
-    match result.trim() {
-        "t" => return Ok(()),
-        "f" => {}
-        _ => anyhow::bail!("owner invitation state is not a boolean"),
+    let forward =
+        super::database::forward(&platform, &document.org, "wamn-pg", "wamn_system").await?;
+    let mut connection = wamn_postgres::connect(&forward.input).await?;
+    let enrolled:bool=sqlx::query_scalar("SELECT EXISTS(SELECT FROM identity.principals p WHERE p.type='user' AND p.email=lower(btrim($1)) AND (EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) OR EXISTS(SELECT FROM identity.password_tokens t WHERE t.principal_id=p.id AND t.purpose='invitation' AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp())))")
+        .bind(&document.owner_email).fetch_one(&mut connection).await?;
+    if enrolled {
+        return Ok(());
     }
+    drop(connection);
+    drop(forward);
     let operator: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
-        "identity",
+        &document.org,
         "secret",
         &wamn_registry::name::resource_suffix("operator", &document.org),
     )
     .await?
     .context("missing identity operator Secret")?;
     let (mut invitation, files) = invitation_job(document, chart.image("ctl")?, &operator, ca)?;
-    let admin = super::bootstrap::administrator(&mut invitation, superuser)?;
-    job::run(&platform, directory, &mut invitation, &mut [admin, files]).await?;
+    super::bootstrap::administrator(&mut invitation, &document.org)?;
+    job::run(&platform, directory, &mut invitation, &mut [files]).await?;
     Ok(())
 }
 
@@ -277,7 +245,7 @@ fn invitation_job(
             &document.owner_email,
             "--org-admin",
             "--pat-issuer",
-            ISSUER,
+            &issuer(&document.org),
             "--pat-client-cert",
             "/inputs/tls.crt",
             "--pat-client-key",
@@ -314,36 +282,6 @@ fn invitation_job(
     Ok((job, files))
 }
 
-fn owner_state_job(document: &ClusterDocument, image: &str) -> (Value, Secret) {
-    let mut job = job::manifest(
-        &format!("platform-owner-state-{}", document.org),
-        image,
-        &["psql"],
-        &[
-            "--no-psqlrc",
-            "--tuples-only",
-            "--no-align",
-            "--set",
-            "ON_ERROR_STOP=1",
-            "--set",
-            &format!("owner={}", document.owner_email),
-            "--file",
-            "/inputs/state.sql",
-        ],
-    );
-    job::environment(
-        &mut job,
-        &[
-            ("PGHOST", &database_host()),
-            ("PGUSER", "postgres"),
-            ("PGDATABASE", "wamn_system"),
-        ],
-    );
-    let files = job::files(&mut job, [("state.sql".into(), OWNER_STATE.into())].into());
-    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
-    (job, files)
-}
-
 pub(super) fn platform_chart_input(
     chart: &Path,
     document: &ClusterDocument,
@@ -353,10 +291,10 @@ pub(super) fn platform_chart_input(
     let mut entry = chart_input(&ChartInput {
         chart,
         name: "identity",
-        namespace: "identity",
+        namespace: &document.org,
         image,
         pull_policy: "IfNotPresent",
-        issuer: ISSUER,
+        issuer: &issuer(&document.org),
         database_secret: "wamn-identity-db",
         tls_secret: "identity-tls",
         operator_ca_secret: "identity-operator-ca",
@@ -403,179 +341,65 @@ pub async fn require_keys(target: &Target, limit: std::time::Duration) -> anyhow
 }
 
 async fn inspect_keys(target: &Target, deadline: tokio::time::Instant) -> anyhow::Result<()> {
-    const RECOVERY: &str = "If no org control release is recorded, run platform deploy without --only \
-         to initialize identity. Otherwise restore a verified system database backup. No resources changed.";
-    let cluster = kubectl::with_timeout(
-        deadline,
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        &[
-            "get",
-            "cluster.postgresql.cnpg.io/wamn-pg",
-            "-o",
-            "json",
-            "--ignore-not-found",
-        ],
-    )
-    .await
-    .with_context(|| {
-        format!("cannot read Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
-    })?;
+    let state = tokio::time::timeout_at(deadline, key_state(target)).await??;
     ensure!(
-        !cluster.is_empty(),
-        "missing Cluster platform/wamn-pg for identity signing state. {RECOVERY}"
-    );
-    let cluster: Value = serde_json::from_str(&cluster).with_context(|| {
-        format!("cannot read Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
-    })?;
-    let primary = cluster["status"]["currentPrimary"]
-        .as_str()
-        .filter(|primary| !primary.is_empty())
-        .with_context(|| {
-            format!("missing PostgreSQL primary for identity signing state. {RECOVERY}")
-        })?;
-    // The server statement limit also applies within the complete inspection limit.
-    let query = format!(
-        "BEGIN READ ONLY; SET LOCAL statement_timeout = '5s'; \
-         SELECT to_json(EXISTS (SELECT FROM identity.session_signing_state s \
-         JOIN identity.session_keys k ON (k.issuer, k.kid) = (s.issuer, s.active_kid) \
-         WHERE s.issuer = '{ISSUER}' \
-         AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)); COMMIT;"
-    );
-    let result = kubectl::with_timeout(
-        deadline,
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        &[
-            "exec",
-            primary,
-            "-c",
-            "postgres",
-            "--",
-            "psql",
-            "--no-psqlrc",
-            "--no-password",
-            "--username=postgres",
-            "--dbname=wamn_system",
-            "--quiet",
-            "--tuples-only",
-            "--no-align",
-            "--set",
-            "ON_ERROR_STOP=1",
-            "--command",
-            &query,
-        ],
-    )
-    .await
-    .with_context(|| {
-        format!("cannot read identity signing state through the PostgreSQL primary. {RECOVERY}")
-    })?;
-    let active: bool = serde_json::from_str(&result).with_context(|| {
-        format!("cannot decode identity signing state as a boolean. {RECOVERY}")
-    })?;
-    ensure!(
-        active,
-        "missing active identity signing key in identity.session_signing_state. {RECOVERY}"
+        state["active"].is_object(),
+        "identity has no active private signing key"
     );
     Ok(())
 }
 
-async fn keys(
-    target: &Target,
-    identity: &Target,
-    directory: &Path,
-    superuser: &SecretData,
-    identity_image: &str,
-) -> anyhow::Result<Value> {
-    let cluster: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "cluster.postgresql.cnpg.io",
-        "wamn-pg",
-    )
-    .await?
-    .context("missing Cluster platform/wamn-pg")?;
-    let image = cluster["spec"]["imageName"]
-        .as_str()
-        .context("the PostgreSQL Cluster has no image")?;
-    let mut probe = key_state_job(image);
-    let mut password = job::credential(
-        &mut probe,
-        "platform-key-probe",
-        "PGPASSWORD",
-        "password",
-        &secret_text(superuser, "password")?,
-    );
-    let result = job::run(
-        target,
-        directory,
-        &mut probe,
-        std::slice::from_mut(&mut password),
-    )
-    .await?;
-    let mut state: Value =
-        serde_json::from_str(&result).context("decode the public session key state")?;
+async fn key_state(target: &Target) -> anyhow::Result<Value> {
+    let forward =
+        super::database::forward(target, &target.namespace, "wamn-pg", "wamn_system").await?;
+    let mut connection = wamn_postgres::connect(&forward.input).await?;
+    Ok(sqlx::query_scalar("SELECT json_build_object(        'active',(SELECT json_build_object('kid',k.kid::text,'x',translate(rtrim(encode(k.public_key,'base64'),'='),'+/','-_'))          FROM identity.session_signing_state s JOIN identity.session_keys k ON (k.issuer,k.kid)=(s.issuer,s.active_kid)          WHERE s.issuer=$1 AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL),        'published',(SELECT kid::text FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL ORDER BY published_at,kid LIMIT 1))")
+        .bind(issuer(&target.namespace)).fetch_one(&mut connection).await?)
+}
+
+async fn keys(identity: &Target, directory: &Path, identity_image: &str) -> anyhow::Result<Value> {
+    let mut state = key_state(identity).await?;
     if state["active"].is_object() {
         return Ok(state["active"].take());
     }
-    let credential: SecretData = kubectl::get(
+    let config: Value = kubectl::get(
         &identity.kubeconfig,
         &identity.context,
-        "identity",
-        "secret",
-        "wamn-identity-db",
+        &identity.namespace,
+        "configmap",
+        "wamn-identity-db-configuration",
     )
     .await?
-    .context("missing Secret identity/wamn-identity-db")?;
-
+    .context("identity connection configuration is absent")?;
+    let connection = config["data"]["connection.json"]
+        .as_str()
+        .context("identity connection data is absent")?;
     let kid = if let Some(kid) = state["published"].as_str() {
         kid.to_owned()
     } else {
-        let mut publish = key_publish_job(identity_image);
-        let secret = job::credential(
-            &mut publish,
-            "platform-key-identity",
-            "WAMN_IDENTITY_DATABASE_URL",
-            "url",
-            &secret_text(&credential, "url")?,
-        );
-        let result = job::run(identity, directory, &mut publish, &mut [secret]).await?;
-        let public: Value =
-            serde_json::from_str(&result).context("decode the published session key")?;
+        let mut publish = key_publish_job(identity_image, &identity.namespace);
+        publish["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
+        job::environment(&mut publish, &[("WAMN_IDENTITY_DATABASE_URL", connection)]);
+        let result = job::run(identity, directory, &mut publish, &mut []).await?;
+        let public: Value = serde_json::from_str(&result)?;
         public["kid"]
             .as_str()
-            .context("the published session key has no kid")?
+            .context("published key has no id")?
             .to_owned()
     };
-    let mut activate = key_activate_job(identity_image, &kid);
-    let secret = job::credential(
-        &mut activate,
-        "platform-key-identity",
-        "WAMN_IDENTITY_DATABASE_URL",
-        "url",
-        &secret_text(&credential, "url")?,
-    );
-    job::run(identity, directory, &mut activate, &mut [secret]).await?;
-    let result = job::run(
-        target,
-        directory,
-        &mut probe,
-        std::slice::from_mut(&mut password),
-    )
-    .await?;
-    let mut state: Value =
-        serde_json::from_str(&result).context("decode the active session key state")?;
+    let mut activate = key_activate_job(identity_image, &kid, &identity.namespace);
+    activate["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
+    job::environment(&mut activate, &[("WAMN_IDENTITY_DATABASE_URL", connection)]);
+    job::run(identity, directory, &mut activate, &mut []).await?;
+    let mut state = key_state(identity).await?;
     ensure!(
-        state["active"]["kid"] == kid,
-        "identity session key activation did not select the published key"
+        state["active"].is_object(),
+        "identity key activation did not persist"
     );
     Ok(state["active"].take())
 }
 
-fn endpoint_job(ca: &str) -> (Value, Secret) {
+fn endpoint_job(ca: &str, namespace: &str) -> (Value, Secret) {
     let mut job = job::manifest(
         "platform-identity-probe",
         CURL_IMAGE,
@@ -589,14 +413,14 @@ fn endpoint_job(ca: &str) -> (Value, Secret) {
             "/inputs/ca.crt",
             "--output",
             "/dev/null",
-            "https://identity.identity.svc.cluster.local/healthz",
+            &format!("{}/healthz", issuer(namespace)),
             "--next",
             "--fail",
             "--silent",
             "--show-error",
             "--cacert",
             "/inputs/ca.crt",
-            "https://identity.identity.svc.cluster.local/.well-known/jwks.json",
+            &format!("{}/.well-known/jwks.json", issuer(namespace)),
         ],
     );
     let files = job::files(&mut job, [("ca.crt".into(), ca.into())].into());
@@ -604,61 +428,25 @@ fn endpoint_job(ca: &str) -> (Value, Secret) {
     (job, files)
 }
 
-const KEY_STATE_SQL: &str = "SELECT json_build_object(\
-                'active', (SELECT json_build_object('kid', k.kid::text, \
-                    'x', translate(rtrim(encode(k.public_key, 'base64'), '='), '+/', '-_')) \
-                    FROM identity.session_signing_state s JOIN identity.session_keys k \
-                    ON (k.issuer, k.kid) = (s.issuer, s.active_kid) \
-                    WHERE s.issuer = 'https://identity.identity.svc.cluster.local' \
-                    AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL), \
-                'published', (SELECT kid::text FROM identity.session_keys \
-                    WHERE issuer = 'https://identity.identity.svc.cluster.local' \
-                    AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
-                    ORDER BY published_at, kid LIMIT 1))";
-
-fn key_state_job(image: &str) -> Value {
-    let mut job = job::manifest(
-        "platform-session-key-state",
-        image,
-        &["psql"],
-        &[
-            "--no-psqlrc",
-            "--tuples-only",
-            "--no-align",
-            "--command",
-            KEY_STATE_SQL,
-        ],
-    );
-    job::environment(
-        &mut job,
-        &[
-            ("PGHOST", &database_host()),
-            ("PGUSER", "postgres"),
-            ("PGDATABASE", "wamn_system"),
-        ],
-    );
-    job
-}
-
-fn key_publish_job(image: &str) -> Value {
+fn key_publish_job(image: &str, namespace: &str) -> Value {
     let mut job = job::manifest(
         "platform-session-key-publish",
         image,
         &["/usr/local/bin/wamn-identity"],
         &["publish"],
     );
-    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", ISSUER)]);
+    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", &issuer(namespace))]);
     job
 }
 
-fn key_activate_job(image: &str, kid: &str) -> Value {
+fn key_activate_job(image: &str, kid: &str, namespace: &str) -> Value {
     let mut job = job::manifest(
         "platform-session-key-activate",
         image,
         &["/usr/local/bin/wamn-identity"],
         &["activate", "--kid", kid],
     );
-    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", ISSUER)]);
+    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", &issuer(namespace))]);
     job
 }
 
@@ -668,64 +456,15 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     #[test]
-    fn owner_state_uses_a_bound_psql_value_and_a_read_only_query() {
-        let document = serde_json::from_value(json!({
-            "provider": "kind", "project_id": "", "zone": "",
-            "cluster_name": "identity-test", "org": "test",
-            "owner_email": "o'brien@example.invalid", "registry": "localhost:5001",
-            "buckets": {"web": "", "otel": "", "state": ""},
-            "route_hosts": {"control": "control.example.invalid"}, "resend_from": ""
-        }))
-        .unwrap();
-        let (mut job, files) = owner_state_job(&document, "postgres:18");
-        let container = job::container(&mut job);
-        let arguments: Vec<String> = serde_json::from_value(container["args"].clone()).unwrap();
-        assert!(
-            arguments
-                .windows(2)
-                .any(|args| args == ["--set", "ON_ERROR_STOP=1"])
-        );
-        assert!(
-            arguments
-                .windows(2)
-                .any(|args| args == ["--set", "owner=o'brien@example.invalid"])
-        );
-        let file = arguments
-            .windows(2)
-            .find(|args| args[0] == "--file")
-            .unwrap();
-        let sql = files.0["stringData"][Path::new(&file[1]).file_name().unwrap().to_str().unwrap()]
-            .as_str()
-            .unwrap();
-        assert!(!sql.contains(&document.owner_email));
-        let parsed = pg_query::parse(&sql.replace(":'owner'", "$1")).unwrap();
-        assert_eq!(parsed.statement_types(), vec!["SelectStmt"]);
-        assert!(
-            container["env"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|env| env == &json!({"name":"PGDATABASE", "value":"wamn_system"}))
-        );
-        assert!(
-            !container["env"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|env| env["name"] == "PGPASSWORD")
-        );
-    }
-
-    #[test]
     fn a_secret_manager_key_refuses_empty_and_whitespace_without_printing_it() {
         for key in ["", "re_key\n", "re key"] {
-            let error = resend_secret(key).unwrap_err().to_string();
+            let error = resend_secret("acme", key).unwrap_err().to_string();
             assert!(error.contains("owner input"), "{error}");
             if !key.trim().is_empty() {
                 assert!(!error.contains(key.trim()), "{error}");
             }
         }
-        let secret = resend_secret("re_key").unwrap();
+        let secret = resend_secret("acme", "re_key").unwrap();
         assert_eq!(secret["metadata"]["name"], "identity-resend");
         assert_eq!(secret["stringData"]["api-key"], "re_key");
     }

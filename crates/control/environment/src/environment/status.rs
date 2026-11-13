@@ -15,7 +15,7 @@ use super::Platform;
 use super::analyse::read_revision;
 use super::drain::{Stranded, stranded};
 use super::ensure::{kubectl, project_url};
-use wamn_package_control::database::connect;
+use wamn_postgres::connect;
 
 pub use wamn_kubernetes::environment_state::DeploymentStatus;
 
@@ -76,8 +76,8 @@ pub async fn status(
     let triple = document.triple();
     let mut warnings = Vec::new();
     let system_schema = match async {
-        let system = connect(&platform.system_database_url).await?;
-        wamn_package_control::schema_baseline::observe_system(&system).await
+        let mut system = connect(&platform.system_database_url).await?;
+        wamn_package_control::schema_baseline::observe_system(&mut system).await
     }
     .await
     {
@@ -91,13 +91,13 @@ pub async fn status(
         }
     };
     let project_schema = match async {
-        let system = connect(&platform.system_database_url).await?;
-        let Some(row) = super::analyse::read_row(&system, &document).await? else {
+        let mut system = connect(&platform.system_database_url).await?;
+        let Some(row) = super::analyse::read_row(&mut system, &document).await? else {
             return Ok::<_, anyhow::Error>(None);
         };
         let url = super::analyse::project_url(platform, &document, &row)?;
-        let project = super::analyse::connect_project(&url).await?;
-        wamn_package_control::schema_baseline::observe_project(&project)
+        let mut project = super::analyse::connect_project(&url).await?;
+        wamn_package_control::schema_baseline::observe_project(&mut project)
             .await
             .map(Some)
     }
@@ -239,19 +239,21 @@ async fn stranded_runs(
     admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
-    let system = connect(admin_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
+    let mut system = connect(admin_url).await?;
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
         .await
+        .map(drop)
         .context("SET ROLE wamn_system")?;
-    let present = system
-        .query_opt(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS,
-            &[&triple.org, &triple.project, &triple.env.as_str()],
-        )
-        .await
-        .context("read the environment row")?
-        .is_some();
+    let present =
+        sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS)
+            .bind(&triple.org)
+            .bind(&triple.project)
+            .bind(triple.env.as_str())
+            .fetch_optional(&mut system)
+            .await
+            .context("read the environment row")?
+            .is_some();
     if !present {
         anyhow::bail!("environment has no provisioned database");
     }

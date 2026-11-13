@@ -21,9 +21,6 @@ pub mod stage;
 pub mod status;
 pub mod write;
 
-#[cfg(test)]
-mod admin_sql_tests;
-
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -190,7 +187,7 @@ impl Platform {
             package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
             component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
             database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")
-                .unwrap_or_else(|_| "platform".to_owned()),
+                .unwrap_or_else(|_| target.namespace.clone()),
             database_host: std::env::var("WAMN_DATABASE_HOST").ok(),
             database_port: std::env::var("WAMN_DATABASE_PORT")
                 .ok()
@@ -412,8 +409,11 @@ async fn apply_selection(
         eprintln!("WARN {warning}");
     }
     document.select_release(application, change, &applied)?;
-    crate::provision_project_env::registry::require_no_reset(lock.client(), &input.triple())
-        .await?;
+    crate::provision_project_env::registry::require_no_reset(
+        &mut *lock.client().await,
+        &input.triple(),
+    )
+    .await?;
     let result = async {
         if matches!(change, document::SelectionChange::Reapply) {
             if ensure::resources_in_place(&platform, &document).await? {

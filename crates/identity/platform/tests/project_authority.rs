@@ -29,9 +29,7 @@
 
 use std::fmt::Write as _;
 
-use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
-};
+use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
 const PROJECT_ENV_KEY: &str = "t1";
@@ -91,21 +89,19 @@ fn current_database(url: &str) -> String {
 /// Returns the generation name for the probes' `current_user`.
 fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
-    let app_generation = workload_generation_role(
+    let app_generation = workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
-        CredentialGeneration::A,
     )
     .expect("App accepts project target");
-    let mut script = sql::prepare_workload_generation_sql(
+    let mut script = wamn_control_provision::test_database::login_sql(
         WorkloadRoleFamily::App,
         &database,
         &app_generation,
         APP_GENERATION_PASSWORD,
-        APP_GENERATION_VALID_UNTIL,
     );
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&app_schema_sql());

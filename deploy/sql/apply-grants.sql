@@ -6,7 +6,7 @@ GRANT USAGE ON SCHEMA registry, identity, catalog, wamn_authority TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.environment_projects,
     registry.target, registry.meta, registry.schema_baseline, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals,
-    registry.generation_passwords, wamn_authority.author_login_projects TO wamn_apply;
+    wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
 GRANT UPDATE (secret_name, secret_namespace, route_host, pending_database)
@@ -16,9 +16,6 @@ GRANT SELECT (id, principal_id, token_prefix, token_hash, revoked_at, expires_at
 GRANT INSERT (type, subject, display_name) ON identity.principals TO wamn_apply;
 GRANT INSERT (principal_id, org, project, role) ON identity.project_roles TO wamn_apply;
 GRANT INSERT (principal_id, org, project, env) ON identity.project_env_memberships TO wamn_apply;
-GRANT INSERT (role, sha256) ON registry.generation_passwords TO wamn_apply;
-GRANT UPDATE (sha256, recorded_at) ON registry.generation_passwords TO wamn_apply;
-GRANT DELETE ON registry.generation_passwords TO wamn_apply;
 GRANT INSERT (login_identity, project_env_key, org_id, project_id, environment)
     ON wamn_authority.author_login_projects TO wamn_apply;
 GRANT UPDATE (org_id, project_id, environment)

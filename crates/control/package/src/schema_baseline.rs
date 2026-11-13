@@ -1,10 +1,10 @@
 //! Record initialization identities and observe image-owned SQL history.
 
+use sqlx::Row as _;
 pub(super) mod plan;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use tokio_postgres::GenericClient;
 use wamn_control_provision::schema_baseline::{project_sha256, system_sha256};
 use wamn_control_provision::schema_migrations::{self, MigrationDatabase};
 use wamn_schema_control::{MigrationOutcome, MigrationSource, RecordedMigration};
@@ -46,23 +46,24 @@ pub struct SchemaPlan {
 }
 
 /// Record the system initialization schema in the caller's transaction or session.
-pub async fn record_system(client: &impl GenericClient) -> anyhow::Result<()> {
+pub async fn record_system(client: &mut sqlx::PgConnection) -> anyhow::Result<()> {
     record(client, "registry.schema_baseline", &system_sha256()).await
 }
 
 /// Record the project initialization schema in the caller's transaction or session.
-pub async fn record_project(client: &impl GenericClient) -> anyhow::Result<()> {
+pub async fn record_project(client: &mut sqlx::PgConnection) -> anyhow::Result<()> {
     record(client, "platform.schema_baseline", &project_sha256()).await
 }
 
-async fn record(client: &impl GenericClient, table: &str, sha256: &str) -> anyhow::Result<()> {
-    client
-        .execute(
-            &format!("INSERT INTO {table} (sha256) VALUES ($1)"),
-            &[&sha256],
-        )
-        .await
-        .with_context(|| format!("record {table}"))?;
+async fn record(client: &mut sqlx::PgConnection, table: &str, sha256: &str) -> anyhow::Result<()> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} (sha256) VALUES ($1)"
+    )))
+    .bind(sha256)
+    .execute(&mut *client)
+    .await
+    .map(|result| result.rows_affected())
+    .with_context(|| format!("record {table}"))?;
     Ok(())
 }
 
@@ -82,7 +83,7 @@ pub fn embedded_sources(target: MigrationDatabase) -> Vec<MigrationSource> {
 }
 
 /// Observe system SQL independently of application and service selections.
-pub async fn observe_system(client: &impl GenericClient) -> anyhow::Result<SchemaReport> {
+pub async fn observe_system(client: &mut sqlx::PgConnection) -> anyhow::Result<SchemaReport> {
     observe(
         client,
         MigrationDatabase::System,
@@ -92,7 +93,7 @@ pub async fn observe_system(client: &impl GenericClient) -> anyhow::Result<Schem
 }
 
 /// Observe project SQL independently of application selections.
-pub async fn observe_project(client: &impl GenericClient) -> anyhow::Result<SchemaReport> {
+pub async fn observe_project(client: &mut sqlx::PgConnection) -> anyhow::Result<SchemaReport> {
     observe(
         client,
         MigrationDatabase::Project,
@@ -109,33 +110,33 @@ fn target_names(target: MigrationDatabase) -> (&'static str, &'static str, Strin
 }
 
 async fn initialization(
-    client: &impl GenericClient,
+    client: &mut sqlx::PgConnection,
     schema: &str,
 ) -> anyhow::Result<Option<InitializationIdentity>> {
     let table = format!("{schema}.schema_baseline");
-    let exists: bool = client
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
+    let exists: bool = sqlx::query("SELECT to_regclass($1) IS NOT NULL")
+        .bind(&table)
+        .fetch_one(&mut *client)
         .await?
         .get(0);
     if !exists {
         return Ok(None);
     }
-    Ok(client
-        .query_opt(
-            &format!("SELECT sha256, installed_at::text FROM {table} WHERE singleton"),
-            &[],
-        )
-        .await
-        .with_context(|| format!("read {table}"))?
-        .map(|row| InitializationIdentity {
-            sha256: row.get(0),
-            installed_at: row.get(1),
-        }))
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT sha256, installed_at::text FROM {table} WHERE singleton"
+    )))
+    .fetch_optional(&mut *client)
+    .await
+    .with_context(|| format!("read {table}"))?
+    .map(|row| InitializationIdentity {
+        sha256: row.get(0),
+        installed_at: row.get(1),
+    }))
 }
 
 /// Compare recorded state with explicit image files without writing SQL.
 pub async fn observe(
-    client: &impl GenericClient,
+    client: &mut sqlx::PgConnection,
     target: MigrationDatabase,
     sources: &[MigrationSource],
 ) -> anyhow::Result<SchemaReport> {
@@ -152,7 +153,7 @@ pub async fn observe(
 
 /// Plan files through the shared prefix planner, including read-only adoption.
 pub async fn plan(
-    client: &impl GenericClient,
+    client: &mut sqlx::PgConnection,
     target: MigrationDatabase,
     sources: &[MigrationSource],
 ) -> anyhow::Result<SchemaPlan> {
@@ -178,28 +179,26 @@ pub async fn plan(
 }
 
 async fn recorded(
-    client: &impl GenericClient,
+    client: &mut sqlx::PgConnection,
     schema: &str,
 ) -> anyhow::Result<(bool, Vec<RecordedMigration>)> {
     let table = format!("{schema}.schema_migration");
-    let exists: bool = client
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
+    let exists: bool = sqlx::query("SELECT to_regclass($1) IS NOT NULL")
+        .bind(&table)
+        .fetch_one(&mut *client)
         .await?
         .get(0);
     let mut recorded = Vec::new();
     if exists {
-        for row in client
-            .query(
-                &format!(
-                    "SELECT ordinal, relative_path, sha256, outcome FROM {table} ORDER BY ordinal"
-                ),
-                &[],
-            )
-            .await?
+        for row in sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT ordinal, relative_path, sha256, outcome FROM {table} ORDER BY ordinal"
+        )))
+        .fetch_all(&mut *client)
+        .await?
         {
             let outcome: &str = row.get(3);
             recorded.push(RecordedMigration {
-                ordinal: u32::try_from(row.get::<_, i32>(0))?,
+                ordinal: u32::try_from(row.get::<i32, _>(0))?,
                 relative_path: row.get(1),
                 sha256: row.get(2),
                 outcome: match outcome {

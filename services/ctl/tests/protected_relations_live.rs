@@ -3,11 +3,11 @@
 //! It uses a superuser connection to a database on the PostgreSQL server of its
 //! test process.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Row as _, Statement as _};
 use std::collections::BTreeMap;
 
-use tokio_postgres::{Client, NoTls};
-
-use wamn_control_provision::identity_issuer::{
+use wamn_control_provision::identity_role::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
@@ -30,18 +30,15 @@ struct PortableFingerprint {
 }
 
 async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let client = wamn_postgres::connect(url)
         .await
         .expect("connect to disposable PostgreSQL");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+
     client
 }
 
-async fn prepare_scratch_database(client: &Client) {
-    client
-        .batch_execute(&format!(
+async fn prepare_scratch_database(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
              DROP SCHEMA IF EXISTS audit_app CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
@@ -75,42 +72,49 @@ async fn prepare_scratch_database(client: &Client) {
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database()); \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
              END $$;"
-        ))
-        .await
+        ))).execute(&mut *client).await.map(drop)
         .expect("prepare disposable database roles");
 }
 
-async fn install_control_database(client: &Client) {
-    client
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the database-owner role that the record history grants name");
+async fn install_control_database(client: &mut Client) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("ensure the database-owner role that the record history grants name");
     let system_install = format!(
         "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;"
     );
-    client
-        .batch_execute(&system_install)
+    sqlx::raw_sql(sqlx::AssertSqlSafe((&system_install).to_string()))
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("install canonical control-plane schema");
-    client
-        .batch_execute(&grant_identity_issuer_surface_sql())
-        .await
-        .expect("install canonical identity issuer key-table authority");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&grant_identity_issuer_surface_sql()).to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("install canonical identity issuer key-table authority");
     // Make sure of the identity issuer privileges, including SELECT and no TRUNCATE.
     for table in IDENTITY_ISSUER_TABLES {
         let relation = format!("identity.{table}");
-        let privileges: bool = client
-            .query_one(
-                "SELECT has_table_privilege($1, $2, 'SELECT') \
+        let privileges: bool = sqlx::query(
+            "SELECT has_table_privilege($1, $2, 'SELECT') \
                     AND has_table_privilege($1, $2, 'INSERT') \
                     AND has_table_privilege($1, $2, 'UPDATE') \
                     AND has_table_privilege($1, $2, 'DELETE') \
                     AND NOT has_table_privilege($1, $2, 'TRUNCATE')",
-                &[&IDENTITY_ISSUER_ROLE, &relation],
-            )
-            .await
-            .expect("read identity issuer key-table privileges")
-            .get(0);
+        )
+        .bind(&IDENTITY_ISSUER_ROLE)
+        .bind(&relation)
+        .fetch_one(&mut *client)
+        .await
+        .expect("read identity issuer key-table privileges")
+        .get(0);
         assert!(
             privileges,
             "identity issuer privilege boundary drifted on {relation}"
@@ -118,37 +122,46 @@ async fn install_control_database(client: &Client) {
     }
 }
 
-async fn install_project_database(client: &Client, url: &str) {
+async fn install_project_database(client: &mut Client, url: &str) {
     // Package DDL runs as the production database owner, not the administrator.
-    client
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .expect("ensure the canonical project database owner");
-    let database: String = client
-        .query_one("SELECT current_database()", &[])
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (sql::ensure_db_owner_role_sql()).to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("ensure the canonical project database owner");
+    let database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut *client)
         .await
         .expect("read the disposable project database name")
         .get(0);
-    client
-        .batch_execute(&sql::set_database_owner_sql(&database))
-        .await
-        .expect("assign the canonical project database owner before package installation");
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS catalog CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&sql::set_database_owner_sql(&database)).to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("assign the canonical project database owner before package installation");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ("DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE",
-        )
-        .await
-        .expect("remove same-qualified control portable schemas before project install");
+             DROP SCHEMA IF EXISTS wamn_history CASCADE")
+            .to_string(),
+    ))
+    .execute(&mut *client)
+    .await
+    .map(drop)
+    .expect("remove same-qualified control portable schemas before project install");
     let schema = BareSchemaName::new("wamn_run").expect("canonical run schema name");
     reconcile_run_plane::reconcile(client, &schema, true)
         .await
         .expect("install canonical project schemas through reconciler");
-    client
-        .batch_execute(APP_SCHEMA_SQL)
+    sqlx::raw_sql(APP_SCHEMA_SQL)
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("install canonical application schema");
     // R55 (wamn-0h0g.12.177). The install above is the FRESH path — the control
     // schemas were dropped a few lines up, so every convergence arm sits behind a
@@ -200,7 +213,7 @@ async fn install_project_database(client: &Client, url: &str) {
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] = [
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 1] = [
     // The projected environment identity is a CONTROL fact: the project plane
     // has no `registry.environment_projects` to project from, and its own catalog is
     // recreated per run (wamn-10yt.38).
@@ -208,7 +221,7 @@ const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] = [
 ];
 
 async fn portable_fingerprints(
-    client: &Client,
+    client: &mut Client,
     relations: &[&str],
 ) -> BTreeMap<String, PortableFingerprint> {
     let mut fingerprints = relations
@@ -224,9 +237,8 @@ async fn portable_fingerprints(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    for row in client
-        .query(
-            "SELECT n.nspname || '.' || c.relname, \
+    for row in sqlx::query(
+        "SELECT n.nspname || '.' || c.relname, \
                     a.attnum::text || ':' || a.attname || ':' || \
                     pg_catalog.format_type(a.atttypid,a.atttypmod) || ':' || \
                     a.attnotnull::text || ':' || \
@@ -239,10 +251,11 @@ async fn portable_fingerprints(
              WHERE a.attnum > 0 AND NOT a.attisdropped \
                AND n.nspname || '.' || c.relname = ANY($1) \
              ORDER BY 1,a.attnum",
-            &[&relations],
-        )
-        .await
-        .expect("read shared portable columns")
+    )
+    .bind(&relations)
+    .fetch_all(&mut *client)
+    .await
+    .expect("read shared portable columns")
     {
         let relation: String = row.get(0);
         fingerprints
@@ -251,9 +264,8 @@ async fn portable_fingerprints(
             .columns
             .push(row.get(1));
     }
-    for row in client
-        .query(
-            "SELECT n.nspname || '.' || c.relname, \
+    for row in sqlx::query(
+        "SELECT n.nspname || '.' || c.relname, \
                     con.contype::text || ':' || pg_get_constraintdef(con.oid,true) \
              FROM pg_catalog.pg_constraint con \
              JOIN pg_catalog.pg_class c ON c.oid=con.conrelid \
@@ -261,10 +273,11 @@ async fn portable_fingerprints(
              WHERE n.nspname || '.' || c.relname = ANY($1) \
                AND con.contype <> 't' \
              ORDER BY 1,2",
-            &[&relations],
-        )
-        .await
-        .expect("read shared portable constraints")
+    )
+    .bind(&relations)
+    .fetch_all(&mut *client)
+    .await
+    .expect("read shared portable constraints")
     {
         let relation: String = row.get(0);
         fingerprints
@@ -279,24 +292,21 @@ async fn portable_fingerprints(
 /// The one author-writable relation outside row security.
 const WRITE_LOG: &str = "platform.write_log";
 
-async fn assert_author_sql_boundaries(client: &Client) {
-    client
-        .batch_execute("BEGIN READ ONLY")
+async fn assert_author_sql_boundaries(client: &mut Client) {
+    sqlx::raw_sql("BEGIN READ ONLY")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("start read-only catalog snapshot");
-    let read_only: bool = client
-        .query_one(
-            "SELECT current_setting('transaction_read_only') = 'on'",
-            &[],
-        )
+    let read_only: bool = sqlx::query("SELECT current_setting('transaction_read_only') = 'on'")
+        .fetch_one(&mut *client)
         .await
         .expect("verify read-only catalog snapshot")
         .get(0);
     assert!(read_only);
 
-    let rows = client
-        .query(
-            "WITH mutation_roles AS ( \
+    let rows = sqlx::query(
+        "WITH mutation_roles AS ( \
                SELECT c.oid AS relation, c.relowner AS role_oid \
                FROM pg_catalog.pg_class c WHERE c.relkind IN ('r','p') \
                UNION \
@@ -320,10 +330,11 @@ async fn assert_author_sql_boundaries(client: &Client) {
              JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
              JOIN pg_catalog.pg_roles granted_role ON granted_role.oid=mutation.role_oid \
              WHERE granted_role.rolname::text = ANY($1) ORDER BY 1,2",
-            &[&AUTHOR_SQL_ROLES.as_slice()],
-        )
-        .await
-        .expect("read author SQL mutation privileges");
+    )
+    .bind(&AUTHOR_SQL_ROLES.as_slice())
+    .fetch_all(&mut *client)
+    .await
+    .expect("read author SQL mutation privileges");
     for row in rows {
         let relation: String = row.get(0);
         let forced_row_security: bool = row.get(2);
@@ -335,18 +346,19 @@ async fn assert_author_sql_boundaries(client: &Client) {
             "{relation} grants author SQL mutation without forced row security"
         );
     }
-    client
-        .batch_execute("ROLLBACK")
+    sqlx::raw_sql("ROLLBACK")
+        .execute(&mut *client)
         .await
+        .map(drop)
         .expect("finish read-only catalog snapshot");
 }
 
 #[tokio::test]
 async fn protected_relations_match_reconciled_postgres() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    let version: String = client
-        .query_one("SELECT current_setting('server_version_num')", &[])
+    let mut client = connect(&url).await;
+    let version: String = sqlx::query("SELECT current_setting('server_version_num')")
+        .fetch_one(&mut client)
         .await
         .expect("read protected-relation probe server version")
         .get(0);
@@ -355,20 +367,20 @@ async fn protected_relations_match_reconciled_postgres() {
         (180_000..190_000).contains(&version),
         "protected-relation derivation requires PostgreSQL 18, found {version}"
     );
-    prepare_scratch_database(&client).await;
-    install_control_database(&client).await;
+    prepare_scratch_database(&mut client).await;
+    install_control_database(&mut client).await;
     let control_only_fingerprints =
-        portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
+        portable_fingerprints(&mut client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(
         control_only_fingerprints
             .values()
             .all(|fingerprint| !fingerprint.columns.is_empty()),
         "control-only portable relations must exist in the control plane: {control_only_fingerprints:?}"
     );
-    assert_author_sql_boundaries(&client).await;
-    install_project_database(&client, &url).await;
+    assert_author_sql_boundaries(&mut client).await;
+    install_project_database(&mut client, &url).await;
     let project_side_control_only =
-        portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
+        portable_fingerprints(&mut client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(
         project_side_control_only
             .values()
@@ -376,5 +388,5 @@ async fn protected_relations_match_reconciled_postgres() {
         "control-only portable relations must not be installed project-side: \
          {project_side_control_only:?}"
     );
-    assert_author_sql_boundaries(&client).await;
+    assert_author_sql_boundaries(&mut client).await;
 }

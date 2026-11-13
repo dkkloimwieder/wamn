@@ -1,10 +1,10 @@
 //! Released and candidate wiring resolution through the existing platform pool.
 
+use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use tokio_postgres::types::ToSql;
 use wamn_catalog::{AdmittedComponent, WiringDocument, validate_resolved_wiring_compatibility};
 use wamn_run_state::AuthorityClass;
 
@@ -93,11 +93,11 @@ impl WamnPostgres {
         package: &str,
         digest: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
-        let (connection, _) = self
+        let (mut connection, _) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection.query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3", &[&project_env_key,&package,&digest]).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
+        Ok(sqlx::query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3").bind(project_env_key).bind(package).bind(digest).fetch_all(&mut *connection).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
     }
 
     /// Read only names declared by the selected package and component closure.
@@ -108,11 +108,11 @@ impl WamnPostgres {
         package: &str,
         digest: &str,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
-        let (connection, _) = self
+        let (mut connection, _) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection.query("SELECT name FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3",&[&project_env_key,&package,&digest]).await?.into_iter().map(|row|row.get(0)).collect())
+        Ok(sqlx::query("SELECT name FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3").bind(project_env_key).bind(package).bind(digest).fetch_all(&mut *connection).await?.into_iter().map(|row|row.get(0)).collect())
     }
 
     /// Read the connection map of release `digest` for the connection
@@ -123,18 +123,12 @@ impl WamnPostgres {
         project_env_key: &str,
         digest: &str,
     ) -> anyhow::Result<crate::connection_memory::ReleaseFact> {
-        let (connection, _) = self
+        let (mut connection, _) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let rows = connection.query(
-            "SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(project_env_key,component_digest,package_id,name) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3",
-            &[&project_env_key,&digest],
-        ).await.context("read the release connection map")?;
-        let versions = connection.query(
-            "SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2",
-            &[&project_env_key,&digest],
-        ).await.context("read the release connection versions")?;
+        let rows = sqlx::query("SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(project_env_key,component_digest,package_id,name) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection map")?;
+        let versions = sqlx::query("SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2").bind(project_env_key).bind(digest).fetch_all(&mut *connection).await.context("read the release connection versions")?;
         Ok(crate::connection_memory::ReleaseFact {
             versions: versions
                 .into_iter()
@@ -161,13 +155,13 @@ impl WamnPostgres {
         environment: &str,
         manifest_digest: &str,
     ) -> anyhow::Result<Vec<AdmittedComponent>> {
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 project_env_key,
@@ -188,7 +182,7 @@ impl WamnPostgres {
 
         let result = if let Some(local) = &self.local_application {
             async {
-                local.require_instance(&connection).await?;
+                local.require_instance(&mut connection).await?;
                 anyhow::ensure!(
                     local.target.project_env_key == project_env_key
                         && local.target.environment == environment
@@ -200,11 +194,10 @@ impl WamnPostgres {
             .await
         } else {
             async {
-                let row = connection
-                    .query_opt(
-                        RELEASE_COMPONENTS_SQL,
-                        &[&project_env_key, &manifest_digest],
-                    )
+                let row = sqlx::query(RELEASE_COMPONENTS_SQL)
+                    .bind(project_env_key)
+                    .bind(manifest_digest)
+                    .fetch_optional(&mut *connection)
                     .await
                     .context("query release components")?
                     .ok_or_else(|| anyhow::anyhow!("release-snapshot-not-found"))?;
@@ -219,14 +212,23 @@ impl WamnPostgres {
 
         match result {
             Ok(components) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
+                if let Err(error) = sqlx::raw_sql("COMMIT")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     self.destroy(connection);
                     return Err(error).context("commit release component snapshot");
                 }
                 Ok(components)
             }
             Err(error) => {
-                if connection.batch_execute("ROLLBACK").await.is_err() {
+                if sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                    .is_err()
+                {
                     self.destroy(connection);
                 }
                 Err(error)
@@ -252,13 +254,13 @@ impl WamnPostgres {
             return Ok(true);
         }
         let component_digests = component_digests.to_vec();
-        let (connection, policy) = self
+        let (mut connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
             .begin_with_identity(
-                &connection,
+                &mut connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
                 project_env_key,
@@ -277,8 +279,6 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 3] =
-            [&project_env_key, &manifest_digest, &component_digests];
         let result = if let Some(local) = &self.local_application {
             if local.target.project_env_key != project_env_key
                 || local.target.environment != environment
@@ -286,11 +286,16 @@ impl WamnPostgres {
             {
                 Err(anyhow::anyhow!("local readiness release target mismatch"))
             } else {
-                local.bindings_ready(&connection, &component_digests).await
+                local
+                    .bindings_ready(&mut connection, &component_digests)
+                    .await
             }
         } else {
-            connection
-                .query_one(RELEASE_COMPONENT_BINDINGS_READY_SQL, &params)
+            sqlx::query(RELEASE_COMPONENT_BINDINGS_READY_SQL)
+                .bind(project_env_key)
+                .bind(manifest_digest)
+                .bind(&component_digests)
+                .fetch_one(&mut *connection)
                 .await
                 .context("query synchronous release connection bindings")
                 .and_then(|row| row.try_get(0).context("decode release binding readiness"))
@@ -298,14 +303,23 @@ impl WamnPostgres {
 
         match result {
             Ok(ready) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
+                if let Err(error) = sqlx::raw_sql("COMMIT")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                {
                     self.destroy(connection);
                     return Err(error).context("commit release binding readiness snapshot");
                 }
                 Ok(ready)
             }
             Err(error) => {
-                if connection.batch_execute("ROLLBACK").await.is_err() {
+                if sqlx::raw_sql("ROLLBACK")
+                    .execute(&mut *connection)
+                    .await
+                    .map(|_| ())
+                    .is_err()
+                {
                     self.destroy(connection);
                 }
                 Err(error)
@@ -322,7 +336,7 @@ pub(super) struct DecodedWiring {
 }
 
 fn decode_release_components(
-    row: &tokio_postgres::Row,
+    row: &sqlx::postgres::PgRow,
     first: usize,
 ) -> anyhow::Result<Vec<AdmittedComponent>> {
     let components: String = row

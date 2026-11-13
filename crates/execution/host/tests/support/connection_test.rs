@@ -1,5 +1,6 @@
 //! Candidate tests through the real control route, TLS and Modbus stores.
 
+use sqlx::{Connection as _, Row as _};
 use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 
 use super::*;
@@ -31,8 +32,8 @@ fn private_ip() -> anyhow::Result<std::net::IpAddr> {
     Ok(socket.local_addr()?.ip())
 }
 
-async fn counts(client: &tokio_postgres::Client) -> anyhow::Result<(i64, i64, i64)> {
-    let row = client.query_one("SELECT (SELECT count(*) FROM registry.connection_generation),(SELECT count(*) FROM identity.credential),(SELECT count(*) FROM registry.connection)", &[]).await?;
+async fn counts(client: &mut sqlx::PgConnection) -> anyhow::Result<(i64, i64, i64)> {
+    let row = sqlx::query("SELECT (SELECT count(*) FROM registry.connection_generation),(SELECT count(*) FROM identity.credential),(SELECT count(*) FROM registry.connection)").fetch_one(&mut *client).await?;
     Ok((row.get(0), row.get(1), row.get(2)))
 }
 
@@ -44,15 +45,16 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     );
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("candidate_health")?;
-    let admin = connect(database.url()).await?;
-    let control_url = install(&admin, database.url()).await?;
-    let (logins, billing, _shop) = environments(&admin, database.url(), "candidate-health").await?;
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.test'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await?;
-    let boss = create_or_reuse_user(&admin, "health-admin@example.test", "Admin")
+    let mut admin = connect(database.url()).await?;
+    let control_url = install(&mut admin, database.url()).await?;
+    let (logins, mut billing, _shop) =
+        environments(&mut admin, database.url(), "candidate-health").await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.test'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning)))).execute(&mut admin).await.map(drop)?;
+    let boss = create_or_reuse_user(&mut admin, "health-admin@example.test", "Admin")
         .await?
         .principal_id;
     invite_member(
-        &admin,
+        &mut admin,
         &boss,
         ORG,
         &MemberGrants {
@@ -153,7 +155,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         HostRouteHandlers::Control {
             status: Arc::<HealthStatus>::clone(&live),
             administration: Some(logins),
-            control: Arc::new(connect(&control_url).await?),
+            control: wamn_postgres::pool(&control_url, 4).await?,
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.into(),
@@ -171,7 +173,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     let mut request = json!({"project":"billing","env":"dev","name":"api","parameters":{"primary-authority":format!("https://{authority}/base/"),"tls-verification":"verify-authority","auth":{"in":"header","name":"Authorization"}},"credential":json!({"key":SECRET}).to_string()});
-    let before = counts(&admin).await?;
+    let before = counts(&mut admin).await?;
     assert!(
         call(
             &delivery,
@@ -232,7 +234,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .unwrap()["ok"],
         false
     );
-    assert_eq!(counts(&admin).await?, before);
+    assert_eq!(counts(&mut admin).await?, before);
     server.abort();
 
     call(
@@ -268,7 +270,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         }
     });
     let request = json!({"project":"billing","env":"dev","name":"meter","parameters":{"authority":address.to_string()}});
-    let before = counts(&admin).await?;
+    let before = counts(&mut admin).await?;
     assert_eq!(
         call(
             &delivery,
@@ -290,7 +292,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
             .unwrap()["ok"],
         false
     );
-    assert_eq!(counts(&admin).await?, before);
+    assert_eq!(counts(&mut admin).await?, before);
     // Native versions use the same component health ABI with their own artifact identity.
     let mut native_config: Value =
         serde_json::from_slice(&std::fs::read(built.directory.join("config.json"))?)?;
@@ -322,8 +324,8 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
             reqwest::header::HeaderValue::from_static("application/vnd.oci.image.manifest.v1+json"),
         )
         .await?;
-    admin.batch_execute("INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES('native-meter','native',false); INSERT INTO registry.integration_type_auth(integration_type,auth_type) VALUES('native-meter','none')").await?;
-    admin.execute("SELECT registry.publish_integration('native-meter',1,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)",&[&native_digest,&schema,&vec!["wamn:modbus/read@1.0.0","wamn:modbus/write@1.0.0","wamn:integration/health@0.1.0"],&vec!["wamn:modbus/write@1.0.0"]]).await?;
+    sqlx::raw_sql("INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES('native-meter','native',false); INSERT INTO registry.integration_type_auth(integration_type,auth_type) VALUES('native-meter','none')").execute(&mut admin).await.map(drop)?;
+    sqlx::query("SELECT registry.publish_integration('native-meter',1,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)").bind(&native_digest).bind(&schema).bind(&vec!["wamn:modbus/read@1.0.0","wamn:modbus/write@1.0.0","wamn:integration/health@0.1.0"]).bind(&vec!["wamn:modbus/write@1.0.0"]).execute(&mut admin).await.map(|result| result.rows_affected())?;
     call(&delivery,"integration/write",boss.to_string().as_str(),json!({"project":"billing","name":"native-meter","integration_type":"native-meter","auth_type":"none"})).await.unwrap();
     let mut native_request = request.clone();
     native_request["name"] = "native-meter".into();
@@ -338,9 +340,22 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .unwrap(),
         json!({"ok":true})
     );
-    assert_eq!(counts(&admin).await?, before);
+    assert_eq!(counts(&mut admin).await?, before);
     // The newest version defaults, while an explicit version still selects its exact code.
-    admin.execute("SELECT registry.publish_integration('modbus',3,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)",&[&format!("sha256:{}","f".repeat(64)),&schema,&vec!["wamn:modbus/read@1.0.0","wamn:modbus/write@1.0.0","wamn:integration/health@0.1.0"],&vec!["wamn:modbus/write@1.0.0"]]).await?;
+    sqlx::query(
+        "SELECT registry.publish_integration('modbus',3,$1,$2,'wamn:modbus/client@1.0.0',$3,$4)",
+    )
+    .bind(&format!("sha256:{}", "f".repeat(64)))
+    .bind(&schema)
+    .bind(&vec![
+        "wamn:modbus/read@1.0.0",
+        "wamn:modbus/write@1.0.0",
+        "wamn:integration/health@0.1.0",
+    ])
+    .bind(&vec!["wamn:modbus/write@1.0.0"])
+    .execute(&mut admin)
+    .await
+    .map(|result| result.rows_affected())?;
     assert_eq!(
         call(
             &delivery,
@@ -365,7 +380,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .unwrap(),
         json!({"ok":true})
     );
-    assert_eq!(counts(&admin).await?, before);
+    assert_eq!(counts(&mut admin).await?, before);
     // A live release takes precedence over the newest published version.
     let connection = call(
         &delivery,
@@ -376,10 +391,10 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     let canonical = b"{}".as_slice();
-    let digest: String = billing.query_one("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&canonical]).await?.get(0);
-    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&connection["id"].as_str().unwrap()]).await?;
+    let digest: String = sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&canonical).fetch_one(&mut billing).await?.get(0);
+    sqlx::query("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)").bind(&wamn_registry::project_env_key(ORG,"billing","dev")).bind(&digest).bind(&connection["id"].as_str().unwrap()).execute(&mut billing).await.map(|result| result.rows_affected())?;
     *live.0.lock().await = Some(digest);
-    let before = counts(&admin).await?;
+    let before = counts(&mut admin).await?;
     assert_eq!(
         call(
             &delivery,
@@ -391,7 +406,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
         .unwrap(),
         json!({"ok":true})
     );
-    assert_eq!(counts(&admin).await?, before);
+    assert_eq!(counts(&mut admin).await?, before);
     let wasm = std::fs::read(built.directory.join("integration.wasm"))?;
     assert_eq!(
         wamn_engine::integration::compile_count(&wamn_digest::bytes_sha256(&wasm)),

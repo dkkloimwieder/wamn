@@ -10,11 +10,11 @@
 //! case posts `widget.record_batch`: a retry with its lines in another order and its
 //! amounts spelled another way is the same request.
 
+use sqlx::Row as _;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use tokio_postgres::NoTls;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use crate::local_application::{LocalApplication, LocalApplicationConfig, LocalPackage};
@@ -145,16 +145,16 @@ async fn start(
 }
 
 /// The rows of `inventory.widget`, and the log rows of `widget.create` by key.
-async fn counts(database: &tokio_postgres::Client, key: &str) -> anyhow::Result<(i64, i64)> {
-    let row = database
-        .query_one(
-            "SELECT (SELECT count(*) FROM inventory.widget), \
+async fn counts(database: &mut sqlx::PgConnection, key: &str) -> anyhow::Result<(i64, i64)> {
+    let row = sqlx::query(
+        "SELECT (SELECT count(*) FROM inventory.widget), \
                     (SELECT count(*) FROM platform.write_log \
                       WHERE operation = 'platform-fixture:widget/create' \
                         AND idempotency_key = $1)",
-            &[&key],
-        )
-        .await?;
+    )
+    .bind(&key)
+    .fetch_one(&mut *database)
+    .await?;
     Ok((row.get(0), row.get(1)))
 }
 
@@ -169,8 +169,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
     let (application, routes) = start(system.url(), project.url(), &scratch).await?;
-    let (database, connection) = tokio_postgres::connect(project.url(), NoTls).await?;
-    tokio::spawn(connection);
+    let mut database = wamn_postgres::connect(project.url()).await?;
 
     let first_id = uuid::Uuid::now_v7().to_string();
     let second_id = uuid::Uuid::now_v7().to_string();
@@ -182,16 +181,16 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         first.get("value").is_some(),
         "the first call creates: {first}"
     );
-    anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-1").await? == (1, 1));
 
     // A retry with the same request answers the stored outcome and writes nothing.
     let retry = routes.create("r-2", "k-1", &first_id, "standard").await?;
     anyhow::ensure!(retry == first, "a retry answers {first}, not {retry}");
-    anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-1").await? == (1, 1));
 
     let changed_id = routes.create("r-id", "k-1", &second_id, "standard").await?;
     anyhow::ensure!(changed_id["error"]["code"] == "idempotency_conflict");
-    anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-1").await? == (1, 1));
 
     // The same key with another request is refused, and writes nothing.
     let changed = routes.create("r-3", "k-1", &first_id, "priority").await?;
@@ -201,7 +200,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
                 == json!({"field": "idempotency_key", "intent": "platform-fixture:widget/create#k-1"}),
         "a changed request is refused: {changed}"
     );
-    anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-1").await? == (1, 1));
 
     // A refused create leaves no log row, so a later different request under
     // the same key does its work.
@@ -210,29 +209,31 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         refused["error"]["code"] == "unique_violation",
         "a second standard widget is refused: {refused}"
     );
-    anyhow::ensure!(counts(&database, "k-2").await? == (1, 0));
+    anyhow::ensure!(counts(&mut database, "k-2").await? == (1, 0));
     let later = routes.create("r-5", "k-2", &second_id, "priority").await?;
     anyhow::ensure!(
         later.get("value").is_some(),
         "the key is free again: {later}"
     );
-    anyhow::ensure!(counts(&database, "k-2").await? == (2, 1));
+    anyhow::ensure!(counts(&mut database, "k-2").await? == (2, 1));
 
     // Two concurrent calls with one key write one row and give one answer. The
     // table's record history needs an actor for the cleanup.
     let actor = wamn_control_provision::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
-    database
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
+    sqlx::query(
+        "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:write-log-test', false)",
-            &[&actor],
-        )
-        .await?;
-    database
-        .batch_execute("DELETE FROM inventory.widget")
-        .await?;
+    )
+    .bind(&actor)
+    .execute(&mut database)
+    .await
+    .map(|result| result.rows_affected())?;
+    sqlx::raw_sql("DELETE FROM inventory.widget")
+        .execute(&mut database)
+        .await
+        .map(drop)?;
     let (left, right) = tokio::join!(
         routes.create("r-6", "k-3", &third_id, "standard"),
         routes.create("r-7", "k-3", &third_id, "standard"),
@@ -246,18 +247,19 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         left == right,
         "both calls answer one outcome: {left} and {right}"
     );
-    anyhow::ensure!(counts(&database, "k-3").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-3").await? == (1, 1));
 
     // Replay keeps stored JSON bytes inside the response array. Only the
     // current request_id is inserted into the stored request element.
     let stored = " \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} }\t";
-    database
-        .execute(
-            "UPDATE platform.write_log SET result = $1 \
+    sqlx::query(
+        "UPDATE platform.write_log SET result = $1 \
              WHERE operation = 'platform-fixture:widget/create' AND idempotency_key = 'k-3'",
-            &[&stored],
-        )
-        .await?;
+    )
+    .bind(&stored)
+    .execute(&mut database)
+    .await
+    .map(|result| result.rows_affected())?;
     let response = routes
         .client
         .post(format!("{}/widget/create", routes.endpoint))
@@ -277,7 +279,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     );
     let answer: Value = serde_json::from_str(&text)?;
     anyhow::ensure!(answer[1]["error"]["code"] == "idempotency_conflict");
-    anyhow::ensure!(counts(&database, "k-3").await? == (1, 1));
+    anyhow::ensure!(counts(&mut database, "k-3").await? == (1, 1));
 
     application.shutdown().await?;
     Ok(())
@@ -299,8 +301,7 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
     let (application, routes) = start(system.url(), project.url(), &scratch).await?;
-    let (database, connection) = tokio_postgres::connect(project.url(), NoTls).await?;
-    tokio::spawn(connection);
+    let mut database = wamn_postgres::connect(project.url()).await?;
 
     let mut widgets = Vec::new();
     for (key, code) in [("w-1", "standard"), ("w-2", "priority")] {
@@ -338,15 +339,14 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
             && changed["error"]["detail"]["field"] == "value.idempotency_key",
         "a changed amount is another request: {changed}"
     );
-    let logged: i64 = database
-        .query_one(
-            "SELECT count(*) FROM platform.write_log \
+    let logged: i64 = sqlx::query(
+        "SELECT count(*) FROM platform.write_log \
               WHERE operation = 'platform-fixture:widget/record-batch' \
                 AND idempotency_key = 'k-batch'",
-            &[],
-        )
-        .await?
-        .get(0);
+    )
+    .fetch_one(&mut database)
+    .await?
+    .get(0);
     anyhow::ensure!(logged == 1, "one key logs one row, not {logged}");
 
     let element = |request_id: &str, key: &str, amount: &str| {
@@ -384,18 +384,17 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
     }
     assert_eq!(answer[1]["request_id"], "refused-element");
     assert_eq!(answer[1]["error"]["code"], "invalid_input");
-    let committed: Vec<String> = database
-        .query(
-            "SELECT idempotency_key FROM platform.write_log
+    let committed: Vec<String> = sqlx::query(
+        "SELECT idempotency_key FROM platform.write_log
          WHERE operation = 'platform-fixture:widget/record-batch'
          AND idempotency_key IN ('sibling-before', 'refused-element', 'sibling-after')
          ORDER BY idempotency_key",
-            &[],
-        )
-        .await?
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
+    )
+    .fetch_all(&mut database)
+    .await?
+    .into_iter()
+    .map(|row| row.get(0))
+    .collect();
     assert_eq!(committed, ["sibling-after", "sibling-before"]);
 
     application.shutdown().await?;

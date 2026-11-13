@@ -1,9 +1,10 @@
 //! Environment deletion refusals and cancellation of the final transaction.
 
+use sqlx::{Connection as _, Row as _};
 use std::time::Duration;
 
 use serde_json::json;
-use tokio_postgres::Client;
+use sqlx::PgConnection as Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
 use wamn_environment_control::{
     environment::{delete::delete_registry_rows, lock::LifecycleLock},
@@ -76,34 +77,46 @@ esac
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut system = connect(database.url()).await?;
-    system.batch_execute("SET ROLE wamn_system").await?;
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let triple = Triple::new("acme", "dev", "app");
-    let transaction = provisioning_transaction(&mut system).await?;
-    transaction
-        .batch_execute(
-            &wamn_control_provision::test_database::seed_org_project_env_sql(
-                &triple.org,
-                &triple.project,
-                &triple.env,
-            ),
-        )
-        .await?;
+    let mut transaction = provisioning_transaction(&mut system).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::test_database::seed_org_project_env_sql(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+        ))
+            .to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)?;
     transaction.commit().await?;
     wamn_environment_control::provision_system::set_platform_domain(&mut system, "example.invalid")
         .await?;
-    system.batch_execute("RESET ROLE").await?;
+    sqlx::raw_sql("RESET ROLE")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let project_name = wamn_control_provision::project_env_database_name(
         &triple.org,
         &triple.project,
         &triple.env,
         "aaaaaaa1",
     );
-    system
-        .batch_execute(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
             postgres_protocol::escape::escape_identifier(&project_name)
         ))
-        .await?;
+            .to_string(),
+    ))
+    .execute(&mut system)
+    .await
+    .map(drop)?;
     let mut project_url = url::Url::parse(database.url())?;
     project_url.set_path(&project_name);
     reconcile_run_plane(ReconcileRunPlaneRequest {
@@ -118,25 +131,30 @@ esac
     })
     .await?;
     // The database-owner policy membership installed by environment::ensure.
-    system
-        .batch_execute("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
-        .await?;
+    sqlx::raw_sql("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let mut project = connect(project_url.as_str()).await?;
     let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let bytes = b"stranded release";
     let digest = wamn_digest::bytes_sha256(bytes);
-    let transaction = project.transaction().await?;
-    transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+    let mut transaction = project.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
-        .await?;
-    transaction.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&project_env_key, &digest, &&bytes[..]]).await?;
-    transaction.execute("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')", &[&project_env_key, &triple.env.as_str(), &digest]).await?;
+            .to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)?;
+    sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&&bytes[..]).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+    sqlx::query("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')").bind(&project_env_key).bind(&triple.env.as_str()).bind(&digest).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
     transaction.commit().await?;
-    let run_before: serde_json::Value = project
-        .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
+    let run_before: serde_json::Value = sqlx::query("SELECT to_jsonb(r) FROM wamn_run.runs r")
+        .fetch_one(&mut project)
         .await?
         .get(0);
     let release = wamn_control_provision::environment_names::application_release_name(
@@ -179,14 +197,15 @@ esac
         events: None,
         auth_nats: None,
     };
-    system.batch_execute("SET ROLE wamn_system").await?;
-    let before: serde_json::Value = system
-        .query_one(
-            "SELECT to_jsonb(e) FROM registry.environment_projects e",
-            &[],
-        )
-        .await?
-        .get(0);
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
+    let before: serde_json::Value =
+        sqlx::query("SELECT to_jsonb(e) FROM registry.environment_projects e")
+            .fetch_one(&mut system)
+            .await?
+            .get(0);
     let error = delete(&platform, &triple, false, database.url())
         .await
         .unwrap_err();
@@ -202,16 +221,14 @@ esac
         std::fs::read("delete-mutations")?.is_empty(),
         "refusal must precede every external mutation"
     );
-    let after: serde_json::Value = system
-        .query_one(
-            "SELECT to_jsonb(e) FROM registry.environment_projects e",
-            &[],
-        )
-        .await?
-        .get(0);
+    let after: serde_json::Value =
+        sqlx::query("SELECT to_jsonb(e) FROM registry.environment_projects e")
+            .fetch_one(&mut system)
+            .await?
+            .get(0);
     assert_eq!(after, before);
-    let run_after: serde_json::Value = project
-        .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
+    let run_after: serde_json::Value = sqlx::query("SELECT to_jsonb(r) FROM wamn_run.runs r")
+        .fetch_one(&mut project)
         .await?
         .get(0);
     assert_eq!(run_after, run_before);
@@ -219,8 +236,8 @@ esac
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
+    let client = wamn_postgres::connect(url).await?;
+
     Ok(client)
 }
 
@@ -229,33 +246,34 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut system = connect(database.url()).await?;
-    system.batch_execute("SET ROLE wamn_system").await?;
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut system)
+        .await
+        .map(drop)?;
     let triple = Triple::new("acme", "dev", "app");
     let other = Triple::new("acme", "prod", "app");
-    let transaction = provisioning_transaction(&mut system).await?;
+    let mut transaction = provisioning_transaction(&mut system).await?;
     for target in [&triple, &other] {
-        transaction
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    &target.org,
-                    &target.project,
-                    &target.env,
-                ),
-            )
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            (&wamn_control_provision::test_database::seed_org_project_env_sql(
+                &target.org,
+                &target.project,
+                &target.env,
+            ))
+                .to_string(),
+        ))
+        .execute(&mut *transaction)
+        .await
+        .map(drop)?;
         let project_env_key =
             wamn_control_provision::project_env_key(&target.org, &target.project, &target.env);
-        transaction
-            .query_one(
-                "SELECT set_config('app.project_env_key', $1, true)",
-                &[&project_env_key],
-            )
+        sqlx::query("SELECT set_config('app.project_env_key', $1, true)")
+            .bind(&project_env_key)
+            .fetch_one(&mut *transaction)
             .await?;
     }
-    transaction.batch_execute(
-        "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
-         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')",
-    ).await?;
+    sqlx::raw_sql("INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
+         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')").execute(&mut *transaction).await.map(drop)?;
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     let mut auth = AuthDrops::default();
     let mut changes = ConnectionDrops::default();
@@ -270,7 +288,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         ),
     ] {
         administration::execute_with_store(
-            &transaction,
+            &mut transaction,
             "acme",
             operation,
             &request.to_string(),
@@ -281,28 +299,30 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .await?;
     }
     transaction.commit().await?;
-    let credential = system
-        .query_one(
-            "SELECT id::text, ref, version FROM identity.credential",
-            &[],
-        )
+    let credential = sqlx::query("SELECT id::text, ref, version FROM identity.credential")
+        .fetch_one(&mut system)
         .await?;
     let id: String = credential.get(0);
     let reference: String = credential.get(1);
     let version: String = credential.get(2);
 
     let mut blocker = connect(database.url()).await?;
-    let blocker_pid: i32 = blocker
-        .query_one("SELECT pg_backend_pid()", &[])
+    let blocker_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut blocker)
         .await?
         .get(0);
-    let held = blocker.transaction().await?;
-    held.batch_execute("LOCK TABLE wamn_authority.author_login_projects IN SHARE MODE")
-        .await?;
+    let mut held = blocker.begin().await?;
+    sqlx::raw_sql("LOCK TABLE wamn_authority.author_login_projects IN SHARE MODE")
+        .execute(&mut *held)
+        .await
+        .map(drop)?;
     let mut deleting = connect(database.url()).await?;
-    deleting.batch_execute("SET ROLE wamn_system").await?;
-    let deleting_pid: i32 = deleting
-        .query_one("SELECT pg_backend_pid()", &[])
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut deleting)
+        .await
+        .map(drop)?;
+    let deleting_pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut deleting)
         .await?
         .get(0);
     let url = database.url().to_owned();
@@ -316,11 +336,10 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     // PostgreSQL stops the real delete after connection removal, before commit.
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let waiting: bool = system
-                .query_one(
-                    "SELECT $1 = ANY(pg_blocking_pids($2))",
-                    &[&blocker_pid, &deleting_pid],
-                )
+            let waiting: bool = sqlx::query("SELECT $1 = ANY(pg_blocking_pids($2))")
+                .bind(&blocker_pid)
+                .bind(&deleting_pid)
+                .fetch_one(&mut system)
                 .await?
                 .get(0);
             if waiting {
@@ -330,17 +349,14 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         }
     })
     .await??;
-    task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     held.rollback().await?;
     // Wait for cancellation to close the database connection and roll back.
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if system
-                .query_opt(
-                    "SELECT 1 FROM pg_stat_activity WHERE pid=$1",
-                    &[&deleting_pid],
-                )
+            if sqlx::query("SELECT 1 FROM pg_stat_activity WHERE pid=$1")
+                .bind(&deleting_pid)
+                .fetch_optional(&mut system)
                 .await?
                 .is_none()
             {
@@ -350,40 +366,46 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         }
     })
     .await??;
-    assert!(system.query_opt("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_some());
-    let retained = system
-        .query_one(
-            "SELECT ref, version FROM identity.credential WHERE id=$1::text::uuid",
-            &[&id],
-        )
-        .await?;
-    assert_eq!(retained.get::<_, String>(0), reference);
-    assert_eq!(retained.get::<_, String>(1), version);
+    assert!(sqlx::query("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'").fetch_optional(&mut system).await?.is_some());
+    let retained =
+        sqlx::query("SELECT ref, version FROM identity.credential WHERE id=$1::text::uuid")
+            .bind(&id)
+            .fetch_one(&mut system)
+            .await?;
+    assert_eq!(retained.get::<String, _>(0), reference);
+    assert_eq!(retained.get::<String, _>(1), version);
     for _ in 0..2 {
         LifecycleLock::hold(database.url(), &triple, async |_| {
             delete_registry_rows(&mut system, &triple, "aaaaaaa1").await
         })
         .await?;
     }
-    assert!(system.query_opt("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_none());
+    assert!(sqlx::query("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'").fetch_optional(&mut system).await?.is_none());
     assert!(
-        system
-            .query_opt(
-                "SELECT 1 FROM identity.credential WHERE id=$1::text::uuid",
-                &[&id]
-            )
+        sqlx::query("SELECT 1 FROM identity.credential WHERE id=$1::text::uuid")
+            .bind(&id)
+            .fetch_optional(&mut system)
             .await?
             .is_none()
     );
-    assert!(system.query_opt("SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_none());
     assert!(
-        system
-            .query_opt(
-                "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
-                &[&other.org, &other.project, &other.env.as_str()],
-            )
-            .await?
-            .is_some()
+        sqlx::query(
+            "SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'"
+        )
+        .fetch_optional(&mut system)
+        .await?
+        .is_none()
+    );
+    assert!(
+        sqlx::query(
+            "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3"
+        )
+        .bind(&other.org)
+        .bind(&other.project)
+        .bind(&other.env.as_str())
+        .fetch_optional(&mut system)
+        .await?
+        .is_some()
     );
 
     Ok(())

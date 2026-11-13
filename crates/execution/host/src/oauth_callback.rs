@@ -17,12 +17,9 @@ pub async fn response(
     if request.method() != hyper::Method::GET {
         return page(405, "OAuth callback requires GET");
     }
-    let Ok((mut database, connection)) =
-        tokio_postgres::connect(database_url, tokio_postgres::NoTls).await
-    else {
+    let Ok(mut database) = wamn_postgres::connect(database_url).await else {
         return page(503, "callback database unavailable");
     };
-    let driver = tokio::spawn(connection);
     let result = oauth
         .callback(
             &mut database,
@@ -31,7 +28,6 @@ pub async fn response(
         )
         .await;
     drop(database);
-    let _ = driver.await;
     match result {
         Ok(()) => page(200, "Authorization succeeded. You can close this page."),
         Err(error) => page(400, &error.reason),

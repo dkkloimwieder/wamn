@@ -1,5 +1,6 @@
 //! Bootstrap invitation refusals against a private PostgreSQL database.
 
+use sqlx::{Connection as _, Row as _};
 use wamn_broker::Publisher;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_environment_control::invite::{InviteRequest, invite};
@@ -10,29 +11,36 @@ use wamn_platform_identity::org::{MemberGrants, invite_member};
 async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+    let mut client = wamn_postgres::connect(database.url()).await.unwrap();
+
+    sqlx::raw_sql("SET ROLE wamn_system")
+        .execute(&mut client)
         .await
+        .map(drop)
         .unwrap();
-    let connection = tokio::spawn(connection);
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    let transaction = client.transaction().await.unwrap();
-    transaction
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
+    let mut transaction = client.begin().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&bind_platform_principal_sql(PlatformComponent::Provisioning)).to_string(),
+    ))
+    .execute(&mut *transaction)
+    .await
+    .map(drop)
+    .unwrap();
+    sqlx::raw_sql("INSERT INTO registry.orgs(id, placement_type) VALUES ('acme', 'dedicated')")
+        .execute(&mut *transaction)
         .await
+        .map(drop)
         .unwrap();
-    transaction
-        .batch_execute("INSERT INTO registry.orgs(id, placement_type) VALUES ('acme', 'dedicated')")
-        .await
-        .unwrap();
-    let admin =
-        wamn_platform_identity::create_or_reuse_user(&transaction, "admin@example.test", "Admin")
-            .await
-            .unwrap();
+    let mut admin = wamn_platform_identity::create_or_reuse_user(
+        &mut transaction,
+        "admin@example.test",
+        "Admin",
+    )
+    .await
+    .unwrap();
     invite_member(
-        &transaction,
-        &admin.principal_id,
+        &mut transaction,
+        &mut admin.principal_id,
         "acme",
         &MemberGrants {
             org_admin: true,
@@ -60,14 +68,11 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
         error.to_string(),
         "org acme already has an active org admin; use user.invite"
     );
-    let row = client
-        .query_one(
-            "SELECT count(*) FROM identity.org_memberships WHERE org = 'acme'",
-            &[],
-        )
+    let row = sqlx::query("SELECT count(*) FROM identity.org_memberships WHERE org = 'acme'")
+        .fetch_one(&mut client)
         .await
         .unwrap();
-    assert_eq!(row.get::<_, i64>(0), 1);
+    assert_eq!(row.get::<i64, _>(0), 1);
 
     // provision-org makes the owner the admin without a password, so the
     // owner's own invitation passes the guard and reaches identity.
@@ -84,5 +89,4 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
     );
 
     drop(client);
-    connection.await.unwrap().unwrap();
 }

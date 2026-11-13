@@ -18,9 +18,9 @@ use crate::identifier::Identifier;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
+use sqlx::postgres::PgConnectOptions as PostgresConfig;
 use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout_at};
-use tokio_postgres::Config as PostgresConfig;
 use url::Url;
 use wamn_compiler::manifest::PackageManifest;
 
@@ -1110,7 +1110,7 @@ fn database_probe(
             "expected a PostgreSQL connection URL",
         )
     })?;
-    let database = postgres.get_dbname().unwrap_or_default();
+    let database = postgres.get_database().unwrap_or_default();
     if database.is_empty() || database.contains('/') {
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,
@@ -1127,7 +1127,7 @@ fn database_probe(
             "set an explicit database name of at most 63 bytes without NUL",
         )
     })?;
-    let user = postgres.get_user().unwrap_or_default();
+    let user = postgres.get_username();
     if user.is_empty() {
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,

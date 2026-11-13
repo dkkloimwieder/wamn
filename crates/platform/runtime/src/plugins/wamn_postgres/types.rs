@@ -1,568 +1,212 @@
-//! Guest↔host value marshalling for `wamn:postgres` (SR4 split, wamn-cjv.18):
-//! text-format parameter encoding, binary-format cell decoding (including the
-//! manual binary-NUMERIC → canonical-string decoder), column/row helpers, and
-//! error mapping. Pure — no pool, clock, or plugin state.
+//! SQLx value conversion for the PostgreSQL guest interface.
 
 use chrono::{DateTime, Utc};
-use tokio_postgres::types::{Format, IsNull, ToSql, Type, to_sql_checked};
+use sqlx::postgres::{PgArgumentBuffer, PgRow, PgStatement, PgTypeInfo, PgValueFormat, PgValueRef};
+use sqlx::types::{BigDecimal, Json};
+use sqlx::{
+    Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
+};
 
 use super::{Column, PgError, SqlValue};
 
-pub(super) fn columns_of(stmt: &tokio_postgres::Statement) -> Vec<Column> {
+pub(super) fn columns_of(stmt: &PgStatement) -> Vec<Column> {
     stmt.columns()
         .iter()
-        .map(|c| Column {
-            name: c.name().to_string(),
-            type_name: c.type_().name().to_string(),
+        .map(|column| Column {
+            name: column.name().to_owned(),
+            type_name: match column.type_info().name() {
+                "CHAR" => "bpchar".into(),
+                name => name.to_ascii_lowercase(),
+            },
         })
         .collect()
 }
 
-pub(super) fn decode_row(row: &tokio_postgres::Row) -> Result<Vec<SqlValue>, PgError> {
+pub(super) fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
     (0..row.len())
-        .map(|i| {
-            row.try_get::<_, SqlCell>(i).map(|c| c.0).map_err(|e| {
-                PgError::QueryError((
-                    "WAMN1".to_string(),
-                    format!("column {i} decode failed: {e}"),
-                ))
-            })
+        .map(|index| {
+            let value = row
+                .try_get_raw(index)
+                .map_err(|error| map_pg_error(&error))?;
+            if value.is_null() {
+                return Ok(SqlValue::Null);
+            }
+            let decoded = match value.type_info().name() {
+                "BOOL" => SqlValue::Boolean(row.try_get(index).map_err(|e| map_pg_error(&e))?),
+                "INT2" => SqlValue::Int32(i32::from(
+                    row.try_get::<i16, _>(index).map_err(|e| map_pg_error(&e))?,
+                )),
+                "INT4" => SqlValue::Int32(row.try_get(index).map_err(|e| map_pg_error(&e))?),
+                "INT8" => SqlValue::Int64(row.try_get(index).map_err(|e| map_pg_error(&e))?),
+                "FLOAT4" => SqlValue::Float64(f64::from(
+                    row.try_get::<f32, _>(index).map_err(|e| map_pg_error(&e))?,
+                )),
+                "FLOAT8" => SqlValue::Float64(row.try_get(index).map_err(|e| map_pg_error(&e))?),
+                "BYTEA" => SqlValue::Bytes(row.try_get(index).map_err(|e| map_pg_error(&e))?),
+                "NUMERIC" => SqlValue::Numeric(
+                    row.try_get::<Numeric, _>(index)
+                        .map_err(|e| map_pg_error(&e))?
+                        .0,
+                ),
+                "TIMESTAMPTZ" => SqlValue::Timestamptz(canonical_timestamptz(
+                    row.try_get(index).map_err(|e| map_pg_error(&e))?,
+                )),
+                "JSON" | "JSONB" => SqlValue::Json(
+                    row.try_get::<Json<Box<serde_json::value::RawValue>>, _>(index)
+                        .map_err(|e| map_pg_error(&e))?
+                        .0
+                        .get()
+                        .to_owned(),
+                ),
+                "UUID" => SqlValue::Uuid(
+                    row.try_get::<uuid::Uuid, _>(index)
+                        .map_err(|e| map_pg_error(&e))?
+                        .to_string(),
+                ),
+                "TEXT" | "VARCHAR" | "CHAR" | "NAME" | "UNKNOWN" => {
+                    SqlValue::Text(row.try_get(index).map_err(|e| map_pg_error(&e))?)
+                }
+                other => {
+                    return Err(PgError::QueryError((
+                        "WAMN1".into(),
+                        format!("unsupported column type {other}"),
+                    )));
+                }
+            };
+            Ok(decoded)
         })
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-pub(super) fn map_pg_error(e: &tokio_postgres::Error) -> PgError {
-    if let Some(db) = e.as_db_error() {
-        let constraint = || db.constraint().unwrap_or_default().to_string();
-        return match db.code().code() {
+pub(super) fn map_pg_error(error: &sqlx::Error) -> PgError {
+    if let Some(database) = error.as_database_error() {
+        let constraint = || database.constraint().unwrap_or_default().to_owned();
+        return match database.code().as_deref().unwrap_or("XX000") {
             "40001" | "40P01" => PgError::SerializationFailure,
             "57014" => PgError::StatementTimeout,
             "23505" => PgError::UniqueViolation(constraint()),
             "23503" => PgError::ForeignKeyViolation(constraint()),
             "23514" => PgError::CheckViolation(constraint()),
             "23P01" => PgError::ExclusionViolation(constraint()),
-            // RLS / privilege denials deliberately carry no policy detail.
             "42501" => PgError::PermissionDenied,
-            code => PgError::QueryError((code.to_string(), db.message().to_string())),
+            code => PgError::QueryError((code.to_owned(), database.message().to_owned())),
         };
     }
-    if e.is_closed() {
+    if connection_lost(error) {
         return PgError::ConnectionUnavailable;
     }
-    PgError::QueryError(("XX000".to_string(), e.to_string()))
+    PgError::QueryError(("XX000".into(), error.to_string()))
 }
 
-// ---------------------------------------------------------------------------
-// Guest→host params: text-format wire encoding
-// ---------------------------------------------------------------------------
+pub(super) fn connection_lost(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::Io(_)
+            | sqlx::Error::Tls(_)
+            | sqlx::Error::Protocol(_)
+            | sqlx::Error::PoolClosed
+            | sqlx::Error::PoolTimedOut
+            | sqlx::Error::WorkerCrashed
+    )
+}
 
-/// Wraps a WIT `sql-value` as a bound parameter. Values are sent in the text
-/// wire format, so the server parses them with the exact semantics of SQL
-/// literals for the *declared* parameter type: `numeric`/`timestamptz`/
-/// `json`/`uuid` strings stay exact, and there is no client-side type
-/// negotiation to disagree with the server.
+/// SQLx decodes finite decimals. PostgreSQL also permits three non-finite values.
+struct Numeric(String);
+
+impl Type<sqlx::Postgres> for Numeric {
+    fn type_info() -> PgTypeInfo {
+        BigDecimal::type_info()
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Postgres> for Numeric {
+    fn decode(value: PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        if value.format() == PgValueFormat::Text {
+            return Ok(Self(value.as_str()?.to_owned()));
+        }
+        let special = match value.as_bytes()?.get(4..6) {
+            Some([0xc0, 0]) => Some("NaN"),
+            Some([0xd0, 0]) => Some("Infinity"),
+            Some([0xf0, 0]) => Some("-Infinity"),
+            _ => None,
+        };
+        Ok(Self(match special {
+            Some(value) => value.to_owned(),
+            None => BigDecimal::decode(value)?.to_plain_string(),
+        }))
+    }
+}
+
+/// A guest value binds with its native PostgreSQL type.
 #[derive(Debug)]
 pub(super) struct PgParam<'a>(pub(super) &'a SqlValue);
 
-impl ToSql for PgParam<'_> {
-    fn to_sql(
+impl Type<sqlx::Postgres> for PgParam<'_> {
+    fn type_info() -> PgTypeInfo {
+        PgTypeInfo::with_oid(sqlx::postgres::types::Oid(0))
+    }
+    fn compatible(_: &PgTypeInfo) -> bool {
+        true
+    }
+}
+
+impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
+    fn produces(&self) -> Option<PgTypeInfo> {
+        Some(match self.0 {
+            SqlValue::Null => Self::type_info(),
+            SqlValue::Boolean(_) => bool::type_info(),
+            SqlValue::Int32(_) => i32::type_info(),
+            SqlValue::Int64(_) => i64::type_info(),
+            SqlValue::Float64(_) => f64::type_info(),
+            SqlValue::Bytes(_) => <Vec<u8> as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Text(_) => <String as Type<sqlx::Postgres>>::type_info(),
+            SqlValue::Numeric(_) => BigDecimal::type_info(),
+            SqlValue::Timestamptz(_) => DateTime::<Utc>::type_info(),
+            SqlValue::Json(_) => Json::<serde_json::Value>::type_info(),
+            SqlValue::Uuid(_) => uuid::Uuid::type_info(),
+        })
+    }
+
+    fn encode_by_ref(
         &self,
-        _ty: &Type,
-        out: &mut bytes::BytesMut,
-    ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        use bytes::BufMut as _;
-        use std::io::Write as _;
+        buffer: &mut PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
         match self.0 {
-            SqlValue::Null => return Ok(IsNull::Yes),
-            SqlValue::Boolean(b) => out.extend_from_slice(if *b { b"t" } else { b"f" }),
-            SqlValue::Int32(v) => {
-                let _ = write!(out.writer(), "{v}");
+            SqlValue::Null => Ok(sqlx::encode::IsNull::Yes),
+            SqlValue::Boolean(value) => value.encode_by_ref(buffer),
+            SqlValue::Int32(value) => value.encode_by_ref(buffer),
+            SqlValue::Int64(value) => value.encode_by_ref(buffer),
+            SqlValue::Float64(value) => value.encode_by_ref(buffer),
+            SqlValue::Bytes(value) => {
+                <Vec<u8> as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)
             }
-            SqlValue::Int64(v) => {
-                let _ = write!(out.writer(), "{v}");
+            SqlValue::Text(value) => {
+                <String as Encode<sqlx::Postgres>>::encode_by_ref(value, buffer)
             }
-            SqlValue::Float64(v) => {
-                if v.is_nan() {
-                    out.extend_from_slice(b"NaN");
-                } else if v.is_infinite() {
-                    out.extend_from_slice(if *v > 0.0 { b"Infinity" } else { b"-Infinity" });
+            SqlValue::Numeric(value) => {
+                let sign = match value.as_str() {
+                    "NaN" => Some(0xc0),
+                    "Infinity" => Some(0xd0),
+                    "-Infinity" => Some(0xf0),
+                    _ => None,
+                };
+                if let Some(sign) = sign {
+                    buffer.extend_from_slice(&[0, 0, 0, 0, sign, 0, 0, 0]);
+                    Ok(sqlx::encode::IsNull::No)
                 } else {
-                    // {:?} is the shortest round-trip representation.
-                    let _ = write!(out.writer(), "{v:?}");
+                    value.parse::<BigDecimal>()?.encode_by_ref(buffer)
                 }
             }
-            SqlValue::Bytes(b) => {
-                out.extend_from_slice(b"\\x");
-                out.reserve(b.len() * 2);
-                let mut writer = out.writer();
-                for byte in b {
-                    let _ = write!(writer, "{byte:02x}");
-                }
-            }
-            // Text and the canonical-string types: pass through, server parses
-            // per the parameter's declared type.
-            SqlValue::Text(s)
-            | SqlValue::Numeric(s)
-            | SqlValue::Timestamptz(s)
-            | SqlValue::Json(s)
-            | SqlValue::Uuid(s) => out.extend_from_slice(s.as_bytes()),
+            SqlValue::Timestamptz(value) => value.parse::<DateTime<Utc>>()?.encode_by_ref(buffer),
+            SqlValue::Json(value) => Json(
+                serde_json::from_str::<Box<serde_json::value::RawValue>>(value)?,
+            )
+            .encode_by_ref(buffer),
+            SqlValue::Uuid(value) => value.parse::<uuid::Uuid>()?.encode_by_ref(buffer),
         }
-        Ok(IsNull::No)
-    }
-
-    fn accepts(_ty: &Type) -> bool {
-        // The server validates the text form against the declared parameter
-        // type; incompatible values fail there with a mappable error.
-        true
-    }
-
-    fn encode_format(&self, _ty: &Type) -> Format {
-        Format::Text
-    }
-
-    to_sql_checked!();
-}
-
-// ---------------------------------------------------------------------------
-// Host→guest cells: binary wire decoding
-// ---------------------------------------------------------------------------
-
-struct SqlCell(SqlValue);
-
-impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
-    fn from_sql(
-        ty: &Type,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        let v = match ty.name() {
-            "bool" => SqlValue::Boolean(bool::from_sql(ty, raw)?),
-            "int2" => SqlValue::Int32(i32::from(i16::from_sql(ty, raw)?)),
-            "int4" => SqlValue::Int32(i32::from_sql(ty, raw)?),
-            "int8" => SqlValue::Int64(i64::from_sql(ty, raw)?),
-            "float4" => SqlValue::Float64(f64::from(f32::from_sql(ty, raw)?)),
-            "float8" => SqlValue::Float64(f64::from_sql(ty, raw)?),
-            "text" | "varchar" | "bpchar" | "name" | "unknown" => {
-                SqlValue::Text(String::from_sql(ty, raw)?)
-            }
-            "bytea" => SqlValue::Bytes(<&[u8]>::from_sql(ty, raw)?.to_vec()),
-            "numeric" => SqlValue::Numeric(decode_binary_numeric(raw)?),
-            "timestamptz" => {
-                SqlValue::Timestamptz(canonical_timestamptz(DateTime::<Utc>::from_sql(ty, raw)?))
-            }
-            "json" => SqlValue::Json(std::str::from_utf8(raw)?.to_string()),
-            "jsonb" => {
-                let (version, body) = raw.split_first().ok_or("empty jsonb value")?;
-                if *version != 1 {
-                    return Err(format!("unsupported jsonb version {version}").into());
-                }
-                SqlValue::Json(std::str::from_utf8(body)?.to_string())
-            }
-            "uuid" => {
-                const HEX: &[u8; 16] = b"0123456789abcdef";
-                if raw.len() != 16 {
-                    return Err("uuid value is not 16 bytes".into());
-                }
-                let mut value = String::with_capacity(36);
-                for (index, byte) in raw.iter().enumerate() {
-                    if matches!(index, 4 | 6 | 8 | 10) {
-                        value.push('-');
-                    }
-                    value.push(char::from(HEX[usize::from(byte >> 4)]));
-                    value.push(char::from(HEX[usize::from(byte & 0x0f)]));
-                }
-                SqlValue::Uuid(value)
-            }
-            other => return Err(format!("unsupported column type {other}").into()),
-        };
-        Ok(SqlCell(v))
-    }
-
-    fn from_sql_null(_ty: &Type) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        Ok(SqlCell(SqlValue::Null))
-    }
-
-    fn accepts(_ty: &Type) -> bool {
-        true
     }
 }
 
-/// Spell a decoded PostgreSQL timestamp through the shared scalar owner.
 pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
     wamn_scalar::format_timestamptz(value)
-}
-
-/// Decode Postgres's binary NUMERIC wire format into its canonical string
-/// (the same text `numeric_out` would produce): base-10000 digit groups with
-/// a weight (group index of the first group relative to the decimal point)
-/// and a display scale.
-fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
-    use std::fmt::Write as _;
-
-    fn rd_i16(raw: &[u8], at: usize) -> Result<i16, Box<dyn std::error::Error + Sync + Send>> {
-        Ok(i16::from_be_bytes(
-            raw.get(at..at + 2).ok_or("truncated numeric")?.try_into()?,
-        ))
-    }
-    let ndigits = usize::try_from(rd_i16(raw, 0)?)?;
-    let weight = i32::from(rd_i16(raw, 2)?);
-    let sign = rd_i16(raw, 4)?.cast_unsigned();
-    let dscale = usize::from(rd_i16(raw, 6)?.cast_unsigned());
-    match sign {
-        0x0000 | 0x4000 => {}
-        0xC000 => return Ok("NaN".to_string()),
-        0xD000 => return Ok("Infinity".to_string()),
-        0xF000 => return Ok("-Infinity".to_string()),
-        other => return Err(format!("bad numeric sign {other:#x}").into()),
-    }
-    let mut digits = Vec::with_capacity(ndigits);
-    for i in 0..ndigits {
-        digits.push(rd_i16(raw, 8 + i * 2)?.cast_unsigned());
-    }
-
-    let mut s = String::new();
-    if sign == 0x4000 {
-        s.push('-');
-    }
-    if weight < 0 || ndigits == 0 {
-        s.push('0');
-    } else {
-        for i in 0..=usize::try_from(weight).expect("the branch above rejects a negative weight") {
-            let d = digits.get(i).copied().unwrap_or(0);
-            if i == 0 {
-                let _ = write!(s, "{d}");
-            } else {
-                let _ = write!(s, "{d:04}");
-            }
-        }
-    }
-    if dscale > 0 {
-        let mut frac = String::new();
-        let mut gw = -1i32;
-        while frac.len() < dscale {
-            let i = weight - gw; // digit index of the group with weight `gw`
-            let d = usize::try_from(i)
-                .ok()
-                .and_then(|index| digits.get(index).copied())
-                .unwrap_or(0);
-            let _ = write!(frac, "{d:04}");
-            gw -= 1;
-        }
-        frac.truncate(dscale);
-        s.push('.');
-        s.push_str(&frac);
-    }
-    Ok(s)
-}
-
-// ---------------------------------------------------------------------------
-// WIT host implementations
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use tokio_postgres::types::FromSql as _;
-
-    use super::*;
-
-    fn enc(ndigits: i16, weight: i16, sign: u16, dscale: u16, digits: &[u16]) -> Vec<u8> {
-        let mut raw = Vec::new();
-        raw.extend_from_slice(&ndigits.to_be_bytes());
-        raw.extend_from_slice(&weight.to_be_bytes());
-        raw.extend_from_slice(&sign.to_be_bytes());
-        raw.extend_from_slice(&dscale.to_be_bytes());
-        for d in digits {
-            raw.extend_from_slice(&d.to_be_bytes());
-        }
-        raw
-    }
-
-    #[test]
-    fn uuid_decode_preserves_hex_spelling_and_rejects_wrong_lengths() {
-        for (bytes, expected) in [
-            ([0; 16], "00000000-0000-0000-0000-000000000000"),
-            ([255; 16], "ffffffff-ffff-ffff-ffff-ffffffffffff"),
-            (
-                [
-                    0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76,
-                    0x54, 0x32, 0x10,
-                ],
-                "01234567-89ab-cdef-fedc-ba9876543210",
-            ),
-        ] {
-            let SqlCell(SqlValue::Uuid(value)) =
-                SqlCell::from_sql(&Type::UUID, &bytes).expect("sixteen bytes encode a UUID")
-            else {
-                panic!("a UUID column decodes as a UUID");
-            };
-            assert_eq!(value, expected);
-        }
-        for length in [0, 15, 17] {
-            let error = SqlCell::from_sql(&Type::UUID, &vec![0; length])
-                .err()
-                .expect("a UUID must have sixteen bytes");
-            assert_eq!(error.to_string(), "uuid value is not 16 bytes");
-        }
-    }
-
-    #[test]
-    fn numeric_decode_basic() {
-        // 12.3400
-        assert_eq!(
-            decode_binary_numeric(&enc(2, 0, 0, 4, &[12, 3400])).unwrap(),
-            "12.3400"
-        );
-        // 0.0001
-        assert_eq!(
-            decode_binary_numeric(&enc(1, -1, 0, 4, &[1])).unwrap(),
-            "0.0001"
-        );
-        // 0.00000001 (weight -2)
-        assert_eq!(
-            decode_binary_numeric(&enc(1, -2, 0, 8, &[1])).unwrap(),
-            "0.00000001"
-        );
-        // 1234567.89
-        assert_eq!(
-            decode_binary_numeric(&enc(3, 1, 0, 2, &[123, 4567, 8900])).unwrap(),
-            "1234567.89"
-        );
-        // -42
-        assert_eq!(
-            decode_binary_numeric(&enc(1, 0, 0x4000, 0, &[42])).unwrap(),
-            "-42"
-        );
-        // 0 and 0.00
-        assert_eq!(decode_binary_numeric(&enc(0, 0, 0, 0, &[])).unwrap(), "0");
-        assert_eq!(
-            decode_binary_numeric(&enc(0, 0, 0, 2, &[])).unwrap(),
-            "0.00"
-        );
-        // 10000 (weight 1, single group)
-        assert_eq!(
-            decode_binary_numeric(&enc(1, 1, 0, 0, &[1])).unwrap(),
-            "10000"
-        );
-        // NaN
-        assert_eq!(
-            decode_binary_numeric(&enc(0, 0, 0xC000, 0, &[])).unwrap(),
-            "NaN"
-        );
-    }
-
-    /// The live carrier tests compare each read-back value to its
-    /// canonicalizer, so this test is the one place that pins the
-    /// canonicalizer itself to the spelling
-    /// `docs/architecture/data-access.md#canonical-values-and-sql-names` rules.
-    #[test]
-    fn the_timestamptz_canonicalizer_spells_utc_rfc3339_with_six_fractional_digits_and_a_z() {
-        for (parsed, spelled) in [
-            ("2026-10-01T09:07:00+02:00", "2026-10-01T07:07:00.000000Z"),
-            ("2026-10-01T09:07:00Z", "2026-10-01T09:07:00.000000Z"),
-            ("2026-10-01T09:07:00.25Z", "2026-10-01T09:07:00.250000Z"),
-            (
-                "2026-10-01T09:07:00.123456789Z",
-                "2026-10-01T09:07:00.123456Z",
-            ),
-        ] {
-            let value = DateTime::parse_from_rfc3339(parsed)
-                .expect("the fixture parses")
-                .to_utc();
-            assert_eq!(canonical_timestamptz(value), spelled);
-        }
-    }
-
-    #[test]
-    fn param_text_encoding() {
-        use tokio_postgres::types::ToSql;
-        let mut buf = bytes::BytesMut::new();
-        let p = PgParam(&SqlValue::Bytes(vec![0xde, 0xad, 0x01]));
-        assert!(matches!(
-            p.to_sql(&Type::BYTEA, &mut buf).unwrap(),
-            IsNull::No
-        ));
-        assert_eq!(&buf[..], b"\\xdead01");
-
-        let mut buf = bytes::BytesMut::new();
-        let p = PgParam(&SqlValue::Float64(1.5));
-        p.to_sql(&Type::FLOAT8, &mut buf).unwrap();
-        assert_eq!(&buf[..], b"1.5");
-
-        let mut buf = bytes::BytesMut::new();
-        let p = PgParam(&SqlValue::Boolean(true));
-        p.to_sql(&Type::BOOL, &mut buf).unwrap();
-        assert_eq!(&buf[..], b"t");
-    }
-
-    // -----------------------------------------------------------------------
-    // Live carrier spelling (wamn-10yt.31)
-    //
-    // Four of the WIT `sql-value` variants carry a typed PostgreSQL value as
-    // text. A test that compares them to a hand-typed literal shows only that
-    // someone typed the literal to match. These two tests compare each carrier
-    // to its own canonicalizer instead: PostgreSQL's output function for every
-    // lexical-preserving type, and `canonical_timestamptz` for the one type
-    // whose canonical spelling PostgreSQL does not produce.
-    // -----------------------------------------------------------------------
-
-    async fn live_client(database: &wamn_test_postgres::Database) -> tokio_postgres::Client {
-        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .expect("connect to the disposable carrier-spelling database");
-        tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                eprintln!("carrier-spelling live connection failed: {error}");
-            }
-        });
-        client
-    }
-
-    #[tokio::test]
-    async fn live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells() {
-        let database = wamn_test_postgres::database();
-        let client = live_client(&database).await;
-        client
-            .batch_execute(
-                "CREATE TEMPORARY TABLE carrier_timestamp (at timestamptz NOT NULL); \
-                 INSERT INTO carrier_timestamp (at) VALUES \
-                     ('2026-10-01T09:07:00+02:00'), \
-                     ('2026-10-01T09:07:00.250000Z'), \
-                     ('2026-10-01T09:07:00Z')",
-            )
-            .await
-            .expect("seed the timestamptz carrier");
-
-        let rows = client
-            .query("SELECT at FROM carrier_timestamp ORDER BY at", &[])
-            .await
-            .expect("read the timestamptz carrier back");
-        assert_eq!(rows.len(), 3);
-        for row in &rows {
-            let decoded = decode_row(row).expect("decode the read-back row");
-            let SqlValue::Timestamptz(spelled) = &decoded[0] else {
-                panic!("a timestamptz column carries the timestamptz variant");
-            };
-            assert_eq!(
-                spelled.as_bytes(),
-                canonical_timestamptz(row.get::<_, DateTime<Utc>>(0)).as_bytes()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer() {
-        let database = wamn_test_postgres::database();
-        let client = live_client(&database).await;
-        client
-            .batch_execute(
-                "CREATE TEMPORARY TABLE carrier_spelling ( \
-                     amount numeric NOT NULL, \
-                     at timestamptz NOT NULL, \
-                     doc json NOT NULL, \
-                     docb jsonb NOT NULL, \
-                     ident uuid NOT NULL); \
-                 INSERT INTO carrier_spelling VALUES ( \
-                     '12.3400', \
-                     '2026-10-01T09:07:00+02:00', \
-                     '{\"b\":1,   \"a\":2}', \
-                     '{\"b\":1,   \"a\":2}', \
-                     '0FB4A2C1-1111-4222-8333-444444444444')",
-            )
-            .await
-            .expect("seed every text carrier");
-
-        let row = client
-            .query_one(
-                "SELECT amount, amount::text, at, doc, doc::text, docb, docb::text, \
-                        ident, ident::text \
-                   FROM carrier_spelling",
-                &[],
-            )
-            .await
-            .expect("read every text carrier back");
-        let decoded = decode_row(&row).expect("decode every text carrier");
-
-        // numeric, json, jsonb and uuid preserve what PostgreSQL holds, so
-        // PostgreSQL's own output function is their canonicalizer and the
-        // reference comes off the same row.
-        for (carrier, canonicalizer) in [(0usize, 1usize), (3, 4), (5, 6), (7, 8)] {
-            let spelled = match &decoded[carrier] {
-                SqlValue::Numeric(value) | SqlValue::Json(value) | SqlValue::Uuid(value) => value,
-                other => panic!("column {carrier} does not carry a typed value as text: {other:?}"),
-            };
-            let SqlValue::Text(reference) = &decoded[canonicalizer] else {
-                panic!("column {canonicalizer} is not the canonicalizer's own output");
-            };
-            assert_eq!(spelled.as_bytes(), reference.as_bytes());
-        }
-
-        // `timestamptz_out` spells a space and a two-digit offset, so the
-        // platform canonicalizer is the authority for this one carrier.
-        let SqlValue::Timestamptz(spelled) = &decoded[2] else {
-            panic!("column 2 does not carry the timestamptz variant");
-        };
-        assert_eq!(
-            spelled.as_bytes(),
-            canonical_timestamptz(row.get::<_, DateTime<Utc>>(2)).as_bytes()
-        );
-        for (input, shared, database) in [
-            ("-0.00", "-0.00", "0.00"),
-            ("0012.3400", "12.3400", "12.3400"),
-            (".50", "0.50", "0.50"),
-            ("5.", "5", "5"),
-        ] {
-            let row = client
-                .query_one("SELECT ($1::text::numeric)::text", &[&input])
-                .await
-                .unwrap();
-            assert_eq!(row.get::<_, String>(0), database);
-            assert_eq!(
-                wamn_scalar::canonical_numeric(input).as_deref(),
-                Some(shared)
-            );
-        }
-        for (input, shared, database) in [
-            (
-                "2024-03-01T00:30:00+02:00",
-                "2024-02-29T22:30:00.000000Z",
-                "2024-02-29T22:30:00.000000Z",
-            ),
-            (
-                "2026-08-29T12:34:56.123456Z",
-                "2026-08-29T12:34:56.123456Z",
-                "2026-08-29T12:34:56.123456Z",
-            ),
-            (
-                "2026-08-29T12:34:56.1234567Z",
-                "2026-08-29T12:34:56.123456Z",
-                "2026-08-29T12:34:56.123457Z",
-            ),
-        ] {
-            let row = client
-                .query_one("SELECT $1::text::timestamptz", &[&input])
-                .await
-                .unwrap();
-            assert_eq!(canonical_timestamptz(row.get(0)), database);
-            assert_eq!(
-                wamn_scalar::canonical_timestamptz(input).as_deref(),
-                Some(shared)
-            );
-        }
-        for input in [
-            "2026-02-29T00:00:00Z",
-            "2024-04-31T00:00:00Z",
-            "2026-08-29T12:34:56+24:00",
-        ] {
-            assert!(
-                client
-                    .query_one("SELECT $1::text::timestamptz", &[&input])
-                    .await
-                    .is_err()
-            );
-            assert_eq!(wamn_scalar::canonical_timestamptz(input), None);
-        }
-    }
 }

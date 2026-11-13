@@ -4,6 +4,8 @@
 //! supplies the production `wamn:postgres` plugin and a real PostgreSQL 18
 //! identity. See `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` for the arming recipe.
 
+use sqlx::PgConnection as Client;
+use sqlx::{Connection as _, Row as _, Statement as _};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,7 +15,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
 };
-use tokio_postgres::{Client, NoTls};
+
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_engine::engine::build_engine;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -66,20 +68,16 @@ impl TraceHarness {
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
+    let mut client = ::wamn_postgres::connect(url)
         .await
         .context("connect to the SQLx transaction database")?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::error!(%error, "SQLx transaction database connection failed");
-        }
-    });
+
     Ok(client)
 }
 
 fn generation_role(database: &str) -> String {
     format!(
-        "wamn_app_{}_a",
+        "wamn_app_{}",
         wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, database)
     )
 }
@@ -93,9 +91,9 @@ fn guest_url(admin_url: &str, role: &str) -> anyhow::Result<String> {
     Ok(url.to_string())
 }
 
-async fn install(admin: &Client, role: &str) -> anyhow::Result<()> {
-    admin
-        .batch_execute(&format!(
+async fn install(admin: &mut Client, role: &str) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE \"{role}\" LOGIN PASSWORD '{PASSWORD}' NOSUPERUSER NOCREATEDB \
@@ -115,26 +113,31 @@ async fn install(admin: &Client, role: &str) -> anyhow::Result<()> {
              GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app; \
              GRANT SELECT, INSERT ON {SCHEMA}.effects TO wamn_app;"
         ))
-        .await
-        .context("install the SQLx transaction fixture")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .context("install the SQLx transaction fixture")
 }
 
-async fn fixture_is_clean(admin: &Client, role: &str) -> anyhow::Result<bool> {
-    Ok(admin
-        .query_one(
-            "SELECT NOT EXISTS (SELECT FROM pg_roles \
+async fn fixture_is_clean(admin: &mut Client, role: &str) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
+        "SELECT NOT EXISTS (SELECT FROM pg_roles \
                                  WHERE rolname::text IN ('wamn_app', $1::text)) \
                     AND to_regnamespace($2::text) IS NULL",
-            &[&role, &SCHEMA],
-        )
-        .await
-        .context("make sure the SQLx transaction fixture is fresh")?
-        .get(0))
+    )
+    .bind(&role)
+    .bind(&SCHEMA)
+    .fetch_one(&mut *admin)
+    .await
+    .context("make sure the SQLx transaction fixture is fresh")?
+    .get(0))
 }
 
-async fn cleanup(admin: &Client, role: &str) -> anyhow::Result<()> {
-    admin
-        .batch_execute(&format!(
+async fn cleanup(admin: &mut Client, role: &str) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        (&format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DO $cleanup$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
@@ -147,8 +150,12 @@ async fn cleanup(admin: &Client, role: &str) -> anyhow::Result<()> {
                END IF; \
              END $cleanup$;"
         ))
-        .await
-        .context("remove the SQLx transaction fixture")
+            .to_string(),
+    ))
+    .execute(&mut *admin)
+    .await
+    .map(drop)
+    .context("remove the SQLx transaction fixture")
 }
 
 async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Result<Vec<SpanData>> {
@@ -214,9 +221,9 @@ fn effect_operations(spans: &[SpanData]) -> HashSet<String> {
         .collect()
 }
 
-async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow::Result<()> {
-    let version: i32 = admin
-        .query_one("SELECT current_setting('server_version_num')::integer", &[])
+async fn acceptance(admin: &mut Client, admin_url: &str, component: &Path) -> anyhow::Result<()> {
+    let version: i32 = sqlx::query("SELECT current_setting('server_version_num')::integer")
+        .fetch_one(&mut *admin)
         .await
         .context("read PostgreSQL version")?
         .get(0);
@@ -224,8 +231,8 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
         version / 10_000 == 18,
         "condition requires PostgreSQL 18, got {version}"
     );
-    let database: String = admin
-        .query_one("SELECT current_database()", &[])
+    let database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut *admin)
         .await
         .context("read current database")?
         .get(0);
@@ -233,22 +240,21 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
     install(admin, &role).await?;
 
     let spans = run_component(component, guest_url(admin_url, &role)?).await?;
-    let rows = admin
-        .query(
-            &format!("SELECT id, label, owner_name FROM {SCHEMA}.effects ORDER BY id"),
-            &[],
-        )
-        .await
-        .context("inspect SQLx transaction effects")?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT id, label, owner_name FROM {SCHEMA}.effects ORDER BY id"
+    )))
+    .fetch_all(&mut *admin)
+    .await
+    .context("inspect SQLx transaction effects")?;
     ensure!(
         rows.len() == 1,
         "only the committed row may exist, got {}",
         rows.len()
     );
     ensure!(
-        rows[0].get::<_, i32>(0) == 1
-            && rows[0].get::<_, String>(1) == "committed"
-            && rows[0].get::<_, String>(2) == role,
+        rows[0].get::<i32, _>(0) == 1
+            && rows[0].get::<String, _>(1) == "committed"
+            && rows[0].get::<String, _>(2) == role,
         "the surviving row must be the committed row owned by the guest login"
     );
     let operations = effect_operations(&spans);
@@ -272,24 +278,24 @@ async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();
-    let admin = connect(admin_url)
+    let mut admin = connect(admin_url)
         .await
         .expect("connect SQLx transaction admin");
-    let database: String = admin
-        .query_one("SELECT current_database()", &[])
+    let database: String = sqlx::query("SELECT current_database()")
+        .fetch_one(&mut admin)
         .await
         .expect("read SQLx transaction database")
         .get(0);
     let role = generation_role(&database);
     assert!(
-        fixture_is_clean(&admin, &role)
+        fixture_is_clean(&mut admin, &role)
             .await
             .expect("inspect SQLx transaction fixture"),
         "SQLx transaction condition requires a fresh cluster: wamn_app, {role}, or {SCHEMA} exists"
     );
 
-    let result = acceptance(&admin, admin_url, &component).await;
-    let teardown = cleanup(&admin, &role).await;
+    let result = acceptance(&mut admin, admin_url, &component).await;
+    let teardown = cleanup(&mut admin, &role).await;
     result.expect("SQLx transaction acceptance");
     teardown.expect("SQLx transaction cleanup");
 }
