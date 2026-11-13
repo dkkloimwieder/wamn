@@ -250,9 +250,9 @@ impl Fixture {
                 "id": id(package),
                 "deps": dependencies
                     .iter()
-                    .map(|(dependency, kind)| json!({
+                    .map(|(dependency, type_)| json!({
                         "pkg": id(dependency),
-                        "dep_kinds": [{"kind": kind}],
+                        "dep_kinds": [{"kind": type_}],
                     }))
                     .collect::<Vec<_>>(),
             })
@@ -510,7 +510,7 @@ impl Fixture {
     fn ignored_target(
         &self,
         package: &str,
-        kind: &str,
+        type_: &str,
         target: &str,
         cases: &[(&str, &str)],
     ) -> String {
@@ -530,7 +530,7 @@ printf 'test %s ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;\n' "$1"
             "reason": "compiler-artifact",
             "manifest_path": self.root.join(format!("crates/{package}/Cargo.toml")),
             "executable": built_executable,
-            "target": {"kind": [kind], "name": target},
+            "target": {"kind": [type_], "name": target},
         });
         let executable = built_executable.display();
         let mut output = format!(
@@ -1237,7 +1237,7 @@ fn publication_and_admission_targets_build_their_authored_applications_in_order(
             }
         }
     }
-    for (package, kind, name, application) in [
+    for (package, type_, name, application) in [
         ("wamn-package-control", "lib", "wamn_package_control", None),
         (
             "wamn-environment-control",
@@ -1264,7 +1264,7 @@ fn publication_and_admission_targets_build_their_authored_applications_in_order(
         }
         let mut member = fixture.package("crates/consumer", package, &[]);
         member["targets"] =
-            json!([{"name": name, "kind": [kind], "test": true, "tier": "live-postgres"}]);
+            json!([{"name": name, "kind": [type_], "test": true, "tier": "live-postgres"}]);
         fixture.metadata(
             "Cargo.toml",
             "",
@@ -1273,7 +1273,7 @@ fn publication_and_admission_targets_build_their_authored_applications_in_order(
             &[json!({"id": member["id"], "deps": []})],
         );
         fixture.add_suite(
-            json!({"package": package, "target": [format!("{kind}:{name}")], "tests": []}),
+            json!({"package": package, "target": [format!("{type_}:{name}")], "tests": []}),
         );
         let target = fixture.directory.join("target");
         fs::create_dir_all(target.join("debug")).unwrap();

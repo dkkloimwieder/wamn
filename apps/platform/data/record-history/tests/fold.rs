@@ -10,14 +10,14 @@ const CURRENT: &str =
 
 fn row<'a>(
     position: i64,
-    kind: &'a str,
+    type_: &'a str,
     before: &'a str,
     current: &'a str,
     head: i64,
 ) -> HistoryRow<'a> {
     HistoryRow {
         position,
-        type_: kind,
+        type_,
         before,
         current,
         head_position: head,
@@ -256,7 +256,7 @@ fn the_fold_refuses_rows_that_do_not_form_one_read() {
     );
     assert_eq!(
         refusal(&[row(1, "upsert", "{}", CURRENT, 1)]),
-        (FoldErrorType::UnknownKind, 1)
+        (FoldErrorType::UnknownType, 1)
     );
     assert_eq!(
         refusal(&[row(1, "update", "{}", "[1]", 1)]),

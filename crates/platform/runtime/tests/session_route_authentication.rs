@@ -166,7 +166,7 @@ fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
 
 /// One HTTP attachment that targets the route of `operation` directly.
 fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Value {
-    let definition = json!({"id": id, "kind": "http", "route": {
+    let definition = json!({"id": id, "type": "http", "route": {
         "host": "purchase.example.test", "path": path, "method": "POST"
     }});
     json!({"type": "http", "package-id": "session_test", "component": "purchase",
@@ -189,7 +189,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             )
         })
         .collect();
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
     let manifest = json!({

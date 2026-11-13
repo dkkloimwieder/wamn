@@ -136,7 +136,7 @@ fn authorize_closure(
         // A closure with neither authorization input, or with both, is a
         // caller mismatch. It refuses rather than authorizing under whichever
         // input is present.
-        _ => Err("closure kind disagrees with the authorization inputs"),
+        _ => Err("closure type disagrees with the authorization inputs"),
     }
 }
 
@@ -224,9 +224,9 @@ impl WamnBlobstore {
         connection_name: &str,
         read_only: bool,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
-        use super::files::{FileStorageError, FileStorageErrorKind, FileStore};
+        use super::files::{FileStorageError, FileStorageErrorType, FileStore};
         let refused = |message: &str| {
-            FileStorageError::new(FileStorageErrorKind::Refused, "open", message.to_owned())
+            FileStorageError::new(FileStorageErrorType::Refused, "open", message.to_owned())
         };
         let release = self
             .release
@@ -288,7 +288,7 @@ impl WamnBlobstore {
             .credential_handle(connection_name, generation)
             .map_err(|error| {
                 FileStorageError::new(
-                    FileStorageErrorKind::Refused,
+                    FileStorageErrorType::Refused,
                     "credential handle",
                     error.into_boxed_dyn_error(),
                 )
@@ -299,7 +299,7 @@ impl WamnBlobstore {
             == Some("gcs");
         let bound = binding::resolve_coordinates(definition, (!is_gcs).then_some(handle.as_str()))
             .map_err(|error| {
-                FileStorageError::new(FileStorageErrorKind::Refused, "binding", error)
+                FileStorageError::new(FileStorageErrorType::Refused, "binding", error)
             })?;
         let (store, signer): (Arc<dyn ObjectStore>, Arc<dyn object_store::signer::Signer>) =
             match &bound.provider {
@@ -309,7 +309,7 @@ impl WamnBlobstore {
                         .ok_or_else(|| refused("connection generation has no credential"))?;
                     let secret = self.facts.secret(&credential).await.map_err(|error| {
                         FileStorageError::new(
-                            FileStorageErrorKind::Refused,
+                            FileStorageErrorType::Refused,
                             "open",
                             error.into_boxed_dyn_error(),
                         )
@@ -317,7 +317,7 @@ impl WamnBlobstore {
                     let client = build_s3_store(endpoint, &bound.container, secret.expose())
                         .map_err(|error| {
                             FileStorageError::new(
-                                FileStorageErrorKind::Refused,
+                                FileStorageErrorType::Refused,
                                 "open",
                                 error.into_boxed_dyn_error(),
                             )
@@ -329,7 +329,7 @@ impl WamnBlobstore {
                     // using credentials supplied by the pod metadata identity.
                     let client = build_gcs_store(&bound.container).map_err(|error| {
                         FileStorageError::new(
-                            FileStorageErrorKind::Refused,
+                            FileStorageErrorType::Refused,
                             "open",
                             error.into_boxed_dyn_error(),
                         )
@@ -416,7 +416,7 @@ impl WamnBlobstore {
         )
         .map_err(|_| {
             refused(
-                "release coordinates: tenant, package or closure kind disagree with the manifest",
+                "release coordinates: tenant, package or closure type disagree with the manifest",
             )
         })?;
         let snapshot = self
@@ -1049,7 +1049,7 @@ mod tests {
 
         assert_eq!(
             authorize_closure(&candidate(), None, None, &snapshot),
-            Err("closure kind disagrees with the authorization inputs"),
+            Err("closure type disagrees with the authorization inputs"),
         );
     }
 

@@ -107,7 +107,7 @@ impl Guest for Component {
             // The one translation of the implementation error into the WIT
             // vocabulary. Every render refusal is caller-supplied input, so
             // they all land on the invalid-input arm carrying the render
-            // kind's code.
+            // type's code.
             let zpl = template::render(template_id, fields)
                 .map_err(|error| invalid_input(error.code(), error.detail()))?;
             // ENRICHING, not replacing. An edge carries a payload verbatim, so

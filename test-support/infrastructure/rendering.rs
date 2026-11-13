@@ -773,7 +773,8 @@ struct HttpResources {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KindCluster {
-    kind: ClusterKind,
+    #[serde(rename = "kind")]
+    type_: ClusterKind,
     api_version: String,
     nodes: Vec<KindNode>,
     #[serde(flatten)]

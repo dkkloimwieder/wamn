@@ -51,9 +51,9 @@ impl ManifestError {
     }
 
     #[doc(hidden)]
-    pub fn new(kind: ManifestErrorType, context: impl Into<Box<str>>) -> Self {
+    pub fn new(type_: ManifestErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             object: None,
             path: None,

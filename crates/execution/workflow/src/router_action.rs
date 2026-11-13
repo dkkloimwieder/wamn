@@ -1,6 +1,6 @@
 //! Map a terminal router outcome onto the production run-store boundary.
 
-use wamn_router::{FailureKind as RouterFailureKind, Outcome, Verdict, WalkStatus};
+use wamn_router::{FailureType as RouterFailureType, Outcome, Verdict, WalkStatus};
 use wamn_run_state::FailType;
 use wamn_run_state::run_store::{
     ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorType, ProductionCompletion,
@@ -64,7 +64,7 @@ fn production_router_action_with_mode(
     {
         tracing::warn!(
             status = ?outcome.status,
-            failure_kind = ?outcome.failure.as_ref().map(|failure| failure.kind),
+            failure_type = ?outcome.failure.as_ref().map(|failure| failure.type_),
             failure_node = outcome.failure.as_ref().map(|failure| failure.node.as_str()),
             "router first verdict stood after a later frontier outcome"
         );
@@ -129,12 +129,12 @@ fn production_router_action_with_mode(
                     "router-failed-without-failure",
                 )
             })?;
-            let fail_type = persisted_router_failure(failure.kind);
+            let fail_type = persisted_router_failure(failure.type_);
             let code = failure
                 .detail
                 .code
                 .as_deref()
-                .unwrap_or_else(|| router_failure_code(failure.kind));
+                .unwrap_or_else(|| router_failure_code(failure.type_));
             let mut error = serde_json::Map::from_iter([
                 (
                     "code".to_owned(),
@@ -168,29 +168,29 @@ fn production_router_action_with_mode(
     }
 }
 
-fn persisted_router_failure(kind: RouterFailureKind) -> FailType {
-    match kind {
-        RouterFailureKind::RetryExhausted => FailType::RetryExhausted,
-        RouterFailureKind::InvalidInput => FailType::InvalidInput,
-        RouterFailureKind::HopLimit => FailType::RunawayBudget,
-        RouterFailureKind::Terminal
-        | RouterFailureKind::UnreleasedCaller
-        | RouterFailureKind::MissingDedupId
-        | RouterFailureKind::RespondWithoutCaller
-        | RouterFailureKind::SecondVerdict => FailType::Terminal,
+fn persisted_router_failure(type_: RouterFailureType) -> FailType {
+    match type_ {
+        RouterFailureType::RetryExhausted => FailType::RetryExhausted,
+        RouterFailureType::InvalidInput => FailType::InvalidInput,
+        RouterFailureType::HopLimit => FailType::RunawayBudget,
+        RouterFailureType::Terminal
+        | RouterFailureType::UnreleasedCaller
+        | RouterFailureType::MissingDedupId
+        | RouterFailureType::RespondWithoutCaller
+        | RouterFailureType::SecondVerdict => FailType::Terminal,
     }
 }
 
-fn router_failure_code(kind: RouterFailureKind) -> &'static str {
-    match kind {
-        RouterFailureKind::Terminal => "terminal",
-        RouterFailureKind::RetryExhausted => "retry-exhausted",
-        RouterFailureKind::InvalidInput => "invalid-input",
-        RouterFailureKind::HopLimit => "hop-limit",
-        RouterFailureKind::UnreleasedCaller => "unreleased-caller",
-        RouterFailureKind::MissingDedupId => "missing-dedup-id",
-        RouterFailureKind::RespondWithoutCaller => "respond-without-caller",
-        RouterFailureKind::SecondVerdict => "second-verdict",
+fn router_failure_code(type_: RouterFailureType) -> &'static str {
+    match type_ {
+        RouterFailureType::Terminal => "terminal",
+        RouterFailureType::RetryExhausted => "retry-exhausted",
+        RouterFailureType::InvalidInput => "invalid-input",
+        RouterFailureType::HopLimit => "hop-limit",
+        RouterFailureType::UnreleasedCaller => "unreleased-caller",
+        RouterFailureType::MissingDedupId => "missing-dedup-id",
+        RouterFailureType::RespondWithoutCaller => "respond-without-caller",
+        RouterFailureType::SecondVerdict => "second-verdict",
     }
 }
 
@@ -216,7 +216,7 @@ mod tests {
                 result: serde_json::Value::Null,
                 failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
                     node: "later".into(),
-                    kind: RouterFailureKind::Terminal,
+                    type_: RouterFailureType::Terminal,
                     detail: wamn_router::ErrorDetail::msg("later work failed"),
                 }),
                 hops: 2,
@@ -271,7 +271,7 @@ mod tests {
             result: serde_json::Value::Null,
             failure: Some(wamn_router::Failure {
                 node: "validate".into(),
-                kind: RouterFailureKind::InvalidInput,
+                type_: RouterFailureType::InvalidInput,
                 detail: wamn_router::ErrorDetail::coded("bad-order", "order is malformed"),
             }),
             hops: 1,
@@ -318,7 +318,7 @@ mod tests {
                 result: serde_json::Value::Null,
                 failure: (status == WalkStatus::Failed).then(|| wamn_router::Failure {
                     node: "later".into(),
-                    kind: RouterFailureKind::SecondVerdict,
+                    type_: RouterFailureType::SecondVerdict,
                     detail: wamn_router::ErrorDetail::coded(
                         "second-verdict",
                         "later frontier reached another terminal",

@@ -81,8 +81,8 @@ use wamn_control_provision::session_target::{SessionTarget, validate_session_env
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
-    WorkloadSecretBodyKind, bind_platform_principal_sql, project_env_database_name,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType, WorkloadSecretBody,
+    WorkloadSecretBodyType, bind_platform_principal_sql, project_env_database_name,
     project_env_namespace, project_env_secret_name, render_org_workload_secret_manifest,
     render_project_env_database, render_project_env_secret_manifest,
     render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,

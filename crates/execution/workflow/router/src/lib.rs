@@ -67,7 +67,7 @@ pub use retry::{RetryPolicy, ThrottleKey};
 pub use terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 #[doc(inline)]
 pub use walk::{
-    ApplyError, ApplyErrorType, Delivery, Failure, FailureKind, NodeCall, Step, Walk, WalkStatus,
+    ApplyError, ApplyErrorType, Delivery, Failure, FailureType, NodeCall, Step, Walk, WalkStatus,
 };
 #[doc(inline)]
 pub use wiring::{DEFAULT_HOP_LIMIT, Wiring, WiringEdge, WiringError, WiringErrorType, WiringNode};

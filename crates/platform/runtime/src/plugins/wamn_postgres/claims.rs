@@ -140,12 +140,12 @@ fn principal_grants_from_rows(
 /// A session presents authority that its principal does not currently hold.
 #[derive(Debug)]
 pub(crate) struct SessionGrantRefusal {
-    kind: &'static str,
+    type_: &'static str,
 }
 
 impl std::fmt::Display for SessionGrantRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.kind)
+        f.write_str(self.type_)
     }
 }
 
@@ -153,13 +153,13 @@ impl std::error::Error for SessionGrantRefusal {}
 
 #[derive(Debug)]
 pub(super) struct ClaimError {
-    pub(super) kind: ClaimErrorKind,
+    pub(super) type_: ClaimErrorType,
     pub(super) context: &'static str,
     pub(super) source: anyhow::Error,
 }
 
 #[derive(Debug)]
-pub(super) enum ClaimErrorKind {
+pub(super) enum ClaimErrorType {
     Authorization,
     Infrastructure,
 }
@@ -178,10 +178,10 @@ impl std::error::Error for ClaimError {
 
 fn principal_read_error(context: &'static str, source: tokio_postgres::Error) -> ClaimError {
     ClaimError {
-        kind: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
-            ClaimErrorKind::Authorization
+        type_: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
+            ClaimErrorType::Authorization
         } else {
-            ClaimErrorKind::Infrastructure
+            ClaimErrorType::Infrastructure
         },
         context,
         source: source.into(),
@@ -196,7 +196,7 @@ fn session_grants(
 ) -> anyhow::Result<HeldOperationGrants> {
     if !grants.active || grants.user != Some(true) {
         return Err(SessionGrantRefusal {
-            kind: "session principal is not an active user",
+            type_: "session principal is not an active user",
         }
         .into());
     }
@@ -205,7 +205,7 @@ fn session_grants(
         .all(|role| grants.roles.contains_key(role.as_str()))
     {
         return Err(SessionGrantRefusal {
-            kind: "session principal does not hold a signed role",
+            type_: "session principal does not hold a signed role",
         }
         .into());
     }
@@ -1836,7 +1836,7 @@ impl WamnPostgres {
             self.checkout_guest(project, env_key)
                 .await
                 .map_err(|source| ClaimError {
-                    kind: ClaimErrorKind::Infrastructure,
+                    type_: ClaimErrorType::Infrastructure,
                     context: "check out the env_key connection that reads platform.\"user\"",
                     source: source.into(),
                 })?;

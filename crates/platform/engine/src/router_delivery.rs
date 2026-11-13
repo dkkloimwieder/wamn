@@ -167,7 +167,7 @@ pub enum SourceRef<'a> {
 }
 
 impl<'a> SourceRef<'a> {
-    /// The bridge's two ingress kinds, as the label a metric attribute and a
+    /// The bridge's two ingress types, as the label a metric attribute and a
     /// delivery preview both carry.
     pub fn source_type(self) -> &'static str {
         match self {

@@ -30,7 +30,7 @@ use async_nats::jetstream;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeType, workload_generation_role,
 };
 use wamn_control_provision::{
     CredentialGeneration, cdc_object_name, control_administration_secret_name,

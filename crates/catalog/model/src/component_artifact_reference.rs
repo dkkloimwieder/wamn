@@ -27,11 +27,8 @@ impl ComponentArtifactReferenceError {
         self.type_
     }
 
-    fn new(kind: ComponentArtifactReferenceErrorType, reason: &'static str) -> Self {
-        Self {
-            type_: kind,
-            reason,
-        }
+    fn new(type_: ComponentArtifactReferenceErrorType, reason: &'static str) -> Self {
+        Self { type_, reason }
     }
 }
 

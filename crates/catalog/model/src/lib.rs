@@ -381,10 +381,10 @@ fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdenti
     }
 }
 
-/// An attachment exposure kind.
+/// An attachment exposure type.
 ///
 /// `Deserialize` is derived so the frozen [`ServingAttachment`] wire shape can
-/// name this kind instead of re-declaring one; the enum is fieldless, so the
+/// name this type instead of re-declaring one; the enum is fieldless, so the
 /// derive adds no unvalidated construction path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

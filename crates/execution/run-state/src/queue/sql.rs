@@ -258,7 +258,7 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
     let terminal_reason = fail_type.map_or(status.as_sql(), FailType::as_sql);
     let fail_type_sql = fail_type.map_or_else(
         || "r.fail_type".to_owned(),
-        |kind| format!("'{}'", kind.as_sql()),
+        |type_| format!("'{}'", type_.as_sql()),
     );
     format!(
         "WITH updated AS ( \

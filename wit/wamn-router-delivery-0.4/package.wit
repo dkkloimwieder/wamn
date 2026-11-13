@@ -1,8 +1,8 @@
 package wamn:router-delivery@0.4.0;
 
 /// 0.4.0 is 0.3.0 without `delivery-report.actor-labels`: actor names come
-/// from the application's own SQL (wamn-stxy9.1). 0.3.0 is 0.2.0 with `failure-kind` renamed `failure-type`, and the field
-/// `delivery-failure.kind` renamed `failure-type` (wamn-ld93.1). The base read
+/// from the application's own SQL (wamn-stxy9.1). Failure reports carry
+/// `failure-type`. The base read
 /// path streams no rows (owner ruling on wamn-cg5e4, 2026-10-23), so
 /// `deliver-stream` is gone. This is the one version in the tree.
 

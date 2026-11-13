@@ -289,9 +289,9 @@ pub(super) fn metadata_graph(
             }
             let dev = dependency["dep_kinds"]
                 .as_array()
-                .context("dependency kinds")?
+                .context("dependency types")?
                 .iter()
-                .all(|kind| kind["kind"] == "dev");
+                .all(|type_| type_["kind"] == "dev");
             dependencies.push((id, dev));
         }
         if let Some(package) = packages.get_mut(&package) {

@@ -853,7 +853,7 @@ mod tests {
 
     #[tokio::test]
     async fn https_issuance_does_not_redirect_retry_or_accept_large_bodies() {
-        for response_kind in [
+        for response_type in [
             "redirect",
             "unavailable",
             "disconnect",
@@ -861,7 +861,7 @@ mod tests {
             "length",
             "chunked",
         ] {
-            let fixture = https_fixture("127.0.0.1", |endpoint| match response_kind {
+            let fixture = https_fixture("127.0.0.1", |endpoint| match response_type {
                 "redirect" => format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {endpoint}/private-marker\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
                 "unavailable" => "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
                 "disconnect" => String::new(),
@@ -878,14 +878,14 @@ mod tests {
             assert_eq!(
                 fixture.requests.load(Ordering::SeqCst),
                 1,
-                "{response_kind}"
+                "{response_type}"
             );
             assert!(!format!("{error:#} {error:?}").contains("private-marker"));
             assert!(
                 error.to_string().contains(UNCERTAIN_ISSUANCE),
-                "{response_kind}"
+                "{response_type}"
             );
-            if response_kind == "truncated" {
+            if response_type == "truncated" {
                 let source = error.downcast_ref::<reqwest::Error>().unwrap();
                 assert!(source.is_decode());
                 assert!(source.url().is_none());
@@ -894,13 +894,13 @@ mod tests {
                     "PAT issuer response read failed. A PAT can exist without a returned token. The request was not retried."
                 );
             }
-            if response_kind == "disconnect" {
+            if response_type == "disconnect" {
                 assert_eq!(
                     error.to_string(),
                     "PAT issuance transport failed. A PAT can exist without a returned token. The request was not retried."
                 );
             }
-            if matches!(response_kind, "length" | "chunked") {
+            if matches!(response_type, "length" | "chunked") {
                 assert!(error.to_string().contains("size limit"));
             }
         }

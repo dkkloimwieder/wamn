@@ -33,7 +33,7 @@ const LABEL_GEOMETRY: &str = "^PW812\n^LL1218\n^MD0\n";
 
 /// Why a render was refused.
 ///
-/// This is the implementation-side error: a kind plus the context needed to
+/// This is the implementation-side error: a type plus the context needed to
 /// act on it. The `label-render` guest translates it to a `wamn:node`
 /// `node-error` exactly once, at that WIT boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]

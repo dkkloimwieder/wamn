@@ -357,7 +357,7 @@ pub fn delivery_advisory_stream(source_stream: &str) -> String {
 /// Broker advisory subjects for one exact environment source stream.
 pub fn delivery_advisory_subjects(source_stream: &str) -> [String; 2] {
     ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|kind| format!("$JS.EVENT.ADVISORY.CONSUMER.{kind}.{source_stream}.*"))
+        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source_stream}.*"))
 }
 
 /// Maximum retained advisories on one broker subject.

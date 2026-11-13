@@ -65,7 +65,7 @@ pub fn tenant_key(env_key: &str, database: &str) -> String {
         WorkloadRoleFamily::App,
         WorkloadRoleScope::EnvKey { env_key, database },
     )
-    .expect("App's scope kind is EnvKey, so an EnvKey scope cannot mismatch it")
+    .expect("App's scope type is EnvKey, so an EnvKey scope cannot mismatch it")
 }
 
 /// The anchored pattern that recovers a tenant key from a guest login name.

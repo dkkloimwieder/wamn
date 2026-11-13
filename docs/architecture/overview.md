@@ -92,7 +92,7 @@ Sealing prevents later changes to its content.
 Conflicting content refuses, and exact retries retain their original facts.
 
 Publication mints one route for each attachment that targets a route.
-The route carries the contract kind of its operation, which publication reads from the generated `operation.json` of the package.
+The route carries the contract type of its operation, which publication reads from the generated `operation.json` of the package.
 Generation derives the route input schema of each generated CRUD operation from its input contract, and writes it to `generated/routes/<model>/<action>.json`.
 Generation also writes the route entry and the declaration entry of each generated operation, under `generated/publication/`.
 The authored `publication/attachments.json` and component declaration carry only the custom operations, and each reader reads both files, as [data access](data-access.md#generated-operations) states.
@@ -270,7 +270,7 @@ Revoking `project-admin` removes it in one project.
 Neither revoke removes ordinary memberships or authored roles.
 A revoke of a lower grant refuses while a higher grant covers it. The holder must revoke the higher grant first.
 
-Deactivating a user in an org removes four kinds of access, from the leaves upward.
+Deactivating a user in an org removes four types of access, from the leaves upward.
 They are the application user rows, the environment memberships, the project roles, and the org roles of that org.
 It then marks the membership `inactive`.
 The global principal stays, and access in other orgs does not change.

@@ -20,7 +20,7 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use wamn_router::invariants::{self, WalkState, WalkTrace};
 use wamn_router::{
-    Delivery, ErrorDetail, FailureKind, NodeCall, NodeError, NodeOutcome, RateLimitDetail,
+    Delivery, ErrorDetail, FailureType, NodeCall, NodeError, NodeOutcome, RateLimitDetail,
     RetryPolicy, Step, ThrottleKey, Walk, WalkStatus, Wiring, WiringEdge, WiringErrorType,
     WiringNode,
 };
@@ -420,7 +420,7 @@ fn terminal_error_with_no_error_path_fails_the_walk() {
     assert_eq!(t.status, WalkStatus::Failed);
     let fail = t.walk.failure().expect("failure recorded");
     assert_eq!(fail.node, "b");
-    assert_eq!(fail.kind, FailureKind::Terminal);
+    assert_eq!(fail.type_, FailureType::Terminal);
     assert_eq!(fail.detail.message, "boom");
 }
 
@@ -460,7 +460,7 @@ fn retry_budget_exhausts_to_failure() {
     });
     assert_eq!(t.status, WalkStatus::Failed);
     assert_eq!(t.nodes().len(), 3); // default max_attempts = 3
-    assert_eq!(t.walk.failure().unwrap().kind, FailureKind::RetryExhausted);
+    assert_eq!(t.walk.failure().unwrap().type_, FailureType::RetryExhausted);
 }
 
 #[test]
@@ -528,7 +528,7 @@ fn invalid_input_is_never_retried() {
     });
     assert_eq!(t.status, WalkStatus::Failed);
     assert_eq!(t.nodes().len(), 1); // exactly one invocation, no retry
-    assert_eq!(t.walk.failure().unwrap().kind, FailureKind::InvalidInput);
+    assert_eq!(t.walk.failure().unwrap().type_, FailureType::InvalidInput);
 }
 
 // ---- node-call ABI fields -------------------------------------------------
@@ -649,7 +649,7 @@ fn a_runaway_cycle_fails_at_exactly_the_hop_limit() {
     assert_eq!(walk.hops(), 5);
     assert_eq!(status, WalkStatus::Failed);
     let failure = walk.failure().expect("failure recorded");
-    assert_eq!(failure.kind, FailureKind::HopLimit);
+    assert_eq!(failure.type_, FailureType::HopLimit);
     // The failure names the node that would have run next (the 6th invocation).
     // The engine named "b" — its walk was one node further along.
     assert_eq!(failure.node, "a");
@@ -711,7 +711,7 @@ fn retries_count_against_the_hop_limit() {
     assert_eq!(executions, 3); // engine asserted 2: + its synthetic event entry
     assert_eq!(walk.hops(), 3);
     assert_eq!(status, WalkStatus::Failed);
-    assert_eq!(walk.failure().unwrap().kind, FailureKind::HopLimit);
+    assert_eq!(walk.failure().unwrap().type_, FailureType::HopLimit);
 }
 
 #[test]
@@ -737,7 +737,7 @@ fn the_hop_limit_verdict_is_terminal_even_with_an_error_path() {
     let mut walk = w.start(delivery(json!("go")));
     let (invoked, status) = run_bounded(&w, &mut walk, 20);
     assert_eq!(status, WalkStatus::Failed);
-    assert_eq!(walk.failure().unwrap().kind, FailureKind::HopLimit);
+    assert_eq!(walk.failure().unwrap().type_, FailureType::HopLimit);
     // The rescue node never ran: the verdict bypassed the error path.
     assert!(!invoked.iter().any(|n| n == "rescue"));
 }
@@ -752,7 +752,7 @@ fn the_default_hop_limit_is_generous_but_finite() {
     assert_eq!(status, WalkStatus::Failed);
     assert_eq!(invoked.len(), 10_000); // engine asserted 9_999: + its synthetic event entry
     assert_eq!(walk.hops(), 10_000);
-    assert_eq!(walk.failure().unwrap().kind, FailureKind::HopLimit);
+    assert_eq!(walk.failure().unwrap().type_, FailureType::HopLimit);
 }
 
 // ---- in-memory retry cursor ------------------------------------------------

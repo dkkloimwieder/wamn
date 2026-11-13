@@ -112,9 +112,9 @@ struct Declaration<'a> {
 /// `[workspace.dependencies]`, `[target.'cfg(unix)'.dependencies]`) or with the
 /// keyword ahead of the one crate it declares, as in
 /// `[dev-dependencies.wamn-catalog]`. Reading only the last segment mistook that
-/// crate name for the table kind, so every key of a dotted table escaped the
+/// crate name for the table type, so every key of a dotted table escaped the
 /// identity rule (`wamn-0h0g.15.115`).
-fn dependency_table_kind(table: &str) -> Option<(&str, Option<&str>)> {
+fn dependency_table_type(table: &str) -> Option<(&str, Option<&str>)> {
     let mut rest = table;
     loop {
         let (segment, tail) = match rest.split_once('.') {
@@ -141,10 +141,10 @@ fn dependency_declarations(source: &str) -> Vec<Declaration<'_>> {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             declarations.extend(dotted.take());
-            let kind = dependency_table_kind(&trimmed[1..trimmed.len() - 1]);
-            dependency_table = kind.is_some();
-            dev_dependency_table = matches!(kind, Some(("dev-dependencies", _)));
-            if let Some((_, Some(name))) = kind {
+            let type_ = dependency_table_type(&trimmed[1..trimmed.len() - 1]);
+            dependency_table = type_.is_some();
+            dev_dependency_table = matches!(type_, Some(("dev-dependencies", _)));
+            if let Some((_, Some(name))) = type_ {
                 dotted = Some(Declaration {
                     line: line_index + 1,
                     name,
@@ -368,7 +368,7 @@ fn the_self_dev_dependency_exemption_admits_nothing_else() {
 #[test]
 fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
     // The keyword leads these headers, so reading only the last segment took
-    // `wamn-digest` for the table kind and every key below it escaped the rule.
+    // `wamn-digest` for the table type and every key below it escaped the rule.
     for table in [
         "dependencies.wamn-digest",
         "target.'cfg(unix)'.dependencies.wamn-digest",

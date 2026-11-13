@@ -472,7 +472,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
          replication, password set)"
     );
 
-    // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
+    // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH TYPE, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
     //    one with none sum to the same 40 and leave a silent lockout standing.
     let missing_arm = psql(
@@ -2119,8 +2119,8 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                ASSERT (SELECT count(*) = 7 AND count(DISTINCT position) = 7 \
                         FROM rh_probe.logged_history), \
                       'every committed change must write one entry, and no position may repeat';\n\
-               ASSERT (SELECT count(*) = 2 AND bool_and(r.kinds = ARRAY['insert', 'update']) \
-                        FROM (SELECT array_agg(type ORDER BY position) AS kinds \
+               ASSERT (SELECT count(*) = 2 AND bool_and(r.types = ARRAY['insert', 'update']) \
+                        FROM (SELECT array_agg(type ORDER BY position) AS types \
                                 FROM rh_probe.logged_history \
                                WHERE row_key IN ('{{\"id\": 2}}', '{{\"id\": 3}}') \
                                GROUP BY row_key) AS r), \

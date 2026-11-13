@@ -46,7 +46,7 @@ A missing, malformed, or incorrect signature or credential returns 401 with an e
 After verification, delivery follows the same JSON mapping and intent rules as a `none` route with the same body.
 Signature authentication adds no timestamp or replay window.
 
-The method of a route follows from the kind of its operation, and no author writes it.
+The method of a route follows from the type of its operation, and no author writes it.
 Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
 A GET carries exactly one request item in its query string.
 The router reads its bounded body for authentication, but takes the operation input from the query string.
@@ -56,7 +56,7 @@ The parser accepts any parameter order and valid escaping, and parses each value
 The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
 The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../apps/platform/ingress/http-route/src/read_query.rs) reads it.
 
-The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
+The host derives the `Cache-Control` value of each read route from its operation type and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
 A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
 Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
@@ -258,7 +258,7 @@ The delivery bridge retains this behavior for wiring attachments.
 The routing provider also projects the ETag inputs from the loaded release.
 Those inputs declare the release digest and either the result's revision field or the sorted relations for a list.
 A get without a revision field and a list without relations carry no ETag inputs.
-The guest receives the kind and fields as data, without application-specific names in the route code.
+The guest receives the type and fields as data, without application-specific names in the route code.
 
 The entry holds the platform ceiling of 50,000 rows for one base read.
 It refuses a read whose limit is above the ceiling before it authorizes the operation.
@@ -742,7 +742,7 @@ A request that carries both refuses with 401, and so does a repeated session coo
 The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF check.
 A cookie token without the `csrf` claim refuses with 401.
 The CSRF check needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
-A read route (kind `get`, `query` or `projection`) needs no header, because a read changes nothing.
+A read route (type `get`, `query` or `projection`) needs no header, because a read changes nothing.
 Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` claim on every route.
 
 The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
@@ -1093,7 +1093,7 @@ It uses the control lists' paging rules above: limits 1 through 100, default 100
 After password authentication, it returns authorized control audiences, then authorized application audiences, each ordered by audience.
 Its response retains `environments` and adds nullable `next_cursor` and `total` members with the same meaning as the control lists.
 A control entry carries only `aud` and `org`. The project filter does not exclude control entries.
-The cursor key contains the kind (control 0, application 1) and audience.
+The cursor key contains the type (control 0, application 1) and audience.
 Its scope binds the authenticated principal and the exact optional org and project filters.
 Invalid limits or cursors return HTTP 400 with `{"error":"password request refused"}`.
 
@@ -1146,7 +1146,7 @@ The [key cache](../../crates/platform/runtime/src/session_keys.rs) and [key owne
 ## Operator clients
 
 Generated screens use the [client contract](../../crates/schema/generator/src/client_ir.rs), derived from admitted declarations.
-Operation kinds come from the manifest.
+Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 

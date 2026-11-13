@@ -503,7 +503,7 @@ async fn drive_claim(
                     tracing::warn!(
                         run_id,
                         error = %error,
-                        error_kind = ?error.error_type(),
+                        error_type = ?error.error_type(),
                         "derived event was not server-acknowledged; lease left for replay"
                     );
                     return Ok(());

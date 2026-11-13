@@ -122,9 +122,9 @@ pub struct DerivedPublishError {
 }
 
 impl DerivedPublishError {
-    fn new(kind: DerivedPublishErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: DerivedPublishErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -755,7 +755,7 @@ impl HostPlugin for WamnJetstream {
 // ---------------------------------------------------------------------------
 
 /// `get_stream` failure → error taxonomy: a transport `Request` failure is
-/// transient; every other kind (a JetStream 404, an empty/invalid name) means
+/// transient; every other type (a JetStream 404, an empty/invalid name) means
 /// the stream is not there to bind against.
 fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
     match e.kind() {

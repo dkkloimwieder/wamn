@@ -147,7 +147,7 @@ fn discovery_page(
 /// Where a discovery page's control orgs start and how many it reads.
 /// Control audiences come first. None means the cursor is past them.
 fn control_window(page: &ListPage) -> Option<(Option<&str>, Option<i64>)> {
-    match page.after_kind() {
+    match page.after_type() {
         Some(1) => None,
         Some(_) => Some((
             page.after(1).and_then(control_audience_org),
@@ -159,7 +159,7 @@ fn control_window(page: &ListPage) -> Option<(Option<&str>, Option<i64>)> {
 
 /// Where a discovery page's application audiences start.
 fn application_after(page: &ListPage) -> std::ops::Bound<&str> {
-    match (page.after_kind(), page.after(1)) {
+    match (page.after_type(), page.after(1)) {
         (Some(1), Some(after)) => std::ops::Bound::Excluded(after),
         _ => std::ops::Bound::Unbounded,
     }
@@ -527,9 +527,9 @@ async fn handle(
                                     break;
                                 }
                             }
-                            Err(error) => match error.kind {
-                                session::FailureKind::Unauthorized => (),
-                                session::FailureKind::Unavailable => return unavailable(),
+                            Err(error) => match error.type_ {
+                                session::FailureType::Unauthorized => (),
+                                session::FailureType::Unavailable => return unavailable(),
                             },
                         }
                     }
@@ -781,9 +781,9 @@ async fn handle(
 }
 
 fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> {
-    match error.kind {
-        session::FailureKind::Unauthorized => session::unauthorized(),
-        session::FailureKind::Unavailable => unavailable(),
+    match error.type_ {
+        session::FailureType::Unauthorized => session::unauthorized(),
+        session::FailureType::Unavailable => unavailable(),
     }
 }
 
@@ -1122,7 +1122,7 @@ mod tests {
             &scope,
         )
         .unwrap();
-        assert_eq!(next.after_kind(), Some(0));
+        assert_eq!(next.after_type(), Some(0));
         assert_eq!(next.after(1), Some("urn:wamn:control:acme"));
         let answer = next.answer("environments", rows[1..].to_vec(), Clone::clone);
         let last =
@@ -1150,7 +1150,7 @@ mod tests {
         );
         let input = json!({"cursor":controls["next_cursor"]});
         let control = discovery_page(&input, &principal, &scope).unwrap();
-        assert_eq!(control.after_kind(), Some(0));
+        assert_eq!(control.after_type(), Some(0));
         assert_eq!(
             control.after(1).and_then(control_audience_org),
             Some("acme")
@@ -1195,7 +1195,7 @@ mod tests {
             &scope,
         )
         .unwrap();
-        assert_eq!(second.after_kind(), Some(0));
+        assert_eq!(second.after_type(), Some(0));
         assert_eq!(control_window(&second), Some((Some("acme"), Some(2))));
         assert_eq!(application_after(&second), std::ops::Bound::Unbounded);
         let answer = second.answer("environments", vec![app.clone()], key);
@@ -1210,7 +1210,7 @@ mod tests {
             &scope,
         )
         .unwrap();
-        assert_eq!(third.after_kind(), Some(1));
+        assert_eq!(third.after_type(), Some(1));
         assert_eq!(control_window(&third), None);
         assert_eq!(
             application_after(&third),

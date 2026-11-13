@@ -139,9 +139,9 @@ pub struct DevActivationError {
 }
 
 impl DevActivationError {
-    fn new(kind: DevActivationErrorType, step: &'static str, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: DevActivationErrorType, step: &'static str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             step,
             detail: detail.into(),
             source: None,

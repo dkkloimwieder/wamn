@@ -88,7 +88,7 @@ pub struct ProductionClaimError {
 }
 
 impl ProductionClaimError {
-    /// Build a failure of `kind` for the named `operation`.
+    /// Build a failure of `type` for the named `operation`.
     pub fn new(
         type_: ProductionClaimErrorType,
         operation: &'static str,
@@ -147,7 +147,7 @@ impl std::error::Error for ProductionClaimError {
 /// Caller result stored before a queue run becomes terminal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductionCallerOutcome {
-    kind: &'static str,
+    type_: &'static str,
     body: serde_json::Value,
     http_status: u16,
     release_node_id: Option<String>,
@@ -161,7 +161,7 @@ impl ProductionCallerOutcome {
         release_node_id: impl Into<String>,
     ) -> Self {
         Self {
-            kind: "responded",
+            type_: "responded",
             body,
             http_status,
             release_node_id: Some(release_node_id.into()),
@@ -175,16 +175,16 @@ impl ProductionCallerOutcome {
         release_node_id: Option<String>,
     ) -> Self {
         Self {
-            kind: "failed",
+            type_: "failed",
             body,
             http_status,
             release_node_id,
         }
     }
 
-    /// The persisted outcome kind: `responded` or `failed`.
+    /// The persisted outcome type: `responded` or `failed`.
     pub fn outcome_type(&self) -> &'static str {
-        self.kind
+        self.type_
     }
 
     /// The body returned to the caller.

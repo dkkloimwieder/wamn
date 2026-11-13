@@ -135,7 +135,7 @@ async fn retained_advisories(
     limit: usize,
 ) -> anyhow::Result<Vec<OperatorRecord>> {
     let subjects = ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|kind| format!("$JS.EVENT.ADVISORY.CONSUMER.{kind}.{source_stream}.{consumer}"));
+        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source_stream}.{consumer}"));
     let mut next = [
         next_advisory(stream, &subjects[0], 1).await?,
         next_advisory(stream, &subjects[1], 1).await?,
@@ -381,11 +381,11 @@ mod tests {
         retained_broker_advisory(DeliveryAdvisoryType::Terminated).await
     }
 
-    async fn retained_broker_advisory(kind: DeliveryAdvisoryType) -> anyhow::Result<()> {
+    async fn retained_broker_advisory(type_: DeliveryAdvisoryType) -> anyhow::Result<()> {
         wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_URL"]);
         let url = std::env::var("WAMN_NATIVE_C_NATS_URL")?;
         let jetstream = async_nats::jetstream::new(async_nats::connect(url).await?);
-        let name = match kind {
+        let name = match type_ {
             DeliveryAdvisoryType::MaxDeliver => "exhausted",
             DeliveryAdvisoryType::Terminated => "terminated",
         };
@@ -400,7 +400,7 @@ mod tests {
             let source = jetstream.get_stream(&source_name).await?;
             let consumer = source.get_consumer::<PullConfig>(name).await.map_err(anyhow::Error::from_boxed)?;
             let sequence = jetstream.publish(subject.clone(), "source payload".into()).await?.await?.sequence;
-            match kind {
+            match type_ {
                 DeliveryAdvisoryType::MaxDeliver => {
                     for attempt in 1..=2 {
                         let message = fetch_one(&consumer).await?.context("broker omitted the expected retry")?;
@@ -429,9 +429,9 @@ mod tests {
             let records = retained_advisories(&jetstream, &advisories, &source_name, name, 1).await?;
             ensure!(records.len() == 1, "selected consumer advisory is missing");
             let record = &records[0];
-            ensure!(record.advisory.type_ == kind && record.advisory.stream_seq == sequence,
+            ensure!(record.advisory.type_ == type_ && record.advisory.stream_seq == sequence,
                 "advisory does not identify the settled source message");
-            let deliveries = match kind {
+            let deliveries = match type_ {
                 DeliveryAdvisoryType::MaxDeliver => 2,
                 DeliveryAdvisoryType::Terminated => 1,
             };

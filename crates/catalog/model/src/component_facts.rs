@@ -497,9 +497,9 @@ impl ComponentFactError {
         self.type_
     }
 
-    fn new(kind: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -767,17 +767,17 @@ pub(crate) fn validate_operation_statement_facts(
 fn validate_statement_fields(
     export: &str,
     statement: &str,
-    field_kind: &str,
+    field_type: &str,
     fields: &[ComponentSqlField],
 ) -> Result<(), ComponentFactError> {
     let mut names = BTreeSet::new();
     for field in fields {
-        validate_identity(&field.name, field_kind)?;
+        validate_identity(&field.name, field_type)?;
         if !names.insert(&field.name) {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::DuplicateStatementField,
                 format!(
-                    "operation {export:?} statement {statement:?} repeats {field_kind} {:?}",
+                    "operation {export:?} statement {statement:?} repeats {field_type} {:?}",
                     field.name
                 ),
             ));
@@ -864,7 +864,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// true until this moved.
 ///
 /// Matching is on the registered PACKAGE, at any version, because this asks
-/// what KIND of import it is and kind does not change with version. A
+/// what TYPE of import it is and type does not change with version. A
 /// `wasi:clocks` import at an unregistered version is still a platform
 /// capability; refusing the version is admission's job, not this classifier's.
 fn is_application_operation_import(name: &str) -> bool {
@@ -978,7 +978,7 @@ fn normalize_connections(
 
 fn normalize_ports(
     declarations: Vec<ComponentPortDeclaration>,
-    duplicate_kind: ComponentFactErrorType,
+    duplicate_type: ComponentFactErrorType,
     field: &'static str,
 ) -> Result<Vec<AdmittedComponentPort>, ComponentFactError> {
     let mut seen = BTreeSet::new();
@@ -987,7 +987,7 @@ fn normalize_ports(
         validate_identity(&declaration.name, field)?;
         if !seen.insert(declaration.name.clone()) {
             return Err(ComponentFactError::new(
-                duplicate_kind,
+                duplicate_type,
                 format!("{field} {:?} is duplicated", declaration.name),
             ));
         }
@@ -1384,7 +1384,7 @@ mod tests {
         verify_stored_effect_projection(&facts.component)
             .expect("stored committed facts remain valid");
 
-        for (schema, kind) in [
+        for (schema, type_) in [
             (
                 json!({"type": "not-a-type"}),
                 ComponentFactErrorType::InvalidSchema,
@@ -1408,7 +1408,7 @@ mod tests {
                 )
                 .unwrap_err()
                 .error_type(),
-                kind
+                type_
             );
         }
     }

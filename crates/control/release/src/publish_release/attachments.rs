@@ -13,7 +13,7 @@ use super::{
 use wamn_catalog::AttachmentTarget;
 
 /// The route an author writes: the path alone. The deployment adds the host,
-/// and publish adds the method from the operation kind.
+/// and publish adds the method from the operation type.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthoredRoute {

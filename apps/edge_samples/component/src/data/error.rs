@@ -50,17 +50,14 @@ pub struct AccessError {
 impl AccessError {
     /// A refusal carrying the detail members its literal requires.
     #[must_use]
-    pub fn new(kind: AccessErrorType, detail: serde_json::Value) -> Self {
-        Self {
-            type_: kind,
-            detail,
-        }
+    pub fn new(type_: AccessErrorType, detail: serde_json::Value) -> Self {
+        Self { type_, detail }
     }
 
     /// A refusal naming the offending field.
     #[must_use]
-    pub fn field(kind: AccessErrorType, field: &str) -> Self {
-        Self::new(kind, serde_json::json!({ "field": field }))
+    pub fn field(type_: AccessErrorType, field: &str) -> Self {
+        Self::new(type_, serde_json::json!({ "field": field }))
     }
 
     /// What went wrong.
@@ -86,11 +83,11 @@ impl Error for AccessError {}
 
 /// The one translation of a statement failure into the contract vocabulary.
 ///
-/// Every unmapped kind lands on `internal_error`, because an unknown statement
+/// Every unmapped type lands on `internal_error`, because an unknown statement
 /// or a contract mismatch is a deployment fault that a caller cannot act on.
 #[must_use]
 pub fn from_statement(error: &StatementError) -> AccessError {
-    let kind = match error.type_() {
+    let type_ = match error.type_() {
         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
             AccessErrorType::Retry
         }
@@ -98,5 +95,5 @@ pub fn from_statement(error: &StatementError) -> AccessError {
         StatementErrorType::PermissionDenied => AccessErrorType::PermissionDenied,
         _ => AccessErrorType::InternalError,
     };
-    AccessError::new(kind, serde_json::json!({}))
+    AccessError::new(type_, serde_json::json!({}))
 }

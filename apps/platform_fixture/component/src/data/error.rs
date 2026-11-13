@@ -76,8 +76,8 @@ impl AccessError {
         &self.detail
     }
 
-    pub(crate) fn field(kind: AccessErrorType, field: &str) -> Self {
-        Self::new(kind, json!({ "field": field }))
+    pub(crate) fn field(type_: AccessErrorType, field: &str) -> Self {
+        Self::new(type_, json!({ "field": field }))
     }
 
     pub(crate) fn range(field: &str, minimum: i64, maximum: i64, observed: i64) -> Self {
@@ -109,7 +109,7 @@ impl AccessError {
     /// The one translation of a statement failure into the contract vocabulary.
     ///
     /// A constraint the operation does not name lands on `internal_error`, as
-    /// does every unmapped kind.
+    /// does every unmapped type.
     pub(crate) fn from_statement(error: &StatementError, constraints: Constraints) -> Self {
         Self::from_statement_parts(error.type_(), error.constraint(), constraints)
     }
@@ -119,9 +119,9 @@ impl AccessError {
         constraint: Option<&str>,
         constraints: Constraints,
     ) -> Self {
-        let violation = |kind, names: &[&str]| match constraint.filter(|name| names.contains(name))
+        let violation = |type_, names: &[&str]| match constraint.filter(|name| names.contains(name))
         {
-            Some(constraint) => Self::new(kind, json!({ "constraint": constraint })),
+            Some(constraint) => Self::new(type_, json!({ "constraint": constraint })),
             None => Self::internal(),
         };
         match type_ {
@@ -150,11 +150,8 @@ impl AccessError {
         }
     }
 
-    fn new(kind: AccessErrorType, detail: Value) -> Self {
-        Self {
-            type_: kind,
-            detail,
-        }
+    fn new(type_: AccessErrorType, detail: Value) -> Self {
+        Self { type_, detail }
     }
 }
 

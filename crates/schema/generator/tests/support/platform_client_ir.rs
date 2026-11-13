@@ -68,7 +68,7 @@ impl ReleaseFiles {
                         "component": "fixture",
                         "operation": wamn_catalog::sealed_operation_reference(&operation),
                         "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "definition": {"id": format!("widget-{index}"), "kind": "http",
+                        "definition": {"id": format!("widget-{index}"), "type": "http",
                             "route": {"path": route.template}},
                         "auth-policy": {"modes": ["pat"]},
                         // An authored entry names its operation by reference.

@@ -50,7 +50,7 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
         &[
             &ORG,
             &ENV,
-            &r#"{"kind":"pool"}"#,
+            &r#"{"type":"pool"}"#,
             &0i32,
             &1i32,
             &"1Gi",

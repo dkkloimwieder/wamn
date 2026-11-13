@@ -57,7 +57,7 @@ pub struct CallIntents {
     env_key: String,
     release: String,
     package: String,
-    kind: wamn_catalog::OperationType,
+    type_: wamn_catalog::OperationType,
     key_field: Option<String>,
 }
 
@@ -69,7 +69,7 @@ impl CallIntents {
             tenant: &self.env_key,
             release: &self.release,
             package: &self.package,
-            kind: self.kind,
+            type_: self.type_,
             key_field: self.key_field.as_deref(),
         }
     }
@@ -384,7 +384,7 @@ impl OperationHost {
             env_key,
             release: self.release.release().manifest_digest.to_string(),
             package: route.package_id.clone(),
-            kind: route.type_,
+            type_: route.type_,
             key_field: route.idempotency.clone(),
         }))
     }

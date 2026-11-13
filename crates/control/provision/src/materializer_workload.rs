@@ -76,7 +76,8 @@ struct Metadata {
 #[serde(rename_all = "camelCase")]
 struct MaterializerDocument {
     api_version: String,
-    kind: WorkloadKind,
+    #[serde(rename = "kind")]
+    type_: WorkloadKind,
     metadata: Metadata,
     spec: DeploymentSpec,
     #[serde(flatten)]

@@ -328,7 +328,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         // Only a CONTROL-scoped family records a login-to-tenant mapping.
         assert_eq!(
             lifecycle.control_env_key.is_some(),
-            family.scope_kind() == WorkloadRoleScopeKind::Control,
+            family.scope_type() == WorkloadRoleScopeType::Control,
             "{family:?}"
         );
     }
@@ -623,9 +623,9 @@ fn every_family_derives_its_credential_secret_name() {
     assert_eq!(names.len(), WorkloadRoleFamily::ALL.len());
 }
 
-fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {
+fn role_acl(type_: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {
     RoleAcl {
-        object_type: kind.to_string(),
+        object_type: type_.to_string(),
         schema_name: schema.to_string(),
         object_name: object.to_string(),
         privilege: privilege.to_string(),

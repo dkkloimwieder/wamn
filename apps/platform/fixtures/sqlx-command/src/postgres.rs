@@ -66,7 +66,7 @@ impl Database for WamnPostgres {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ValueKind {
+enum ValueType {
     Null,
     Boolean,
     Int32,
@@ -83,25 +83,25 @@ enum ValueKind {
 /// Type metadata carried by a `wamn:postgres` result column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WamnTypeInfo {
-    kind: ValueKind,
+    type_: ValueType,
     name: &'static str,
 }
 
 impl WamnTypeInfo {
-    const NULL: Self = Self::new(ValueKind::Null, "NULL");
-    const BOOLEAN: Self = Self::new(ValueKind::Boolean, "BOOLEAN");
-    const INT32: Self = Self::new(ValueKind::Int32, "INT4");
-    const INT64: Self = Self::new(ValueKind::Int64, "INT8");
-    const FLOAT64: Self = Self::new(ValueKind::Float64, "FLOAT8");
-    const TEXT: Self = Self::new(ValueKind::Text, "TEXT");
-    const BYTES: Self = Self::new(ValueKind::Bytes, "BYTEA");
-    const NUMERIC: Self = Self::new(ValueKind::Numeric, "NUMERIC");
-    const TIMESTAMPTZ: Self = Self::new(ValueKind::Timestamptz, "TIMESTAMPTZ");
-    const JSON: Self = Self::new(ValueKind::Json, "JSONB");
-    const UUID: Self = Self::new(ValueKind::Uuid, "UUID");
+    const NULL: Self = Self::new(ValueType::Null, "NULL");
+    const BOOLEAN: Self = Self::new(ValueType::Boolean, "BOOLEAN");
+    const INT32: Self = Self::new(ValueType::Int32, "INT4");
+    const INT64: Self = Self::new(ValueType::Int64, "INT8");
+    const FLOAT64: Self = Self::new(ValueType::Float64, "FLOAT8");
+    const TEXT: Self = Self::new(ValueType::Text, "TEXT");
+    const BYTES: Self = Self::new(ValueType::Bytes, "BYTEA");
+    const NUMERIC: Self = Self::new(ValueType::Numeric, "NUMERIC");
+    const TIMESTAMPTZ: Self = Self::new(ValueType::Timestamptz, "TIMESTAMPTZ");
+    const JSON: Self = Self::new(ValueType::Json, "JSONB");
+    const UUID: Self = Self::new(ValueType::Uuid, "UUID");
 
-    const fn new(kind: ValueKind, name: &'static str) -> Self {
-        Self { kind, name }
+    const fn new(type_: ValueType, name: &'static str) -> Self {
+        Self { type_, name }
     }
 
     fn from_postgres_name(name: &str) -> Result<Self, Error> {
@@ -133,7 +133,7 @@ impl Display for WamnTypeInfo {
 
 impl TypeInfo for WamnTypeInfo {
     fn is_null(&self) -> bool {
-        self.kind == ValueKind::Null
+        self.type_ == ValueType::Null
     }
 
     fn name(&self) -> &str {
@@ -141,7 +141,7 @@ impl TypeInfo for WamnTypeInfo {
     }
 
     fn type_compatible(&self, other: &Self) -> bool {
-        self.is_null() || other.is_null() || self.kind == other.kind
+        self.is_null() || other.is_null() || self.type_ == other.type_
     }
 }
 
@@ -284,18 +284,18 @@ impl Type<WamnPostgres> for WamnValue {
 
     fn compatible(ty: &WamnTypeInfo) -> bool {
         matches!(
-            ty.kind,
-            ValueKind::Null
-                | ValueKind::Boolean
-                | ValueKind::Int32
-                | ValueKind::Int64
-                | ValueKind::Float64
-                | ValueKind::Text
-                | ValueKind::Bytes
-                | ValueKind::Numeric
-                | ValueKind::Timestamptz
-                | ValueKind::Json
-                | ValueKind::Uuid
+            ty.type_,
+            ValueType::Null
+                | ValueType::Boolean
+                | ValueType::Int32
+                | ValueType::Int64
+                | ValueType::Float64
+                | ValueType::Text
+                | ValueType::Bytes
+                | ValueType::Numeric
+                | ValueType::Timestamptz
+                | ValueType::Json
+                | ValueType::Uuid
         )
     }
 }

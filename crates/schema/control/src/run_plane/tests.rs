@@ -150,12 +150,12 @@ fn multi_line_column_definitions_parse_whole() {
 
 #[test]
 fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
-    let expected_fail_kind = "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
+    let expected_fail_type = "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
     let fail_type = CHECK_SPECS
         .iter()
         .find(|spec| spec.table == "runs" && spec.name == "runs_fail_type_check")
         .expect("runs.fail_type CHECK mirror exists");
-    assert_eq!(fail_type.definition, expected_fail_kind);
+    assert_eq!(fail_type.definition, expected_fail_type);
 
     let status = CHECK_SPECS
         .iter()
@@ -215,7 +215,7 @@ fn a_pin_carrier_added_without_its_inline_check_does_not_converge() {
     let plan = plan_run_plane(&schema("demo"), &obs);
     assert!(
         plan.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::RepairConstraint
+            action.type_ == RunPlaneActionType::RepairConstraint
                 && action.target == format!("runs.{check}")
         }),
         "a bare {column} costs a second reconcile turn: {:#?}",
@@ -271,7 +271,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
             .actions
             .iter()
             .find(|action| {
-                action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+                action.type_ == RunPlaneActionType::RepairAuthoringPrivilege
                     && action.target == format!("catalog.{table}")
             })
             .expect("effective privilege drift is surfaced as an action");
@@ -290,7 +290,7 @@ fn environment_policy_row_security_repair(obs: &RunPlaneObservation) -> RunPlane
     let plan = plan_run_plane(&schema("demo"), obs);
     plan.actions
         .into_iter()
-        .find(|action| action.kind == RunPlaneActionKind::RepairRowSecurity)
+        .find(|action| action.type_ == RunPlaneActionType::RepairRowSecurity)
         .expect("environment-policy row-security drift must be repaired")
 }
 
@@ -300,7 +300,7 @@ fn exact_environment_policy_row_security_plans_no_repair() {
     assert!(
         plan.actions
             .iter()
-            .all(|action| action.kind != RunPlaneActionKind::RepairRowSecurity)
+            .all(|action| action.type_ != RunPlaneActionType::RepairRowSecurity)
     );
 }
 
@@ -413,7 +413,7 @@ fn guest_column_authority_alone_never_plans_false_clean() {
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+            action.type_ == RunPlaneActionType::RepairAuthoringPrivilege
                 && action.target == "demo.environment_policies"
         })
         .expect("column-level guest write authority must be surfaced");
@@ -444,18 +444,18 @@ fn guest_column_authority_alone_never_plans_false_clean() {
 fn from_zero_plans_the_full_set_in_order() {
     let obs = RunPlaneObservation::default();
     let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
-    let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
-    assert_eq!(kinds[0], RunPlaneActionKind::EnsureSchema);
+    let types: Vec<RunPlaneActionType> = plan.actions.iter().map(|a| a.type_).collect();
+    assert_eq!(types[0], RunPlaneActionType::EnsureSchema);
     assert!(
         plan.actions
             .iter()
-            .any(|a| a.kind == RunPlaneActionKind::EnsureCatalogSchema)
+            .any(|a| a.type_ == RunPlaneActionType::EnsureCatalogSchema)
     );
     let pin_helper = plan
         .actions
         .iter()
         .position(|action| {
-            action.kind == RunPlaneActionKind::RepairHelperFunction
+            action.type_ == RunPlaneActionType::RepairHelperFunction
                 && action.target == "guard_run_admission_pins_immutable"
         })
         .expect("run admission-pin helper is provisioned");
@@ -463,7 +463,7 @@ fn from_zero_plans_the_full_set_in_order() {
         .actions
         .iter()
         .position(|action| {
-            action.kind == RunPlaneActionKind::CreateTable && action.target == "runs"
+            action.type_ == RunPlaneActionType::CreateTable && action.target == "runs"
         })
         .expect("runs table is provisioned");
     assert!(
@@ -471,8 +471,8 @@ fn from_zero_plans_the_full_set_in_order() {
         "the admission-pin helper must exist before the runs trigger"
     );
     // No column/index repairs on tables being created (sections carry them).
-    assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
-    assert!(!kinds.contains(&RunPlaneActionKind::CreateIndex));
+    assert!(!types.contains(&RunPlaneActionType::AddColumn));
+    assert!(!types.contains(&RunPlaneActionType::CreateIndex));
     // The rewrite reached the sections.
     let rq = plan
         .actions
@@ -512,7 +512,7 @@ fn broad_app_run_grants_are_removed_without_regranting_writes() {
     let repair = plan
         .actions
         .iter()
-        .find(|action| action.kind == RunPlaneActionKind::RepairRunCapturePrivilege)
+        .find(|action| action.type_ == RunPlaneActionType::RepairRunCapturePrivilege)
         .expect("broad application-role grant is repaired");
     assert_eq!(repair.target, "runs.capture_mode");
     assert!(
@@ -545,7 +545,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
     let repairs: Vec<&RunPlaneAction> = plan
         .actions
         .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::RepairConstraint)
+        .filter(|action| action.type_ == RunPlaneActionType::RepairConstraint)
         .collect();
     assert_eq!(
         repairs.len(),
@@ -562,7 +562,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 }
 
 // `cancelled_node_error_check_is_repaired` was retired here: its subject was
-// the `node_runs_error_kind_check` spec, which wamn-0h0g.26.3.1 (204220e8)
+// the `node_runs_error_type_check` spec, which wamn-0h0g.26.3.1 (204220e8)
 // deleted from `CHECK_SPECS` with the projection it constrained.
 // `drifted_and_missing_checks_plan_exact_repairs` above keeps the
 // drop-then-add repair test on live record checks.
@@ -585,7 +585,7 @@ fn extra_record_check_is_removed_but_floor_check_is_untouched() {
     let drops: Vec<&RunPlaneAction> = plan
         .actions
         .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::DropExtraConstraint)
+        .filter(|action| action.type_ == RunPlaneActionType::DropExtraConstraint)
         .collect();
     assert_eq!(drops.len(), 1);
     assert_eq!(drops[0].target, "runs.legacy_runs_check");
@@ -600,7 +600,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
     assert_eq!(
         plan.actions
             .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
+            .filter(|action| action.type_ == RunPlaneActionType::RepairHelperFunction)
             .count(),
         3
     );
@@ -608,7 +608,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairHelperFunction
+            action.type_ == RunPlaneActionType::RepairHelperFunction
                 && action.target == "guard_terminal_run_delete"
         })
         .expect("terminal-delete guard repair");
@@ -625,18 +625,18 @@ fn missing_helpers_and_record_triggers_are_repaired() {
     );
     assert!(!terminal_delete_guard.sql.contains("SECURITY DEFINER"));
     assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairTrigger
+        action.type_ == RunPlaneActionType::RepairTrigger
             && action.target == "runs.runs_event_lineage_immutable"
     }));
     assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairTrigger
+        action.type_ == RunPlaneActionType::RepairTrigger
             && action.target == "runs.runs_admission_pins_immutable"
     }));
     let terminal_delete_trigger = plan
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairTrigger
+            action.type_ == RunPlaneActionType::RepairTrigger
                 && action.target == "runs.runs_terminal_delete_only"
         })
         .expect("terminal-delete trigger repair");
@@ -648,7 +648,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
     assert_eq!(
         plan.actions
             .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
+            .filter(|action| action.type_ == RunPlaneActionType::RepairTrigger)
             .count(),
         5
     );
@@ -669,7 +669,7 @@ fn extra_record_trigger_is_removed_but_floor_trigger_is_untouched() {
     let drops: Vec<&RunPlaneAction> = plan
         .actions
         .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::DropExtraTrigger)
+        .filter(|action| action.type_ == RunPlaneActionType::DropExtraTrigger)
         .collect();
     assert_eq!(drops.len(), 1);
     assert_eq!(drops[0].target, "runs.legacy_runs_trigger");
@@ -687,14 +687,14 @@ fn queue_missing_plans_only_the_queue_creates() {
     let creates: Vec<&str> = plan
         .actions
         .iter()
-        .filter(|a| a.kind == RunPlaneActionKind::CreateTable)
+        .filter(|a| a.type_ == RunPlaneActionType::CreateTable)
         .map(|a| a.target.as_str())
         .collect();
     assert_eq!(creates, ["run_queue"]);
     assert!(
         plan.actions
             .iter()
-            .all(|a| a.kind != RunPlaneActionKind::AddColumn)
+            .all(|a| a.type_ != RunPlaneActionType::AddColumn)
     );
 }
 

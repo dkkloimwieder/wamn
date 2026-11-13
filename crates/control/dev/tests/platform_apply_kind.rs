@@ -263,7 +263,7 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
                 case,
                 application_deploy::Case::Reset | application_deploy::Case::PlatformSchema
             ),
-        "this case requires kind for its additional isolated environment"
+        "this case requires type for its additional isolated environment"
     );
     let mut run = prepare(&repository, Path::new(""), &binary, &kcl, Some(document))?;
     run.target.context =
@@ -541,12 +541,12 @@ async fn success(command: &mut Command) -> anyhow::Result<Output> {
     Ok(output)
 }
 
-async fn get(run: &Run, namespace: &str, kind: &str, name: &str) -> anyhow::Result<Value> {
+async fn get(run: &Run, namespace: &str, type_: &str, name: &str) -> anyhow::Result<Value> {
     let mut command = kubectl(run);
     if !namespace.is_empty() {
         command.args(["-n", namespace]);
     }
-    command.args(["get", kind]);
+    command.args(["get", type_]);
     if !name.is_empty() {
         command.arg(name);
     }

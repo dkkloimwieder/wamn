@@ -1,10 +1,10 @@
-use super::{RefusalKind, check_declared_statement};
+use super::{RefusalType, check_declared_statement};
 
-fn assert_refused(kind: RefusalKind, statements: &[&str]) {
+fn assert_refused(type_: RefusalType, statements: &[&str]) {
     for sql in statements {
         let refusal =
             check_declared_statement(sql).expect_err(&format!("admission must refuse {sql:?}"));
-        assert_eq!(refusal.kind(), kind, "{sql:?}: {refusal}");
+        assert_eq!(refusal.type_(), type_, "{sql:?}: {refusal}");
     }
 }
 
@@ -21,7 +21,7 @@ fn assert_admitted(statements: &[&str]) {
 #[test]
 fn refuses_counter_function_calls() {
     assert_refused(
-        RefusalKind::CounterFunction,
+        RefusalType::CounterFunction,
         &[
             "SELECT platform.bump_counter($1::text::uuid, 'po', '')",
             "select PLATFORM.ASSIGN_COUNTER($1::uuid, 'batch', $2)",
@@ -65,7 +65,7 @@ fn refuses_counter_function_calls() {
 #[test]
 fn refuses_unicode_escapes() {
     assert_refused(
-        RefusalKind::UnicodeEscape,
+        RefusalType::UnicodeEscape,
         &[
             "SELECT U&\"\\0062ump_counter\"($1::uuid, 'po', '')",
             "SELECT platform.U&\"\\0073et_counter\"($1::uuid, 'po', '', 1)",
@@ -82,7 +82,7 @@ fn refuses_unicode_escapes() {
 #[test]
 fn refuses_do_blocks_and_function_bodies() {
     assert_refused(
-        RefusalKind::CodeBlock,
+        RefusalType::CodeBlock,
         &[
             "DO $$ BEGIN PERFORM 1; END $$",
             "do language plpgsql $$ BEGIN EXECUTE 'SELECT 1'; END $$",
@@ -97,7 +97,7 @@ fn refuses_do_blocks_and_function_bodies() {
 #[test]
 fn refuses_dynamic_execute() {
     assert_refused(
-        RefusalKind::DynamicExecute,
+        RefusalType::DynamicExecute,
         &[
             "EXECUTE counter_call",
             "execute counter_call(1, 'po')",
@@ -110,7 +110,7 @@ fn refuses_dynamic_execute() {
 #[test]
 fn refuses_xml_query_functions() {
     assert_refused(
-        RefusalKind::XmlQuery,
+        RefusalType::XmlQuery,
         &[
             "SELECT query_to_xml('SELECT 1', true, false, '')",
             "SELECT pg_catalog.query_to_xml($1, true, false, '')",
@@ -131,7 +131,7 @@ fn refuses_xml_query_functions() {
 #[test]
 fn refuses_session_writes() {
     assert_refused(
-        RefusalKind::SessionWrite,
+        RefusalType::SessionWrite,
         &[
             "SET app.env_key = 'victim'",
             "set local app.env_key = 'victim'",
@@ -162,7 +162,7 @@ fn refuses_session_writes() {
 #[test]
 fn refuses_logical_messages() {
     assert_refused(
-        RefusalKind::LogicalMessage,
+        RefusalType::LogicalMessage,
         &[
             "SELECT pg_logical_emit_message(true,'wamn.causation','{}')",
             "select PG_LOGICAL_EMIT_MESSAGE(true, 'wamn.causation', $1)",
@@ -177,7 +177,7 @@ fn refuses_logical_messages() {
 #[test]
 fn refuses_platform_writes() {
     assert_refused(
-        RefusalKind::PlatformWrite,
+        RefusalType::PlatformWrite,
         &[
             "INSERT INTO platform.number_counter (sequence_id, counter, key_value, value) VALUES ($1, 'po', '', 1)",
             "UPDATE platform.number_counter SET value = 1",
@@ -202,7 +202,7 @@ fn refuses_platform_writes() {
 #[test]
 fn refuses_unparsed_and_multiple_statements() {
     assert_refused(
-        RefusalKind::Unparsed,
+        RefusalType::Unparsed,
         &[
             "SELECT FROM WHERE",
             "SELECT platform.bump_counter(",
@@ -210,7 +210,7 @@ fn refuses_unparsed_and_multiple_statements() {
         ],
     );
     assert_refused(
-        RefusalKind::NotOneStatement,
+        RefusalType::NotOneStatement,
         &[
             "",
             "-- only a comment",

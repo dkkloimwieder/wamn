@@ -1009,7 +1009,7 @@ fn authorize_method(read_only: bool, method: &str) -> Result<(), ConnectionError
 fn authority_denied(phase: &'static str, error: &AuthorityError) -> ConnectionError {
     tracing::warn!(
         phase,
-        kind = ?error.error_type(),
+        type_ = ?error.error_type(),
         error = %error,
         "trusted HTTP connection authority denied"
     );

@@ -761,13 +761,13 @@ SET LOCAL ROLE wamn_system;
 SELECT set_config('app.user_id', :'administrator_id', true);
 SELECT EXISTS (
     SELECT 1 FROM identity.principals
-    WHERE id = :'principal_id'::uuid AND kind = 'user'
+    WHERE id = :'principal_id'::uuid AND type = 'user'
     FOR UPDATE
 ) AS account_found \gset
 \if :account_found
 UPDATE identity.principals
 SET email = lower(btrim(:'replacement_email'))
-WHERE id = :'principal_id'::uuid AND kind = 'user';
+WHERE id = :'principal_id'::uuid AND type = 'user';
 UPDATE identity.password_tokens
 SET consumed_at = clock_timestamp()
 WHERE principal_id = :'principal_id'::uuid AND consumed_at IS NULL;

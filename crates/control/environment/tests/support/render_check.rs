@@ -494,7 +494,7 @@ fn mounted_secret_key(
     anyhow::bail!("events binding {path} has no Secret mount")
 }
 
-/// Project fixture roles without the Wasm artifact that kind composes.
+/// Project fixture roles without the Wasm artifact that type composes.
 /// The entry reference is only chart input. Helm never pulls it.
 pub fn fixture_roles(
     manifest: &wamn_catalog::ServingManifest,

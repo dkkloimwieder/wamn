@@ -67,13 +67,13 @@ pub struct EventTrigger {
 /// A stored condition or an event that cannot be evaluated safely.
 #[derive(Debug)]
 pub struct TriggerMatchError {
-    pub kind: TriggerMatchErrorKind,
+    pub type_: TriggerMatchErrorType,
     pub workflow_id: String,
     detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TriggerMatchErrorKind {
+pub enum TriggerMatchErrorType {
     Condition,
     Event,
 }
@@ -109,7 +109,7 @@ impl EventTrigger {
             condition: self.condition.clone(),
         };
         let condition = serviceable(&registration).map_err(|error| TriggerMatchError {
-            kind: TriggerMatchErrorKind::Condition,
+            type_: TriggerMatchErrorType::Condition,
             workflow_id: self.workflow_id.clone(),
             detail: format!("{error:?}"),
         })?;
@@ -136,7 +136,7 @@ impl EventTrigger {
             Verdict::Deliver(input) => Ok(Some(input)),
             Verdict::Skip(_) => Ok(None),
             Verdict::Refuse(reason) => Err(TriggerMatchError {
-                kind: TriggerMatchErrorKind::Event,
+                type_: TriggerMatchErrorType::Event,
                 workflow_id: self.workflow_id.clone(),
                 detail: format!("{reason:?}"),
             }),
@@ -233,8 +233,8 @@ mod tests {
             trigger
                 .matches(&SourceEvent::Cdc(missing_old), 42, &packages, "tenant")
                 .unwrap_err()
-                .kind,
-            TriggerMatchErrorKind::Event
+                .type_,
+            TriggerMatchErrorType::Event
         );
     }
 }

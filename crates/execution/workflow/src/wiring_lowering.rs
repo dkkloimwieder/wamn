@@ -139,9 +139,9 @@ pub struct WiringLoweringError {
 }
 
 impl WiringLoweringError {
-    fn new(kind: WiringLoweringErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: WiringLoweringErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
             source: None,
         }

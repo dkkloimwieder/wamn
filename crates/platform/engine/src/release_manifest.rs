@@ -96,9 +96,9 @@ pub struct ReleaseLoadError {
 }
 
 impl ReleaseLoadError {
-    fn new(kind: ReleaseLoadErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: ReleaseLoadErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }

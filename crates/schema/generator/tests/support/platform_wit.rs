@@ -189,13 +189,13 @@ fn a_read_contract_declares_no_request_id_and_a_write_still_does() {
         .keys()
         .filter(|path| path.ends_with(".operation.json"))
     {
-        let kind = json(path)["type"].as_str().expect("type").to_owned();
+        let type_ = json(path)["type"].as_str().expect("type").to_owned();
         let input = json(&path.replace(".operation.json", ".input.json"));
         let declares = input.get("request_id").is_some()
             || input["fields"]
                 .as_array()
                 .is_some_and(|fields| fields.iter().any(|field| field["path"] == "request_id"));
-        match kind.as_str() {
+        match type_.as_str() {
             "get" | "query" | "projection" => {
                 assert!(!declares, "{path}: a read declares no request_id");
                 reads += 1;

@@ -528,7 +528,7 @@ DO $$ BEGIN BEGIN
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 -- An unknown placement_type is rejected.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_type) VALUES ('badkind','elastic');
+  INSERT INTO registry.orgs (id, placement_type) VALUES ('badtype','elastic');
   ASSERT false, 'an unknown placement_type must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 

@@ -1052,7 +1052,7 @@ pub(super) async fn secret_exists(
 /// Wait for a CloudNativePG CR to report `status.applied`.
 pub(super) async fn wait_applied(
     platform: &Platform,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<()> {
     kubectl(
@@ -1060,7 +1060,7 @@ pub(super) async fn wait_applied(
         &platform.database_namespace,
         &[
             "wait",
-            &format!("{kind}/{name}"),
+            &format!("{type_}/{name}"),
             "--for=jsonpath={.status.applied}=true",
             APPLIED_TIMEOUT,
         ],
@@ -1068,7 +1068,7 @@ pub(super) async fn wait_applied(
     )
     .await
     .map(drop)
-    .with_context(|| format!("wait for {kind} {name} to report status.applied"))
+    .with_context(|| format!("wait for {type_} {name} to report status.applied"))
 }
 
 /// Run `kubectl` against the platform's cluster in `namespace`.

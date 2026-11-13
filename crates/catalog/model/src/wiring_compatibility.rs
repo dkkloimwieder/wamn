@@ -43,9 +43,9 @@ impl WiringCompatibilityError {
         self.type_
     }
 
-    fn new(kind: WiringCompatibilityErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: WiringCompatibilityErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }

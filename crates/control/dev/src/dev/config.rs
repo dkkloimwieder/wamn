@@ -204,9 +204,9 @@ pub struct DevConfigError {
 }
 
 impl DevConfigError {
-    fn new(kind: DevConfigErrorType, key: impl Into<Box<str>>, detail: &'static str) -> Self {
+    fn new(type_: DevConfigErrorType, key: impl Into<Box<str>>, detail: &'static str) -> Self {
         Self {
-            type_: kind,
+            type_,
             key: key.into(),
             endpoint: None,
             detail,

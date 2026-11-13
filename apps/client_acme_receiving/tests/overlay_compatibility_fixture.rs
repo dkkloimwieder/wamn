@@ -104,8 +104,8 @@ async fn observe_installed_contract(
                         foreign_key_action(row.get(6))?,
                     )?
                 }
-                kind => anyhow::bail!(
-                    "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} has kind {kind}"
+                type_ => anyhow::bail!(
+                    "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} has type {type_}"
                 ),
             };
             constraints.push(serde_json::to_value(observed)?);

@@ -446,7 +446,7 @@ async fn unavailable_principal_database_returns_connection_unavailable() {
         .await
         .unwrap_err();
     let error = error.downcast_ref::<super::ClaimError>().unwrap();
-    assert!(matches!(error.kind, super::ClaimErrorKind::Infrastructure));
+    assert!(matches!(error.type_, super::ClaimErrorType::Infrastructure));
     assert!(matches!(
         error.source.downcast_ref::<super::super::PgError>(),
         Some(super::super::PgError::ConnectionUnavailable),

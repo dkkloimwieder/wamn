@@ -468,8 +468,8 @@ fn query_variants(operation: &OperationDeclaration) -> Vec<(&str, CursorDirectio
     )
 }
 
-fn constraint_error_code(kind: &ConstraintType) -> AccessOperationErrorLiteral {
-    match kind {
+fn constraint_error_code(type_: &ConstraintType) -> AccessOperationErrorLiteral {
+    match type_ {
         ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => {
             AccessOperationErrorLiteral::UniqueViolation
         }
@@ -693,8 +693,8 @@ fn operation_exclusions<'a>(
         .collect()
 }
 
-fn update_can_violate(kind: &ConstraintType, writable_fields: &[String]) -> bool {
-    match kind {
+fn update_can_violate(type_: &ConstraintType, writable_fields: &[String]) -> bool {
+    match type_ {
         // Opaque CHECK expressions expose no structural field set to intersect.
         ConstraintType::Check { .. } => false,
         ConstraintType::PrimaryKey { columns } | ConstraintType::Unique { columns } => {
@@ -1084,8 +1084,8 @@ fn omission_refused(column: &Column) -> bool {
     !column.nullable() && column.default().is_none() && column.generation().is_none()
 }
 
-fn constraint_error(kind: &ConstraintType) -> &'static str {
-    match kind {
+fn constraint_error(type_: &ConstraintType) -> &'static str {
+    match type_ {
         ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => "unique_violation",
         ConstraintType::ForeignKey { .. } => "foreign_key_violation",
         ConstraintType::Check { .. } => "check_violation",
@@ -1113,7 +1113,7 @@ mod tests {
         for other in [
             "((status = 'open'::text) OR (status = 'complete'::text))",
             "(status <> ''::text)",
-            "((kind)::text = ANY (ARRAY['a'::text]))",
+            "((type)::text = ANY (ARRAY['a'::text]))",
             "(\"Status\" = ANY (ARRAY['a'::text]))",
             "(status = ANY (ARRAY['it''s'::text]))",
             "(status = ANY (ARRAY['a'::character varying]))",

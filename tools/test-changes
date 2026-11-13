@@ -259,9 +259,9 @@ def closure($graph):
       | ([.next[] | $graph[.][]?] | unique - $seen) as $new
       | {seen: ($seen + $new), next: $new})
   | .seen;
-def graph($md; $kinds):
+def graph($md; $types):
   reduce ($md.resolve.nodes[] | .id as $to | .deps[]
-    | select(any(.dep_kinds[]; (.kind // "normal") | IN($kinds[])))
+    | select(any(.dep_kinds[]; (.kind // "normal") | IN($types[])))
     | {from: .pkg, $to}) as $edge ({}; .[$edge.from] += [$edge.to]);
 def features($package):
   [$package.targets[] | .["required-features"][]? | select(. != "cluster" or $cluster)] | unique
@@ -761,15 +761,15 @@ while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
 )
 
 wamn_root_test() {
-  local result exit_code=0 manifest kind target name package executable
+  local result exit_code=0 manifest type target name package executable
   result=$(mktemp "${TMPDIR:-/tmp}/wamn-root-test.XXXXXXXX")
   wamn_run_child "$label" "$WAMN_CARGO" "$@" --message-format=json-render-diagnostics 2>&1 |
     tee "$result" |
     sed -u '/^{.*"reason":"\(compiler-artifact\|build-script-executed\|build-finished\)"/d' || exit_code=$?
-  while IFS=$'\t' read -r manifest kind target name executable; do
+  while IFS=$'\t' read -r manifest type target name executable; do
     package="$(jq -r --arg manifest "$manifest" '.packages[]
       | select(.manifest_path == $manifest) | .name' <<<"${WAMN_METADATA[0]}")"
-    jq -e --arg package "$package" --arg target "$kind:$target" --arg tiers "$WAMN_TIERS" '
+    jq -e --arg package "$package" --arg target "$type:$target" --arg tiers "$WAMN_TIERS" '
       any(.targets[]; .workspace == "root" and .package == $package and .target == $target
         and .tier != "kind" and (.tier | IN($tiers | split(",") | .[])))' \
       <<<"$WAMN_POLICY" >/dev/null || continue

@@ -22,7 +22,7 @@ pub(super) fn package_route(
         package_id: package_id.to_owned(),
         component: component.to_owned(),
         operation: operation.to_owned(),
-        type_: contract.kind,
+        type_: contract.type_,
         reads: contract.reads,
         revision: contract.revision,
         idempotency: contract.idempotency,

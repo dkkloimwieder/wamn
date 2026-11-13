@@ -291,7 +291,7 @@ async fn exact_grants(
     anyhow::ensure!(
         rows.len() == count
             && rows.iter().all(|row| {
-                let kind: &str = row.get("object_type");
+                let type_: &str = row.get("object_type");
                 let schema: &str = row.get("schema_name");
                 let object: &str = row.get("object_name");
                 let privilege: &str = row.get("privilege_type");
@@ -299,12 +299,12 @@ async fn exact_grants(
                     && match expected {
                         Grants::None => false,
                         Grants::Generation => {
-                            kind == "database"
+                            type_ == "database"
                                 && object == IDENTITY_ISSUER_DATABASE
                                 && privilege == "CONNECT"
                         }
                         Grants::Stable | Grants::StableBeforePrepare => {
-                            kind == "schema"
+                            type_ == "schema"
                                 && if foundation {
                                     schema == "identity"
                                 } else {
@@ -312,7 +312,7 @@ async fn exact_grants(
                                 }
                                 && object == schema
                                 && privilege == "USAGE"
-                                || kind == "relation"
+                                || type_ == "relation"
                                     && schema == "identity"
                                     && IDENTITY_ISSUER_TABLES.contains(&object)
                                     && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
@@ -320,17 +320,17 @@ async fn exact_grants(
                                     && !previous
                                     && !read_only_pat
                                     && schema == "identity"
-                                    && ((kind == "routine"
+                                    && ((type_ == "routine"
                                         && object == "lock_password_principal"
                                         && privilege == "EXECUTE")
-                                        || (kind == "relation"
+                                        || (type_ == "relation"
                                             && object == "password_logins"
                                             && privilege == "DELETE")
-                                        || (kind == "relation"
+                                        || (type_ == "relation"
                                             && object == "password_attempts"
                                             && ["SELECT", "INSERT", "UPDATE", "DELETE"]
                                                 .contains(&privilege))
-                                        || (kind == "column"
+                                        || (type_ == "column"
                                             && IDENTITY_ISSUER_PASSWORD_COLUMNS.iter().any(
                                                 |(table, p, columns)| {
                                                     privilege == *p
@@ -340,7 +340,7 @@ async fn exact_grants(
                                                 },
                                             )))
                                 || !foundation
-                                    && kind == "column"
+                                    && type_ == "column"
                                     && privilege == "SELECT"
                                     && IDENTITY_ISSUER_READ_COLUMNS.iter().any(
                                         |(expected_schema, table, columns)| {
@@ -355,7 +355,7 @@ async fn exact_grants(
                                     )
                                 || !foundation
                                     && !read_only_pat
-                                    && kind == "column"
+                                    && type_ == "column"
                                     && schema == "identity"
                                     && privilege == "INSERT"
                                     && IDENTITY_ISSUER_PAT_INSERT_COLUMNS

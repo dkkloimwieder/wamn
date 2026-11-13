@@ -369,14 +369,14 @@ pub(super) fn validate_generated_statement_shape(
             format!("operation {operation:?} carries an empty or non-canonical statement name"),
         ));
     }
-    for (kind, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
+    for (type_, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
         let mut names = BTreeSet::new();
         for field in fields {
             if !canonical_text(&field.name) || !names.insert(field.name.as_str()) {
                 return Err(ComponentProjectionError::new(
                     ComponentProjectionErrorType::StatementContractInvalid,
                     format!(
-                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {kind}",
+                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {type_}",
                         statement.name
                     ),
                 ));

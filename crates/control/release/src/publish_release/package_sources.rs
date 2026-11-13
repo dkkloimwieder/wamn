@@ -15,7 +15,7 @@ use super::{
     RouteContract, RouteContracts, ServingRelation, ServingRoute,
 };
 
-/// Every package's parsed manifest and the contract kind of every operation
+/// Every package's parsed manifest and the contract type of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
     BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
@@ -136,13 +136,13 @@ pub(super) fn read_package_manifests(
             ));
         }
     }
-    let mut kinds = RouteContracts::new();
+    let mut types = RouteContracts::new();
     for (package_id, package) in contracts {
         for contract in package {
-            kinds.insert((package_id.clone(), contract.operation), contract.route);
+            types.insert((package_id.clone(), contract.operation), contract.route);
         }
     }
-    Ok((manifests, kinds))
+    Ok((manifests, types))
 }
 
 /// One generated contract of a package.
@@ -153,7 +153,7 @@ struct PackageContract {
 
 /// The route facts of every generated contract `operation.json` under the package.
 ///
-/// The generated contract is the only source of an operation kind, of the
+/// The generated contract is the only source of an operation type, of the
 /// relations a read reads, of the revision field of a `get`, and of the item
 /// field that carries an idempotency key. A package that generates no contract
 /// has no operation a route can call.
@@ -199,7 +199,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(unreadable(&contracts, error)),
     };
-    let mut kinds = Vec::new();
+    let mut types = Vec::new();
     for model in models {
         let model = model.map_err(|error| unreadable(&contracts, error))?.path();
         if !model.is_dir() {
@@ -215,7 +215,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!(
-                        "generated contract {} names no operation kind; regenerate the package evidence",
+                        "generated contract {} names no operation type; regenerate the package evidence",
                         path.display()
                     ),
                     error,
@@ -252,10 +252,10 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             } else {
                 read_input_identity(&path)?
             };
-            kinds.push(PackageContract {
+            types.push(PackageContract {
                 operation: contract.operation,
                 route: RouteContract {
-                    kind: contract.type_,
+                    type_: contract.type_,
                     reads,
                     revision,
                     idempotency,
@@ -263,7 +263,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             });
         }
     }
-    Ok(kinds)
+    Ok(types)
 }
 
 /// The idempotency key field of the input contract beside `operation_path`.

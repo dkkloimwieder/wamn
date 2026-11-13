@@ -83,7 +83,7 @@ function harness(options: { held?: boolean; cookies?: () => string } = {}) {
 }
 
 function contract(
-  kind: string,
+  type: string,
   resultClass: string,
   relations: { reads?: readonly string[]; writes?: readonly string[] | null } = {},
 ): ResponseContract {
@@ -93,7 +93,7 @@ function contract(
     errors: [],
     replay: null,
     direct: true,
-    type: kind,
+    type: type,
     transaction: "implicit",
     reads: relations.reads ?? [],
     writes: relations.writes ?? null,

@@ -236,9 +236,9 @@ pub struct EdgeReleaseError {
 }
 
 impl EdgeReleaseError {
-    pub(crate) fn new(kind: EdgeReleaseErrorType, detail: impl Into<Box<str>>) -> Self {
+    pub(crate) fn new(type_: EdgeReleaseErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }

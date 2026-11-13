@@ -12,7 +12,7 @@ use crate::name::{
     workload_secret_name,
 };
 use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
-use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
+use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyType};
 
 /// Render the per-project-env identity `Secret` (wamn-q3n.7). Name
 /// `wamn-db-<org>--<project>--<env>` — the 5x0.1 lookup key recorded as the
@@ -50,7 +50,7 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str) -> V
 /// The body one workload credential `Secret` carries.
 ///
 /// Three shapes, not one variant per family. Which shape a family
-/// takes is [`WorkloadRoleFamily::secret_body_kind`], so an admitted family
+/// takes is [`WorkloadRoleFamily::secret_body_type`], so an admitted family
 /// gets the plain single-`url` Secret with no edit here.
 #[derive(Debug, Clone, Copy)]
 pub enum WorkloadSecretBody<'a> {
@@ -75,11 +75,11 @@ pub enum WorkloadSecretBody<'a> {
 }
 
 impl WorkloadSecretBody<'_> {
-    fn body_type(self) -> WorkloadSecretBodyKind {
+    fn body_type(self) -> WorkloadSecretBodyType {
         match self {
-            Self::Url(_) => WorkloadSecretBodyKind::Url,
-            Self::EnvKeyUrl { .. } => WorkloadSecretBodyKind::EnvKeyUrl,
-            Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
+            Self::Url(_) => WorkloadSecretBodyType::Url,
+            Self::EnvKeyUrl { .. } => WorkloadSecretBodyType::EnvKeyUrl,
+            Self::SessionTarget(_) => WorkloadSecretBodyType::SessionTarget,
         }
     }
 }
@@ -100,9 +100,9 @@ pub fn render_workload_secret_manifest(
 ) -> Value {
     assert_eq!(
         body.body_type(),
-        family.secret_body_kind(),
+        family.secret_body_type(),
         "{family:?} publishes a {:?} Secret body, not a {:?} one",
-        family.secret_body_kind(),
+        family.secret_body_type(),
         body.body_type(),
     );
     let mut metadata = json!({
@@ -149,8 +149,8 @@ pub fn render_org_workload_secret_manifest(
     url: &str,
 ) -> Value {
     assert_eq!(
-        family.secret_body_kind(),
-        WorkloadSecretBodyKind::Url,
+        family.secret_body_type(),
+        WorkloadSecretBodyType::Url,
         "{family:?} does not publish a single-url Secret"
     );
     json!({

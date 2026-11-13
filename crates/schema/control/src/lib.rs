@@ -35,7 +35,7 @@ pub use replica_identity::{
 };
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
+    RunPlaneAction, RunPlaneActionType, RunPlaneObservation, RunPlanePlan,
     catalog_schema_present_sql, plan_run_plane, rewrite_schema, select_app_run_queue_authority_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,

@@ -34,7 +34,7 @@ use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
-    AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionKind,
+    AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionType,
     CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
     MembershipExpectation, MembershipMode, ProductionClaimErrorType, ProductionClaimResult,
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
@@ -377,7 +377,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // database name or the probe refuses before the socket, so the mismatch has
     // to arrive the way it would in production: a connection that is not on the
     // database the credential named. The refusal is therefore the SERVER's
-    // `current_database()`, and its connection kind shows it was
+    // `current_database()`, and its connection type shows it was
     // reached over the wire rather than decided from the url.
     let elsewhere_url = generation_url(admin_url, Some(ELSEWHERE))?;
     let elsewhere = connect(&elsewhere_url).await?;
@@ -399,8 +399,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         CredentialProbePredicate::Database
     );
     assert_eq!(
-        wrong_database.connection_kind(),
-        Some(CredentialConnectionKind::Pooled),
+        wrong_database.connection_type(),
+        Some(CredentialConnectionType::Pooled),
         "a database refusal decided without a connection does not test the server"
     );
 
@@ -434,8 +434,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         CredentialProbePredicate::Membership
     );
     assert_eq!(
-        wrong_membership.connection_kind(),
-        Some(CredentialConnectionKind::Pooled)
+        wrong_membership.connection_type(),
+        Some(CredentialConnectionType::Pooled)
     );
 
     // The other direction, and it is the arm a superuser would swallow: a
@@ -489,14 +489,14 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     );
     assert_eq!(wrong_acl.predicate(), CredentialProbePredicate::Acl);
     assert_eq!(
-        wrong_acl.connection_kind(),
-        Some(CredentialConnectionKind::Pooled)
+        wrong_acl.connection_type(),
+        Some(CredentialConnectionType::Pooled)
     );
 
     // WRONG TENANT BINDING. This arm refuses BEFORE a socket exists, and that
     // is the whole point: the binding is lifecycle metadata minted beside the
     // credential, so a selector pairing this credential with another tenant's
-    // expectation never gets to open a connection at all. `connection_kind()`
+    // expectation never gets to open a connection at all. `connection_type()`
     // is `None` — the evidence that no server was consulted — while the
     // control arm above, differing only in this value, connected and read rows.
     let wrong_binding = credential_exactness_probe(
@@ -521,7 +521,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         CredentialProbePredicate::TenantBinding
     );
     assert_eq!(
-        wrong_binding.connection_kind(),
+        wrong_binding.connection_type(),
         None,
         "the tenant binding must refuse before a connection is used"
     );

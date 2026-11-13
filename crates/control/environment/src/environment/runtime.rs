@@ -322,12 +322,12 @@ pub(super) async fn require_chart_references(
     require_references(
         &target.namespace,
         &objects,
-        async |namespace, kind, name| {
+        async |namespace, type_, name| {
             wamn_kubernetes::kubectl::get(
                 &target.kubeconfig,
                 &target.context,
                 namespace,
-                kind,
+                type_,
                 name,
             )
             .await
@@ -364,10 +364,10 @@ pub(crate) async fn require_references(
         )?;
     }
     for (reference_namespace, references) in references {
-        for ((kind, name), keys) in references {
+        for ((type_, name), keys) in references {
             let external;
             let object = if let Some(object) = objects.iter().find(|object| {
-                object["kind"] == kind
+                object["kind"] == type_
                     && object["metadata"]["name"] == name
                     && object["metadata"]["namespace"]
                         .as_str()
@@ -376,18 +376,18 @@ pub(crate) async fn require_references(
             }) {
                 object
             } else {
-                external = get(reference_namespace, &kind, &name)
+                external = get(reference_namespace, &type_, &name)
                     .await?
                     .with_context(|| {
                         format!(
                             "missing required {} {reference_namespace}/{name}. No resources changed.",
-                            kind.to_ascii_lowercase()
+                            type_.to_ascii_lowercase()
                         )
                     })?;
                 &external
             };
             for key in keys {
-                let present = if kind == "Secret" {
+                let present = if type_ == "Secret" {
                     object["stringData"][&key]
                         .as_str()
                         .is_some_and(|value| !value.is_empty())
@@ -407,7 +407,7 @@ pub(crate) async fn require_references(
                 ensure!(
                     present,
                     "required {} {reference_namespace}/{name} lacks valid {key}. No resources changed.",
-                    kind.to_ascii_lowercase()
+                    type_.to_ascii_lowercase()
                 );
             }
         }
@@ -431,14 +431,14 @@ fn collect_references(
                     "configMapKeyRef" | "configMapRef" | "configMap" => Some(("ConfigMap", "name")),
                     _ => None,
                 };
-                if let Some((kind, name_field)) = reference {
+                if let Some((type_, name_field)) = reference {
                     if child["optional"] == true {
                         continue;
                     }
                     let name = child[name_field]
                         .as_str()
                         .context("runtime reference name")?;
-                    let keys = references.entry((kind.into(), name.into())).or_default();
+                    let keys = references.entry((type_.into(), name.into())).or_default();
                     if let Some(key) = child["key"].as_str() {
                         keys.insert(key.to_owned());
                     }
@@ -476,7 +476,7 @@ mod tests {
     {
         let env = json!({"env":[{"name":"TOKEN", "valueFrom":{"secretKeyRef":{"name":"credential","key":"token"}}}]});
         let env_from = json!({"envFrom":[{"secretRef":{"name":"credential"}}]});
-        for (kind, container, internal_key, external_exists, external_key, succeeds) in [
+        for (type_, container, internal_key, external_exists, external_key, succeeds) in [
             (
                 "Deployment",
                 &env,
@@ -499,15 +499,15 @@ mod tests {
             ("Deployment", &env, true, true, Some("!"), false),
         ] {
             let objects = [
-                json!({"kind":kind, "metadata":{"namespace":"hosts"}, "spec":{"template":{"spec":{
+                json!({"kind":type_, "metadata":{"namespace":"hosts"}, "spec":{"template":{"spec":{
                     "containers":[container],
                     "volumes":[{"configMap":{"name":"host-config", "items":[{"key":"config","path":"config"}]}}]
                 }}}}),
                 json!({"kind":"ConfigMap", "metadata":{"name":"host-config"},
                     "data": if internal_key { json!({"config":"rendered"}) } else { json!({}) }}),
             ];
-            let result = require_references("hosts", &objects, async |namespace, kind, name| {
-                assert_eq!((namespace, kind, name), ("hosts", "Secret", "credential"));
+            let result = require_references("hosts", &objects, async |namespace, type_, name| {
+                assert_eq!((namespace, type_, name), ("hosts", "Secret", "credential"));
                 Ok(external_exists.then(|| {
                     json!({"data":
                         if let Some(value) = external_key { json!({"token":value}) } else { json!({}) }
@@ -771,21 +771,21 @@ mod tests {
         let internal = objects
             .iter()
             .filter_map(|object| {
-                let kind = object["kind"].as_str()?;
+                let type_ = object["kind"].as_str()?;
                 let name = object["metadata"]["name"].as_str()?;
                 references
-                    .contains_key(&(kind.to_owned(), name.to_owned()))
-                    .then_some((kind, name))
+                    .contains_key(&(type_.to_owned(), name.to_owned()))
+                    .then_some((type_, name))
             })
             .collect::<std::collections::BTreeSet<_>>();
-        assert!(internal.iter().any(|(kind, _)| *kind == "ConfigMap"));
-        require_references("hosts", &objects, async |namespace, kind, name| {
+        assert!(internal.iter().any(|(type_, _)| *type_ == "ConfigMap"));
+        require_references("hosts", &objects, async |namespace, type_, name| {
             assert_eq!(namespace, "hosts");
-            assert!(!internal.contains(&(kind, name)), "{namespace}/{name}");
-            if kind == "Secret" && registry_secret["metadata"]["name"] == name {
+            assert!(!internal.contains(&(type_, name)), "{namespace}/{name}");
+            if type_ == "Secret" && registry_secret["metadata"]["name"] == name {
                 return Ok(Some(registry_secret.clone()));
             }
-            let data: serde_json::Map<_, _> = references[&(kind.to_owned(), name.to_owned())]
+            let data: serde_json::Map<_, _> = references[&(type_.to_owned(), name.to_owned())]
                 .iter()
                 .map(|key| (key.to_owned(), json!("Y3JlZGVudGlhbA==")))
                 .collect();
