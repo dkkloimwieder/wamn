@@ -175,7 +175,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
                 .env("WAMN_ENDPOINT", &application.endpoint)
                 .env("WAMN_ROUTE_HOST", &application.route_host)
                 .env("WAMN_BEARER", &application.bearer)
-                .env("WAMN_USER_ID", user.id().as_str())
+                .env("WAMN_USER_ID", user.id().to_string().as_str())
                 .env("WAMN_AUD", audience)
                 .env("WAMN_LOCATION_ID", LOCATION_A_ID)
                 .env("WAMN_FIRST_ID", PACKAGING_ID)

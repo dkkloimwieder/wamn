@@ -8,7 +8,7 @@ use wamn_environment_control::prune_record_history::prune;
 use wamn_schema_generator::{GenerationInput, StatementTransactionality, generate};
 
 async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .expect("connect to the fixture database");

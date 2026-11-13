@@ -18,8 +18,7 @@
 //! sends no trace at all, so "all under the incoming trace" is true of this leg
 //! and of no other.
 //!
-//! Runs through `cargo test`, without an orchestrator subcommand or
-//! `deploy/gates` Job.
+//! Runs through `cargo test`.
 
 #[cfg(test)]
 mod tests {

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use clap::Parser as _;
+use postgres_protocol::escape::escape_identifier;
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::Value;
 use tokio::net::TcpListener;
@@ -16,9 +17,8 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::sql::revoke_public_connect_floor_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
-use wamn_pg_core::quote_ident;
+use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
 use wamn_platform_identity::session_keys::publish_session_key;
-use wamn_session::keys::{PublicSessionKey, SessionJwks};
 
 const ISSUER: &str = "https://identity.service.internal";
 const PASSWORD: &str = "identity-surface-fixture-secret";
@@ -333,7 +333,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     admin
         .batch_execute(&format!(
             "REVOKE SELECT ON identity.session_keys FROM {}",
-            quote_ident(IDENTITY_ISSUER_ROLE)
+            escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
         .await
         .expect("authoritative read refusal control");
@@ -360,8 +360,8 @@ async fn identity_https_has_only_public_jwks_and_health() {
     admin
         .batch_execute(&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
-            role = quote_ident(&role),
-            stable = quote_ident(IDENTITY_ISSUER_ROLE)
+            role = escape_identifier(&role),
+            stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
         .await
         .expect("remove exact fixture authority roles");

@@ -69,23 +69,6 @@ DO $app_drain$ DECLARE stale_pid integer; BEGIN
   END IF;
 END $app_drain$;
 
--- The host-only scenario-author group role (11.2/12g). Roles are CLUSTER-global,
--- so creating it here is what makes the canonical run-plane DDL
--- (deploy/sql/{run-state,authoring-tests,catalog-schema}.sql, which GRANT to it)
--- appliable out of the box — without it every such apply dies with
--- `role "wamn_scenario_author" does not exist`. Same advisory-locked,
--- idempotent shape as `wamn_schema_control::ensure_scenario_author_role_sql`
--- (crates/schema/control/src/run_plane.rs), so an init-time create and a later
--- reconcile-run-plane bootstrap converge on identical attributes.
-DO $scenario_author$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_scenario_author') THEN
-    CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-END $scenario_author$;
-
 -- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
 -- scoped A/B LOGIN generations, their CONNECT and their Secret are provisioned
 -- separately; this local fixture needs only the NOLOGIN grant carrier, so
@@ -129,20 +112,6 @@ END $platform_group$;
 -- dies, and the platform principal reads ZERO ROWS with no error at all.
 -- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
 --
--- `wamn_scenario_author` IS DELIBERATELY ABSENT FROM THIS LIST
--- (`wamn-0h0g.22.27`). It was granted here and NOWHERE ELSE: the converge path
--- that creates the role, `wamn_schema_control::ensure_scenario_author_role_sql`
--- (crates/schema/control/src/run_plane.rs), grants no membership at all. A
--- fresh install therefore granted what a converge did not, which is the
--- two-appliers drift class, and the membership itself was never ratified.
---
--- THE EMITTERS AGREE AT ZERO GRANTS. Agreeing by GRANTING would have ratified
--- through the side door a membership that was explicitly not pre-ratified;
--- replicating it into the converge path is REJECTED and is not to be
--- re-proposed. The six-SELECT revoke of `wamn-0h0g.22.20` has landed, so
--- deleting it strands nothing — the silent-deny risk that made the timing hard
--- is gone. Whether the author's two remaining catalog reads are load-bearing
--- for authoring is `wamn-0h0g.22.25`'s question and is not decided here.
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
 CREATE DATABASE wamn;

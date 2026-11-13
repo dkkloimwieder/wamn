@@ -66,7 +66,7 @@ pub(super) async fn start(
     std::fs::create_dir_all(&local)?;
     let bytes =
         wamn_component_composer::compose_control_entry(std::fs::read(&args.flow_http_component)?)?;
-    let digest = wamn_engine::component_admission::component_digest(&bytes);
+    let digest = wamn_digest::bytes_sha256(&bytes);
     let entry_path = wamn_engine::artifact_source::local_component_path(&local, &digest)?;
     std::fs::write(&entry_path, bytes)?;
     // Read the deployed interfaces instead of defining another HTTP contract.

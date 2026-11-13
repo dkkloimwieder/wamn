@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_broker::{Publisher, auth_changes::AuthDrops};
 use wamn_broker::nats::PlatformNats;
 
@@ -1024,7 +1024,7 @@ async fn holds_org_admin(inputs: &Inputs, principal: &PrincipalId) -> Result<boo
             "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
              WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)",
             &[
-                &principal.as_str(),
+                &principal.to_string().as_str(),
                 &inputs.org,
                 &wamn_platform_identity::org::ORG_ADMIN_ROLE,
             ],
@@ -1050,7 +1050,7 @@ async fn project_admin(
         wamn_environment_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
     if org_admin && grant {
         wamn_platform_identity::org::grant_org_admin(&authority, principal, &inputs.org).await?;
-        drops.identity(principal.as_str());
+        drops.identity(principal.to_string().as_str());
     } else if org_admin {
         wamn_platform_identity::org::revoke_org_admin(&authority, principal, &inputs.org, &mut drops)
             .await?;

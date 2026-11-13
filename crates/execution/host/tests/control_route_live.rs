@@ -33,8 +33,9 @@ use wamn_engine::router_delivery::{
 };
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::create_or_reuse_user;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
-use wamn_platform_identity::{PrincipalId, create_or_reuse_user};
 
 #[path = "support/control_fixture.rs"]
 mod control_fixture;
@@ -308,11 +309,12 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         },
     )
     .await?;
-    let boss = boss.as_str();
+    let boss_text = boss.to_string();
+    let boss = boss_text.as_str();
 
     let mut identity = fake_identity(vec![
-        ("ann@example.test", ann.as_str().to_owned(), false),
-        ("cat@example.test", cat.as_str().to_owned(), true),
+        ("ann@example.test", ann.to_string(), false),
+        ("cat@example.test", cat.to_string(), true),
     ])
     .await;
     let delivery = HostRouteDelivery::new(
@@ -340,7 +342,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         "org-admin/revoke",
     ] {
         assert_eq!(
-            call(&delivery, operation, ann.as_str(), json!({})).await,
+            call(&delivery, operation, ann.to_string().as_str(), json!({})).await,
             Err(format!("permission denied wamn-control:{operation}@0.9.0"))
         );
     }
@@ -364,18 +366,18 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
                    "memberships": [{"project": "billing", "env": "dev"}]})
         )
         .await,
-        Ok(json!({"principal_id": ann.as_str(), "enrolled": false, "invited": true}))
+        Ok(json!({"principal_id": ann.to_string().as_str(), "enrolled": false, "invited": true}))
     );
     assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
     assert_eq!(
         identity.requests.recv().await.unwrap(),
         (
             "/identity/invitations".to_owned(),
-            json!({"principal_id": ann.as_str()})
+            json!({"principal_id": ann.to_string().as_str()})
         )
     );
     assert_eq!(
-        grants(&admin, ann.as_str()).await,
+        grants(&admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             format!("member active {boss}")
@@ -389,7 +391,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             json!({"email": "cat@example.test", "display_name": "Cat"})
         )
         .await,
-        Ok(json!({"principal_id": cat.as_str(), "enrolled": true, "invited": false}))
+        Ok(json!({"principal_id": cat.to_string().as_str(), "enrolled": true, "invited": false}))
     );
     assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
     assert!(
@@ -420,9 +422,9 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         call(&delivery, "user/list", boss, json!({})).await,
         Ok(json!({"next_cursor": null, "total": 3, "users": [
-            {"principal_id": ann.as_str(), "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
+            {"principal_id": ann.to_string().as_str(), "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
             {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss", "status": "active", "org_admin": true},
-            {"principal_id": cat.as_str(), "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
+            {"principal_id": cat.to_string().as_str(), "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
         ]}))
     );
     // A paged read follows next_cursor to the end. Only a complete first page carries a total.
@@ -442,7 +444,11 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     }
     assert_eq!(
         paged,
-        [json!(ann.as_str()), json!(boss), json!(cat.as_str())]
+        [
+            json!(ann.to_string().as_str()),
+            json!(boss),
+            json!(cat.to_string().as_str())
+        ]
     );
     assert_eq!(
         call(&delivery, "user/list", boss, json!({"limit": 3}))
@@ -453,13 +459,13 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
 
     // org-admin materializes over every project and environment, and its
     // revoke leaves the ordinary memberships.
-    let ann_payload = json!({"principal_id": ann.as_str()});
+    let ann_payload = json!({"principal_id": ann.to_string().as_str()});
     assert_eq!(
         call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.as_str(), "org_admin": true}))
+        Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": true}))
     );
     assert_eq!(
-        grants(&admin, ann.as_str()).await,
+        grants(&admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             "env shop/dev".to_owned(),
@@ -471,10 +477,10 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
     assert_eq!(
         call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.as_str(), "org_admin": false}))
+        Ok(json!({"principal_id": ann.to_string().as_str(), "org_admin": false}))
     );
     assert_eq!(
-        grants(&admin, ann.as_str()).await,
+        grants(&admin, ann.to_string().as_str()).await,
         [
             "env billing/dev".to_owned(),
             "env shop/dev".to_owned(),
@@ -486,10 +492,10 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     // no access.
     assert_eq!(
         call(&delivery, "user/deactivate", boss, ann_payload.clone()).await,
-        Ok(json!({"principal_id": ann.as_str(), "status": "inactive"}))
+        Ok(json!({"principal_id": ann.to_string().as_str(), "status": "inactive"}))
     );
     assert_eq!(
-        grants(&admin, ann.as_str()).await,
+        grants(&admin, ann.to_string().as_str()).await,
         [format!("member inactive {boss}")]
     );
     assert_eq!(
@@ -501,10 +507,10 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
     assert_eq!(
         call(&delivery, "user/activate", boss, ann_payload).await,
-        Ok(json!({"principal_id": ann.as_str(), "status": "active"}))
+        Ok(json!({"principal_id": ann.to_string().as_str(), "status": "active"}))
     );
     assert_eq!(
-        grants(&admin, ann.as_str()).await,
+        grants(&admin, ann.to_string().as_str()).await,
         [format!("member active {boss}")]
     );
 
@@ -569,7 +575,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ids.push(user);
     }
     let [boss, cat, ann]: [PrincipalId; 3] = ids.try_into().expect("three users");
-    let (boss, cat, ann) = (boss.as_str(), cat.as_str(), ann.as_str());
+    let (boss_text, cat_text, ann_text) = (boss.to_string(), cat.to_string(), ann.to_string());
+    let (boss, cat, ann) = (boss_text.as_str(), cat_text.as_str(), ann_text.as_str());
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -844,7 +851,8 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         ids.push(user);
     }
     let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
-    let (boss, ann) = (boss.as_str(), ann.as_str());
+    let (boss_text, ann_text) = (boss.to_string(), ann.to_string());
+    let (boss, ann) = (boss_text.as_str(), ann_text.as_str());
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -1024,7 +1032,8 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         ids.push(user);
     }
     let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
-    let (boss, ann) = (boss.as_str(), ann.as_str());
+    let (boss_text, ann_text) = (boss.to_string(), ann.to_string());
+    let (boss, ann) = (boss_text.as_str(), ann_text.as_str());
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -1262,7 +1271,8 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
         ids.push(user);
     }
     let [boss, dee, cat]: [PrincipalId; 3] = ids.try_into().expect("three users");
-    let (boss, dee, cat) = (boss.as_str(), dee.as_str(), cat.as_str());
+    let (boss_text, dee_text, cat_text) = (boss.to_string(), dee.to_string(), cat.to_string());
+    let (boss, dee, cat) = (boss_text.as_str(), dee_text.as_str(), cat_text.as_str());
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -1452,7 +1462,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         call(
             &delivery,
             "environment/status",
-            principal.as_str(),
+            principal.to_string().as_str(),
             payload.clone()
         )
         .await,
@@ -1464,7 +1474,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         call(
             &delivery,
             "environment/status",
-            principal.as_str(),
+            principal.to_string().as_str(),
             json!({"project": "shop", "env": "dev"})
         )
         .await,
@@ -1478,7 +1488,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         call(
             &delivery,
             "environment/status",
-            principal.as_str(),
+            principal.to_string().as_str(),
             json!({"project": "shop", "env": "dev"})
         )
         .await,
@@ -1495,7 +1505,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         call(
             &delivery,
             "environment/status",
-            principal.as_str(),
+            principal.to_string().as_str(),
             payload.clone()
         )
         .await,
@@ -1507,7 +1517,13 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     ));
     std::fs::remove_file(login)?;
     assert_eq!(
-        call(&delivery, "environment/status", principal.as_str(), payload).await,
+        call(
+            &delivery,
+            "environment/status",
+            principal.to_string().as_str(),
+            payload
+        )
+        .await,
         Ok(unavailable)
     );
     std::fs::remove_dir_all(logins)?;
@@ -1521,10 +1537,6 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
         (
             "identity.lock_password_principal(uuid)",
             &["wamn_identity_issuer"],
-        ),
-        (
-            "wamn_authority.session_author_env_key()",
-            &["wamn_control_author"],
         ),
         ("platform.bump_counter(uuid, text, text)", &["wamn_app"]),
         ("platform.assign_counter(uuid, text, text)", &["wamn_app"]),
@@ -1603,11 +1615,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
         assert_eq!(function.get::<_, String>(2), "wamn_system", "{name} owner");
         let configuration: Vec<String> = function.get(1);
-        let expected_path = if name == "wamn_authority.session_author_env_key()" {
-            "search_path=pg_catalog, wamn_authority"
-        } else {
-            "search_path=pg_catalog"
-        };
+        let expected_path = "search_path=pg_catalog";
         assert_eq!(configuration, [expected_path], "{name}");
         for grantee in function.get::<_, Vec<String>>(3) {
             assert!(
@@ -1702,14 +1710,19 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .unwrap_err()
         .starts_with("permission denied ")
     );
-    call(&delivery, "external-system/write", boss.as_str(), external)
-        .await
-        .unwrap();
+    call(
+        &delivery,
+        "external-system/write",
+        boss.to_string().as_str(),
+        external,
+    )
+    .await
+    .unwrap();
     let integration = json!({"project":"billing","name":"erp","integration_type":"http","auth_type":"none","external_system":"erp"});
     call(
         &delivery,
         "integration/write",
-        boss.as_str(),
+        boss.to_string().as_str(),
         integration.clone(),
     )
     .await
@@ -1718,15 +1731,20 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     wrong_type["integration_type"] = "s3".into();
     wrong_type["auth_type"] = "custom".into();
     assert!(
-        call(&delivery, "integration/write", boss.as_str(), wrong_type)
-            .await
-            .is_err()
+        call(
+            &delivery,
+            "integration/write",
+            boss.to_string().as_str(),
+            wrong_type
+        )
+        .await
+        .is_err()
     );
     let connection = json!({"project":"billing","env":"dev","name":"erp","parameters":{"primary-authority":"https://example.invalid","tls-verification":"verify-authority"}});
     call(
         &delivery,
         "connection/write",
-        boss.as_str(),
+        boss.to_string().as_str(),
         connection.clone(),
     )
     .await
@@ -1755,7 +1773,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let empty = call(
         &delivery,
         "connection/get",
-        boss.as_str(),
+        boss.to_string().as_str(),
         selection.clone(),
     )
     .await
@@ -1769,7 +1787,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         let answer = call(
             &delivery,
             "connection/get",
-            boss.as_str(),
+            boss.to_string().as_str(),
             selection.clone(),
         )
         .await
@@ -1806,7 +1824,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     call(
         &delivery,
         "connection/disable",
-        boss.as_str(),
+        boss.to_string().as_str(),
         selection.clone(),
     )
     .await
@@ -1833,23 +1851,33 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         call(
             &delivery,
             "connection/delete",
-            boss.as_str(),
+            boss.to_string().as_str(),
             selection.clone()
         )
         .await
         .unwrap_err()
         .starts_with("referenced ")
     );
-    call(&delivery, "connection/enable", boss.as_str(), selection)
-        .await
-        .unwrap();
+    call(
+        &delivery,
+        "connection/enable",
+        boss.to_string().as_str(),
+        selection,
+    )
+    .await
+    .unwrap();
     let mut changed = connection.clone();
     changed["parameters"]["primary-authority"] = "https://changed.invalid".into();
     assert!(
-        call(&delivery, "connection/write", boss.as_str(), changed)
-            .await
-            .unwrap_err()
-            .starts_with("immutable_field ")
+        call(
+            &delivery,
+            "connection/write",
+            boss.to_string().as_str(),
+            changed
+        )
+        .await
+        .unwrap_err()
+        .starts_with("immutable_field ")
     );
     billing
         .batch_execute("ALTER TABLE platform.integration RENAME TO unavailable_integration")
@@ -1857,10 +1885,15 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let mut changed = connection;
     changed["parameters"]["tls-verification"] = "disabled".into();
     assert!(
-        call(&delivery, "connection/write", boss.as_str(), changed)
-            .await
-            .unwrap_err()
-            .starts_with("application_write_incomplete ")
+        call(
+            &delivery,
+            "connection/write",
+            boss.to_string().as_str(),
+            changed
+        )
+        .await
+        .unwrap_err()
+        .starts_with("application_write_incomplete ")
     );
     assert_eq!(admin.query_one("SELECT g.parameters->>'tls-verification' FROM registry.connection c JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1::text::uuid",&[&identity]).await?.get::<_,String>(0),"disabled");
     billing

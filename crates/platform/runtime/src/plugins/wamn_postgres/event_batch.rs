@@ -1,8 +1,8 @@
 //! Atomic admission of every matching event workflow for one delivery.
 
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_identity_protocol::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_materializer::workflow::{EventTrigger, SourceEvent};
-use wamn_project_state::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_run_state::queue::{insert_event_run_sql, insert_run_queue_sql, select_event_run_sql};
 
 use super::production_claim::{
@@ -119,7 +119,7 @@ impl WamnPostgres {
                 None,
                 None,
                 Some(&executor),
-                Some(PlatformComponent::Executor.principal_name()),
+                Some(&PlatformComponent::Executor.principal_name()),
                 None,
                 None,
                 policy.statement_timeout_ms,
@@ -133,8 +133,20 @@ impl WamnPostgres {
             require_executor_authority(&connection).await?;
             let source = SourceEvent::decode(admission.envelope.as_bytes())
                 .map_err(|error| invalid("decode event", error))?;
-            if admission.sequence == 0 || source.identity(env_key, project, &scope.environment, &[admission.source_event_id]).is_none() {
-                return Err(contract("identify event", "invalid event sequence or source identity"));
+            if admission.sequence == 0
+                || source
+                    .identity(
+                        env_key,
+                        project,
+                        &scope.environment,
+                        &[admission.source_event_id],
+                    )
+                    .is_none()
+            {
+                return Err(contract(
+                    "identify event",
+                    "invalid event sequence or source identity",
+                ));
             }
             // Different packages can share an entity subject. Only its own
             // consumer admits the event; the others settle it without runs.
@@ -142,75 +154,146 @@ impl WamnPostgres {
                 return Ok(());
             }
             let names: Vec<_> = scope.applications.keys().cloned().collect();
-            let packages = scope.applications.values().flat_map(|application| application.packages.iter().cloned()).collect();
-            let rows = connection.query(ENABLED_EVENTS_SQL, &[env_key, &scope.environment, &names]).await
+            let packages = scope
+                .applications
+                .values()
+                .flat_map(|application| application.packages.iter().cloned())
+                .collect();
+            let rows = connection
+                .query(ENABLED_EVENTS_SQL, &[env_key, &scope.environment, &names])
+                .await
                 .map_err(|error| storage("read event workflows", error))?;
             let mut matches = Vec::new();
             for row in rows {
                 let event = trigger(&row)?;
-                if let Some(input) = event.matches(&source, admission.sequence, &packages, env_key)
-                    .map_err(|error| invalid("filter event workflow", error))? {
+                if let Some(input) = event
+                    .matches(&source, admission.sequence, &packages, env_key)
+                    .map_err(|error| invalid("filter event workflow", error))?
+                {
                     matches.push((row, event, input));
                 }
             }
-            if matches.is_empty() { return Ok(()); }
+            if matches.is_empty() {
+                return Ok(());
+            }
             let actor = match &source {
                 SourceEvent::Cdc(envelope) => history_actor(&connection, envelope).await?,
                 SourceEvent::Derived(_) => None,
             };
-            let durability: String = connection.query_opt(
-                "SELECT durability_class FROM environment_policies WHERE env_key = $1 AND expected_environment = $2",
-                &[env_key, &scope.environment],
-            ).await.map_err(|error| storage("read environment policy", error))?
-                .ok_or_else(|| contract("read environment policy", "environment policy is absent"))?.get(0);
             let parent = match &source {
                 SourceEvent::Cdc(envelope) => envelope.causation.as_ref(),
                 SourceEvent::Derived(event) => Some(&event.causation),
             };
             let source_run = parent.map(|parent| parent.run.as_str());
             let root_run = parent.map(|parent| parent.root.as_str());
-            let depth = parent.map(|parent| i32::try_from(parent.depth + 1)).transpose()
+            let depth = parent
+                .map(|parent| i32::try_from(parent.depth + 1))
+                .transpose()
                 .map_err(|error| invalid("decode event depth", error))?;
             let principal = workflow_user_id().to_string();
             let delivery = format!("event:{}:{}", admission.sequence, admission.source_event_id);
             for (row, event, input) in matches {
-                let key = serde_json::json!(["event", scope.environment, event.application, event.workflow_id, delivery]).to_string();
+                let key = serde_json::json!([
+                    "event",
+                    scope.environment,
+                    event.application,
+                    event.workflow_id,
+                    delivery
+                ])
+                .to_string();
                 let input = input.to_string();
                 // A delivery committed by an earlier host retains its manifest
                 // and node digests, even when this release cannot run its graph.
-                if connection.query_opt(select_event_run_sql(), &[env_key, &key, &input]).await
-                    .map_err(|error| storage("read existing event run", error))?.is_some() {
+                if connection
+                    .query_opt(select_event_run_sql(), &[env_key, &key, &input])
+                    .await
+                    .map_err(|error| storage("read existing event run", error))?
+                    .is_some()
+                {
                     continue;
                 }
                 let version: i32 = row.get(7);
                 let graph_json: String = row.get(8);
                 let hash: String = row.get(9);
-                let role = row.get::<_, Option<String>>(10).unwrap_or_else(|| ADMIN_ROLE.to_owned());
+                let role = row
+                    .get::<_, Option<String>>(10)
+                    .unwrap_or_else(|| ADMIN_ROLE.to_owned());
                 let graph = super::workflow_resolution::parse_graph(&graph_json)
                     .map_err(|error| invalid("parse event workflow", error))?;
                 let packages = &scope.applications[&event.application].packages;
-                let gated = wamn_catalog::gate_workflow_document(env_key, packages, release.manifest(), &graph)
-                    .map_err(|error| invalid("gate event workflow", error))?;
-                if gated.as_str() != hash { return Err(contract("gate event workflow", "workflow hash differs")); }
-                let components = wamn_catalog::resolve_workflow_components(env_key, packages, release.manifest(), &graph)
-                    .map_err(|error| invalid("resolve event workflow", error))?;
-                let digests = serde_json::Value::Object(components.into_iter().map(|(node, component)| (node, serde_json::Value::String(component.component_digest))).collect()).to_string();
+                let gated = wamn_catalog::gate_workflow_document(
+                    env_key,
+                    packages,
+                    release.manifest(),
+                    &graph,
+                )
+                .map_err(|error| invalid("gate event workflow", error))?;
+                if gated.as_str() != hash {
+                    return Err(contract("gate event workflow", "workflow hash differs"));
+                }
+                let components = wamn_catalog::resolve_workflow_components(
+                    env_key,
+                    packages,
+                    release.manifest(),
+                    &graph,
+                )
+                .map_err(|error| invalid("resolve event workflow", error))?;
+                let digests = serde_json::Value::Object(
+                    components
+                        .into_iter()
+                        .map(|(node, component)| {
+                            (node, serde_json::Value::String(component.component_digest))
+                        })
+                        .collect(),
+                )
+                .to_string();
                 let digest = release.release().manifest_digest.as_str();
-                let inserted = connection.query_opt(&insert_event_run_sql(), &[
-                    env_key, &event.application, &digest, &scope.environment, &event.workflow_id,
-                    &version, &hash, &principal, &role, &delivery, &actor, &digests, &key, &input, &durability, &source_run, &root_run, &depth,
-                ]).await.map_err(|error| storage("insert event run", error))?;
+                let inserted = connection
+                    .query_opt(
+                        &insert_event_run_sql(),
+                        &[
+                            env_key,
+                            &event.application,
+                            &digest,
+                            &scope.environment,
+                            &event.workflow_id,
+                            &version,
+                            &hash,
+                            &principal,
+                            &role,
+                            &delivery,
+                            &actor,
+                            &digests,
+                            &key,
+                            &input,
+                            &source_run,
+                            &root_run,
+                            &depth,
+                        ],
+                    )
+                    .await
+                    .map_err(|error| storage("insert event run", error))?;
                 if let Some(row) = inserted {
                     let run_id: String = row.get(0);
-                    connection.execute(insert_run_queue_sql(), &[env_key, &run_id]).await
+                    connection
+                        .execute(insert_run_queue_sql(), &[env_key, &run_id])
+                        .await
                         .map_err(|error| storage("queue event run", error))?;
-                } else if connection.query_opt(select_event_run_sql(), &[env_key, &key, &input]).await
-                    .map_err(|error| storage("read existing event run", error))?.is_none() {
-                    return Err(contract("read existing event run", "event idempotency conflict"));
+                } else if connection
+                    .query_opt(select_event_run_sql(), &[env_key, &key, &input])
+                    .await
+                    .map_err(|error| storage("read existing event run", error))?
+                    .is_none()
+                {
+                    return Err(contract(
+                        "read existing event run",
+                        "event idempotency conflict",
+                    ));
                 }
             }
             Ok(())
-        }.await;
+        }
+        .await;
         finish_queue_transaction(self, connection, result, "commit event batch").await
     }
 }
@@ -233,7 +316,7 @@ async fn history_actor(
         .map_err(|error| storage("read entity map schemas", error))?;
     for row in schemas {
         let schema: String = row.get(0);
-        let quoted_schema = wamn_pg_core::quote_ident(&schema);
+        let quoted_schema = postgres_protocol::escape::escape_identifier(&schema);
         let sql = format!(
             "SELECT c.oid, c.relname::text FROM {quoted_schema}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid WHERE m.package_id = $1 AND m.entity_id = $2 AND c.relname = m.table_name AND c.relnamespace = $3::text::regnamespace"
         );
@@ -248,7 +331,7 @@ async fn history_actor(
         let table: String = model.get(1);
         let history = format!(
             "{quoted_schema}.{}",
-            wamn_pg_core::quote_ident(&format!("{table}_history"))
+            postgres_protocol::escape::escape_identifier(&format!("{table}_history"))
         );
         let present: bool = connection
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&history])
@@ -267,7 +350,10 @@ async fn history_actor(
         let image = serde_json::Value::Object(image.clone()).to_string();
         // History stores a full xid8. CDC carries its low 32 bits. Build the
         // primary key from the same columns and timestamp spelling as history.
-        let table = format!("{quoted_schema}.{}", wamn_pg_core::quote_ident(&table));
+        let table = format!(
+            "{quoted_schema}.{}",
+            postgres_protocol::escape::escape_identifier(&table)
+        );
         let sql = format!(
             "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by::text FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
         );

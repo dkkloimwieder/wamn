@@ -35,7 +35,7 @@ use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServedAttachment,
     ServingManifest, parse_attachment_auth_policy,
 };
-use wamn_session::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -303,7 +303,7 @@ impl InputSchemaValidators {
                 .get("input-schema")
                 .cloned()
                 .unwrap_or(Value::Bool(true));
-            let hash = wamn_execution_contract::canonical_json_sha256(&schema);
+            let hash = wamn_digest::canonical_json_sha256(&schema);
             attachment_hashes.insert(attachment_id.to_owned(), hash.clone());
             validators
                 .entry(hash.clone())
@@ -1018,35 +1018,6 @@ fn route_definition(
                     .clone()
                     .unwrap_or_else(|| "request_id".to_owned())
             }),
-        request_hash_rule: operation
-            .filter(|route| logs_intent(route.type_))
-            .map(|route| {
-                let form = route.canonicalization.clone().unwrap_or_default();
-                let mut excluded = form.excluded;
-                excluded.insert("request_id".to_owned());
-                routing::RequestHashRule {
-                    excluded: excluded.into_iter().collect(),
-                    lines: form.lines.map(|order| routing::LineOrder {
-                        path: order.path,
-                        ascending_by: order.ascending_by,
-                    }),
-                    spelling: form
-                        .spelling
-                        .into_iter()
-                        .map(|(path, spelling)| routing::FieldSpelling {
-                            path,
-                            spelling: match spelling {
-                                wamn_catalog::CanonicalSpelling::Numeric => {
-                                    routing::CanonicalSpelling::Numeric
-                                }
-                                wamn_catalog::CanonicalSpelling::Timestamptz => {
-                                    routing::CanonicalSpelling::Timestamptz
-                                }
-                            },
-                        })
-                        .collect(),
-                }
-            }),
         etag_inputs: operation.filter(|_| !signs_files).and_then(|route| {
             let kind = match route.type_ {
                 OperationType::Get => routing::EtagKind::Get(route.revision.clone()?),
@@ -1550,8 +1521,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingAttachment,
-        ServingComponent, ServingComponentOperation, ServingRelease, ServingRoute,
+        AdmittedComponentOperation, DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME,
+        ServingAttachment, ServingComponent, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1570,16 +1541,21 @@ mod tests {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "cat".into(),
-            operations: BTreeMap::from([(
-                "request".into(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: None,
-                    permissions: BTreeSet::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            descriptor: wamn_catalog::ComponentDescriptor::named("http-request", "0.1", COMPONENT),
+            descriptor: wamn_catalog::ComponentDescriptor {
+                operations: BTreeMap::from([(
+                    "request".into(),
+                    AdmittedComponentOperation {
+                        committed_result_schema: None,
+                        registered_operation: None,
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        statements: BTreeMap::new(),
+                    },
+                )]),
+                ..wamn_catalog::ComponentDescriptor::named("http-request", "0.1", COMPONENT)
+            },
         }])
     }
 
@@ -1625,7 +1601,6 @@ mod tests {
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             attachments,
         )
@@ -1801,7 +1776,6 @@ mod tests {
                 reads: BTreeSet::new(),
                 revision: Some("revision".into()),
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "route".into(),
@@ -1902,7 +1876,6 @@ mod tests {
                     reads: BTreeSet::new(),
                     revision: None,
                     idempotency: None,
-                    canonicalization: None,
                 }]),
                 BTreeMap::from([("route".to_string(), route)]),
             );
@@ -1929,23 +1902,6 @@ mod tests {
             component: "http-request".into(),
             operation: "request".into(),
         };
-        let form = wamn_catalog::RouteCanonicalization {
-            excluded: BTreeSet::from(["value.note".into()]),
-            lines: Some(wamn_catalog::RouteLineOrder {
-                path: "value.lines".into(),
-                ascending_by: "id".into(),
-            }),
-            spelling: BTreeMap::from([
-                (
-                    "value.lines[].quantity".into(),
-                    wamn_catalog::CanonicalSpelling::Numeric,
-                ),
-                (
-                    "value.at".into(),
-                    wamn_catalog::CanonicalSpelling::Timestamptz,
-                ),
-            ]),
-        };
         for kind in [
             OperationType::Command,
             OperationType::Update,
@@ -1964,7 +1920,6 @@ mod tests {
                     }]),
                     revision: Some("revision".into()),
                     idempotency: (kind == OperationType::Command).then(|| "value.key".into()),
-                    canonicalization: Some(form.clone()),
                 }]),
                 BTreeMap::from([("route".into(), attachment.clone())]),
             );
@@ -1986,25 +1941,9 @@ mod tests {
                         "request_id"
                     })
                 );
-                let rule = definition.request_hash_rule.as_ref().unwrap();
-                assert_eq!(rule.excluded, ["request_id", "value.note"]);
-                let order = rule.lines.as_ref().unwrap();
-                assert_eq!(order.path, "value.lines");
-                assert_eq!(order.ascending_by, "id");
-                assert_eq!(rule.spelling[0].path, "value.at");
-                assert!(matches!(
-                    rule.spelling[0].spelling,
-                    routing::CanonicalSpelling::Timestamptz
-                ));
-                assert_eq!(rule.spelling[1].path, "value.lines[].quantity");
-                assert!(matches!(
-                    rule.spelling[1].spelling,
-                    routing::CanonicalSpelling::Numeric
-                ));
                 assert!(definition.etag_inputs.is_none());
             } else {
                 assert!(definition.idempotency_rule.is_none());
-                assert!(definition.request_hash_rule.is_none());
                 let inputs = definition.etag_inputs.as_ref().unwrap();
                 assert_eq!(inputs.release, manifest.digest().as_str());
                 match &inputs.kind {
@@ -2029,7 +1968,6 @@ mod tests {
             for definition in route_definitions(&manifest, method) {
                 assert!(definition.sealed_operation_id.is_none());
                 assert!(definition.idempotency_rule.is_none());
-                assert!(definition.request_hash_rule.is_none());
                 assert!(definition.etag_inputs.is_none());
             }
         }

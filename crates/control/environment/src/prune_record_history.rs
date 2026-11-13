@@ -28,6 +28,7 @@ pub(super) mod plan;
 use plan::prune_history_sql;
 
 use anyhow::{Context as _, bail};
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
@@ -37,7 +38,6 @@ use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope,
     bind_platform_principal_sql, workload_generation_role,
 };
-use wamn_pg_core::{Identifier, QualifiedName, quote_literal};
 
 /// Inputs of one record history retention run.
 #[derive(Debug)]
@@ -202,11 +202,11 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
         let days = days.parse::<i32>().with_context(|| {
             format!("the retention P{days}D of {schema}.{relation} has too many days")
         })?;
-        let table = QualifiedName::new(
-            Identifier::new(schema.as_str())?,
-            Identifier::new(history.as_str())?,
-        )
-        .quoted();
+        let table = format!(
+            "{}.{}",
+            escape_identifier(&schema),
+            escape_identifier(&history)
+        );
         let removed: i64 = transaction
             .query_one(&prune_history_sql(&table), &[&days])
             .await

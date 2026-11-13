@@ -63,6 +63,8 @@ use wamn_control_registry::identifiers::valid_project;
 use wamn_control_registry::project_env_key;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
+use wamn_identity_protocol::ADMIN_ROLE;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
     ApplicationScope, permission_rows, project_authority, require_platform_rows, role_names,
     write_environment_status,
@@ -78,9 +80,7 @@ use wamn_platform_identity::org::{
     status_environments,
 };
 use wamn_platform_identity::paging::{ListPage, Order};
-use wamn_platform_identity::{IdentityError, IdentityRefusal, PrincipalId, check_user_contact};
-
-use wamn_project_state::ADMIN_ROLE;
+use wamn_platform_identity::{IdentityError, IdentityRefusal, check_user_contact};
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -108,6 +108,12 @@ impl From<tokio_postgres::Error> for Refusal {
 
 /// A refusal of the identity writes is the declared error of the route, with
 /// the input member it names in `field`. Any other error is a failure.
+impl From<wamn_identity_protocol::ParseIdentityError> for Refusal {
+    fn from(source: wamn_identity_protocol::ParseIdentityError) -> Self {
+        IdentityError::from(source).into()
+    }
+}
+
 impl From<IdentityError> for Refusal {
     fn from(error: IdentityError) -> Self {
         let (code, field) = match error.refusal() {
@@ -299,10 +305,10 @@ impl ControlRoutes<'_> {
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.as_str());
+                drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
-                Ok(json!({ "principal_id": principal.as_str(), "status": "active" }))
+                Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "active" }))
             }
             HostHandler::UserDeactivate => {
                 let principal = principal(payload)?;
@@ -315,7 +321,7 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.as_str(), "status": "inactive" }))
+                Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "inactive" }))
             }
             HostHandler::OrgAdminGrant => {
                 let principal = principal(payload)?;
@@ -323,13 +329,13 @@ impl ControlRoutes<'_> {
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&transaction, &principal, self.org).await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.as_str());
+                drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.as_str(), "org_admin": true }))
+                Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": true }))
             }
             HostHandler::OrgAdminRevoke => {
                 let principal = principal(payload)?;
@@ -342,7 +348,7 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.as_str(), "org_admin": false }))
+                Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": false }))
             }
             HostHandler::EnvironmentList => {
                 let request: ProjectScope = parse(payload)?;
@@ -482,14 +488,14 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.as_str());
+                drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.as_str(),
+                    "principal_id": principal.to_string().as_str(),
                     "project": request.project,
                     "env": request.env,
                     "member": true,
@@ -518,7 +524,7 @@ impl ControlRoutes<'_> {
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.as_str(),
+                    "principal_id": principal.to_string().as_str(),
                     "project": request.project,
                     "env": request.env,
                     "member": false,
@@ -533,14 +539,14 @@ impl ControlRoutes<'_> {
                     .await?;
                 grant_project_admin(&transaction, &principal, self.org, &request.project).await?;
                 let mut drops = AuthDrops::default();
-                drops.identity(principal.as_str());
+                drops.identity(principal.to_string().as_str());
                 transaction.commit().await?;
                 self.changes.publish(drops).await;
                 let environments = self.environments(Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.as_str(),
+                    "principal_id": principal.to_string().as_str(),
                     "project": request.project,
                     "project_admin": true,
                 }))
@@ -567,7 +573,7 @@ impl ControlRoutes<'_> {
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
                 Ok(json!({
-                    "principal_id": principal.as_str(),
+                    "principal_id": principal.to_string().as_str(),
                     "project": request.project,
                     "project_admin": false,
                 }))
@@ -673,7 +679,7 @@ impl ControlRoutes<'_> {
         let transaction = self.begin(&mut writer, attachment, caller).await?;
         invite_member(&transaction, &user.principal_id, self.org, &grants).await?;
         let mut drops = AuthDrops::default();
-        drops.identity(user.principal_id.as_str());
+        drops.identity(user.principal_id.to_string().as_str());
         transaction.commit().await?;
         self.changes.publish(drops).await;
         let mut environments: std::collections::BTreeSet<(String, String)> =
@@ -710,7 +716,7 @@ impl ControlRoutes<'_> {
             }
         }
         Ok(json!({
-            "principal_id": user.principal_id.as_str(),
+            "principal_id": user.principal_id.to_string().as_str(),
             "enrolled": user.enrolled,
             "invited": !user.enrolled,
         }))
@@ -881,7 +887,7 @@ impl ControlRoutes<'_> {
             .execute(
                 "SELECT pg_catalog.set_config('app.user_id', $1, true), \
                  pg_catalog.set_config('app.operation', $2, true)",
-                &[&caller.as_str(), &attachment.operation],
+                &[&caller.to_string().as_str(), &attachment.operation],
             )
             .await?;
         if !self.admits(&transaction, caller, project).await? {
@@ -1001,7 +1007,7 @@ async fn write_application(
         let transaction = client.transaction().await?;
         transaction.execute(
             "SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.operation', $2, true)",
-            &[&caller.as_str(), &attachment.operation],
+            &[&caller.to_string().as_str(), &attachment.operation],
         ).await?;
         require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
@@ -1138,7 +1144,7 @@ async fn write_status(
             .execute(
                 "SELECT pg_catalog.set_config('app.user_id', $1, true), \
                  pg_catalog.set_config('app.operation', $2, true)",
-                &[&caller.as_str(), &attachment.operation],
+                &[&caller.to_string().as_str(), &attachment.operation],
             )
             .await?;
         require_platform_rows(&transaction).await?;
@@ -1175,7 +1181,8 @@ pub(crate) fn control_page(
     }) {
         return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
     }
-    let mut scope = json!({"principal": caller.as_str(), "org": org, "project": project});
+    let mut scope =
+        json!({"principal": caller.to_string().as_str(), "org": org, "project": project});
     if filtered {
         let environment = match fields.get("environment") {
             None => Value::Null,
@@ -1262,7 +1269,7 @@ mod tests {
             )
             .unwrap();
             let key = if order == Order::Principal {
-                json!(["a@example.invalid", principal.as_str()])
+                json!(["a@example.invalid", principal.to_string().as_str()])
             } else {
                 json!(["a"])
             };
@@ -1329,7 +1336,7 @@ mod tests {
                 Order::Principal,
             )
         };
-        let key = json!(["a@example.invalid", principal.as_str()]);
+        let key = json!(["a@example.invalid", principal.to_string().as_str()]);
         let cursor = page("{\"limit\":1,\"environment\":\"dev\"}")
             .unwrap()
             .answer("members", vec![key.clone(), key], Clone::clone)["next_cursor"]

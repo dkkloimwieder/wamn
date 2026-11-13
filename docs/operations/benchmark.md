@@ -1,7 +1,7 @@
 # Benchmark
 
 This page holds the current baselines of the Receiving benchmark: the tier 2 run on `wamn-dev` with the collector in place, the PostgreSQL floor, and the local run.
-The procedure and regression gate of the tier 2 run are in [Google Cloud operations](gcp.md#58-benchmark).
+The procedure for the tier 2 run is in [Google Cloud operations](gcp.md#58-benchmark).
 `tools/bench/tier.sh` writes one result per platform version to `tests/bench/platform-<version>.json`.
 Latency is in milliseconds.
 
@@ -48,15 +48,6 @@ A `local.sh` result also includes `host_cpu_ms_per_request`. This value is the u
 The raw results retain guest digests, edge selection, maximum latency, and version conflicts.
 Throughput counts all completed attempts, including errors and conflicts.
 
-Run the local regression gate after the benchmarks:
-
-```bash
-cargo run --offline -p wamn-conformance-tests --bin wamn-benchmark-gate -- --local
-```
-
-The gate compares the newest two local application results and the newest two local PostgreSQL results separately.
-It requires concurrency 16 and refuses a throughput drop greater than 20% for any call in the previous result.
-Without `--local`, the command compares platform results with the same rules.
 Local timings inform design decisions but do not decide them.
 
 Use `--call get`, `--call update`, `--call query`, `--call receipt-query`, `--call create`, or `--call record_receipt` for one call type.
@@ -218,7 +209,6 @@ All profile files stay in the private run directory under `/var/tmp/wamn-h2r2l/`
 
 The newest tier 2 result is [`platform-0.1.26.json`](../../tests/bench/platform-0.1.26.json).
 Receiving ran on `wamn-dev` with every host exporting spans to the collector. The run used concurrency 16 for 60 seconds per call and had 0 errors.
-The conformance test `benchmark::platform_benchmark_gate` compares the newest two result files.
 
 | Call | Throughput | p50 | p95 | p99 | Statements per request |
 | --- | --- | --- | --- | --- | --- |

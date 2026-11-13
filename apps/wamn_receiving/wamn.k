@@ -183,9 +183,7 @@ manifest.Package {
                     {path = "row_version", type = "int32", revision = True, label = "Revision", visible = True}
                 ]
             }
-            canonicalization = {
-                line_order = {ascending_by = "purchase_order_line_id", positive_member = "quantity"}
-            }
+
             errors = [
                 "invalid_input"
                 "purchase_order_not_found"

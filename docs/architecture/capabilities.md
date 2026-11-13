@@ -303,16 +303,15 @@ These delivery rules do not create exactly-once application effects.
 
 ## Session role reader
 
-`POST /session` exchanges a current user PAT for a bounded session token.
+`POST /password/session` signs in a user and returns a bounded session token.
 The request supplies the audience and cannot supply roles, an `env_key`, or a database URL.
 A mounted target declaration selects the exact audience, `env_key`, database, and dedicated `SessionRoleReader` credential.
 
 That role reads active users and their role assignments within the selected tenant.
 It cannot write application data, read permission tables, or use catalog and execution authority.
 The query binds the principal explicitly. The target selects its environment database.
-The service reads roles afresh for every exchange.
-An inactive user or empty role set refuses exchange.
-The request permits five seconds and a 1,024-byte body.
+The service reads roles for each login.
+An inactive user or empty role set refuses login.
 
 Connections are lazy and retained only for active configured targets.
 An unused target opens no connection.
@@ -322,7 +321,7 @@ The [execution page](execution.md#caller-authentication) owns token acceptance a
 ## PAT issuance
 
 `POST /pats` requires a client certificate under the dedicated operator CA.
-An accepted operator certificate can mint for an existing active user or service principal.
+An accepted operator certificate can mint for an existing active service principal.
 A PAT, session JWT, or caller identity header cannot grant issuance authority.
 Absent operator trust roots refuse issuance.
 

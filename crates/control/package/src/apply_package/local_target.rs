@@ -7,13 +7,7 @@ use wamn_schema_control::PackageDirectory;
 
 /// The digest of the local manifest bytes, independent of installed SQL state.
 pub fn manifest_digest(directory: &PackageDirectory) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(
-            &ring::digest::SHA256,
-            &directory.manifest_bytes
-        ))
-    )
+    wamn_digest::bytes_sha256(&directory.manifest_bytes)
 }
 
 const COMMENT_ON_TARGET_SQL: &str = "SELECT pg_catalog.format(\

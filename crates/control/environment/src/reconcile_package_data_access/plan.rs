@@ -153,7 +153,7 @@ pub(super) fn desired_effective_acl(effective: &EffectiveDataAccess) -> Effectiv
 /// the render stays safe even when the read and the write disagree. The role
 /// and PUBLIC both lose the privilege, because PUBLIC reaches the App role.
 pub(super) fn render_undeclared_revocation(role: &str, residue: &UndeclaredResidue) -> String {
-    let role = quote_identifier(role);
+    let role = postgres_protocol::escape::escape_identifier(role);
     let mut targets = BTreeMap::<(&str, &str, &str), BTreeSet<&str>>::new();
     for (schema, table, kind, column, _) in residue {
         let columns = targets
@@ -165,7 +165,11 @@ pub(super) fn render_undeclared_revocation(role: &str, residue: &UndeclaredResid
     }
     let mut sql = String::new();
     for ((schema, table, kind), columns) in targets {
-        let target = format!("{}.{}", quote_identifier(schema), quote_identifier(table));
+        let target = format!(
+            "{}.{}",
+            postgres_protocol::escape::escape_identifier(schema),
+            postgres_protocol::escape::escape_identifier(table)
+        );
         // A sequence carries its own privilege vocabulary, and REVOKE refuses to
         // name a sequence as a table.
         let carrier = if kind == "S" { "SEQUENCE" } else { "TABLE" };
@@ -181,7 +185,7 @@ pub(super) fn render_undeclared_revocation(role: &str, residue: &UndeclaredResid
         // columns the read named lose each column privilege by name.
         let columns = columns
             .into_iter()
-            .map(quote_identifier)
+            .map(postgres_protocol::escape::escape_identifier)
             .collect::<Vec<_>>()
             .join(", ");
         for privilege in ["SELECT", "INSERT", "UPDATE", "REFERENCES"] {
@@ -204,8 +208,4 @@ pub(super) fn residue_targets(residue: &UndeclaredResidue) -> String {
         .into_iter()
         .collect::<Vec<_>>()
         .join(",")
-}
-
-pub(super) fn quote_identifier(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
 }

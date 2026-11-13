@@ -55,11 +55,12 @@ use crate::component_declaration::{
     authored_base_digests, declared_platform_packages, render_declaration_document,
     render_palette_declaration,
 };
+use wamn_digest::bytes_sha256;
 pub use wamn_package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
 };
-use wamn_package_artifact::{Repository, ensure_tag, sha256_digest};
+use wamn_package_artifact::{Repository, ensure_tag};
 
 /// Media type of the three tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
@@ -274,7 +275,7 @@ fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec
             descriptor.component
         );
         ensure!(
-            wamn_execution_contract::canonical_json_bytes(
+            wamn_digest::canonical_json_bytes(
                 &serde_json::to_value(&descriptor).context("encode a component descriptor")?
             ) == bytes,
             "component descriptor {} is not canonical JSON",
@@ -401,7 +402,7 @@ fn pack_layers(
     Ok(PackedPackage {
         package_id,
         version,
-        digest: sha256_digest(&manifest),
+        digest: bytes_sha256(&manifest),
         layers,
         manifest,
     })
@@ -769,7 +770,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         );
         let bytes = std::fs::read(&source.file)
             .with_context(|| format!("read {}", source.file.display()))?;
-        let digest = sha256_digest(&bytes);
+        let digest = bytes_sha256(&bytes);
         ensure!(
             digest == facts.component_digest && digest == source.sha256,
             "component {} is {digest}, but admission saw {} and build.json records {}; run wamn build again",
@@ -782,7 +783,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         descriptors.push(DescriptorFile {
             name: source.name.clone(),
             digest: digest.clone(),
-            bytes: wamn_execution_contract::canonical_json_bytes(
+            bytes: wamn_digest::canonical_json_bytes(
                 &serde_json::to_value(&descriptor).context("encode a component descriptor")?,
             ),
         });
@@ -804,7 +805,7 @@ async fn push_artifact(repository: &Repository, packed: &PackedPackage) -> anyho
     {
         repository
             .client
-            .push_blob(&repository.reference, bytes.to_vec(), &sha256_digest(bytes))
+            .push_blob(&repository.reference, bytes.to_vec(), &bytes_sha256(bytes))
             .await
             .with_context(|| format!("push a blob of package artifact {}", repository.reference))?;
     }
@@ -1227,7 +1228,7 @@ mod tests {
                 build_record::BuildComponent {
                     name: name.to_owned(),
                     path,
-                    sha256: sha256_digest(name.as_bytes()),
+                    sha256: bytes_sha256(name.as_bytes()),
                 }
             })
             .to_vec();
@@ -1249,7 +1250,7 @@ mod tests {
                 sqlx: "0.9.0".to_owned(),
             },
             outputs: build_record::BuildOutputs {
-                manifest: sha256_digest(b"manifest"),
+                manifest: bytes_sha256(b"manifest"),
                 files: BTreeMap::new(),
                 components,
             },
@@ -1329,7 +1330,7 @@ mod tests {
 
     /// A canonical descriptor of the component `receiving`.
     fn descriptor() -> DescriptorFile {
-        let digest = sha256_digest(b"receiving");
+        let digest = bytes_sha256(b"receiving");
         let descriptor: ComponentDescriptor = serde_json::from_value(serde_json::json!({
             "component": "receiving",
             "interface-version": "0.1.0",
@@ -1344,9 +1345,7 @@ mod tests {
         DescriptorFile {
             name: "receiving".to_owned(),
             digest,
-            bytes: wamn_execution_contract::canonical_json_bytes(
-                &serde_json::to_value(&descriptor).unwrap(),
-            ),
+            bytes: wamn_digest::canonical_json_bytes(&serde_json::to_value(&descriptor).unwrap()),
         }
     }
 
@@ -1471,7 +1470,7 @@ manifest.Package {
         std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
         let second = pack_package(&root).unwrap();
         assert_eq!(first.digest, second.digest);
-        assert_eq!(first.digest, sha256_digest(&first.manifest));
+        assert_eq!(first.digest, bytes_sha256(&first.manifest));
         assert_eq!(first.tag(), "wamn_receiving-2.2.11");
 
         let layout = first
@@ -1520,7 +1519,7 @@ manifest.Package {
             manifest["config"],
             serde_json::json!({
                 "mediaType": EMPTY_CONFIG_MEDIA_TYPE,
-                "digest": sha256_digest(b"{}"),
+                "digest": bytes_sha256(b"{}"),
                 "size": 2,
             })
         );
@@ -1591,7 +1590,7 @@ manifest.Package {
                 .collect::<Vec<_>>(),
             ["blob-put", "receiving"]
         );
-        assert_eq!(listed[1].sha256, sha256_digest(b"receiving"));
+        assert_eq!(listed[1].sha256, bytes_sha256(b"receiving"));
         let ComponentTemplate::Palette {
             bytes, store_alias, ..
         } = &listed[0].template

@@ -80,8 +80,7 @@ A change to its external address-enforcement boundary requires its own security 
 
 ## PostgreSQL replication dependency
 
-The root manifest uses the released `pg_walstream` 0.9.0 crate from `vendor/pg-walstream`.
-The local patch returns typed keepalive events so idle readers can report acknowledged progress.
+The root manifest pins `pg_walstream` 0.10.0 from [the fork](https://github.com/dkkloimwieder/pg-walstream/tree/2f6697e4e761565ed366b94f43a6f29b2287d67a).
+Its patch returns typed keepalive events so idle readers can report acknowledged progress.
 The raw event API retains its upstream behavior.
-Upstream 0.9.0 includes the FAILOVER slot syntax fix.
-See [the patch record](../../vendor/pg-walstream/WAMN-PATCH.md).
+Upstream includes the FAILOVER slot syntax fix.

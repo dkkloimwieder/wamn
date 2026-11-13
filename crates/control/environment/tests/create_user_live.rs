@@ -88,7 +88,7 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     .await
     .expect("create the user principal");
 
-    let id = principal.id().as_str().to_owned();
+    let id = principal.id().to_string().as_str().to_owned();
     let stored: String = observer
         .query_one(
             "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
@@ -110,7 +110,7 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     )
     .await
     .expect("create a second user principal from a mixed-case address");
-    let mixed_id = mixed.id().as_str().to_owned();
+    let mixed_id = mixed.id().to_string().as_str().to_owned();
     let folded: String = observer
         .query_one(
             "SELECT email FROM identity.principals WHERE id = $1::text::uuid",

@@ -13,9 +13,9 @@ use argon2::{
     password_hash::{PasswordHasher as _, PasswordVerifier as _, phc::PasswordHash},
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
-use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 use tokio_postgres::{Client, GenericClient, Transaction};
+use wamn_identity_protocol::secret::{SecretToken, SecretType};
 use zeroize::Zeroizing;
 
 use crate::{AuthenticatedPrincipal, PrincipalId, decode_principal};
@@ -29,10 +29,8 @@ pub const MIN_PASSWORD_CHARACTERS: usize = 15;
 pub const PASSWORD_MEMORY_KIB: u32 = 19 * 1024;
 /// Two simultaneous jobs use at most 38 MiB of Argon2 working memory.
 pub const MAX_PASSWORD_JOBS: usize = 2;
-const INVITATION_PREFIX: &str = "wamn_inv_";
 const INVITATION_PURPOSE: &str = "invitation";
 const RESET_PURPOSE: &str = "reset";
-const RESET_PREFIX: &str = "wamn_reset_";
 
 /// Failure classes inside the password owner, not HTTP or WIT outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,25 +293,21 @@ impl fmt::Debug for Invitation {
     }
 }
 fn token_hash(secret: &str, purpose: &str) -> Option<Vec<u8>> {
-    let prefix = if purpose == INVITATION_PURPOSE {
-        INVITATION_PREFIX
+    SecretToken::parse(secret_type(purpose), secret)
+        .ok()
+        .map(|token| token.digest())
+}
+fn secret_type(purpose: &str) -> SecretType {
+    if purpose == INVITATION_PURPOSE {
+        SecretType::Invitation
     } else {
-        RESET_PREFIX
-    };
-    let suffix = secret.strip_prefix(prefix)?;
-    if suffix.len() != 64
-        || !suffix
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
-        return None;
+        SecretType::Reset
     }
-    Some(Sha256::digest(secret.as_bytes()).to_vec())
 }
 async fn bind_actor(tx: &Transaction<'_>, actor: &PrincipalId) -> Result<(), PasswordError> {
     tx.execute(
         "SELECT set_config('app.user_id', $1, true)",
-        &[&actor.as_str()],
+        &[&actor.to_string().as_str()],
     )
     .await
     .map_err(|source| database(&source))?;
@@ -329,14 +323,14 @@ async fn lock_account(
     let row = tx
         .query_opt(
             "SELECT identity.lock_password_principal($1::text::uuid)",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .map_err(|source| database(&source))?;
     if !row.is_some_and(|row| row.get::<_, bool>(0)) {
         return Ok(Some((RefusalCause::NoSuchAccount, None)));
     }
-    let has_password = tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0);
+    let has_password = tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.to_string().as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0);
     Ok(match (enrolled, has_password) {
         (false, true) => Some((RefusalCause::AlreadyEnrolled, None)),
         (true, false) => Some((RefusalCause::NoSuchAccount, Some("no-password"))),
@@ -373,25 +367,19 @@ async fn issue_token(
     purpose: &str,
     expected_email: Option<&str>,
 ) -> Result<Invitation, PasswordError> {
-    let prefix = if purpose == INVITATION_PURPOSE {
-        INVITATION_PREFIX
-    } else {
-        RESET_PREFIX
-    };
     let lifetime: i64 = if purpose == INVITATION_PURPOSE {
         86400
     } else {
         900
     };
-    let mut bytes = [0u8; 32];
-    SystemRandom::new().fill(&mut bytes).map_err(|_| {
+    let token = SecretToken::mint(secret_type(purpose)).map_err(|_| {
         failure(
             PasswordErrorType::Infrastructure,
             "email credential entropy failed",
         )
     })?;
-    let secret = Zeroizing::new(format!("{prefix}{}", hex::encode(bytes)));
-    let hash = token_hash(&secret, purpose).expect("generated email credential is valid");
+    let hash = token.digest();
+    let secret = token.into_secret();
     let tx = client
         .transaction()
         .await
@@ -403,7 +391,7 @@ async fn issue_token(
         let current: String = tx
             .query_one(
                 "SELECT email FROM identity.principals WHERE id=$1::text::uuid",
-                &[&principal.as_str()],
+                &[&principal.to_string().as_str()],
             )
             .await
             .map_err(|source| database(&source))?
@@ -417,7 +405,7 @@ async fn issue_token(
         }
     }
     bind_actor(&tx, actor).await?;
-    let expires_at: String = tx.query_one("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')", &[&hash, &principal.as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?.get(0);
+    let expires_at: String = tx.query_one("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')", &[&hash, &principal.to_string().as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
 }
@@ -428,7 +416,7 @@ async fn usable_token(
     hash: &[u8],
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
+    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.to_string().as_str(), &purpose]).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -487,7 +475,7 @@ pub async fn reset_password(
 ) -> Result<(), PasswordError> {
     establish_password(client, work, principal, secret, password, RESET_PURPOSE).await?;
     // The reset revoked every login of the principal (store_password).
-    drops.identity(principal.as_str());
+    drops.identity(principal.to_string().as_str());
     Ok(())
 }
 
@@ -528,15 +516,15 @@ async fn store_password(
     }
     bind_actor(&tx, principal).await?;
     if purpose == RESET_PURPOSE {
-        tx.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
+        tx.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid", &[&principal.to_string().as_str(), &hash]).await.map_err(|source| database(&source))?;
         // reset_password records the drop of this revoke after the commit.
         crate::password_login::revoke_all(&tx, principal, &mut AuthDrops::default())
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {
-        tx.execute("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
+        tx.execute("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1::text::uuid, $2)", &[&principal.to_string().as_str(), &hash]).await.map_err(|source| database(&source))?;
     }
-    tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL", &[&principal.as_str()]).await.map_err(|source| database(&source))?;
+    tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1::text::uuid AND consumed_at IS NULL", &[&principal.to_string().as_str()]).await.map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))
 }
 

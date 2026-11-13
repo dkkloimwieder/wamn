@@ -7,8 +7,8 @@
 //! spelling that is not the one [`id::encode_with_id`] writes.
 
 use serde_json::Value;
-use wamn_execution_contract::{canonical_numeric, canonical_timestamptz};
 use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
+use wamn_scalar::{canonical_numeric, canonical_timestamptz};
 
 use crate::{Invalid, scalar};
 

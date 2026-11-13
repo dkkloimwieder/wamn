@@ -34,7 +34,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await
         .unwrap();
-    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN; END IF; END $$; CREATE SCHEMA wamn_run;").await.unwrap();
+    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$; DO $$ BEGIN  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN; END IF; END $$; CREATE SCHEMA wamn_run;").await.unwrap();
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
@@ -178,7 +178,6 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             pat.token(),
             "acme",
             "host-project",
-            "prod",
             &[ADMIN_ROLE],
         )
         .await
@@ -242,7 +241,7 @@ async fn queued_run_without_a_selected_role_uses_only_active_services_and_all_th
     const USER: &str = "c6d14132-207e-4c8b-a8f3-2ad242c10dc1";
     const ABSENT: &str = "13e42097-1f19-4e5b-a79a-5c333c57f677";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let client = connect(database.url()).await;
     client.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:queued-caller-fixture',false)", &[&SERVICE]).await.unwrap();
     client.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','queued-service@example.test'),($2::text::uuid,'user','queued-user@example.test')", &[&SERVICE, &USER]).await.unwrap();

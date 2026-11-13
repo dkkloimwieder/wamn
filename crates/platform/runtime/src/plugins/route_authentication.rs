@@ -22,10 +22,9 @@ use wamn_engine::flow_http_routing::{
     RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
     required_bearer_token, route_credential, signature_unauthorized, unauthorized,
 };
+use wamn_identity_protocol::ADMIN_ROLE;
+use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
-
-use wamn_project_state::ADMIN_ROLE;
-use wamn_session::verifier::SessionVerifier;
 
 use crate::connection_facts::ConnectionFacts;
 use crate::connection_memory::ConnectionStatus;
@@ -366,7 +365,7 @@ impl PlatformRouteAuthenticator {
         if let Some((headers, requires_csrf)) = cookie_headers {
             check_csrf(requires_csrf, session.claims().csrf.as_deref(), headers)?;
         }
-        let principal = session.claims().sub.parse().map_err(|_| unauthorized())?;
+        let principal = session.claims().sub;
         let permissions = authentication
             .postgres
             .session_operation_permissions(
@@ -406,7 +405,7 @@ impl PlatformRouteAuthenticator {
             if !active {
                 return Err(unauthorized());
             }
-            cache.keep_session_active(ticket, token, session.claims().sub.as_str());
+            cache.keep_session_active(ticket, token, session.claims().sub.to_string().as_str());
         }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
@@ -423,7 +422,7 @@ impl PlatformRouteAuthenticator {
         let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
             attachment_id,
-            session.claims().sub.as_str(),
+            session.claims().sub.to_string().as_str(),
             CredentialType::Session,
             permissions.admin,
             permissions.references.into_iter().collect(),
@@ -461,7 +460,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .ok_or_else(signature_unauthorized)?;
             let id = principal.to_string();
             let principal = id
-                .parse::<wamn_platform_identity::PrincipalId>()
+                .parse::<wamn_identity_protocol::PrincipalId>()
                 .map_err(|_| signature_unauthorized())?;
             let authentication = self
                 .authentication
@@ -530,7 +529,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         token,
                         &authentication.org,
                         &authentication.project,
-                        &scope.environment,
                         &[ADMIN_ROLE],
                     )
                     .instrument(tracing::info_span!("wamn.auth.identity"))
@@ -545,7 +543,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             };
             let principal = principal.principal();
             match principal.principal_type() {
-                PrincipalType::Platform => return Err(unauthorized()),
+                PrincipalType::Platform | PrincipalType::User => return Err(unauthorized()),
                 PrincipalType::Service if principal.subject().starts_with("connection-") => {
                     let connection = principal
                         .subject()
@@ -562,7 +560,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .map_err(|_| authentication_unavailable())?;
                     if !active.is_some_and(|fact| {
                         fact.status == ConnectionStatus::Active
-                            && fact.service_principal_id.to_string() == principal.id().as_str()
+                            && fact.service_principal_id.to_string()
+                                == principal.id().to_string().as_str()
                     }) {
                         return Err(unauthorized());
                     }
@@ -572,10 +571,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 {
                     return Err(unauthorized());
                 }
-                PrincipalType::Service | PrincipalType::User => {}
+                PrincipalType::Service => {}
             }
-            // A service and a user hold their roles the same way, through
-            // `wamn-ctl grant-role`.
+            // A service receives its roles through `wamn-ctl grant-role`.
             let permissions = authentication
                 .postgres
                 .user_operation_permissions(&authentication.project, &scope.env_key, principal.id())
@@ -588,7 +586,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id,
-                principal.id().as_str(),
+                principal.id().to_string().as_str(),
                 CredentialType::Pat,
                 permissions.admin,
                 permissions.references.into_iter().collect(),
@@ -676,7 +674,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
         }
         Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
-            session.claims().sub.as_str(),
+            session.claims().sub.to_string().as_str(),
             CredentialType::Session,
             false,
             std::collections::HashSet::new(),
@@ -690,8 +688,8 @@ pub(crate) mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
-        AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
-        PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+        AdmittedComponentOperation, AttachmentTarget, AttachmentType, DefinitionHash,
+        PAT_AUTHENTICATION_MODE, PackageCoordinate, ServingAttachment, ServingComponent,
         ServingManifest, ServingRelease,
     };
     use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
@@ -717,20 +715,26 @@ pub(crate) mod tests {
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "cat".into(),
-                operations: BTreeMap::from([(
-                    "request".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: wamn_catalog::ComponentDescriptor::named(
-                    "http-request",
-                    "0.1",
-                    digest('a'),
-                ),
+                descriptor: {
+                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                        "http-request",
+                        "0.1",
+                        digest('a'),
+                    );
+                    descriptor.operations = BTreeMap::from([(
+                        "request".into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+                            registered_operation: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
             }]),
             BTreeSet::from([wamn_catalog::ServingRoute {
                 package_id: "cat".into(),
@@ -740,7 +744,6 @@ pub(crate) mod tests {
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "orders".to_string(),

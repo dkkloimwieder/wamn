@@ -21,9 +21,9 @@ use wamn_catalog::manifest::{
     canonical_operation_identity, custom_artifact_stem, rust_type_identifier,
 };
 use wamn_catalog::manifest::{FieldReference, OperationErrorDetailKey, authored_name};
-use wamn_catalog::schema::ColumnType;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
+use wamn_scalar::SqlValueType;
 
 #[expect(
     clippy::too_many_arguments,
@@ -324,20 +324,7 @@ fn emit_custom_operation_contracts(
             "limit": {"default": 100, "minimum": 1, "maximum": 100, "invalid": "invalid_input"}
         }));
     }
-    if let Some(canonicalization) = &operation.canonicalization {
-        let mut contract = json!({
-            "payload": "canonical_compact_json",
-            "excluded_fields": canonicalization.excluded_fields,
-            "uuid": "lowercase_hyphenated",
-            "timestamptz": "utc_rfc3339_six_fractional_digits",
-            "numeric": "postgresql_lexical_scale_preserved",
-        });
-        if let Some(order) = canonicalization.line_order.as_ref() {
-            contract["line_order"] = json!(format!("{}_ascending", order.ascending_by));
-            contract["duplicate_line"] = json!("invalid_input");
-        }
-        input_contract.insert("canonicalization".to_owned(), contract);
-    }
+
     insert_json(
         files,
         &format!("{root}.input.json"),
@@ -433,7 +420,11 @@ fn idempotency_contract(key: &str, operation_id: &str) -> Value {
     })
 }
 
-fn statement_value_contract(name: &str, ty: ColumnType, nullable: bool) -> StatementValueContract {
+fn statement_value_contract(
+    name: &str,
+    ty: SqlValueType,
+    nullable: bool,
+) -> StatementValueContract {
     StatementValueContract {
         name: name.to_owned(),
         ty,
@@ -507,24 +498,6 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
             }
             if operation.input.line.is_some() {
                 sources.push("line_count");
-            }
-            // Only a command WITH lines can refuse a duplicate one.
-            if operation
-                .canonicalization
-                .as_ref()
-                .is_some_and(|canonical| canonical.line_order.is_some())
-            {
-                sources.push("duplicate_line");
-            }
-            // Only a command that names a positive line member can refuse a
-            // line that is not positive.
-            if operation
-                .canonicalization
-                .as_ref()
-                .and_then(|canonical| canonical.line_order.as_ref())
-                .is_some_and(|order| order.positive_member.is_some())
-            {
-                sources.push("nonpositive_quantity");
             }
             json!({"literal": literal, "from": sources})
         }
@@ -729,7 +702,7 @@ fn emit_operation_contracts(
         columns.retain(|column| column.name != "row_version");
         columns.push(statement_value_contract(
             "row_version",
-            ColumnType::Int64,
+            SqlValueType::Int64,
             false,
         ));
     }

@@ -133,10 +133,7 @@ fn resolved_wasi_virt() -> (String, String) {
         .join("lib/virtual_adapter-wasip2.wasm");
     let bytes = std::fs::read(&adapter)
         .unwrap_or_else(|error| panic!("read {}: {error}", adapter.display()));
-    (
-        revision,
-        wamn_engine::component_admission::component_digest(&bytes),
-    )
+    (revision, wamn_digest::bytes_sha256(&bytes))
 }
 
 #[test]
@@ -169,7 +166,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
         .collect();
     println!(
         "production-profile-adapter={} imports={imports:?}",
-        wamn_engine::component_admission::component_digest(&adapter.adapter)
+        wamn_digest::bytes_sha256(&adapter.adapter)
     );
     for package in ["wasi:io", "wasi:clocks"] {
         assert_registry_family(package, &imports);

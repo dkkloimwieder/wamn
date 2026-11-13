@@ -1,6 +1,7 @@
 //! Typed component contracts generated from operation declarations.
 
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{BTreeMap, Column, Table, insert_bytes};
@@ -14,7 +15,6 @@ use wamn_catalog::manifest::{
     rust_identifier, rust_type_identifier,
 };
 use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, authored_name};
-use wamn_catalog::schema::ColumnType;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// How many request elements one generated CRUD call carries. The codec refuses any
@@ -279,7 +279,7 @@ fn emit_operation_errors(
     source: &mut String,
     name: &str,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
-    revision: Option<ColumnType>,
+    revision: Option<SqlValueType>,
 ) {
     for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
@@ -454,7 +454,7 @@ fn emit_update_codec(
     // The revision carries its declared width. An int32 arrives as a JSON
     // number and narrows, and an int64 arrives as a string and parses.
     let (revision_json_type, revision_conversion) =
-        if model_column(table, revision).column_type() == ColumnType::Int32 {
+        if model_column(table, revision).column_type() == SqlValueType::Int32 {
             ("i64", "i32::try_from(request.expected_revision)")
         } else {
             ("String", "request.expected_revision.parse::<i64>()")
@@ -648,7 +648,7 @@ fn emit_query_codec(
     emit_json_row_fields(&mut source, fields, "row");
     source.push_str("    })\n}\n\n");
     if feed {
-        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == ColumnType::Int64 { "change.id.to_string()," } else { "change.id," }));
+        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == SqlValueType::Int64 { "change.id.to_string()," } else { "change.id," }));
         source.push_str("/// The page or the changes, or the error, as the outcome list a read reply\n/// carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(contract::QueryResult::Page(page)) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor } }]),\n        Ok(contract::QueryResult::Changes(changes)) => json!([{ \"value\": { \"rows\": changes.rows.iter().map(change_json).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
     } else {
         source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
@@ -911,8 +911,8 @@ fn emit_crud_json_codec(
 fn mutation_value(column: &Column, access: &str) -> String {
     let value = format!("change({access})");
     match column.column_type() {
-        ColumnType::Int64 => format!("{value}.map(|value| value.map(|value| value.0))"),
-        ColumnType::Json => format!("{value}.map(|value| value.map(|value| value.to_string()))"),
+        SqlValueType::Int64 => format!("{value}.map(|value| value.map(|value| value.0))"),
+        SqlValueType::Json => format!("{value}.map(|value| value.map(|value| value.to_string()))"),
         _ => value,
     }
 }
@@ -958,7 +958,7 @@ fn emit_mutation_validation(
             Vec::as_slice,
         );
         let mut checks = Vec::new();
-        if column.column_type() == ColumnType::Uuid {
+        if column.column_type() == SqlValueType::Uuid {
             checks.push("!canonical_uuid(value)".to_owned());
         }
         if !values.is_empty() {
@@ -1043,7 +1043,7 @@ fn emit_crud_normalizer(
             let column = model_column(table, &filter.field);
             let name = binding_identifier(&filter.field).expect("validated filter has a Rust name");
             // Only a list carries uuid values: an is-null filter carries one boolean.
-            if column.column_type() == ColumnType::Uuid && filter.match_mode.takes_list() {
+            if column.column_type() == SqlValueType::Uuid && filter.match_mode.takes_list() {
                 writeln!(source, "    if let Some(values) = &mut request.{name} {{ for value in values {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
                     .expect("writing to a String cannot fail");
             }
@@ -1067,7 +1067,7 @@ fn emit_scalar_validation(
     source: &mut String,
     access: &str,
     path: &str,
-    ty: ColumnType,
+    ty: SqlValueType,
     values: &[String],
     optional: bool,
 ) {
@@ -1078,7 +1078,7 @@ fn emit_scalar_validation(
     } else {
         &format!("&mut {access}")
     };
-    if ty == ColumnType::Uuid {
+    if ty == SqlValueType::Uuid {
         writeln!(
             source,
             "        if !canonical_uuid({value}) {{ return Err(invalid({path:?})); }}"
@@ -1220,7 +1220,7 @@ fn emit_crud_request_assignments(
                     .expect("delete revision exists"),
             )
             .column_type()
-                == ColumnType::Int64
+                == SqlValueType::Int64
             {
                 ".0"
             } else {
@@ -1256,10 +1256,10 @@ fn emit_crud_request_assignments(
                 let member =
                     binding_identifier(&filter.field).expect("validated filter has a Rust name");
                 let conversion = match model_column(table, &filter.field).column_type() {
-                    ColumnType::Int64 => {
+                    SqlValueType::Int64 => {
                         ".map(|values| values.into_iter().map(|value| value.0).collect())"
                     }
-                    ColumnType::Json => {
+                    SqlValueType::Json => {
                         ".map(|values| values.into_iter().map(|value| value.to_string()).collect())"
                     }
                     _ => "",
@@ -1317,7 +1317,7 @@ fn emit_crud_encoder(
     fields: &[ContractFieldDeclaration],
     operation: &OperationDeclaration,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
-    revision: Option<ColumnType>,
+    revision: Option<SqlValueType>,
     guarded: &[GuardedField],
 ) {
     let type_name = rust_type_identifier(action.as_str());
@@ -2047,7 +2047,7 @@ fn emit_error_detail(
     source: &mut String,
     literal: &str,
     detail: &OperationErrorDetailDeclaration,
-    revision: Option<ColumnType>,
+    revision: Option<SqlValueType>,
 ) {
     writeln!(source, "  record {}-detail {{", wit_name(literal))
         .expect("writing to a String cannot fail");
@@ -2090,11 +2090,11 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 /// an operation that reports none keeps the wider member. A bound or observed
 /// value is a decimal string, spelled as a numeric is, so a fractional
 /// quantity and an integer count share one member.
-fn detail_type(key: OperationErrorDetailKey, revision: Option<ColumnType>) -> &'static str {
+fn detail_type(key: OperationErrorDetailKey, revision: Option<SqlValueType>) -> &'static str {
     match key {
         OperationErrorDetailKey::ExpectedRowVersion
         | OperationErrorDetailKey::ObservedRowVersion
-            if revision == Some(ColumnType::Int32) =>
+            if revision == Some(SqlValueType::Int32) =>
         {
             "s32"
         }
@@ -2111,25 +2111,25 @@ fn detail_type(key: OperationErrorDetailKey, revision: Option<ColumnType>) -> &'
 }
 
 /// The revision width of a CRUD operation, or none when it declares no revision.
-fn revision_width(table: &Table, operation: &OperationDeclaration) -> Option<ColumnType> {
+fn revision_width(table: &Table, operation: &OperationDeclaration) -> Option<SqlValueType> {
     operation
         .revision_field
         .as_deref()
         .map(|revision| model_column(table, revision).column_type())
 }
 
-fn wit_type(ty: ColumnType) -> String {
+fn wit_type(ty: SqlValueType) -> String {
     let value = match ty {
-        ColumnType::Boolean => "bool",
-        ColumnType::Int32 => "s32",
-        ColumnType::Int64 => "s64",
-        ColumnType::Float64 => "f64",
-        ColumnType::Text
-        | ColumnType::Numeric
-        | ColumnType::Timestamptz
-        | ColumnType::Json
-        | ColumnType::Uuid => "string",
-        ColumnType::Bytes => "list<u8>",
+        SqlValueType::Boolean => "bool",
+        SqlValueType::Int32 => "s32",
+        SqlValueType::Int64 => "s64",
+        SqlValueType::Float64 => "f64",
+        SqlValueType::Text
+        | SqlValueType::Numeric
+        | SqlValueType::Timestamptz
+        | SqlValueType::Json
+        | SqlValueType::Uuid => "string",
+        SqlValueType::Bytes => "list<u8>",
     };
     value.to_owned()
 }
@@ -2224,7 +2224,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             .find(|field| &field.path == key)
             .expect("validated key")
             .ty
-            == ColumnType::Int64
+            == SqlValueType::Int64
         {
             "change.id.to_string()"
         } else {
@@ -2482,16 +2482,16 @@ fn emit_json_tree_fields(source: &mut String, fields: &[FieldIr], root: &str) {
 /// number cannot carry every `int64` value, so a revision, a counter and an
 /// application integer take one spelling. Every codec path reads this rule
 /// here, and no path reads the revision flag for it.
-const fn int64_is_json_string(ty: ColumnType) -> bool {
-    matches!(ty, ColumnType::Int64)
+const fn int64_is_json_string(ty: SqlValueType) -> bool {
+    matches!(ty, SqlValueType::Int64)
 }
 
 /// The contract type one IR type name states, when it states one.
 ///
-/// A generated CRUD field carries a [`ColumnType`]. An IR field carries the
+/// A generated CRUD field carries a [`SqlValueType`]. An IR field carries the
 /// wire literal of the same vocabulary, plus `string`, `object` and `array`,
 /// which name no column type.
-fn column_type_of(type_name: &str) -> Option<ColumnType> {
+fn column_type_of(type_name: &str) -> Option<SqlValueType> {
     serde_json::from_value(serde_json::Value::String(type_name.to_owned())).ok()
 }
 
@@ -2671,17 +2671,18 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
     }
 }
 
-fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
+fn codec_rust_type(ty: SqlValueType, nullable: bool) -> String {
     let ty = match ty {
-        ColumnType::Boolean => "bool",
-        ColumnType::Int32 => "i32",
-        ColumnType::Int64 => "JsonInt64",
-        ColumnType::Float64 => "f64",
-        ColumnType::Json => "serde_json::Value",
-        ColumnType::Text | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Uuid => {
-            "String"
-        }
-        ColumnType::Bytes => "Vec<u8>",
+        SqlValueType::Boolean => "bool",
+        SqlValueType::Int32 => "i32",
+        SqlValueType::Int64 => "JsonInt64",
+        SqlValueType::Float64 => "f64",
+        SqlValueType::Json => "serde_json::Value",
+        SqlValueType::Text
+        | SqlValueType::Numeric
+        | SqlValueType::Timestamptz
+        | SqlValueType::Uuid => "String",
+        SqlValueType::Bytes => "Vec<u8>",
     };
     if nullable {
         format!("Option<{ty}>")
@@ -2746,7 +2747,7 @@ fn emit_codec_error_arm(
     error_type: &str,
     literal: &str,
     detail: &OperationErrorDetailDeclaration,
-    revision: Option<ColumnType>,
+    revision: Option<SqlValueType>,
     guarded: &[GuardedField],
 ) {
     let variant = rust_type_identifier(literal);
@@ -2764,7 +2765,7 @@ fn emit_codec_error_arm(
     )
     .expect("writing to a String cannot fail");
     source.push_str("            let mut detail = Map::new();\n");
-    let wide_revision = revision != Some(ColumnType::Int32);
+    let wide_revision = revision != Some(SqlValueType::Int32);
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");
         if wide_revision
@@ -2825,13 +2826,13 @@ fn emit_codec_error_arm(
         .expect("writing to a String cannot fail");
 }
 
-fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nullable: bool) {
+fn emit_codec_result_field(source: &mut String, field: &str, ty: SqlValueType, nullable: bool) {
     emit_codec_result_field_for(source, field, ty, nullable, "value");
 }
 
 /// Encode one list result field: each element takes the spelling of a
 /// single field of its type.
-fn emit_codec_result_list(source: &mut String, member: &str, ty: ColumnType, nullable: bool) {
+fn emit_codec_result_list(source: &mut String, member: &str, ty: SqlValueType, nullable: bool) {
     let mut element = String::new();
     emit_codec_result_field_for(&mut element, "element", ty, nullable, "list");
     let element = element
@@ -2850,12 +2851,12 @@ fn emit_codec_result_list(source: &mut String, member: &str, ty: ColumnType, nul
 fn emit_codec_result_field_for(
     source: &mut String,
     field: &str,
-    ty: ColumnType,
+    ty: SqlValueType,
     nullable: bool,
     carrier: &str,
 ) {
     let name = binding_identifier(field).expect("validated result field has a Rust name");
-    if ty == ColumnType::Json {
+    if ty == SqlValueType::Json {
         let value = if nullable {
             format!(
                 "{carrier}.{name}.as_ref().map(|value| serde_json::from_str::<Value>(value).expect(\"declared JSON result contains valid JSON\"))"

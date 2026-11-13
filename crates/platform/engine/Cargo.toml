@@ -11,20 +11,19 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+wamn-digest.workspace = true
 # No `oci` feature here: the registry source lives in wamn-runtime.
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
-wamn-execution-contract = { workspace = true }
 # `invoke_operation` takes the intent store trait. Run-state is pure.
 wamn-run-state = { workspace = true }
 # A route delivery derives its causation, and a registration source names the
 # platform component that runs it. Both crates are pure.
 wamn-event-wire = { workspace = true }
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 # A route request's credential kind reads the PAT prefix. The crate is pure.
-wamn-session = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 # Route input schemas. A pure schema check with no I/O.

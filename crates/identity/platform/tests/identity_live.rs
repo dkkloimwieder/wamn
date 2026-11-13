@@ -5,9 +5,10 @@ use wamn_broker::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
-    IdentityErrorType, PreparedIdentityReads, Principal, PrincipalId, PrincipalStatus,
-    PrincipalType, assign_project_role, create_service, create_user, disable_principal,
+    IdentityErrorType, PreparedIdentityReads, Principal, PrincipalStatus, PrincipalType,
+    assign_project_role, create_service, create_user, disable_principal,
     grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
     resolve_principal, resolve_subject, revoke_project_env_membership,
 };
@@ -49,7 +50,7 @@ async fn platform_identity_round_trip_on_postgres() {
     client
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning.as_str()],
+            &[&provisioning.to_string().as_str()],
         )
         .await
         .expect("bind wamn:provisioning for the fixture session");
@@ -142,7 +143,7 @@ async fn platform_identity_round_trip_on_postgres() {
     assert_eq!(
         roles
             .iter()
-            .map(wamn_platform_identity::ProjectRole::as_str)
+            .map(wamn_identity_protocol::RoleName::as_str)
             .collect::<Vec<_>>(),
         ["project-author", "project-promoter"]
     );
@@ -153,7 +154,10 @@ async fn platform_identity_round_trip_on_postgres() {
              WHERE p.id = $1::text::uuid \
                AND p.created_by = $2::text::uuid AND p.updated_by = $2::text::uuid \
                AND r.created_by = $2::text::uuid AND r.updated_by = $2::text::uuid",
-            &[&user.id().as_str(), &provisioning.as_str()],
+            &[
+                &user.id().to_string().as_str(),
+                &provisioning.to_string().as_str(),
+            ],
         )
         .await
         .expect("read principal and role stamps");
@@ -209,7 +213,7 @@ async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
     let stored: String = client
         .query_one(
             "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-            &[&first.id().as_str()],
+            &[&first.id().to_string().as_str()],
         )
         .await
         .expect("read the stored email")
@@ -300,9 +304,11 @@ async fn project_environment_membership_round_trip(
     let reads = PreparedIdentityReads::prepare(client)
         .await
         .expect("prepare the identity query");
-    let user_token = issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
-        .await
-        .expect("issue the user route PAT");
+    assert!(
+        issue_pat(client, user.id(), "route member", Duration::from_secs(3600))
+            .await
+            .is_err()
+    );
     let service_token = issue_pat(
         client,
         service.id(),
@@ -311,14 +317,19 @@ async fn project_environment_membership_round_trip(
     )
     .await
     .expect("issue the service route PAT");
-    for token in [user_token.token(), service_token.token()] {
-        assert!(
-            route_principal_id(&reads, client, token, "demo", "widgets", "dev")
-                .await
-                .is_none(),
-            "a valid PAT without its kind's authority passed"
-        );
-    }
+    assert!(
+        route_principal_id(
+            &reads,
+            client,
+            service_token.token(),
+            "demo",
+            "widgets",
+            "dev"
+        )
+        .await
+        .is_none(),
+        "a PAT without project authority passed"
+    );
     let other_user = create_user(
         client,
         "other@example.com",
@@ -352,7 +363,7 @@ async fn project_environment_membership_round_trip(
         )
         .await
         .expect("read the stored grant");
-    assert_eq!(stored.get::<_, String>(0), user.id().as_str());
+    assert_eq!(stored.get::<_, String>(0), user.id().to_string().as_str());
     assert_eq!(stored.get::<_, i64>(1), 1);
     let stamped: bool = client
         .query_one(
@@ -371,11 +382,6 @@ async fn project_environment_membership_round_trip(
         has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
             .expect("unprepared query observes new grant")
-    );
-    assert_eq!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev").await,
-        Some(user.id().as_str().to_owned()),
-        "user membership must not require a project management role"
     );
     assign_project_role(
         client,
@@ -397,7 +403,7 @@ async fn project_environment_membership_round_trip(
             "dev"
         )
         .await,
-        Some(service.id().as_str().to_owned()),
+        Some(service.id().to_string()),
         "a service needs its role, not a user membership"
     );
     for (org, project, env) in [
@@ -406,9 +412,9 @@ async fn project_environment_membership_round_trip(
         ("demo", "widgets", "prod"),
     ] {
         assert!(
-            route_principal_id(&reads, client, user_token.token(), org, project, env)
+            !has_project_env_membership(client, user.id(), org, project, env)
                 .await
-                .is_none(),
+                .unwrap(),
             "the prepared PAT query accepted another environment"
         );
     }
@@ -437,7 +443,7 @@ async fn project_environment_membership_round_trip(
             "INSERT INTO identity.project_env_memberships \
              (principal_id, principal_type, org, project, env) \
              VALUES ($1::text::uuid, 'service', 'demo', 'widgets', 'dev')",
-            &[&service.id().as_str()],
+            &[&service.id().to_string().as_str()],
         )
         .await
         .expect_err("direct SQL cannot bypass the user-only constraint");
@@ -471,9 +477,9 @@ async fn project_environment_membership_round_trip(
         .expect("revoke membership")
     );
     assert!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev")
+        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
-            .is_none(),
+            .unwrap(),
         "the prepared PAT query must observe membership revocation"
     );
     assert!(
@@ -510,9 +516,9 @@ async fn project_environment_membership_round_trip(
         .await
         .expect("replace the provisioned environment");
     assert!(
-        route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev")
+        !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await
-            .is_none(),
+            .unwrap(),
         "replacement environment must not inherit the deleted grant"
     );
 
@@ -522,7 +528,7 @@ async fn project_environment_membership_round_trip(
     client
         .execute(
             "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&other_user.id().as_str()],
+            &[&other_user.id().to_string().as_str()],
         )
         .await
         .expect("delete a principal with no PAT audit records");
@@ -644,14 +650,14 @@ async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> Pr
             "SELECT subject, display_name, created_by::text, updated_by::text, \
                     (SELECT count(*) FROM identity.principals) \
              FROM identity.principals WHERE id = $1::text::uuid",
-            &[&id.as_str()],
+            &[&id.to_string().as_str()],
         )
         .await
         .expect("read the seeded wamn:provisioning row");
     assert_eq!(row.get::<_, String>(0), component.principal_name());
     assert_eq!(row.get::<_, String>(1), component.principal_name());
-    assert_eq!(row.get::<_, String>(2), id.as_str());
-    assert_eq!(row.get::<_, String>(3), id.as_str());
+    assert_eq!(row.get::<_, String>(2), id.to_string().as_str());
+    assert_eq!(row.get::<_, String>(3), id.to_string().as_str());
     assert_eq!(
         row.get::<_, i64>(4),
         1,
@@ -685,7 +691,7 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
         format!(
             "INSERT INTO identity.pats \
                (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-             VALUES ('{PRINCIPAL}', 'user', '{}', '{}', 'unbound', now() + interval '1 hour')",
+             VALUES ('{PRINCIPAL}', 'service', '{}', '{}', 'unbound', now() + interval '1 hour')",
             "0".repeat(16),
             "0".repeat(64),
         ),
@@ -726,28 +732,28 @@ async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Cl
         (
             "platform",
             OTHER.to_owned(),
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
             None,
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
         ),
         (
             "platform",
             executor.principal_id().to_string(),
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
             None,
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
         ),
         (
             "platform",
             executor.principal_id().to_string(),
-            executor.principal_name(),
+            executor.principal_name().as_str(),
             None,
-            executor.principal_name(),
+            executor.principal_name().as_str(),
         ),
         (
             "platform",
             provisioning.principal_id().to_string(),
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
             None,
             "Provisioning",
         ),
@@ -756,7 +762,7 @@ async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Cl
         (
             "user",
             OTHER.to_owned(),
-            provisioning.principal_name(),
+            provisioning.principal_name().as_str(),
             ADDRESS,
             "User",
         ),
@@ -785,11 +791,11 @@ async fn route_principal_id(
     token: &str,
     org: &str,
     project: &str,
-    env: &str,
+    _env: &str,
 ) -> Option<String> {
     reads
-        .authenticate_route_pat(client, token, org, project, env, &["operator", "admin"])
+        .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
         .await
         .expect("read route PAT and scope in one statement")
-        .map(|authenticated| authenticated.principal().id().as_str().to_owned())
+        .map(|authenticated| authenticated.principal().id().to_string())
 }

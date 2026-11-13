@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
@@ -40,30 +40,30 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("part_code", ColumnType::Text, false, None, None),
-            Column::new("stock_id", ColumnType::Uuid, false, None, None),
+            Column::new("part_code", SqlValueType::Text, false, None, None),
+            Column::new("stock_id", SqlValueType::Uuid, false, None, None),
             Column::new(
                 "status",
-                ColumnType::Text,
+                SqlValueType::Text,
                 false,
                 Some(ColumnDefault::text("open")),
                 None,
             ),
             Column::new(
                 "row_version",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
@@ -85,7 +85,7 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
         tables.push(Table::new(
             "inventory",
             "unused",
-            vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+            vec![Column::new("id", SqlValueType::Uuid, false, None, None)],
             vec![Constraint::primary_key("unused_id_pkey", ["id"]).unwrap()],
             Vec::new(),
         ));

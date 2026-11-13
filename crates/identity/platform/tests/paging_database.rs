@@ -151,7 +151,7 @@ async fn sql_pages_keep_order_scope_and_current_authority() {
         .execute(
             "DELETE FROM identity.project_env_memberships \
              WHERE principal_id = $1::text::uuid AND env = 'b'",
-            &[&principals[2].as_str()],
+            &[&principals[2].to_string().as_str()],
         )
         .await
         .unwrap();

@@ -22,11 +22,12 @@ pub(super) mod plan;
 mod resources;
 mod roles;
 mod rows;
-pub use plan::{delete_control_rows_sql, instance_families, instance_roles};
+pub use plan::{instance_families, instance_roles};
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
 use async_nats::jetstream;
+use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
@@ -37,7 +38,6 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 use wamn_event_wire::delivery_advisory_stream;
-use wamn_pg_core::{quote_ident, quote_literal};
 
 use super::Platform;
 use super::analyse::application_releases;
@@ -49,16 +49,6 @@ use wamn_release_control::release_chart;
 
 /// How long CloudNativePG may take to finalize the `Database` CR.
 const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
-
-/// The control tables that key rows by `env_key`, each with its
-/// immutability trigger.
-pub const CONTROL_TABLES: [(&str, Option<&str>); 2] = [
-    (
-        "catalog.authoring_command_audit",
-        Some("authoring_command_audit_immutable"),
-    ),
-    ("wamn_run.gate_reports", Some("gate_reports_immutable")),
-];
 
 /// Delete the environment. With `data`, the database and its roles are
 /// dropped too, and a stranded run does not stop the delete. The caller
@@ -424,7 +414,7 @@ async fn delete_locked(
         let roles = instance_roles(triple, &instance, &env_key)?;
         for role in &roles {
             admin
-                .batch_execute(&format!("DROP ROLE IF EXISTS {}", quote_ident(role)))
+                .batch_execute(&format!("DROP ROLE IF EXISTS {}", escape_identifier(role)))
                 .await
                 .with_context(|| format!("drop role {role}"))?;
         }
@@ -492,10 +482,7 @@ mod tests {
     fn the_instance_roles_are_the_cdc_role_then_a_and_b_of_each_family() {
         let roles =
             instance_roles(&Triple::new("dkk", "receiving", "dev"), "zf7o454t", "dev").unwrap();
-        // The CDC role, then a and b of the ten instance families.
-        assert_eq!(instance_families().count(), 10);
-        assert_eq!(roles.len(), 1 + 10 * 2);
-        assert_eq!(roles[0], "wamn_cdc_dkk__receiving__dev__zf7o454t");
+        assert_eq!(roles.len(), 1 + instance_families().count() * 2);
         assert!(roles.iter().all(|role| role.len() <= 63));
     }
 }

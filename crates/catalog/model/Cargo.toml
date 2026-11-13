@@ -19,6 +19,8 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 wamn-record-history = { workspace = true }
 wit-parser = { workspace = true }
 croner = { workspace = true }
@@ -26,10 +28,8 @@ boon = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
-sha2 = { workspace = true }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-test-postgres = { workspace = true, optional = true }
 

@@ -3,10 +3,12 @@
 //! `org-admin` and `project-admin` write their row, then the project roles and
 //! memberships below it, and refuse a scope outside the member's org.
 
+use wamn_identity_protocol::PrincipalId;
+
 use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
-    IdentityErrorType, PrincipalId, create_or_reuse_user,
+    IdentityErrorType, create_or_reuse_user,
     org::{
         activate_org_membership, grant_org_admin, grant_project_admin, materialize_admin_grants,
     },
@@ -40,7 +42,7 @@ async fn grants(client: &Client, principal: &PrincipalId) -> Vec<String> {
              UNION ALL SELECT 'env ' || org || '/' || project || '/' || env \
                FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid \
              ORDER BY 1",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .expect("read the grants")
@@ -199,7 +201,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         .execute(
             "UPDATE identity.org_memberships SET status = 'inactive' \
              WHERE principal_id = $1::text::uuid",
-            &[&ben.as_str()],
+            &[&ben.to_string().as_str()],
         )
         .await
         .expect("deactivate ben");
@@ -215,7 +217,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         client
             .query_one(
                 "SELECT status FROM identity.org_memberships WHERE principal_id = $1::text::uuid",
-                &[&ben.as_str()],
+                &[&ben.to_string().as_str()],
             )
             .await
             .expect("read ben's membership")
@@ -227,7 +229,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
     client
         .execute(
             "SELECT set_config('app.user_id', $1, true)",
-            &[&ann.as_str()],
+            &[&ann.to_string().as_str()],
         )
         .await
         .unwrap();
@@ -247,8 +249,8 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         &client,
         "registry.projects",
         "org='acme' AND id='history'",
-        ann.as_str(),
-        ann.as_str(),
+        ann.to_string().as_str(),
+        ann.to_string().as_str(),
     )
     .await;
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
@@ -257,7 +259,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         "registry.project_envs",
         "org='acme' AND project='billing' AND env='dev'",
         &actor,
-        ann.as_str(),
+        ann.to_string().as_str(),
     )
     .await;
     client.batch_execute("COMMIT").await.unwrap();

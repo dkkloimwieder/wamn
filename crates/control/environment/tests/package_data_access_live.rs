@@ -185,9 +185,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
                CREATE ROLE wamn_app NOLOGIN; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
+                \
              END $reset$;"
         ))
         .await
@@ -491,9 +489,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
                CREATE ROLE wamn_app NOLOGIN; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
+                \
              END $reset$;",
         )
         .await
@@ -559,7 +555,7 @@ async fn moved_bytes_under_an_applied_version_are_refused() {
         serde_json::from_slice(&std::fs::read(released.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     moved["routes"]["path_prefix"] = serde_json::json!("/changed-fixture");
-    let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
+    let moved_bytes = wamn_digest::canonical_json_bytes(&moved);
     std::fs::write(released.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
     wamn_test_infrastructure::fixture_digest::write_build_record(&released);
     assert_ne!(
@@ -895,7 +891,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             "DO $comment$ BEGIN \
                EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {}::text); \
              END $comment$;",
-            wamn_pg_core::quote_literal(&marker)
+            postgres_protocol::escape::escape_literal(&marker)
         ))
         .await
         .expect("mark the local target");

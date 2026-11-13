@@ -33,6 +33,7 @@ path = "../../../apps/rest_connector/tests/publication.rs"
 
 [dependencies]
 wamn-broker = { workspace = true }
+wamn-digest.workspace = true
 wit-parser = { workspace = true }
 wamn-kubernetes = { workspace = true }
 futures-util = { workspace = true }
@@ -60,11 +61,10 @@ wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-execution-contract = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
@@ -74,7 +74,6 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
-wamn-gate-harness = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
@@ -86,7 +85,7 @@ uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
@@ -94,7 +93,7 @@ wat = "=1.254.2"
 rcgen = { workspace = true }
 pg_query = "=6.2.1"
 tar = { workspace = true }
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-package-control = { workspace = true, features = ["test-util"] }
 

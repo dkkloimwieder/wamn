@@ -112,17 +112,12 @@ pub struct ClaimPlan {
 }
 
 /// Model a global FIFO lease grant over a candidate row set: take claimable rows
-/// in `(available_at, stream_seq, run_id)` order, up to `limit`, each with a fresh
+/// in `(available_at, run_id)` order, up to `limit`, each with a fresh
 /// lease deadline `now + lease_ttl`. Only reclaiming an expired lease bumps its
 /// attempt count; first claims and released queue waits remain free.
 /// The real SQL additionally `SKIP LOCKED`s rows another transaction already
 /// holds; this pure function models eligibility, ordering, and lease arithmetic.
 ///
-/// The sort mirrors the SQL's `ORDER BY (available_at, stream_seq, run_id)` (E4):
-/// the numeric `stream_seq` tiebreak rides AHEAD of `run_id`, so evt runs
-/// (`<flow>:evt:<seq>`, real stream positions minted by the materializer,
-/// l5i9.17) dispatch by numeric stream position; every non-CDC enqueue writes
-/// `stream_seq = 0`, keeping the tiebreak inert there.
 pub fn plan_claim(
     candidates: &[QueueEntry],
     now: Millis,
@@ -134,7 +129,6 @@ pub fn plan_claim(
     eligible.sort_by(|a, b| {
         a.available_at
             .cmp(&b.available_at)
-            .then_with(|| a.stream_seq.cmp(&b.stream_seq))
             .then_with(|| a.run_id.cmp(&b.run_id))
     });
     let claimed = eligible

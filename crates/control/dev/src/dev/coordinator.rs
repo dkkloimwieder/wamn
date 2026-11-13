@@ -4,6 +4,8 @@
 //! reproduce migration, generation, admission, publication, release, or
 //! activation semantics.
 
+#[cfg(test)]
+use wamn_scalar::SqlValueType;
 pub(super) mod plan;
 use plan::{
     base_digests_stage_error, declaration_stage_error, project_catalog_for_package,
@@ -973,9 +975,7 @@ impl ProductionDevStageRunner {
             let bytes = fs::read(&artifact.path).map_err(|source| {
                 ProductionDevStageError::owner("read local component", source.into())
             })?;
-            if wamn_engine::component_admission::component_digest(&bytes)
-                != artifact.digest.as_ref()
-            {
+            if wamn_digest::bytes_sha256(&bytes) != artifact.digest.as_ref() {
                 return Err(ProductionDevStageError::invalid(
                     "stage local component",
                     "admitted component bytes changed",
@@ -2056,7 +2056,6 @@ fn selected_store_alias(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{
         Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod, ExclusionElement,
         ExclusionKey, Table,
@@ -2164,7 +2163,7 @@ mod tests {
             "dependencies": dependencies,
             "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
             "outputs": {
-                "manifest": wamn_engine::component_admission::component_digest(&manifest),
+                "manifest": wamn_digest::bytes_sha256(&manifest),
                 "files": {"wamn.json": "manifest", "generated.txt": "generated"},
                 "components": []
             },
@@ -2535,22 +2534,22 @@ mod tests {
                 "platform_fixture",
                 "record",
                 vec![
-                    Column::new("id", ColumnType::Uuid, false, None, None),
-                    Column::new("maker_id", ColumnType::Uuid, false, None, None),
-                    Column::new("created_at", ColumnType::Timestamptz, false, None, None),
-                    Column::new("created_by", ColumnType::Uuid, false, None, None),
-                    Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
-                    Column::new("updated_by", ColumnType::Uuid, false, None, None),
+                    Column::new("id", SqlValueType::Uuid, false, None, None),
+                    Column::new("maker_id", SqlValueType::Uuid, false, None, None),
+                    Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
+                    Column::new("created_by", SqlValueType::Uuid, false, None, None),
+                    Column::new("updated_at", SqlValueType::Timestamptz, false, None, None),
+                    Column::new("updated_by", SqlValueType::Uuid, false, None, None),
                     Column::new(
                         "review_required",
-                        ColumnType::Boolean,
+                        SqlValueType::Boolean,
                         false,
                         Some(ColumnDefault::boolean(false)),
                         None,
                     ),
                     Column::new(
                         "review_state",
-                        ColumnType::Text,
+                        SqlValueType::Text,
                         false,
                         Some(ColumnDefault::text("not_required")),
                         None,
@@ -2573,7 +2572,7 @@ mod tests {
                 "inspection",
                 vec![Column::new(
                     "record_id",
-                    ColumnType::Uuid,
+                    SqlValueType::Uuid,
                     false,
                     None,
                     None,
@@ -2640,12 +2639,12 @@ mod tests {
                 "platform_fixture",
                 "record",
                 vec![
-                    Column::new("id", ColumnType::Uuid, false, None, None),
-                    Column::new("maker_id", ColumnType::Uuid, false, None, None),
-                    Column::new("created_at", ColumnType::Timestamptz, false, None, None),
-                    Column::new("created_by", ColumnType::Uuid, false, None, None),
-                    Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
-                    Column::new("updated_by", ColumnType::Uuid, false, None, None),
+                    Column::new("id", SqlValueType::Uuid, false, None, None),
+                    Column::new("maker_id", SqlValueType::Uuid, false, None, None),
+                    Column::new("created_at", SqlValueType::Timestamptz, false, None, None),
+                    Column::new("created_by", SqlValueType::Uuid, false, None, None),
+                    Column::new("updated_at", SqlValueType::Timestamptz, false, None, None),
+                    Column::new("updated_by", SqlValueType::Uuid, false, None, None),
                 ],
                 vec![Constraint::primary_key("record_id_pkey", ["id"]).unwrap()],
                 Vec::new(),
@@ -2722,9 +2721,7 @@ mod tests {
                     components: vec![build_record::BuildComponent {
                         name: component.to_owned(),
                         path,
-                        sha256: wamn_engine::component_admission::component_digest(
-                            component.as_bytes(),
-                        ),
+                        sha256: wamn_digest::bytes_sha256(component.as_bytes()),
                     }],
                 },
             };

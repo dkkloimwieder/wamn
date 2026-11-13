@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
+use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
-use wamn_platform_identity::PrincipalId;
 
 use super::{ControlRoutes, Refusal};
 
@@ -220,7 +220,7 @@ impl ControlRoutes<'_> {
             operation,
             &request,
             self.org,
-            caller.as_str(),
+            caller.to_string().as_str(),
             &coordinate,
             cluster,
             image,

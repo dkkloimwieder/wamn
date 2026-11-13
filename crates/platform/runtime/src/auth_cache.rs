@@ -188,7 +188,7 @@ impl AuthCache {
     }
 
     pub fn keep_pat(&self, ticket: IdentityTicket, token: &str, principal: AuthenticatedPrincipal) {
-        let id = principal.principal().id().as_str().to_owned();
+        let id = principal.principal().id().to_string();
         self.keep_token(ticket, token, &id, Some(principal));
     }
 

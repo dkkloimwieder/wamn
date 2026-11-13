@@ -149,12 +149,12 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
         }
         let (mut admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
         let driver = tokio::spawn(driver);
-        let actor: wamn_platform_identity::PrincipalId =
+        let actor: wamn_identity_protocol::PrincipalId =
             PlatformComponent::Provisioning.principal_id().to_string().parse()?;
         // Bind the caller for the existing platform verbs. No identity table SQL belongs here.
         admin.execute(
             "SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:receiving-ui-test', false)",
-            &[&actor.as_str()],
+            &[&actor.to_string().as_str()],
         ).await?;
         // dev up calls provision-org --admin through its shared implementation.
         let user = create_or_reuse_user(&admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
@@ -176,13 +176,13 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
         reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         business.execute(
             "SELECT set_config('app.user_id', $1, false), set_config('app.env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
-            &[&actor.as_str(), &env_key],
+            &[&actor.to_string().as_str(), &env_key],
         ).await?;
         business.batch_execute(include_str!("fixtures/receiving_ui.sql")).await?;
         drop(business);
         business_driver.await??;
         let enrolled = reqwest::Client::new().post(format!("{url}/password/enroll"))
-            .json(&json!({"principal_id": user.as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
+            .json(&json!({"principal_id": user.to_string().as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
             .send().await?;
         ensure!(enrolled.status() == reqwest::StatusCode::NO_CONTENT, "password enrollment refused: {}", enrolled.status());
         let mut browser = Command::new("pnpm").current_dir(&repository)

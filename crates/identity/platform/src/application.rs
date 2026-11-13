@@ -11,7 +11,7 @@ use std::fmt;
 
 use tokio_postgres::GenericClient;
 
-use wamn_project_state::ADMIN_ROLE;
+use wamn_identity_protocol::ADMIN_ROLE;
 
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 use wamn_broker::auth_changes::AuthDrops;
@@ -101,11 +101,15 @@ pub async fn write_user(
     client
         .execute(
             USER_ROW_SQL,
-            &[&user.principal_id.as_str(), &user.email, &user.display_name],
+            &[
+                &user.principal_id.to_string().as_str(),
+                &user.email,
+                &user.display_name,
+            ],
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, user.principal_id.as_str());
+    drops.principal(env_key, user.principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -120,14 +124,14 @@ pub async fn write_service(
         .execute(
             SERVICE_ROW_SQL,
             &[
-                &service.principal_id.as_str(),
+                &service.principal_id.to_string().as_str(),
                 &service.email,
                 &service.display_name,
             ],
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, service.principal_id.as_str());
+    drops.principal(env_key, service.principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -145,7 +149,10 @@ pub async fn write_admin(
         .await
         .map_err(|error| database_error(&error))?;
     client
-        .execute(USER_ROLE_SQL, &[&user.principal_id.as_str(), &ADMIN_ROLE])
+        .execute(
+            USER_ROLE_SQL,
+            &[&user.principal_id.to_string().as_str(), &ADMIN_ROLE],
+        )
         .await
         .map_err(|error| database_error(&error))?;
     Ok(())
@@ -159,10 +166,13 @@ pub async fn remove_admin(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
-        .execute(DROP_USER_ROLE_SQL, &[&principal_id.as_str(), &ADMIN_ROLE])
+        .execute(
+            DROP_USER_ROLE_SQL,
+            &[&principal_id.to_string().as_str(), &ADMIN_ROLE],
+        )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, principal_id.as_str());
+    drops.principal(env_key, principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -175,10 +185,10 @@ pub async fn remove_user(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
-        .execute(DROP_USER_ROW_SQL, &[&principal_id.as_str()])
+        .execute(DROP_USER_ROW_SQL, &[&principal_id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(env_key, principal_id.as_str());
+    drops.principal(env_key, principal_id.to_string().as_str());
     Ok(())
 }
 
@@ -194,7 +204,7 @@ pub enum AdministrationRefusal {
     /// `admin` is the built-in role.
     AdminDeleted,
     /// The name is not a role slug.
-    NotRoleName { role: String },
+    NotProjectRole { role: String },
     /// The role does not exist in the environment.
     RoleNotFound { role: String },
     /// The operation is fixed to `admin` or to every member (§2.5).
@@ -220,7 +230,7 @@ impl fmt::Display for AdministrationRefusal {
             Self::AdminDeleted => {
                 formatter.write_str("admin is the built-in role and cannot be deleted")
             }
-            Self::NotRoleName { role } => write!(
+            Self::NotProjectRole { role } => write!(
                 formatter,
                 "role {role:?} is not a role name: lowercase letters, digits and hyphens after \
                  the first character, at most 64 bytes"
@@ -309,8 +319,11 @@ pub async fn create_role(
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminCreated.into());
     }
-    if !wamn_session::token::is_role_slug(role) {
-        return Err(AdministrationRefusal::NotRoleName {
+    if !role
+        .parse::<wamn_identity_protocol::RoleName>()
+        .is_ok_and(|parsed| parsed.as_str() == role)
+    {
+        return Err(AdministrationRefusal::NotProjectRole {
             role: role.to_owned(),
         }
         .into());
@@ -547,7 +560,7 @@ pub async fn project_authority(
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
          OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.role='org-admin') \
          FROM identity.principals p WHERE p.id=$1::text::uuid",
-        &[&principal.as_str(), &scope.org, &scope.project, &scope.env],
+        &[&principal.to_string().as_str(), &scope.org, &scope.project, &scope.env],
     ).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, scope.env_key, principal, drops).await;
@@ -560,7 +573,7 @@ pub async fn project_authority(
         let present = target
             .query_opt(
                 "SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid",
-                &[&principal.as_str()],
+                &[&principal.to_string().as_str()],
             )
             .await
             .map_err(|error| database_error(&error))?
@@ -590,10 +603,13 @@ pub async fn project_authority(
                 .await
                 .map_err(|error| database_error(&error))?;
             target
-                .execute(USER_ROLE_SQL, &[&principal.as_str(), &ADMIN_ROLE])
+                .execute(
+                    USER_ROLE_SQL,
+                    &[&principal.to_string().as_str(), &ADMIN_ROLE],
+                )
                 .await
                 .map_err(|error| database_error(&error))?;
-            drops.principal(scope.env_key, principal.as_str());
+            drops.principal(scope.env_key, principal.to_string().as_str());
         } else {
             remove_admin(target, scope.env_key, principal, drops).await?;
         }
@@ -703,7 +719,7 @@ pub async fn mutate_grant(
     if grant && let GrantAuthority::User(actor) = authority {
             let admin: bool = client.query_one(
                 "SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')",
-                &[&actor.as_str()],
+                &[&actor.to_string().as_str()],
             ).await.map_err(|error| database_error(&error))?.get(0);
             if !admin {
                 let required = match change {
@@ -714,7 +730,7 @@ pub async fn mutate_grant(
                     let held: bool = client.query_one(
                         "SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
                          WHERE r.user_id=$1::text::uuid AND p.permission=$2)",
-                        &[&actor.as_str(), &reference],
+                        &[&actor.to_string().as_str(), &reference],
                     ).await.map_err(|error| database_error(&error))?.get(0);
                     if !held || !permission_is_grantable(&reference) {
                         return Err(AdministrationRefusal::NotGrantable { reference }.into());

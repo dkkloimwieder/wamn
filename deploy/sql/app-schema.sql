@@ -175,7 +175,7 @@ $wamn_authority_bootstrap$;
 -- `type` names the kind of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
 -- names its type. A platform row carries its `wamn:<component>` name in
--- `display_name` and the id that `wamn-project-state` derives from that name.
+-- `display_name` and the id that `wamn-identity-protocol` derives from that name.
 -- `user_platform_principal_check` pins each (display_name, id) pair and
 -- refuses a `wamn:` name on any other type. PostgreSQL has no UUIDv5, so a
 -- Rust test compares these literals with the derivation. Provisioning writes
@@ -226,7 +226,7 @@ GRANT SELECT ON platform."user" TO wamn_app;
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
 -- service holds a role through `wamn-ctl grant-role`. `role_name_check` is the
--- role slug of identity (`wamn_session::token::is_role_slug`), so no stored
+-- role slug of identity (`wamn_identity_protocol::RoleName`), so no stored
 -- role name is one that a session refuses.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.role (

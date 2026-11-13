@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
+use wamn_scalar::SqlValueType;
 
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
@@ -13,12 +14,12 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ComponentSqlField,
-    ComponentSqlStatement, ComponentSqlValueType, PackageCoordinate,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
+    ComponentSqlStatement, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+    ServingManifest, ServingRelease,
 };
-use wamn_engine::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -496,7 +497,7 @@ fn member_statement(path: &str, sql: &str) -> BTreeMap<String, ComponentSqlState
             binds: Vec::new(),
             columns: vec![ComponentSqlField {
                 name: "value".into(),
-                value_type: ComponentSqlValueType::Text,
+                value_type: SqlValueType::Text,
                 nullable: false,
             }],
             transactional: true,
@@ -641,9 +642,9 @@ fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
                 statements: BTreeMap::new(),
             },
         )]),
-        component_digest: component_digest(bytes),
+        component_digest: bytes_sha256(bytes),
         imports: vec![OBSERVE.into(), "wamn:node/types@0.1.0".into()],
-        imports_fingerprint: component_digest(OBSERVE.as_bytes()),
+        imports_fingerprint: bytes_sha256(OBSERVE.as_bytes()),
         effects: Vec::new(),
     }
 }

@@ -46,6 +46,8 @@
 
 pub(super) mod plan;
 
+use wamn_identity_protocol::PrincipalId;
+
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 
@@ -54,7 +56,7 @@ use wamn_control_provision::org::OrgClusters;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 use wamn_platform_identity::{
-    PrincipalId, create_or_reuse_user,
+    create_or_reuse_user,
     org::{activate_org_membership, grant_org_admin},
 };
 
@@ -218,7 +220,7 @@ async fn record_org(
         Ok(admin) => {
             client.batch_execute("COMMIT").await.context("COMMIT")?;
             let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-            drops.identity(admin.as_str());
+            drops.identity(admin.to_string().as_str());
             changes.publish(drops).await;
         }
         Err(e) => {
@@ -270,7 +272,6 @@ async fn record_org_rows(
                     &p.backup_cadence,
                     &p.wal_retention,
                     &p.hibernation,
-                    &p.durability_class.as_sql(),
                 ],
             )
             .await

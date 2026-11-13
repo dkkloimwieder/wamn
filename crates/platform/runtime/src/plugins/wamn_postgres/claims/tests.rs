@@ -1,11 +1,12 @@
 use super::super::pool::ResolvedCredential;
 use super::super::resources::admit_transaction_statement;
-use super::super::statements::{StatementField, StatementValueType};
+use super::super::statements::StatementField;
 use super::super::{SqlValue, StatementError};
 use super::transactions::{CLAIM_SQL, causation_emit_sql};
 use super::*;
 use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionOrigin};
 use tokio_postgres::NoTls;
+use wamn_scalar::SqlValueType;
 
 fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
     serde_json::json!({
@@ -744,7 +745,7 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
            EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
          END $acl$;";
 
-/// The platform principal id `wamn-project-state` derives for `wamn:executor`.
+/// The platform principal id `wamn-identity-protocol` derives for `wamn:executor`.
 const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 
 /// The `platform."user"` floor the provisioning check reads
@@ -1940,7 +1941,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
         wamn_control_provision::CredentialGeneration::A,
     )
     .expect("derive the executor generation");
-    let role_ident = wamn_pg_core::quote_ident(&role);
+    let role_ident = postgres_protocol::escape::escape_identifier(&role);
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!(
@@ -2167,7 +2168,7 @@ fn cold_parse_statement() -> VerifiedStatement {
         exact_sql: "SELECT id FROM cold_parse ORDER BY id".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Int32,
+            value_type: SqlValueType::Int32,
             nullable: false,
         }]),
         // The claim path under test. A non-transactional statement with no
@@ -2272,7 +2273,7 @@ fn principal_statement(transactional: bool) -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.user_id', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional,
@@ -2714,7 +2715,7 @@ fn operation_statement(transactional: bool) -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.operation', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional,
@@ -2897,7 +2898,7 @@ fn application_statement() -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.application', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional: true,
@@ -3136,7 +3137,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
         exact_sql: "SELECT value FROM public.read_snapshot_fixture WHERE id = 1".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Int32,
+            value_type: SqlValueType::Int32,
             nullable: false,
         }]),
         transactional: false,
@@ -3240,15 +3241,15 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         binds: Box::new([]),
         columns: Box::new([
             StatementField {
-                value_type: StatementValueType::Text,
+                value_type: SqlValueType::Text,
                 nullable: true,
             },
             StatementField {
-                value_type: StatementValueType::Text,
+                value_type: SqlValueType::Text,
                 nullable: true,
             },
             StatementField {
-                value_type: StatementValueType::Int32,
+                value_type: SqlValueType::Int32,
                 nullable: true,
             },
         ]),
@@ -3383,19 +3384,19 @@ async fn live_stream_reads_once_and_scopes_claims() {
             binds: Box::new([]),
             columns: Box::new([
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: true,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Int32,
+                    value_type: SqlValueType::Int32,
                     nullable: false,
                 },
             ]),
@@ -3483,11 +3484,11 @@ async fn live_stream_reads_once_and_scopes_claims() {
             binds: Box::new([]),
             columns: Box::new([
                 StatementField {
-                    value_type: StatementValueType::Int32,
+                    value_type: SqlValueType::Int32,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
             ]),
@@ -3559,7 +3560,7 @@ fn session_and_pat_callers_act_with_their_single_role() {
     let signed = |roles: &[&str]| {
         roles
             .iter()
-            .map(|role| (*role).to_owned())
+            .map(|role| role.parse::<wamn_identity_protocol::RoleName>().unwrap())
             .collect::<Vec<_>>()
     };
 
@@ -3728,7 +3729,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
 
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
-    let project = wamn_project_state::test_database::tenant_platform();
+    let project = wamn_platform_identity::test_database::tenant_platform();
     let admin = connect_raw(system.url()).await;
     admin.batch_execute(&format!(
         "SET ROLE wamn_system; \
@@ -3809,7 +3810,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         "SET ROLE \"{administration}\"; SET app.user_id = '{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation = 'admin:seed-pat-drop-fixture';"
     )).await.unwrap();
     project_admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')",
-        &[&principal.id().as_str()]).await.unwrap();
+        &[&principal.id().to_string().as_str()]).await.unwrap();
     let mut http_url = url::Url::parse(project.url()).unwrap();
     http_url.set_username(&http).unwrap();
     http_url.set_password(Some("pat-drop")).unwrap();
@@ -3862,7 +3863,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();
     let caller = request().await.unwrap().unwrap();
-    assert_eq!(caller.principal_id(), principal.id().as_str());
+    assert_eq!(caller.principal_id(), principal.id().to_string().as_str());
     assert!(pg.auth_cache().pat(issued.token()).is_some());
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     revoke_pat(&admin, issued.record().prefix(), &mut drops)
@@ -3890,7 +3891,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
 #[tokio::test]
 async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let admin = connect_raw(database.url()).await;
     admin.batch_execute(&format!(
         "SET app.user_id='{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation='admin:role-refusal-fixture';
@@ -3923,15 +3924,15 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
     )
     .unwrap();
     assert_eq!(
-        session_grants(&user, &["human-reader".into()])
+        session_grants(&user, &["human-reader".parse().unwrap()])
             .unwrap()
             .active_role()
             .as_deref(),
         Some("human-reader")
     );
-    assert!(session_grants(&user, &["unheld".into()]).is_err());
-    assert!(session_grants(&user, &["service-reader".into()]).is_err());
-    assert!(session_grants(&service, &["service-reader".into()]).is_err());
+    assert!(session_grants(&user, &["unheld".parse().unwrap()]).is_err());
+    assert!(session_grants(&user, &["service-reader".parse().unwrap()]).is_err());
+    assert!(session_grants(&service, &["service-reader".parse().unwrap()]).is_err());
     assert_eq!(held_grants(&service, None).active_role(), None);
     assert_eq!(
         held_grants(&service, None).pat_role().as_deref(),

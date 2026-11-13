@@ -7,3 +7,5 @@ pub mod source_deploy;
 
 #[cfg(test)]
 mod pat_secrets_tests;
+
+pub mod identifier;

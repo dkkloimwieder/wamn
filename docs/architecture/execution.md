@@ -51,9 +51,10 @@ Publish writes GET for a route to a `get`, `query` or `projection` operation, an
 A GET carries exactly one request item in its query string.
 The router reads its bounded body for authentication, but takes the operation input from the query string.
 Each top-level member is one parameter, and its value is the compact JSON text of the member.
-Parameters stand in byte order of their names, and every byte outside the RFC 3986 unreserved set is escaped.
-The router refuses any other spelling, and a request target longer than 8 KiB, with HTTP 400 and the code `invalid-target`.
-The [read query codec](../../apps/platform/execution/contract/src/read_query.rs) owns this encoding, and its fixture vectors bind the TypeScript encoder to it.
+The client encoder sorts parameter names and uses one escaping format so its requests share cache entries.
+The parser accepts any parameter order and valid escaping, and parses each value as JSON.
+The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
+The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../apps/platform/ingress/http-route/src/read_query.rs) reads it.
 
 The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
@@ -295,7 +296,9 @@ Here, `tenant` holds the edge organization ID.
 A begin with a known key and another input hash is a conflict.
 A begin with a finished key answers the stored outcome, and an open intent with no outcome is uncertain until an operator resolves it.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
-Publish writes two input facts into the serving manifest route from the generated contracts: the key field (`idempotency`) and the canonical item form (`canonicalization`).
+Publish writes the key field (`idempotency`) into the serving manifest route.
+The server hashes parsed JSON with sorted object keys. It leaves out `request_id` and the key field.
+It preserves scalar spelling and array order. A retry with changed input is an idempotency conflict.
 
 A host or wiring route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 Base routes keep this response for declared page and band limits.
@@ -422,7 +425,8 @@ The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` own
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases. Replicas need no wake service or process-local handoff.
-The only durability class is `standard`. Claims and exhausted-run reaping ignore effect-attempt records.
+Claims and exhausted-run reaping ignore effect-attempt records.
+Workflow runs have no event ordering guarantee.
 
 The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
@@ -676,7 +680,7 @@ The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials retain their declared scope and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
-For each new request, the host checks the principal, environment membership, and password login or source PAT.
+For each new request, the host checks the principal, environment membership, and password login.
 It intersects signed roles with the held roles and their permissions for the active tenant user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
@@ -723,11 +727,11 @@ The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suff
 The configured environment supplies its current suffix.
 Identity offers and mints no audience of an environment whose `registry.project_envs.status` is `inactive`, so the shell does not list it.
 
-Session tokens use Ed25519 with `typ=wamn-session+jwt`.
+Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
-`authority` is exactly one object: `{"login":"<login UUID>"}` or `{"pat":"<source PAT UUID>"}`.
+`authority` is the object `{"login":"<login UUID>"}`.
 The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
-The password issuer binds the existing login record. PAT exchange binds the authenticated source PAT.
+The password issuer binds the existing login record.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
 Unknown roles grant no implicit authority, and an empty permission set returns 403.
@@ -749,9 +753,8 @@ Age bounds limit delayed admission without promising that identity remains uncha
 
 Authentication deadlines bound new admission and do not cancel work already accepted.
 
-The [session token owner](../../crates/identity/session/src/token.rs) defines the token and time rules.
-The [session verifier](../../crates/identity/session/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
-PAT exchange keeps no login record or renewal credential.
+The [session token owner](../../crates/identity/protocol/src/token.rs) defines the token and time rules.
+The [session verifier](../../crates/identity/protocol/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
@@ -905,7 +908,7 @@ An `env delete` deletes every key of the environment.
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
 Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org, also when the request names a project, so an application shell offers it beside the environments.
-A control session comes from a password login only, because the PAT exchange refuses a control audience.
+A control session comes from a password login.
 It carries no roles.
 For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.
 A revoked role therefore refuses the next request and the next renewal with 401.
@@ -1041,7 +1044,7 @@ An email that the identity rules refuse answers 400 with the reason, and a disab
 
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
-It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
+It reads membership, environment status, the active user and roles before it signs the token.
 Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
 
@@ -1296,7 +1299,7 @@ Unknown replay information grants no retry.
 An operation without an HTTP route remains visible as unexposed.
 Event handlers do not become operator actions.
 
-The shared request builder canonicalizes typed UUID, timestamp, and numeric input through `wamn-client`.
+The generated web client prepares typed UUID, timestamp, and numeric input.
 The invocation layer canonicalizes bytes and does not reinterpret field types.
 The current client submits one outer envelope item, while nested repeated fields remain supported.
 Cursors remain opaque and reset when filters or sorting change.

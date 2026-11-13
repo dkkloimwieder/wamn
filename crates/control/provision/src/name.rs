@@ -36,23 +36,10 @@ pub fn package_owner_role(package: &str) -> String {
     )
 }
 
-/// Prefix for the scoped control-author URL Secret.
-pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
-
-/// Prefix for the scoped management-admitter URL Secret (`wamn-0h0g.8.5.3`).
-///
-/// It mirrors the family's frozen Postgres generation prefix `wamn_mgmt_admitter`
-/// (`wamn-0h0g.13.62`) in the hyphenated K8s convention, so one glance ties the
-/// Secret to the login it carries. The abbreviation is inherited, not re-derived:
-/// a Kubernetes Secret name has 253 bytes to spend and would have fit the full
-/// role name, but two spellings for one credential is exactly the drift this
-/// helper exists to prevent.
-pub const MANAGEMENT_ADMITTER_SECRET_PREFIX: &str = "wamn-mgmt-admitter-";
-
 /// Prefix for the scoped per-tenant guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
 ///
 /// It mirrors the family's Postgres generation prefix in the hyphenated K8s
-/// convention, exactly as the management-admitter prefix does. The Secret is
+/// convention. The Secret is
 /// scoped to the project-environment, not to the tenant key: one management
 /// instance serves exactly one `(org, project, environment)` and that scope's
 /// single tenant. The tenant travels in the manifest's labels, never in the
@@ -232,27 +219,6 @@ pub fn control_administration_secret_name(org: &str) -> String {
 /// `<project>--<env>`, the file name the mounted Secret shows.
 pub fn control_administration_key(project: &str, env: &str) -> String {
     format!("{project}--{env}")
-}
-
-/// Scoped control-author Secret name consumed by scenario-worker.
-pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
-    workload_secret_name(WorkloadRoleFamily::ControlAuthor, org, project, env)
-}
-
-/// Scoped management-admitter Secret name consumed by scenario-worker
-/// (`wamn-0h0g.8.5.3`): `wamn-mgmt-admitter-<org>--<project>--<env>`.
-///
-/// It is the sibling of [`control_author_secret_name`] on the other plane —
-/// control-author names the control database, this one names the project
-/// environment's own database — and it is triple-only for the same reason
-/// [`project_env_secret_name`] is: the URL inside names the suffixed Postgres
-/// database, so the Secret name does not have to.
-///
-/// This exists so the deployment manifest and the minting renderer
-/// (`wamn-0h0g.12.176`) derive the same string instead of each carrying a copied
-/// literal that can drift apart silently.
-pub fn management_admitter_secret_name(org: &str, project: &str, env: &str) -> String {
-    workload_secret_name(WorkloadRoleFamily::ManagementAdmitter, org, project, env)
 }
 
 /// The per-project-env Kubernetes namespace:
@@ -992,33 +958,5 @@ mod tests {
         assert_eq!(u, "postgres://wamn_app:p%40ss%3Aw%2Frd@h:5432/wamn-db-x");
         // The hyphenated database name is URL-unreserved (no encoding).
         assert!(u.ends_with("/wamn-db-x"));
-    }
-
-    #[test]
-    fn the_management_admitter_secret_name_is_frozen_and_its_own_tier() {
-        assert_eq!(
-            management_admitter_secret_name("acme", "widgets", "dev"),
-            "wamn-mgmt-admitter-acme--widgets--dev"
-        );
-        assert_eq!(
-            management_admitter_secret_name("acme", "billing", "prod"),
-            "wamn-mgmt-admitter-acme--billing--prod"
-        );
-        // Every identity component participates, so two environments never share
-        // one Secret.
-        assert_ne!(
-            management_admitter_secret_name("acme", "widgets", "dev"),
-            management_admitter_secret_name("acme", "widgets", "prod")
-        );
-        // R8b: a distinct credential tier is a distinct Secret. None of the
-        // sibling names can collide with it for the same triple.
-        let admitter = management_admitter_secret_name("acme", "widgets", "dev");
-        for sibling in [
-            control_author_secret_name("acme", "widgets", "dev"),
-            project_env_secret_name("acme", "widgets", "dev"),
-            project_env_cdc_secret_name("acme", "widgets", "dev"),
-        ] {
-            assert_ne!(admitter, sibling);
-        }
     }
 }

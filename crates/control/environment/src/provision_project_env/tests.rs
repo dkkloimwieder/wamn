@@ -1,15 +1,13 @@
 use super::grants::plan::{
     RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
     verify_connection_reader_grants, verify_event_materializer_grants, verify_http_admitter_grants,
-    verify_management_admitter_grants, verify_session_role_reader_grants,
-    verify_system_reader_grants,
+    verify_session_role_reader_grants, verify_system_reader_grants,
 };
 use super::registry::{INSTANCE_SUFFIX_ALPHABET, do_record_project_env};
 use super::workload::{
     WorkloadActionIdentity, WorkloadLifecycle, is_workload_generation_role, workload_lifecycle,
 };
 use super::*;
-use wamn_control_provision::MANAGEMENT_ADMITTER_ROLE;
 
 /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
 /// must satisfy the pure crate's rule, and the draws must actually differ.
@@ -342,7 +340,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     assert_eq!(
         with_grant_sets,
         [
-            WorkloadRoleFamily::ManagementAdmitter,
             // `wamn-0h0g.12.69`: run retention acquired authority — DELETE
             // plus a three-column SELECT on `runs` — so it acquires a
             // denial matrix here at the same time. The two are the same
@@ -378,7 +375,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     // apply-package converges the audit retention grants, not this batch.
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::AuditRetention).is_none());
     for family in [
-        WorkloadRoleFamily::ManagementAdmitter,
         // `wamn-0h0g.22.37`: this batch applies both new surfaces, so the
         // pre-prepare assertion must NOT fire for them — on a first prepare
         // there is nothing converged yet to assert against.
@@ -397,8 +393,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     for family in WorkloadRoleFamily::ALL {
         if !matches!(
             family,
-            WorkloadRoleFamily::ManagementAdmitter
-                | WorkloadRoleFamily::ExecutorPlatform
+            WorkloadRoleFamily::ExecutorPlatform
                 | WorkloadRoleFamily::HttpAdmitter
                 | WorkloadRoleFamily::EventMaterializer
                 | WorkloadRoleFamily::RegistryReader
@@ -610,18 +605,9 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
 /// DERIVED, and the three frozen names are unchanged.
 #[test]
 fn every_family_derives_its_credential_secret_name() {
-    let frozen = [
-        (
-            WorkloadRoleFamily::ControlAuthor,
-            "wamn-authoring-demo--billing--dev",
-        ),
-        (
-            WorkloadRoleFamily::ManagementAdmitter,
-            "wamn-mgmt-admitter-demo--billing--dev",
-        ),
-        (WorkloadRoleFamily::App, "wamn-guest-demo--billing--dev"),
-    ];
-    for (family, name) in frozen {
+    let frozen = [(WorkloadRoleFamily::App, "wamn-guest-demo--billing--dev")];
+    {
+        let [(family, name)] = frozen;
         assert_eq!(
             wamn_control_provision::workload_secret_name(family, "demo", "billing", "dev"),
             name,
@@ -847,141 +833,6 @@ fn materializer_grants_cover_exactly_the_two_production_reads() {
 }
 
 #[test]
-fn management_grants_are_exact_and_required_in_the_target_database() {
-    let mut exact = vec![
-        role_acl("schema", "catalog", "catalog", "USAGE"),
-        role_acl("routine", "wamn_authority", "tenant_key", "EXECUTE"),
-    ];
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        exact.push(role_acl("relation", "catalog", relation, "SELECT"));
-    }
-    verify_management_admitter_grants(MANAGEMENT_ADMITTER_ROLE, "project_db", "project_db", &exact)
-        .unwrap();
-
-    let mut widened = exact.clone();
-    widened.push(role_acl(
-        "relation",
-        "wamn_run",
-        "environment_policies",
-        "UPDATE",
-    ));
-    assert!(
-        verify_management_admitter_grants(
-            MANAGEMENT_ADMITTER_ROLE,
-            "project_db",
-            "project_db",
-            &widened,
-        )
-        .is_err()
-    );
-    assert!(
-        verify_management_admitter_grants(
-            MANAGEMENT_ADMITTER_ROLE,
-            "project_db",
-            "project_db",
-            &[],
-        )
-        .is_err()
-    );
-    verify_management_admitter_grants(
-        MANAGEMENT_ADMITTER_ROLE,
-        "unprovisioned_db",
-        "project_db",
-        &[],
-    )
-    .unwrap();
-}
-
-/// `wamn-0h0g.12.176`: the management-admitter action is one more STAMP of
-/// the `wamn-0h0g.13.59` unified lifecycle, not a fourth mechanism.
-///
-/// This COMPLETES `wamn-0h0g.12.118`'s deferral — "no bespoke prepare,
-/// retire, Secret, or A/B implementation", closed for want of "a ctl
-/// lifecycle or call site". `wamn-0h0g.8.5.3` is the first consumer, so the
-/// deferral reached its trigger; nothing here reverses it, and every assert
-/// below is that the generic machinery, not a bespoke path, produced the
-/// result.
-#[test]
-fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() {
-    const DATABASE: &str = "wamn-db-demo--inventory--dev--k3m9x2p7";
-
-    // The ONE lifecycle derivation pairs the seventh family with its exact
-    // scope grain, and carries no control tenant: the tenant mapping row
-    // belongs to the control plane, which this credential never reaches.
-    let identity = WorkloadActionIdentity {
-        org: "demo",
-        project: "inventory",
-        environment: "dev",
-    };
-    let lifecycle = workload_lifecycle(
-        WorkloadRoleFamily::ManagementAdmitter,
-        identity,
-        "tenant",
-        DATABASE,
-    );
-    assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
-    assert_eq!(lifecycle.database(), DATABASE);
-    assert_eq!(lifecycle.label(), "management-admitter");
-    assert!(lifecycle.control_env_key.is_none());
-    assert!(matches!(
-        lifecycle.scope,
-        WorkloadRoleScope::ProjectEnvironment { .. }
-    ));
-
-    // The A/B pair is the crate's derivation, never a second spelling here.
-    let a = lifecycle.role(CredentialGeneration::A);
-    let b = lifecycle.role(CredentialGeneration::B);
-    for (generation, derived) in [(CredentialGeneration::A, &a), (CredentialGeneration::B, &b)] {
-        assert_eq!(
-            derived,
-            &wamn_control_provision::management_admitter_generation_role(
-                "demo",
-                "inventory",
-                "dev",
-                DATABASE,
-                generation,
-            )
-        );
-        assert!(is_workload_generation_role(
-            WorkloadRoleFamily::ManagementAdmitter,
-            derived
-        ));
-        assert_eq!(derived.len(), 61);
-    }
-    assert_ne!(a, b);
-    assert!(a.starts_with("wamn_mgmt_admitter_") && a.ends_with("_a"));
-    assert!(b.ends_with("_b"));
-    // The generation prefix is the short frozen one, never the 24-byte stable
-    // ACL role name (wamn-0h0g.13.62).
-    assert!(!a.starts_with(MANAGEMENT_ADMITTER_ROLE));
-    assert_eq!(lifecycle.family.acl_role(), MANAGEMENT_ADMITTER_ROLE);
-
-    // Each family locks on its own key, so three lifecycles never serialize
-    // against one another.
-    let keys: BTreeSet<String> = WorkloadRoleFamily::ALL
-        .into_iter()
-        .map(|family| workload_lifecycle(family, identity, "tenant", DATABASE).family_lock_key())
-        .collect();
-    assert_eq!(keys.len(), WorkloadRoleFamily::ALL.len());
-
-    // The published Secret is the crate renderer's, named by the crate helper
-    // the wamn-0h0g.8.5.3 Deployment reference derives from. One derivation,
-    // so the mint and the reference cannot drift apart.
-    let secret = render_workload_secret_manifest(
-        WorkloadRoleFamily::ManagementAdmitter,
-        &Triple::new("demo", "inventory", "dev"),
-        "wamn-system",
-        WorkloadSecretBody::Url(
-            "postgres://role:pw@demo-dev-rw:5432/wamn-db-demo--inventory--dev--k3m9x2p7",
-        ),
-    );
-    assert_eq!(
-        secret["metadata"]["name"].as_str().expect("Secret name"),
-        wamn_control_provision::management_admitter_secret_name("demo", "inventory", "dev")
-    );
-}
-
-#[test]
 fn every_workload_family_carries_a_distinct_frozen_label() {
     // `wamn-0fqa` takes the vocabulary to ten and `wamn-0h0g.13.63` to
     // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth,
@@ -989,11 +840,6 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     // `wamn-0h0g.10.15` removes the effect writer, leaving thirteen.
     // `label` reads only the family, so the scope is deliberately uniform.
     let expected = [
-        (WorkloadRoleFamily::ControlAuthor, "control-author"),
-        (
-            WorkloadRoleFamily::ManagementAdmitter,
-            "management-admitter",
-        ),
         (WorkloadRoleFamily::ServiceReader, "service-reader"),
         (WorkloadRoleFamily::App, "app"),
         (WorkloadRoleFamily::Retention, "retention"),
@@ -1031,18 +877,8 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
 #[test]
 fn stable_acl_role_members_are_only_scoped_generation_roles() {
     assert!(is_workload_generation_role(
-        WorkloadRoleFamily::ControlAuthor,
-        "wamn_control_author_0123456789abcdef0123456789abcdef01234567_b"
-    ));
-    // `wamn-0h0g.13.62`: management generations carry the short frozen
-    // prefix, never the 24-byte stable ACL role name.
-    assert!(is_workload_generation_role(
-        WorkloadRoleFamily::ManagementAdmitter,
-        "wamn_mgmt_admitter_0123456789abcdef0123456789abcdef01234567_a"
-    ));
-    assert!(!is_workload_generation_role(
-        WorkloadRoleFamily::ManagementAdmitter,
-        "wamn_management_admitter_0123456789abcdef0123456789abcdef01234567_a"
+        WorkloadRoleFamily::RegistryReader,
+        "wamn_registry_reader_0123456789abcdef0123456789abcdef01234567_b"
     ));
     // `wamn-0fqa`: the executor-platform and event-materializer families
     // carry short frozen prefixes for the same reason; the callable-HTTP
@@ -1068,13 +904,13 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
         "wamn_http_admitter_0123456789abcdef0123456789abcdef01234567_a"
     ));
     for invalid in [
-        "wamn_control_author_a",
-        "wamn_control_author_0123456789ABCDEF0123456789abcdef01234567_a",
-        "wamn_control_author_0123456789abcdef0123456789abcdef01234567_c",
+        "wamn_registry_reader_a",
+        "wamn_registry_reader_0123456789ABCDEF0123456789abcdef01234567_a",
+        "wamn_registry_reader_0123456789abcdef0123456789abcdef01234567_c",
         "unrelated_0123456789abcdef0123456789abcdef01234567_a",
     ] {
         assert!(
-            !is_workload_generation_role(WorkloadRoleFamily::ControlAuthor, invalid),
+            !is_workload_generation_role(WorkloadRoleFamily::RegistryReader, invalid),
             "accepted {invalid}"
         );
     }

@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use wamn_broker::Publisher;
-use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::{Publisher, auth_changes::AuthDrops};
+use wamn_identity_protocol::ADMIN_ROLE;
 
 use anyhow::Context as _;
 use tokio_postgres::Client;
@@ -14,27 +14,26 @@ use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_environment_control::provision_project_env::{self, secret_value};
-use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
-
-use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication,
+    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
-use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
+use crate::fixture_membership::{self, MembershipRequest};
 use wamn_dev_control::dev::environment::{
     ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
     reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
+
+use crate::session_fixture;
 
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
@@ -110,7 +109,7 @@ async fn grant_service_operator(
         .execute(
             "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'service', $2)",
-            &[&principal.id().as_str(), &email],
+            &[&principal.id().to_string().as_str(), &email],
         )
         .await
         .context("write the operator service's user row")?;
@@ -120,7 +119,7 @@ async fn grant_service_operator(
         ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: principal.id().as_str(),
+            user_id: principal.id().to_string().as_str(),
             role: ITEM_READER,
             grant: true,
         },
@@ -265,7 +264,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             "method": "POST"
         }
     });
-    let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+    let definition_hash = wamn_digest::canonical_json_sha256(&definition);
     let manifest = serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
@@ -273,24 +272,24 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
         },
         "components": [{
             "package-id": FIXTURE_PACKAGE_ID,
-            "descriptor": {"component": FIXTURE_COMPONENT, "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": {"component": FIXTURE_COMPONENT, "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
             "operations": {
-                (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]},
+                (OPERATION): {"registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []},
                 (EXTRA_OPERATION): {
                     "registered-operation": EXTRA_OPERATION,
-                    "permissions": [EXTRA_OPERATION]
+                    "input-ports": [], "output-ports": [], "parameters": []
                 }
-            }
+            }}
         }],
         "routes": [{"package-id":FIXTURE_PACKAGE_ID,"component":FIXTURE_COMPONENT,"operation":OPERATION,"type":"get"}],
         "attachments": {(ATTACHMENT_ID): {
             "type":"http","package-id":FIXTURE_PACKAGE_ID,"component":FIXTURE_COMPONENT,"operation":OPERATION,
-            "definition-hash":definition_hash,"definition":definition,"auth-policy":{"modes":["pat"]},
+            "definition-hash":definition_hash,"definition":definition,"auth-policy":{"modes":["pat","session"]},
             "registered-operation":OPERATION
         }}
 
     });
-    let bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
+    let bytes = wamn_digest::canonical_json_bytes(&manifest);
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
@@ -421,13 +420,68 @@ fn flip_last_hex_digit(token: &str) -> String {
     format!("{head}{replacement}")
 }
 
+async fn password_session(
+    admin_url: &str,
+    principal: &wamn_identity_protocol::PrincipalId,
+    email: &str,
+    audience: &str,
+    roles: &[&str],
+) -> anyhow::Result<String> {
+    use wamn_platform_identity::{password, password_login};
+    let (mut client, connection) =
+        tokio_postgres::connect(admin_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string()
+        .parse()?;
+    let invitation = password::issue_invitation(&mut client, &actor, principal).await?;
+    let work = password::password_work();
+    let secret = || password::Password::new("a private membership test password".into());
+    password::enroll_password(
+        &mut client,
+        &work,
+        principal,
+        invitation.secret(),
+        secret()?,
+    )
+    .await?;
+    let tx = client.transaction().await?;
+    assert!(password_login::lock_principal(&tx, principal).await?);
+    let authenticated = password::authenticate_password(&tx, &work, email, secret()?)
+        .await?
+        .context("password login refused")?;
+    let renewal = password_login::create_login(
+        &tx,
+        authenticated.principal().id(),
+        session_fixture::ISSUER,
+        audience,
+    )
+    .await?
+    .context("active password principal")?;
+    let login = renewal.login.id;
+    tx.commit().await?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    Ok(session_fixture::signed(
+        &session_fixture::header(),
+        &serde_json::json!({
+            "iss": session_fixture::ISSUER, "sub": principal.to_string(), "org": ORG,
+            "aud": audience, "roles": roles, "iat": now, "exp": now + 900,
+            "authority": {"login": login}, "jti": uuid::Uuid::new_v4().to_string(),
+        }),
+    ))
+}
+
 async fn assert_user_environment_membership(
     admin: &Client,
     admin_url: &str,
     identity_url: &str,
     project: &Client,
-    route_auth: &FlowHttpRouting,
-    loaded_release: &LoadedRelease,
+    identity_reader: Arc<Client>,
+    postgres: Arc<WamnPostgres>,
+    loaded_release: Arc<LoadedRelease>,
 ) -> anyhow::Result<()> {
     let user = create_user(
         admin,
@@ -443,14 +497,43 @@ async fn assert_user_environment_membership(
         "Other member",
     )
     .await?;
-    let token = issue_pat(
-        admin,
-        user.id(),
-        "membership test",
-        Duration::from_secs(3600),
+    let server = session_fixture::Server::start().await;
+    let suffix: String = admin.query_one(
+        "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        &[&ORG, &PROJECT, &ENVIRONMENT],
+    ).await?.get(0);
+    let audience = wamn_control_provision::session_target::session_audience(
+        &wamn_control_registry::Triple {
+            org: ORG.into(),
+            project: PROJECT.into(),
+            env: ENVIRONMENT.into(),
+        },
+        &suffix,
+    )?;
+    let verifier =
+        wamn_identity_protocol::verifier::SessionVerifier::new(server.cache().0, ORG, &audience)?;
+    let session_routing = FlowHttpRouting::new(
+        Some(Arc::clone(&loaded_release)),
+        RouteInFlightLimit::default(),
     )
-    .await?;
-    let authorization = format!("Bearer {}", token.token());
+    .with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
+        )),
+    ));
+    let route_auth = &session_routing;
+    let loaded_release = loaded_release.as_ref();
+    let authorization = format!(
+        "Bearer {}",
+        password_session(
+            admin_url,
+            user.id(),
+            "member@example.test",
+            &audience,
+            &["user-reader", "user-extra"],
+        )
+        .await?
+    );
     let membership = |org: &str, env: &str, principal_id: &str| MembershipRequest {
         org: org.to_owned(),
         project: PROJECT.to_owned(),
@@ -476,7 +559,10 @@ async fn assert_user_environment_membership(
             "INSERT INTO platform.\"user\" (id, type, email) \
          VALUES ($1::text::uuid, 'user', 'member@example.test'), \
                 ($2::text::uuid, 'user', 'other@example.test')",
-            &[&user.id().as_str(), &other.id().as_str()],
+            &[
+                &user.id().to_string().as_str(),
+                &other.id().to_string().as_str(),
+            ],
         )
         .await?;
     project
@@ -489,7 +575,7 @@ async fn assert_user_environment_membership(
         .execute(
             "INSERT INTO platform.user_role (user_id, role_name) \
          VALUES ($1::text::uuid, 'user-reader'), ($1::text::uuid, 'user-extra')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     project
@@ -503,11 +589,7 @@ async fn assert_user_environment_membership(
     let other_database = wamn_test_postgres::database();
     let (other_project, other_connection) = connect(other_database.url()).await?;
     other_project
-        .batch_execute(&format!(
-            "{} {}",
-            wamn_control_provision::sql::ensure_app_acl_role_sql(),
-            wamn_schema_control::ensure_scenario_author_role_sql(),
-        ))
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await?;
     wamn_dev_control::dev::environment::install_journey_platform_floor(
         &other_project,
@@ -518,14 +600,14 @@ async fn assert_user_environment_membership(
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:other-environment-fixture', false)",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     other_project
         .execute(
             "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'member@example.test')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     other_project
@@ -539,7 +621,7 @@ async fn assert_user_environment_membership(
         .execute(
             "INSERT INTO platform.user_role (user_id, role_name) \
              VALUES ($1::text::uuid, 'user-reader')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     drop(other_project);
@@ -568,7 +650,7 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone())
     );
     for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
-        fixture_membership::grant(membership(org, env, user.id().as_str())).await?;
+        fixture_membership::grant(membership(org, env, user.id().to_string().as_str())).await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -581,7 +663,7 @@ async fn assert_user_environment_membership(
             "membership in {org}/{PROJECT}/{env} authorized a different environment"
         );
     }
-    let mut other_project = membership(ORG, ENVIRONMENT, user.id().as_str());
+    let mut other_project = membership(ORG, ENVIRONMENT, user.id().to_string().as_str());
     other_project.project = OTHER_PROJECT.to_owned();
     fixture_membership::grant(other_project).await?;
     assert_eq!(
@@ -595,7 +677,7 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone()),
         "membership in another project authorized this route"
     );
-    let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().as_str());
+    let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().to_string().as_str());
     forbidden_writer.system_database_url = identity_url.to_owned();
     fixture_membership::grant(forbidden_writer)
         .await
@@ -613,14 +695,20 @@ async fn assert_user_environment_membership(
     assert_eq!(admissions, 0, "a nonmember reached application admission");
 
     for _ in 0..2 {
-        fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+        fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().to_string().as_str()))
+            .await?;
     }
     assert_eq!(
         admin
             .query_one(
                 "SELECT count(*) FROM identity.project_env_memberships \
          WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4",
-                &[&user.id().as_str(), &ORG, &PROJECT, &ENVIRONMENT],
+                &[
+                    &user.id().to_string().as_str(),
+                    &ORG,
+                    &PROJECT,
+                    &ENVIRONMENT
+                ],
             )
             .await?
             .get::<_, i64>(0),
@@ -637,9 +725,9 @@ async fn assert_user_environment_membership(
     let caller = route_auth
         .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&authorization))
         .await
-        .expect("authenticate user PAT")
+        .expect("authenticate password session")
         .expect("authenticated caller");
-    assert_eq!(caller.principal_id(), user.id().as_str());
+    assert_eq!(caller.principal_id(), user.id().to_string().as_str());
     assert!(caller.permits(OPERATION));
     assert!(
         caller.permits(EXTRA_OPERATION),
@@ -650,62 +738,19 @@ async fn assert_user_environment_membership(
         "another tenant's role leaked"
     );
 
-    let expired = issue_pat(
-        admin,
-        user.id(),
-        "expired member",
-        Duration::from_secs(3600),
-    )
+    fixture_membership::grant(membership(
+        ORG,
+        ENVIRONMENT,
+        other.id().to_string().as_str(),
+    ))
     .await?;
-    admin
-        .execute(
-            "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
-         WHERE token_prefix = $1",
-            &[&expired.record().prefix()],
-        )
-        .await?;
-    let revoked = issue_pat(
-        admin,
-        user.id(),
-        "revoked member",
-        Duration::from_secs(3600),
-    )
-    .await?;
-    let revoked_authorization = format!("Bearer {}", revoked.token());
-    assert!(
-        route_auth
-            .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&revoked_authorization))
-            .await
-            .expect("authenticate user before PAT revocation")
-            .is_some()
-    );
-    revoke_pat(admin, revoked.record().prefix(), &mut AuthDrops::default()).await?;
-    for (label, invalid) in [
-        ("forged user PAT", flip_last_hex_digit(token.token())),
-        ("expired user PAT", expired.token().to_owned()),
-        ("revoked user PAT", revoked.token().to_owned()),
-    ] {
-        assert_eq!(
-            invoke(
-                route_auth,
-                loaded_release,
-                Some(&format!("Bearer {invalid}")),
-                &mut admissions
-            )
-            .await,
-            Err(unauthorized.clone()),
-            "{label} passed with valid environment membership"
-        );
-    }
-
-    fixture_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
     let other_token =
-        issue_pat(admin, other.id(), "other member", Duration::from_secs(3600)).await?;
+        password_session(admin_url, other.id(), "other@example.test", &audience, &[]).await?;
     assert_eq!(
         invoke(
             route_auth,
             loaded_release,
-            Some(&format!("Bearer {}", other_token.token())),
+            Some(&format!("Bearer {other_token}")),
             &mut admissions
         )
         .await,
@@ -714,7 +759,7 @@ async fn assert_user_environment_membership(
     );
     project.execute(
         "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid AND role_name = 'user-reader'",
-        &[&user.id().as_str()],
+        &[&user.id().to_string().as_str()],
     ).await?;
     assert_eq!(
         invoke(
@@ -724,17 +769,17 @@ async fn assert_user_environment_membership(
             &mut admissions
         )
         .await,
-        Err(Refusal::Permission(OPERATION.into())),
+        Err(unauthorized.clone()),
         "role removal must affect the next request"
     );
     project.execute(
         "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'user-reader')",
-        &[&user.id().as_str()],
+        &[&user.id().to_string().as_str()],
     ).await?;
     project
         .execute(
             "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     assert_eq!(
@@ -745,12 +790,12 @@ async fn assert_user_environment_membership(
             &mut admissions
         )
         .await,
-        Err(Refusal::Permission(OPERATION.into()))
+        Err(unauthorized.clone())
     );
     project
         .execute(
             "UPDATE platform.\"user\" SET status = 'active' WHERE id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     invoke(
@@ -763,7 +808,7 @@ async fn assert_user_environment_membership(
     .expect("restored environment role authorizes again");
     for _ in 0..2 {
         fixture_membership::revoke(
-            membership(ORG, ENVIRONMENT, user.id().as_str()),
+            membership(ORG, ENVIRONMENT, user.id().to_string().as_str()),
             &Publisher::default(),
         )
         .await?;
@@ -778,7 +823,7 @@ async fn assert_user_environment_membership(
             Err(unauthorized.clone())
         );
     }
-    fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+    fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().to_string().as_str())).await?;
     disable_principal(admin, user.id(), &mut AuthDrops::default()).await?;
     assert_eq!(
         invoke(
@@ -955,8 +1000,9 @@ async fn production_operator_authentication(root: &Path) {
         &admin_url,
         &identity_url,
         &project,
-        &route_auth,
-        &loaded_release,
+        Arc::clone(&identity_reader),
+        Arc::clone(&postgres),
+        Arc::clone(&loaded_release),
     )
     .await
     .expect("test user environment membership through the production CLI and route authentication");
@@ -1054,7 +1100,12 @@ async fn production_operator_authentication(root: &Path) {
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
              AND org = $2 AND project = $3 AND role = $4",
-            &[&principal.id().as_str(), &ORG, &PROJECT, &ADMIN_ROLE],
+            &[
+                &principal.id().to_string().as_str(),
+                &ORG,
+                &PROJECT,
+                &ADMIN_ROLE,
+            ],
         )
         .await
         .expect("remove the admin project role");
@@ -1134,7 +1185,7 @@ async fn production_operator_authentication(root: &Path) {
     );
     admin.execute(
         "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
-        &[&principal.id().as_str()],
+        &[&principal.id().to_string().as_str()],
     ).await.expect("restore the service principal for permission tests");
 
     // An operator revokes a credential that is IN USE. The case above revokes
@@ -1253,131 +1304,4 @@ async fn production_operator_authentication(root: &Path) {
     drop(project);
     project_task.abort();
     admin_task.abort();
-}
-
-/// Checked-in schema generated from [`JourneyDocument`], relative to this
-/// crate's manifest. Regenerate it with the command beside its drift test.
-const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";
-/// A complete example the shell writer reproduces byte-for-byte and this crate
-/// parses, so the two sides are pinned to one artifact rather than to each
-/// other's reading of the schema.
-const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
-
-/// Regenerate the checked-in schema with
-/// `cargo run --locked --offline -p wamn-integration-tests --example print-journey-schema > tests/integration/schema/wamn-journey.schema.json`.
-#[test]
-fn checked_in_journey_schema_matches_generated_bytes() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
-    let checked_in = std::fs::read(&path).expect("read the checked-in journey schema");
-    assert_eq!(checked_in, journey_document_schema_bytes());
-}
-
-/// The generated schema and the strict parser share ONE field authority: a
-/// field cannot exist in the parser and be absent from the schema, or the
-/// reverse, and the schema says which fields a writer must supply.
-#[test]
-fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
-    let first = journey_document_schema_bytes();
-    assert_eq!(first, journey_document_schema_bytes());
-    assert_eq!(first.last(), Some(&b'\n'));
-
-    let schema: serde_json::Value = serde_json::from_slice(&first).expect("parse the schema");
-    assert_eq!(schema["additionalProperties"], false);
-    let properties = schema["properties"].as_object().expect("object properties");
-    let required: Vec<&str> = schema["required"]
-        .as_array()
-        .expect("required set")
-        .iter()
-        .map(|key| key.as_str().expect("required key"))
-        .collect();
-    // Every scalar the parser refuses-when-empty is a required property, and
-    // the only property that is not required is the phase the shell amends in.
-    let example = parse_journey_document(&example_document()).expect("example parses");
-    for (field, _) in example.scalars() {
-        assert!(properties.contains_key(field), "schema lacks {field}");
-        assert!(required.contains(&field), "schema does not require {field}");
-    }
-    assert_eq!(properties.len(), example.scalars().len() + 3);
-    for phase in ["materializer", "runtime", "postcommit"] {
-        assert!(properties.contains_key(phase));
-        assert!(!required.contains(&phase));
-    }
-    let runtime = &schema["definitions"]["RuntimePhase"];
-    assert_eq!(runtime["additionalProperties"], false);
-    assert_eq!(
-        runtime["required"],
-        serde_json::json!(["packaging_id", "route_endpoint", "to_location_id"])
-    );
-    let phase = &schema["definitions"]["MaterializerPhase"];
-    assert_eq!(phase["additionalProperties"], false);
-    assert_eq!(
-        phase["required"],
-        serde_json::json!(["nats_url", "project_pg_url", "receipt_id"])
-    );
-
-    // And the refusals name the field, so a forty-minute run does not fail
-    // under a message about something else.
-    let mut missing: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    missing
-        .as_object_mut()
-        .expect("object")
-        .remove("route_host");
-    let error = parse_journey_document(&serde_json::to_vec(&missing).expect("serialize"))
-        .expect_err("a missing required field is refused");
-    assert!(format!("{error:#}").contains("route_host"), "{error:#}");
-
-    let mut unknown: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    unknown["route_hots"] = serde_json::json!("typo.localhost");
-    let error = parse_journey_document(&serde_json::to_vec(&unknown).expect("serialize"))
-        .expect_err("an unknown field is refused, not ignored");
-    assert!(format!("{error:#}").contains("route_hots"), "{error:#}");
-
-    let mut empty: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    empty["host_secret_namespace"] = serde_json::json!("");
-    let error = parse_journey_document(&serde_json::to_vec(&empty).expect("serialize"))
-        .expect_err("an empty value is refused, not passed through");
-    assert!(
-        format!("{error:#}").contains("host_secret_namespace"),
-        "{error:#}"
-    );
-
-    let mut no_phase: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    no_phase
-        .as_object_mut()
-        .expect("object")
-        .remove("materializer");
-    let parsed = parse_journey_document(&serde_json::to_vec(&no_phase).expect("serialize"))
-        .expect("the materializer phase is optional until the shell amends it in");
-    assert!(parsed.materializer.is_none());
-}
-
-/// The checked-in example is what the shell writer reproduces byte-for-byte;
-/// parsing it here is what pins the two sides to one artifact.
-#[test]
-fn the_checked_in_example_document_parses_with_every_field() {
-    let document = parse_journey_document(&example_document()).expect("example parses");
-    assert_eq!(document.route_host, "example.localhost");
-    assert_eq!(document.host_secret_namespace, "wamn-example-journey");
-    assert_eq!(
-        document.registry_auth_file,
-        Path::new("/tmp/example/docker/config.json")
-    );
-    let phase = document
-        .materializer
-        .expect("the example carries the amended phase");
-    assert_eq!(phase.receipt_id, "00000000-0000-0000-0000-00000000c0de");
-    let runtime = document
-        .runtime
-        .expect("the example carries the runtime phase");
-    assert_eq!(runtime.route_endpoint, "http://10.0.0.2:30999");
-    assert_eq!(runtime.packaging_id, "00000000-0000-0000-0000-000000000301");
-}
-
-fn example_document() -> Vec<u8> {
-    std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_EXAMPLE_PATH))
-        .expect("read the checked-in journey example")
 }

@@ -30,7 +30,7 @@ async fn state(client: &mut Client) -> wamn_schema_control::AppliedPackage {
 #[tokio::test]
 async fn explicit_sql_advances_across_versions_without_selecting_code() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -258,7 +258,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     std::fs::remove_file(next.join("migrations/0003_candidate.sql")).unwrap();
     manifest["package"]["version"] = "3.0.0".into();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let fresh = wamn_project_state::test_database::tenant_platform();
+    let fresh = wamn_platform_identity::test_database::tenant_platform();
     fresh.execute(&["DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;"]).unwrap();
     apply_package(request(&next, fresh.url())).await.unwrap();
     let (mut fresh_client, fresh_connection) =
@@ -284,7 +284,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     use wamn_schema_control::MigrationOutcome;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -522,7 +522,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     use crate::apply_package::adopt_package_schemas;
     use wamn_schema_control::MigrationOutcome;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -757,7 +757,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
 async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
     use crate::apply_package::adopt_package_schemas;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database
         .execute(&[include_str!(
             "../../../../../../deploy/sql/app-schema-baseline.sql"
@@ -816,7 +816,7 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
     use crate::apply_package::{read_package_migrations, resolution_package};
     use wamn_schema_control::MigrationOutcome;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -901,7 +901,7 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
     use tokio::time::{Duration, timeout};
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
@@ -1000,7 +1000,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
     use wamn_schema_control::MigrationOutcome;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",

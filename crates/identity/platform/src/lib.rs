@@ -4,7 +4,7 @@
 //!
 //! This crate owns user and service principals, org memberships and roles, project-role assignments,
 //! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
-//! It owns the fixed session-token profile but contains no HTTP, OIDC,
+//! The identity protocol crate owns the session-token profile. This crate contains no HTTP, OIDC,
 //! or per-project `platform` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
 //! resolve an externally authenticated subject through [`resolve_subject`].
@@ -16,11 +16,12 @@
 use std::fmt;
 use std::time::Duration;
 
-use ring::rand::{SecureRandom as _, SystemRandom};
-use sha2::{Digest as _, Sha256};
-use subtle::ConstantTimeEq as _;
 use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
-use wamn_session::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::secret::PatToken;
+use wamn_identity_protocol::{PrincipalId, RoleName};
+
+#[cfg(feature = "test-util")]
+pub mod test_database;
 
 pub mod application;
 pub mod configuration;
@@ -36,17 +37,6 @@ pub mod session_token;
 
 use wamn_broker::auth_changes::AuthDrops;
 
-#[cfg(test)]
-const PRINCIPAL_COLUMNS: &str = "id::text, type, subject, display_name, status";
-#[cfg(test)]
-const PAT_COLUMNS: [&str; 6] = [
-    "id::text",
-    "token_prefix",
-    "label",
-    "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-    "to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-    "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-];
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id::text, type, subject, display_name, status";
@@ -91,7 +81,7 @@ const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
     (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
     SELECT p.id, p.type, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
     FROM identity.principals p \
-    WHERE p.id = $1::text::uuid AND p.status = 'active' \
+    WHERE p.id = $1::text::uuid AND p.status = 'active' AND p.type = 'service' \
     RETURNING id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -107,13 +97,9 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1 AND CASE p.type \
-        WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
-            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
-        WHEN 'user' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
-            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4 \
-            AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active')) \
-        ELSE false END";
+    WHERE identity.pats.token_prefix = $1 AND p.type = 'service' \
+        AND EXISTS (SELECT 1 FROM identity.project_roles r \
+            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($4::text[]))";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -155,12 +141,6 @@ pub fn operator_subject(
 pub fn application_subject(env_key: &str, package: &str) -> Result<String, IdentityError> {
     canonical_subject(&format!("wamn-app-{env_key}--{package}"))
 }
-
-/// Random bytes behind the non-secret lookup half of a token.
-const TOKEN_LOOKUP_BYTES: usize = 8;
-
-/// Random bytes behind the secret half of a token.
-const TOKEN_SECRET_BYTES: usize = 32;
 
 /// The kind of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,40 +219,6 @@ impl fmt::Display for PrincipalStatus {
     }
 }
 
-/// Opaque platform principal identity minted by the system database.
-/// Parsing checks UUID spelling. It does not establish existence or authentication.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PrincipalId(Box<str>);
-
-impl PrincipalId {
-    /// Return the canonical UUID text stored by PostgreSQL.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for PrincipalId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for PrincipalId {
-    type Err = IdentityError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let value = value.to_ascii_lowercase();
-        if !wamn_session::token::is_principal_id(&value) {
-            return Err(IdentityError::refused(
-                IdentityErrorType::InvalidInput,
-                IdentityRefusal::Invalid("principal_id"),
-                "principal ID must be a hyphenated UUID",
-            ));
-        }
-        Ok(Self(value.into()))
-    }
-}
-
 /// A stored first-party principal. This identity record does not authenticate
 /// the current caller as that principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,26 +282,6 @@ impl AuthenticatedPrincipal {
     /// Return the verified principal record.
     pub fn principal(&self) -> &Principal {
         &self.principal
-    }
-}
-
-/// One project-scoped role assignment. Role names are opaque canonical slugs;
-/// this core does not attach permissions to them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectRole {
-    role: Box<str>,
-}
-
-impl ProjectRole {
-    /// Return the stable role slug.
-    pub fn as_str(&self) -> &str {
-        &self.role
-    }
-}
-
-impl fmt::Display for ProjectRole {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
     }
 }
 
@@ -429,7 +355,7 @@ impl PatRecord {
 /// and redacts the token from its `Debug` output.
 #[derive(Clone)]
 pub struct IssuedPat {
-    token: Box<str>,
+    token: zeroize::Zeroizing<String>,
     record: PatRecord,
 }
 
@@ -540,9 +466,29 @@ impl fmt::Display for IdentityError {
 
 impl std::error::Error for IdentityError {}
 
-/// A session refusal keeps its message and is invalid input to this crate.
-impl From<wamn_session::SessionError> for IdentityError {
-    fn from(source: wamn_session::SessionError) -> Self {
+/// Translate protocol input errors at the identity boundary.
+impl From<wamn_identity_protocol::ParseIdentityError> for IdentityError {
+    fn from(source: wamn_identity_protocol::ParseIdentityError) -> Self {
+        if source.field() == "principal_id" {
+            Self::refused(
+                IdentityErrorType::InvalidInput,
+                IdentityRefusal::Invalid("principal_id"),
+                source.to_string(),
+            )
+        } else {
+            Self::new(IdentityErrorType::InvalidInput, source.to_string())
+        }
+    }
+}
+
+impl From<wamn_identity_protocol::secret::TokenError> for IdentityError {
+    fn from(source: wamn_identity_protocol::secret::TokenError) -> Self {
+        Self::new(IdentityErrorType::Entropy, source.to_string())
+    }
+}
+
+impl From<wamn_identity_protocol::SessionError> for IdentityError {
+    fn from(source: wamn_identity_protocol::SessionError) -> Self {
         Self::new(IdentityErrorType::InvalidInput, source.to_string())
     }
 }
@@ -643,7 +589,7 @@ pub async fn create_service(
         .await
         .map_err(|error| database_error(&error))?;
     let principal = decode_principal(&row)?;
-    drops.identity(principal.id().as_str());
+    drops.identity(principal.id().to_string().as_str());
     Ok(principal)
 }
 
@@ -653,7 +599,7 @@ pub async fn resolve_principal(
     id: &PrincipalId,
 ) -> Result<Option<Principal>, IdentityError> {
     client
-        .query_opt(SELECT_PRINCIPAL_BY_ID_SQL, &[&id.as_str()])
+        .query_opt(SELECT_PRINCIPAL_BY_ID_SQL, &[&id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?
         .as_ref()
@@ -685,22 +631,21 @@ pub async fn disable_principal(
     drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let row = client
-        .query_opt(DISABLE_PRINCIPAL_SQL, &[&id.as_str()])
+        .query_opt(DISABLE_PRINCIPAL_SQL, &[&id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
             IdentityError::new(IdentityErrorType::NotFound, "principal does not exist")
         })?;
-    drops.identity(id.as_str());
+    drops.identity(id.to_string().as_str());
     decode_principal(&row)
 }
 
-/// Issue a personal access token for an active principal.
+/// Issue a personal access token for an active service principal.
 ///
 /// This is the trusted-context issuance path: the caller must already have
-/// authorized the request. It serves users and services identically and reads
-/// no client-supplied identity field — only the principal ID the caller already
-/// resolved. A missing or disabled principal is `NotFound`.
+/// authorized the request. It reads only the principal ID the caller resolved.
+/// A missing, disabled or non-service principal is `NotFound`.
 pub async fn issue_pat(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -709,13 +654,14 @@ pub async fn issue_pat(
 ) -> Result<IssuedPat, IdentityError> {
     let label = checked_pat_label(label)?;
     let ttl_seconds = checked_pat_ttl(ttl)?;
-    let (token, prefix) = mint_token(PAT_TOKEN_PREFIX)?;
-    let token_hash = digest_token(&token);
+    let token = PatToken::mint()?;
+    let prefix = token.lookup();
+    let token_hash = token.digest();
     let row = client
         .query_opt(
             INSERT_PAT_SQL,
             &[
-                &principal_id.as_str(),
+                &principal_id.to_string().as_str(),
                 &prefix,
                 &token_hash,
                 &label,
@@ -731,7 +677,7 @@ pub async fn issue_pat(
             )
         })?;
     Ok(IssuedPat {
-        token: token.into(),
+        token: token.into_secret(),
         record: decode_pat(&row)?,
     })
 }
@@ -746,14 +692,15 @@ pub async fn authenticate_pat(
     client: &(impl GenericClient + Sync),
     token: &str,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
+    let Ok(parsed) = token.parse::<PatToken>() else {
         return Ok(None);
     };
+    let prefix = parsed.lookup();
     let row = client
         .query_opt(SELECT_PAT_BY_PREFIX_SQL, &[&prefix])
         .await
         .map_err(|error| database_error(&error))?;
-    decide_pat(row, token)
+    decide_pat(row, &parsed)
 }
 
 /// Apply the token predicates to the looked-up row.
@@ -762,7 +709,7 @@ pub async fn authenticate_pat(
 /// about which token is acceptable: a predicate added here binds both.
 fn decide_pat(
     row: Option<Row>,
-    token: &str,
+    token: &PatToken,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     let Some(row) = row else {
         return Ok(None);
@@ -779,10 +726,7 @@ fn decide_pat(
     }
     let stored_hash: String = row.try_get(5).map_err(|error| database_error(&error))?;
     let usable: bool = row.try_get(6).map_err(|error| database_error(&error))?;
-    if !digest_matches(&stored_hash, &digest_token(token))
-        || !usable
-        || principal.status != PrincipalStatus::Active
-    {
+    if !token.matches(&stored_hash) || !usable || principal.status != PrincipalStatus::Active {
         return Ok(None);
     }
     Ok(Some(AuthenticatedPrincipal {
@@ -821,7 +765,7 @@ pub async fn list_pats(
     principal_id: &PrincipalId,
 ) -> Result<Vec<PatRecord>, IdentityError> {
     let rows = client
-        .query(SELECT_PATS_SQL, &[&principal_id.as_str()])
+        .query(SELECT_PATS_SQL, &[&principal_id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?;
     rows.iter().map(decode_pat).collect()
@@ -839,23 +783,23 @@ pub async fn assign_project_role(
     let org = checked_scope_segment("org", org)?;
     let service: bool = client.query_one(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
-        &[&principal_id.as_str()],
+        &[&principal_id.to_string().as_str()],
     ).await.map_err(|error| database_error(&error))?.get(0);
     if !service {
         org::active_member(client, principal_id, &org).await?;
     }
 
     let project = checked_scope_segment("project", project)?;
-    let role = canonical_role(role)?;
+    let role = role.parse::<RoleName>()?.to_string();
     let written = client
         .execute(
             ASSIGN_PROJECT_ROLE_SQL,
-            &[&principal_id.as_str(), &org, &project, &role],
+            &[&principal_id.to_string().as_str(), &org, &project, &role],
         )
         .await
         .map_err(|error| database_error(&error))?;
     if written > 0 {
-        drops.identity(principal_id.as_str());
+        drops.identity(principal_id.to_string().as_str());
     }
     Ok(())
 }
@@ -866,24 +810,24 @@ pub async fn project_roles(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
-) -> Result<Vec<ProjectRole>, IdentityError> {
+) -> Result<Vec<RoleName>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     let rows = client
         .query(
             SELECT_PROJECT_ROLES_SQL,
-            &[&principal_id.as_str(), &org, &project],
+            &[&principal_id.to_string().as_str(), &org, &project],
         )
         .await
         .map_err(|error| database_error(&error))?;
     decode_project_roles(rows)
 }
 
-fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityError> {
+fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> {
     rows.into_iter()
         .map(|row| {
             let role: String = row.try_get(0).map_err(|error| database_error(&error))?;
-            Ok(ProjectRole { role: role.into() })
+            Ok(role.parse()?)
         })
         .collect()
 }
@@ -905,7 +849,7 @@ pub async fn grant_project_env_membership(
     client
         .execute(
             GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.as_str(), &org, &project, &env],
+            &[&principal_id.to_string().as_str(), &org, &project, &env],
         )
         .await
         .map_err(|error| database_error(&error))?;
@@ -929,7 +873,7 @@ pub async fn has_project_env_membership(
     client
         .query_one(
             SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.as_str(), &org, &project, &env],
+            &[&principal_id.to_string().as_str(), &org, &project, &env],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -953,11 +897,11 @@ pub async fn revoke_project_env_membership(
     let removed = client
         .execute(
             REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
-            &[&principal_id.as_str(), &org, &project, &env],
+            &[&principal_id.to_string().as_str(), &org, &project, &env],
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.identity(principal_id.as_str());
+    drops.identity(principal_id.to_string().as_str());
     Ok(removed != 0)
 }
 
@@ -996,33 +940,31 @@ impl PreparedIdentityReads {
 
     /// Authenticate a route PAT and its system scope in one round trip.
     ///
-    /// Services need one of the accepted project roles. Users need explicit membership
-    /// in the exact project environment. The caller must still enforce the
-    /// configured service identity and read tenant permissions.
+    /// Services need one of the accepted project roles. The caller must still
+    /// enforce the configured service identity and read operation permissions.
     pub async fn authenticate_route_pat(
         &self,
         client: &(impl GenericClient + Sync),
         token: &str,
         org: &str,
         project: &str,
-        env: &str,
         accepted_roles: &[&str],
     ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-        let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
+        let Ok(parsed) = token.parse::<PatToken>() else {
             return Ok(None);
         };
+        let prefix = parsed.lookup();
         let org = checked_scope_segment("org", org)?;
         let project = checked_scope_segment("project", project)?;
-        let env = checked_scope_segment("env", env)?;
         let roles = accepted_roles
             .iter()
-            .map(|role| canonical_role(role))
+            .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
             .collect::<Result<Vec<_>, _>>()?;
         let row = client
-            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &roles])
+            .query_opt(&self.route_pat, &[&prefix, &org, &project, &roles])
             .await
             .map_err(|error| database_error(&error))?;
-        decide_pat(row, token)
+        decide_pat(row, &parsed)
     }
 }
 
@@ -1033,7 +975,7 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
     let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;
     let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
     Ok(Principal {
-        id: PrincipalId(id.into()),
+        id: id.parse()?,
         kind: PrincipalType::parse(&kind)?,
         subject: subject.into(),
         display_name: display_name.into(),
@@ -1056,56 +998,6 @@ fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
         expires_at: expires_at.into(),
         revoked_at: revoked_at.map(Into::into),
     })
-}
-
-/// Mint a personal access token and return it beside its lookup prefix.
-fn mint_token(marker: &str) -> Result<(String, String), IdentityError> {
-    let mut lookup = [0_u8; TOKEN_LOOKUP_BYTES];
-    let mut secret = [0_u8; TOKEN_SECRET_BYTES];
-    let rng = SystemRandom::new();
-    rng.fill(&mut lookup).map_err(|_| {
-        IdentityError::new(
-            IdentityErrorType::Entropy,
-            "operating system could not supply token lookup entropy",
-        )
-    })?;
-    rng.fill(&mut secret).map_err(|_| {
-        IdentityError::new(
-            IdentityErrorType::Entropy,
-            "operating system could not supply token secret entropy",
-        )
-    })?;
-    let prefix = hex::encode(lookup);
-    let token = format!("{marker}{prefix}_{}", hex::encode(secret));
-    Ok((token, prefix))
-}
-
-/// Digest a whole token. Tokens are uniform 256-bit random material, so a plain
-/// SHA-256 is the right rest form — a password KDF would buy nothing against an
-/// attacker who cannot enumerate the space anyway.
-fn digest_token(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
-}
-
-fn digest_matches(stored: &str, presented: &str) -> bool {
-    stored.as_bytes().ct_eq(presented.as_bytes()).into()
-}
-
-/// Return the lookup half of a well-formed token carrying `marker`, or `None`
-/// if it is malformed.
-fn lookup_prefix<'a>(marker: &str, token: &'a str) -> Option<&'a str> {
-    let (prefix, secret) = token.strip_prefix(marker)?.split_once('_')?;
-    let well_formed = prefix.len() == TOKEN_LOOKUP_BYTES * 2
-        && secret.len() == TOKEN_SECRET_BYTES * 2
-        && is_lower_hex(prefix)
-        && is_lower_hex(secret);
-    well_formed.then_some(prefix)
-}
-
-fn is_lower_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn checked_pat_label(value: &str) -> Result<String, IdentityError> {
@@ -1131,7 +1023,7 @@ fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
 }
 
 fn checked_pat_prefix(value: &str) -> Result<&str, IdentityError> {
-    if value.len() != TOKEN_LOOKUP_BYTES * 2 || !is_lower_hex(value) {
+    if !PatToken::valid_lookup(value) {
         return Err(IdentityError::new(
             IdentityErrorType::InvalidInput,
             "token prefix must be 16 lowercase hex digits",
@@ -1229,17 +1121,6 @@ fn checked_scope_segment(name: &'static str, value: &str) -> Result<String, Iden
     Ok(value.to_owned())
 }
 
-fn canonical_role(value: &str) -> Result<String, IdentityError> {
-    let value = value.trim().to_ascii_lowercase();
-    if !wamn_session::token::is_role_slug(&value) {
-        return Err(IdentityError::new(
-            IdentityErrorType::InvalidInput,
-            "role must be a lowercase slug of at most 64 bytes",
-        ));
-    }
-    Ok(value)
-}
-
 fn database_error(error: &tokio_postgres::Error) -> IdentityError {
     let kind = match error.code() {
         Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorType::Conflict,
@@ -1287,68 +1168,6 @@ mod tests {
     }
 
     #[test]
-    fn principal_id_parsing_preserves_uuid_identity_and_rejects_other_spellings() {
-        let id = "A56F21C8-591A-4B4B-B4E9-15357C0B4A81"
-            .parse::<PrincipalId>()
-            .expect("parse a principal UUID");
-        assert_eq!(id.as_str(), "a56f21c8-591a-4b4b-b4e9-15357c0b4a81");
-        for invalid in [
-            "",
-            "author@example.com",
-            "a56f21c8591a4b4bb4e915357c0b4a81",
-            "a56f21c8-591a-4b4b-b4e9-15357c0b4a8z",
-            "a56f21c8_591a-4b4b-b4e9-15357c0b4a81",
-            " a56f21c8-591a-4b4b-b4e9-15357c0b4a81",
-        ] {
-            assert_eq!(
-                invalid.parse::<PrincipalId>().unwrap_err().error_type(),
-                IdentityErrorType::InvalidInput,
-                "accepted invalid principal ID {invalid:?}"
-            );
-        }
-    }
-
-    /// THE PREMISE `wamn-0h0g.12.67`'s GRANT SET RESTS ON.
-    ///
-    /// `wamn_identity_reader` is provisioned SELECT-only, and that is correct
-    /// only while the two statements the management surface makes are plain
-    /// reads. A row lock — `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` —
-    /// requires `UPDATE` on the locked relation, which a SELECT-only role
-    /// cannot serve, so adding one here silently breaks the credential rather
-    /// than the query. The grant is pinned separately by
-    /// `wamn_control_provision::sql`'s `the_identity_reader_grants_no_insert_and_no_update`;
-    /// this is the half that lives with the statements.
-    #[test]
-    fn the_two_reads_the_management_surface_makes_take_no_row_lock() {
-        for statement in [SELECT_PAT_BY_PREFIX_SQL, SELECT_PROJECT_ROLES_SQL] {
-            for locking in [
-                "FOR UPDATE",
-                "FOR NO KEY UPDATE",
-                "FOR SHARE",
-                "FOR KEY SHARE",
-            ] {
-                assert!(
-                    !statement.contains(locking),
-                    "an identity read takes a {locking} row lock, \
-                     which the SELECT-only reader role cannot serve"
-                );
-            }
-        }
-        // …and they reach the original three relations that role is granted.
-        for (statement, relations) in [
-            (
-                SELECT_PAT_BY_PREFIX_SQL,
-                &["identity.pats", "identity.principals"][..],
-            ),
-            (SELECT_PROJECT_ROLES_SQL, &["identity.project_roles"][..]),
-        ] {
-            for relation in relations {
-                assert!(statement.contains(relation), "{relation} is not read here");
-            }
-        }
-    }
-
-    #[test]
     fn principal_kind_literals_round_trip() {
         for kind in [
             PrincipalType::User,
@@ -1371,7 +1190,7 @@ mod tests {
             "user@example.com"
         );
         assert_eq!(
-            canonical_role(" Project-Author ").unwrap(),
+            " Project-Author ".parse::<RoleName>().unwrap().to_string(),
             "project-author"
         );
         for invalid in ["", "two words", "/root", "-leading"] {
@@ -1382,7 +1201,7 @@ mod tests {
         }
         for invalid in ["", "two words", "_admin", "-admin"] {
             assert!(
-                canonical_role(invalid).is_err(),
+                invalid.parse::<RoleName>().is_err(),
                 "accepted role {invalid:?}"
             );
         }
@@ -1431,79 +1250,6 @@ mod tests {
         assert!(operator_subject("demo", "two words", "prod").is_err());
     }
 
-    fn sample_record() -> PatRecord {
-        PatRecord {
-            id: PatId("6d3f2d1c-0000-4000-8000-00000000abcd".into()),
-            prefix: "0123456789abcdef".into(),
-            label: "laptop".into(),
-            created_at: "2026-08-07T11:00:00Z".into(),
-            expires_at: "2026-08-08T11:00:00Z".into(),
-            revoked_at: None,
-        }
-    }
-
-    #[test]
-    fn minted_tokens_are_unique_prefixed_hex_that_parses_back() {
-        let (token, prefix) = mint_token(PAT_TOKEN_PREFIX).unwrap();
-        let (other, other_prefix) = mint_token(PAT_TOKEN_PREFIX).unwrap();
-        assert_ne!(token, other);
-        assert_ne!(prefix, other_prefix);
-        assert!(token.starts_with(PAT_TOKEN_PREFIX));
-        assert_eq!(
-            token.len(),
-            PAT_TOKEN_PREFIX.len() + TOKEN_LOOKUP_BYTES * 2 + 1 + TOKEN_SECRET_BYTES * 2
-        );
-        assert_eq!(
-            lookup_prefix(PAT_TOKEN_PREFIX, &token),
-            Some(prefix.as_str())
-        );
-        assert_eq!(checked_pat_prefix(&prefix).unwrap(), prefix);
-
-        let secret = token.rsplit_once('_').unwrap().1;
-        for malformed in [
-            String::new(),
-            "not-a-token".to_owned(),
-            token.replacen("wamn_pat_", "wamn_tok_", 1),
-            token.to_ascii_uppercase(),
-            format!("{PAT_TOKEN_PREFIX}{prefix}_{}", &secret[1..]),
-            format!("{PAT_TOKEN_PREFIX}{}_{secret}", &prefix[1..]),
-            format!("{PAT_TOKEN_PREFIX}{prefix}{secret}"),
-        ] {
-            assert!(
-                lookup_prefix(PAT_TOKEN_PREFIX, &malformed).is_none(),
-                "accepted malformed token {malformed:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn token_digest_is_deterministic_and_hides_the_token() {
-        let (token, _) = mint_token(PAT_TOKEN_PREFIX).unwrap();
-        let digest = digest_token(&token);
-        assert_eq!(digest, digest_token(&token));
-        assert_eq!(digest.len(), 64);
-        assert!(is_lower_hex(&digest));
-        assert!(!digest.contains(&token));
-        assert!(!token.contains(&digest));
-        assert!(digest_matches(&digest, &digest_token(&token)));
-
-        let (forged, _) = mint_token(PAT_TOKEN_PREFIX).unwrap();
-        assert!(!digest_matches(&digest, &digest_token(&forged)));
-        assert!(!digest_matches(&digest, ""));
-    }
-
-    #[test]
-    fn issued_tokens_never_reach_debug_output() {
-        let issued = IssuedPat {
-            token: "wamn_pat_0123456789abcdef_secret".into(),
-            record: sample_record(),
-        };
-        let rendered = format!("{issued:?}");
-        assert!(!rendered.contains(issued.token()), "{rendered}");
-        assert!(rendered.contains("<redacted>"), "{rendered}");
-        assert!(rendered.contains("0123456789abcdef"), "{rendered}");
-    }
-
     #[test]
     fn token_labels_and_lifetimes_fail_closed() {
         assert_eq!(checked_pat_label("  laptop  ").unwrap(), "laptop");
@@ -1522,36 +1268,6 @@ mod tests {
                 checked_pat_prefix(invalid).is_err(),
                 "accepted prefix {invalid:?}"
             );
-        }
-    }
-
-    #[test]
-    fn token_storage_keeps_a_digest_and_never_the_token() {
-        assert!(INSERT_PAT_SQL.contains("token_hash"));
-        for sql in [INSERT_PAT_SQL, SELECT_PAT_BY_PREFIX_SQL, SELECT_PATS_SQL] {
-            assert!(!sql.contains("token_secret"));
-            assert!(!sql.contains("token_plaintext"));
-        }
-        assert!(SELECT_PAT_BY_PREFIX_SQL.contains("revoked_at IS NULL"));
-        assert!(SELECT_PAT_BY_PREFIX_SQL.contains("expires_at > now()"));
-        assert!(REVOKE_PAT_SQL.contains("COALESCE(revoked_at, now())"));
-        assert!(INSERT_PAT_SQL.contains("p.status = 'active'"));
-        for column in PAT_COLUMNS {
-            for sql in [INSERT_PAT_SQL, SELECT_PATS_SQL, REVOKE_PAT_SQL] {
-                assert!(sql.contains(column), "missing {column} in {sql}");
-            }
-        }
-    }
-
-    #[test]
-    fn principal_columns_are_shared_by_every_record_decoder() {
-        for column in PRINCIPAL_COLUMNS.split(", ") {
-            let column = column.trim_end_matches("::text");
-            assert!(INSERT_USER_SQL.contains(column));
-            assert!(INSERT_SERVICE_SQL.contains(column));
-            assert!(SELECT_PRINCIPAL_BY_ID_SQL.contains(column));
-            assert!(SELECT_PRINCIPAL_BY_SUBJECT_SQL.contains(column));
-            assert!(DISABLE_PRINCIPAL_SQL.contains(column));
         }
     }
 }

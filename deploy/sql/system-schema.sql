@@ -291,9 +291,6 @@ CREATE TABLE registry.env_policies (
     backup_cadence  text  NOT NULL DEFAULT '',
     wal_retention   text  NOT NULL DEFAULT '',
     hibernation     text  NOT NULL DEFAULT 'off',
-    durability_class text NOT NULL DEFAULT 'standard'
-        CONSTRAINT env_policies_durability_class_check
-        CHECK (durability_class IN ('standard')),
     -- The readiness budget and drain bound of `env apply`
     -- (docs/architecture/overview.md#environment-lifecycle).
     readiness_budget_seconds int NOT NULL DEFAULT 600
@@ -351,7 +348,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `type` is user, service, or platform. A platform row names a platform
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
--- and the id that `wamn-project-state` derives from that name.
+-- and the id that `wamn-identity-protocol` derives from that name.
 -- `principals_platform_principal_check` pins the subject, display name, and id
 -- of each platform row, and it refuses a `wamn:` display name on another type.
 -- The subject pattern refuses a colon on another type. PostgreSQL has no
@@ -503,7 +500,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- ---------------------------------------------------------------------------
 -- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
--- users and services use headlessly. INVARIANT: no token material is stored.
+-- services use headlessly. No token material is stored.
 -- `token_prefix` is the non-secret lookup half (hex of the token's random
 -- lookup bytes, UNIQUE so verification is a single index probe);
 -- `token_hash` is the hex SHA-256 of the WHOLE token string, which is
@@ -511,7 +508,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
 -- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
 -- evidence that must outlive careless principal deletes. The FK carries the
--- principal type, and `pats_principal_type_check` refuses a platform principal.
+-- principal type, and `pats_principal_type_check` permits only service principals.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.pats (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -529,7 +526,7 @@ CREATE TABLE identity.pats (
     FOREIGN KEY (principal_id, principal_type)
         REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
     CONSTRAINT pats_principal_type_check
-        CHECK (principal_type IN ('user', 'service')),
+        CHECK (principal_type = 'service'),
     CONSTRAINT pats_token_prefix_check
         CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
     CONSTRAINT pats_token_hash_check
@@ -740,8 +737,6 @@ CREATE TRIGGER wamn_record_history_stamp
 -- anchored in THIS row, never in a CLI argument or a stage: the target decides.
 -- This row is the AUTHORITY; `catalog.tenant_environments` in the control store
 -- carries the projected copy the admit path reads (deploy/sql/control-portable-store.sql).
--- It is deliberately NOT `registry.env_policies.durability_class`, which is
--- run-retention policy for admitted runs and means something else.
 --
 -- `status` is `active` or `inactive` (docs/plan/platform-ui.md §5.4). Identity
 -- offers no audience of an inactive environment, and its host serves none of

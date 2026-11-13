@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-broker = { workspace = true }
+wamn-digest.workspace = true
 mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
@@ -17,7 +18,7 @@ wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }

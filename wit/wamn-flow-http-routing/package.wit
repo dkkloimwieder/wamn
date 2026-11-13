@@ -29,31 +29,6 @@ interface routing {
     cardinality: cardinality,
   }
 
-  enum canonical-spelling {
-    numeric,
-    timestamptz,
-  }
-
-  record field-spelling {
-    path: string,
-    spelling: canonical-spelling,
-  }
-
-  record line-order {
-    path: string,
-    ascending-by: string,
-  }
-
-  /// Apply spelling and line order before invocation and hashing.
-  /// Exclude the listed dotted paths only from the hash, not the input.
-  /// A [] path segment visits each list element. Hash canonical JSON with
-  /// SHA-256, retaining the sha256: prefix in the bytes sent to begin-operation.
-  record request-hash-rule {
-    excluded: list<string>,
-    lines: option<line-order>,
-    spelling: list<field-spelling>,
-  }
-
   record relation {
     schema: string,
     name: string,
@@ -99,7 +74,6 @@ interface routing {
     sealed-operation-id: option<string>,
     /// The dotted request element path of the key. None means this route logs no intent.
     idempotency-rule: option<string>,
-    request-hash-rule: option<request-hash-rule>,
     etag-inputs: option<etag-inputs>,
     /// The shared operation budget, bounded by the host operation limit.
     operation-deadline-ms: u64,

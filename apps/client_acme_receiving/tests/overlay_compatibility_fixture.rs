@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
-use wamn_engine::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 

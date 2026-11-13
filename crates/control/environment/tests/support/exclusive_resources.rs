@@ -35,7 +35,7 @@ impl Fixture {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         fixture(scratch.path())?;
         let database = wamn_control_provision::test_database::system();
-        let project_database = wamn_project_state::test_database::tenant_platform();
+        let project_database = wamn_platform_identity::test_database::tenant_platform();
         let mut admin = connect(database.url()).await?;
         admin.batch_execute(&format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),

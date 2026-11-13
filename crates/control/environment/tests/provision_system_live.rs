@@ -228,7 +228,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     client
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&recorded.database),
+            postgres_protocol::escape::escape_identifier(&recorded.database),
         ))
         .await
         .unwrap();
@@ -261,9 +261,9 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     client
         .batch_execute(&format!(
             "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-            wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(
-                wamn_fixture_package::PACKAGE_ID
-            ))
+            postgres_protocol::escape::escape_identifier(
+                &wamn_control_provision::package_owner_role(wamn_fixture_package::PACKAGE_ID)
+            )
         ))
         .await
         .unwrap();
@@ -757,7 +757,7 @@ async fn migration_database(
     use wamn_control_provision::schema_migrations::MigrationScope;
     let database = match scope {
         MigrationScope::System => wamn_test_postgres::database(),
-        MigrationScope::Project => wamn_project_state::test_database::tenant_platform(),
+        MigrationScope::Project => wamn_platform_identity::test_database::tenant_platform(),
     };
     let (client, connection) = connect(database.url()).await;
     match scope {
@@ -784,7 +784,7 @@ async fn migration_database(
     client
         .batch_execute(&format!(
             "ALTER DATABASE {} OWNER TO {owner}",
-            wamn_pg_core::quote_ident(database.name())
+            postgres_protocol::escape::escape_identifier(database.name())
         ))
         .await
         .unwrap();
@@ -1002,10 +1002,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
                 .iter()
                 .find(|file| file.relative_path == record.relative_path)
                 .unwrap();
-            assert_eq!(
-                record.sha256,
-                wamn_execution_contract::bytes_sha256(&source.bytes)
-            );
+            assert_eq!(record.sha256, wamn_digest::bytes_sha256(&source.bytes));
         }
         let actor = wamn_control_provision::PlatformComponent::Provisioning
             .principal_id()
@@ -1320,7 +1317,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         system
             .batch_execute(&format!(
                 "CREATE DATABASE {} OWNER wamn_db_owner",
-                wamn_pg_core::quote_ident(&name)
+                postgres_protocol::escape::escape_identifier(&name)
             ))
             .await
             .unwrap();
@@ -1493,7 +1490,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     fresh_system
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await
         .unwrap();
@@ -1601,7 +1598,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
     system
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await
         .unwrap();

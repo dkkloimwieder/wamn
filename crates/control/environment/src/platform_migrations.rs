@@ -82,8 +82,8 @@ async fn warnings(
             }
             let relation = format!(
                 "{}.{}",
-                wamn_pg_core::quote_ident(mutation.schema()),
-                wamn_pg_core::quote_ident(mutation.relation())
+                postgres_protocol::escape::escape_identifier(mutation.schema()),
+                postgres_protocol::escape::escape_identifier(mutation.relation())
             );
             let column = (mutation.definition_type() == DefinitionType::Field)
                 .then_some(mutation.definition());
@@ -91,11 +91,17 @@ async fn warnings(
                 DefinitionType::Relation => ("table", String::new()),
                 DefinitionType::Field => (
                     "column",
-                    format!(".{}", wamn_pg_core::quote_ident(mutation.definition())),
+                    format!(
+                        ".{}",
+                        postgres_protocol::escape::escape_identifier(mutation.definition())
+                    ),
                 ),
                 DefinitionType::Constraint => (
                     "constraint",
-                    format!(".{}", wamn_pg_core::quote_ident(mutation.definition())),
+                    format!(
+                        ".{}",
+                        postgres_protocol::escape::escape_identifier(mutation.definition())
+                    ),
                 ),
             };
             warnings.push(format!(

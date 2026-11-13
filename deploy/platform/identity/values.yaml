@@ -26,7 +26,8 @@ localMail: ""
 operatorCaSecret: ""
 
 # Each Secret contains one provisioner-generated target.json document.
-# Empty keeps POST /session disabled. Restart after credential rotation.
+# Each target configures password login for one project environment.
+# Restart after credential rotation.
 sessionTargetSecrets: []
 
 # The NATS that logouts, resets and replay revocations go to, so

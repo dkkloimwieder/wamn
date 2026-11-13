@@ -11,10 +11,11 @@ test-util = []
 
 [dependencies]
 wamn-broker = { workspace = true }
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 futures-util = { workspace = true }
 rcgen = { workspace = true }
 schemars = { workspace = true }
-wamn-authoring-model = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
@@ -33,11 +34,10 @@ wamn-catalog = { workspace = true }
 wamn-component-composer = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-execution-contract = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
@@ -48,9 +48,6 @@ wamn-release-control = { workspace = true }
 wamn-environment-control = { workspace = true }
 
 [dev-dependencies]
-async-trait = { workspace = true }
-wamn-client = { workspace = true }
-wamn-gate-harness = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
@@ -61,7 +58,7 @@ uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
@@ -71,7 +68,7 @@ base64 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 oci-client = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-environment-control = { workspace = true, features = ["test-util", "ops"] }

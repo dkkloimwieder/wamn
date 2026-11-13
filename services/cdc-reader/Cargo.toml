@@ -21,13 +21,12 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
-# The CDC walsender session (our pinned fork — F1 failover-slot syntax;
-# docs/archive/events/pg-walstream-fork.md).
+# The CDC replication session uses the pinned fork for typed keepalive events.
 pg_walstream = { workspace = true }
 # The draft envelope/subject/Nats-Msg-Id wire contract.
 wamn-event-wire = { workspace = true }
 # Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 # registry.event_readers registration lookup.
 wamn-control-registry = { workspace = true }
 # The scoped registry-reader credential contract (wamn-0h0g.12.116): the pure,

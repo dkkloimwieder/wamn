@@ -45,7 +45,7 @@ pub async fn execution_role(
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
+            &[&wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()],
         )
@@ -69,7 +69,7 @@ pub async fn execution_role(
             )
             .await?;
     }
-    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     for user in [ENABLER, workflow_user.as_str()] {
         project
             .execute(
@@ -101,12 +101,12 @@ pub async fn workflow_host(
     admin
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
+            &[&wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ($1,'test')", &[&ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(
@@ -223,25 +223,9 @@ pub async fn schedule_run(
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     let mut project = execution_role(database, role, operations).await?;
 
-    // The gate's green report under the graph's hash, which authoring reads.
-    let control = wamn_control_provision::test_database::system();
-    let (gate, connection) = tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    gate.execute(
-        "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-        &[&ENV_KEY, &ENABLER],
-    )
-    .await?;
-    gate.execute(
-        "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-         VALUES ($1, $2, true, '{}'::jsonb)",
-        &[&ENV_KEY, &document.wiring_hash().as_str()],
-    )
-    .await?;
     let declared = declared(application, manifest);
     author_workflow_in_databases(
         database.url(),
-        control.url(),
         &AuthorWorkflowRequest {
             org: "rest",
             project: "publication",
@@ -312,7 +296,8 @@ pub async fn run_caller(
     let principal: String = row.get(0);
     let execution_role: String = row.get(1);
     anyhow::ensure!(
-        principal == wamn_project_state::workflow_user_id().to_string() && execution_role == role,
+        principal == wamn_identity_protocol::workflow_user_id().to_string()
+            && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
     host.workflow_node_caller("test", ENV_KEY, &principal, &execution_role)
@@ -327,7 +312,7 @@ pub async fn install(
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
     admin
-        .batch_execute("CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN;")
+        .batch_execute("CREATE ROLE wamn_app NOLOGIN; ")
         .await?;
     admin.batch_execute(sql::ensure_db_owner_role_sql()).await?;
     admin.batch_execute("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$").await?;
@@ -396,7 +381,7 @@ pub async fn install(
     system.execute(&[
         "BEGIN",
         &wamn_control_provision::bind_platform_principal_sql(
-            wamn_project_state::PlatformComponent::Provisioning,
+            wamn_identity_protocol::PlatformComponent::Provisioning,
         ),
         "UPDATE registry.meta SET platform_domain = 'example.test'",
         "COMMIT",

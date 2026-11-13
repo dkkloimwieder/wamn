@@ -10,11 +10,8 @@ name = "repo-policy"
 path = "src/bin/repo-policy.rs"
 test = false
 
-[[bin]]
-name = "wamn-benchmark-gate"
-path = "src/benchmark.rs"
-
 [dependencies]
+wamn-digest.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
@@ -25,13 +22,17 @@ syn = { workspace = true, features = ["full", "visit"] }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
-wamn-gate-harness = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }
 wasm-encoder = { workspace = true }
 
 [dev-dependencies]
+wamn-environment-control = { workspace = true }
+wamn-release-control = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-catalog = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 serde_yaml = { workspace = true }

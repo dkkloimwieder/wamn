@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_catalog::ServingManifest;
 use wamn_catalog::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
-use wamn_session::token::is_role_slug;
+use wamn_identity_protocol::RoleName;
 
 use crate::release::{EdgeReleaseError, EdgeReleaseErrorType};
 
@@ -33,11 +33,14 @@ impl Grants {
         let required: BTreeSet<&str> = manifest
             .components
             .iter()
-            .flat_map(|component| component.operations.values())
-            .flat_map(|operation| operation.permissions.iter().map(String::as_str))
+            .flat_map(|component| component.descriptor.operations.values())
+            .filter_map(|operation| operation.registered_operation.as_deref())
             .collect();
         for (role, permissions) in &document.roles {
-            if !is_role_slug(role) {
+            if !role
+                .parse::<RoleName>()
+                .is_ok_and(|parsed| parsed.as_str() == role)
+            {
                 return Err(rejected(format!("{GRANTS_FILE_NAME} names role {role:?}")));
             }
             if let Some(permission) = permissions
@@ -56,10 +59,10 @@ impl Grants {
     }
 
     /// The permissions that `roles` hold together. An unknown role holds none.
-    pub fn permissions(&self, roles: &[String]) -> BTreeSet<String> {
+    pub fn permissions(&self, roles: &[impl AsRef<str>]) -> BTreeSet<String> {
         roles
             .iter()
-            .filter_map(|role| self.roles.get(role))
+            .filter_map(|role| self.roles.get(role.as_ref()))
             .flatten()
             .cloned()
             .collect()

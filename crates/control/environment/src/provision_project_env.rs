@@ -75,6 +75,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, Config as PgConfig, GenericClient, NoTls, Transaction};
 use url::Url;
 
+use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::SystemReader;
 use wamn_control_provision::session_target::{SessionTarget, validate_session_env_key};
 use wamn_control_provision::tenant_key::tenant_key;
@@ -88,7 +89,6 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
-use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
     authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,

@@ -2,48 +2,16 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use wamn_scalar::SqlValueType;
 
 use super::{
     Column, ContractMismatch, ContractPart, SqlValue, StatementError, ValueShape, WamnPostgres,
 };
 
-/// A type in the frozen `wamn:postgres/types.sql-value` vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatementValueType {
-    Boolean,
-    Int32,
-    Int64,
-    Float64,
-    Text,
-    Bytes,
-    Numeric,
-    Timestamptz,
-    Json,
-    Uuid,
-}
-
-impl StatementValueType {
-    /// Return the canonical WIT vocabulary spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Boolean => "boolean",
-            Self::Int32 => "int32",
-            Self::Int64 => "int64",
-            Self::Float64 => "float64",
-            Self::Text => "text",
-            Self::Bytes => "bytes",
-            Self::Numeric => "numeric",
-            Self::Timestamptz => "timestamptz",
-            Self::Json => "json",
-            Self::Uuid => "uuid",
-        }
-    }
-}
-
 /// One parameter or result-column contract slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatementField {
-    pub value_type: StatementValueType,
+    pub value_type: SqlValueType,
     pub nullable: bool,
 }
 
@@ -452,34 +420,34 @@ fn value_matches(expected: StatementField, observed: &SqlValue) -> bool {
     }
 }
 
-fn statement_type_for_value(value: &SqlValue) -> Option<StatementValueType> {
+fn statement_type_for_value(value: &SqlValue) -> Option<SqlValueType> {
     Some(match value {
         SqlValue::Null => return None,
-        SqlValue::Boolean(_) => StatementValueType::Boolean,
-        SqlValue::Int32(_) => StatementValueType::Int32,
-        SqlValue::Int64(_) => StatementValueType::Int64,
-        SqlValue::Float64(_) => StatementValueType::Float64,
-        SqlValue::Text(_) => StatementValueType::Text,
-        SqlValue::Bytes(_) => StatementValueType::Bytes,
-        SqlValue::Numeric(_) => StatementValueType::Numeric,
-        SqlValue::Timestamptz(_) => StatementValueType::Timestamptz,
-        SqlValue::Json(_) => StatementValueType::Json,
-        SqlValue::Uuid(_) => StatementValueType::Uuid,
+        SqlValue::Boolean(_) => SqlValueType::Boolean,
+        SqlValue::Int32(_) => SqlValueType::Int32,
+        SqlValue::Int64(_) => SqlValueType::Int64,
+        SqlValue::Float64(_) => SqlValueType::Float64,
+        SqlValue::Text(_) => SqlValueType::Text,
+        SqlValue::Bytes(_) => SqlValueType::Bytes,
+        SqlValue::Numeric(_) => SqlValueType::Numeric,
+        SqlValue::Timestamptz(_) => SqlValueType::Timestamptz,
+        SqlValue::Json(_) => SqlValueType::Json,
+        SqlValue::Uuid(_) => SqlValueType::Uuid,
     })
 }
 
-fn statement_type_for_postgres(type_name: &str) -> Option<StatementValueType> {
+fn statement_type_for_postgres(type_name: &str) -> Option<SqlValueType> {
     Some(match type_name {
-        "bool" => StatementValueType::Boolean,
-        "int2" | "int4" => StatementValueType::Int32,
-        "int8" => StatementValueType::Int64,
-        "float4" | "float8" => StatementValueType::Float64,
-        "text" | "varchar" | "bpchar" | "name" | "unknown" => StatementValueType::Text,
-        "bytea" => StatementValueType::Bytes,
-        "numeric" => StatementValueType::Numeric,
-        "timestamptz" => StatementValueType::Timestamptz,
-        "json" | "jsonb" => StatementValueType::Json,
-        "uuid" => StatementValueType::Uuid,
+        "bool" => SqlValueType::Boolean,
+        "int2" | "int4" => SqlValueType::Int32,
+        "int8" => SqlValueType::Int64,
+        "float4" | "float8" => SqlValueType::Float64,
+        "text" | "varchar" | "bpchar" | "name" | "unknown" => SqlValueType::Text,
+        "bytea" => SqlValueType::Bytes,
+        "numeric" => SqlValueType::Numeric,
+        "timestamptz" => SqlValueType::Timestamptz,
+        "json" | "jsonb" => SqlValueType::Json,
+        "uuid" => SqlValueType::Uuid,
         _ => return None,
     })
 }
@@ -560,7 +528,7 @@ mod tests {
         WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)))
     }
 
-    fn field(value_type: StatementValueType, nullable: bool) -> StatementField {
+    fn field(value_type: SqlValueType, nullable: bool) -> StatementField {
         StatementField {
             value_type,
             nullable,
@@ -570,8 +538,8 @@ mod tests {
     fn verified(sql: &str) -> VerifiedStatement {
         VerifiedStatement {
             exact_sql: sql.into(),
-            binds: [field(StatementValueType::Uuid, false)].into(),
-            columns: [field(StatementValueType::Text, false)].into(),
+            binds: [field(SqlValueType::Uuid, false)].into(),
+            columns: [field(SqlValueType::Text, false)].into(),
             // These fixtures are SELECTs, which is what PostgreSQL classifies as
             // needing no transaction.
             transactional: false,

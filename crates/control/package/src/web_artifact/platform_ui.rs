@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use object_store::{ObjectStore, ObjectStoreExt as _};
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_package_artifact::{PackageRegistry, ensure_tag};
 
 use super::{
@@ -182,7 +182,7 @@ mod tests {
     use super::*;
     use futures_util::TryStreamExt as _;
     use object_store::memory::InMemory;
-    use wamn_execution_contract::bytes_sha256;
+    use wamn_digest::bytes_sha256;
     use wamn_package_artifact::registry_pull::test_server::Server;
     use wamn_test_infrastructure::scratch::ScratchRoot;
 

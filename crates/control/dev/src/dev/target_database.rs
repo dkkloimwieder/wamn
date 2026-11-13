@@ -13,8 +13,8 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
+use crate::identifier::Identifier;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
-use wamn_pg_core::Identifier;
 use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::DevActivationIdentity;
@@ -1179,7 +1179,7 @@ mod tests {
             .batch_execute(&format!(
                 "COMMENT ON DATABASE {} IS {}",
                 Identifier::new(target.name())?.quoted(),
-                wamn_pg_core::quote_literal(&marker)
+                postgres_protocol::escape::escape_literal(&marker)
             ))
             .await?;
         let scratch = ScratchRoot::create()?;
@@ -1316,7 +1316,9 @@ mod tests {
         let config = super::super::config::parse_config(&serde_json::to_vec(&document)?)?;
         let (admin, admin_driver) = tokio_postgres::connect(admin_database.url(), NoTls).await?;
         let admin_driver = tokio::spawn(admin_driver);
-        admin.batch_execute("CREATE ROLE wamn_app; CREATE ROLE wamn_scenario_author; CREATE ROLE fixture_reader;").await?;
+        admin
+            .batch_execute("CREATE ROLE wamn_app; CREATE ROLE fixture_reader;")
+            .await?;
         let fingerprint = template_fingerprint("target", "system", config.activation_identity());
         admin
             .batch_execute(&format!(

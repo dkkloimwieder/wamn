@@ -7,7 +7,7 @@
 //! the org, grants control authority in that org.
 
 use tokio_postgres::GenericClient;
-use wamn_session::token::{SessionAuthority, SessionClaims};
+use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
 use crate::org::ORG_ADMIN_ROLE;
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
@@ -119,7 +119,7 @@ pub async fn control_projects_page(
         .query(
             CONTROL_PROJECTS_SQL,
             &[
-                &principal_id.as_str(),
+                &principal_id.to_string().as_str(),
                 &org,
                 &PROJECT_ADMIN_ROLE,
                 &after,
@@ -145,7 +145,7 @@ pub async fn is_org_admin(
     client
         .query_one(
             ORG_ADMIN_SQL,
-            &[&principal_id.as_str(), &org, &ORG_ADMIN_ROLE],
+            &[&principal_id.to_string().as_str(), &org, &ORG_ADMIN_ROLE],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -168,7 +168,12 @@ pub async fn is_project_admin(
     client
         .query_one(
             PROJECT_ADMIN_SQL,
-            &[&principal_id.as_str(), &org, &project, &PROJECT_ADMIN_ROLE],
+            &[
+                &principal_id.to_string().as_str(),
+                &org,
+                &project,
+                &PROJECT_ADMIN_ROLE,
+            ],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -236,7 +241,7 @@ pub async fn control_orgs_page(
         .query(
             CONTROL_ORGS_SQL,
             &[
-                &principal_id.as_str(),
+                &principal_id.to_string().as_str(),
                 &PROJECT_ADMIN_ROLE,
                 &ORG_ADMIN_ROLE,
                 &org,
@@ -261,9 +266,7 @@ pub async fn control_session_is_active(
     client: &(impl GenericClient + Sync),
     claims: &SessionClaims,
 ) -> Result<bool, IdentityError> {
-    let SessionAuthority::Login(login) = &claims.authority else {
-        return Ok(false);
-    };
+    let SessionAuthority::Login(login) = &claims.authority;
     if control_audience_org(&claims.aud) != Some(claims.org.as_str()) {
         return Ok(false);
     }
@@ -271,10 +274,10 @@ pub async fn control_session_is_active(
         .query_one(
             CONTROL_SESSION_ACTIVE_SQL,
             &[
-                &claims.sub,
+                &claims.sub.to_string(),
                 &claims.org,
                 &PROJECT_ADMIN_ROLE,
-                login,
+                &login.to_string(),
                 &claims.iss,
                 &claims.aud,
                 &ORG_ADMIN_ROLE,

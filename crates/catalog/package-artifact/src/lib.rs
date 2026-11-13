@@ -35,6 +35,7 @@ use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::{
     AdmittedComponent, ComponentDescriptor, ComponentPackageScope, parse_component_artifact_base,
 };
+use wamn_digest::bytes_sha256;
 
 use crate::registry_credentials::{RegistryCredentials, read_registry_credentials};
 
@@ -152,14 +153,6 @@ pub struct PackedLayer {
     pub annotations: BTreeMap<String, String>,
     /// The layer bytes.
     pub bytes: Vec<u8>,
-}
-
-/// `sha256:<hex>` of `bytes`.
-pub fn sha256_digest(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
-    )
 }
 
 /// Refuse a tag that the OCI distribution grammar does not admit.
@@ -362,7 +355,7 @@ impl Repository {
         {
             Ok((bytes, digest)) => {
                 ensure!(
-                    sha256_digest(&bytes) == digest
+                    bytes_sha256(&bytes) == digest
                         && self.reference.digest().is_none_or(|named| named == digest),
                     "the manifest of package artifact {} does not hash to {digest}",
                     self.reference
@@ -413,7 +406,7 @@ impl Repository {
             .await
             .with_context(|| format!("pull a layer of package artifact {}", self.reference))?;
         ensure!(
-            sha256_digest(&bytes) == layer.digest,
+            bytes_sha256(&bytes) == layer.digest,
             "a layer of package artifact {} does not hash to {}",
             self.reference,
             layer.digest
@@ -465,7 +458,7 @@ pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
     let descriptor: ComponentDescriptor =
         serde_json::from_slice(bytes).context("parse a component descriptor")?;
     ensure!(
-        wamn_execution_contract::canonical_json_bytes(
+        wamn_digest::canonical_json_bytes(
             &serde_json::to_value(&descriptor).context("encode a component descriptor")?
         ) == bytes,
         "component descriptor {} is not canonical JSON",
@@ -581,7 +574,7 @@ mod tests {
             "effects": [],
             "connections": [],
         });
-        let canonical = wamn_execution_contract::canonical_json_bytes(&descriptor);
+        let canonical = wamn_digest::canonical_json_bytes(&descriptor);
         assert_eq!(
             parse_descriptor(&canonical)
                 .expect("canonical bytes parse")

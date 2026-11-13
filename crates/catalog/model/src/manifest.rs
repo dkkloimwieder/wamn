@@ -140,8 +140,6 @@ pub struct CustomOperationDeclaration {
     /// for every other kind. Nothing about it is inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotent_by: Option<CommandIdempotence>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canonicalization: Option<CommandCanonicalization>,
     /// Authored screen text for the operation itself. A component exports the
     /// label, and the page that places the component decides where it goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,7 +219,7 @@ impl CustomOperationDeclaration {
                 matches!(
                     field.path.as_str(),
                     "idempotency_key" | "value.idempotency_key"
-                ) && field.ty == crate::schema::ColumnType::Text
+                ) && field.ty == wamn_scalar::SqlValueType::Text
                     && !field.nullable
             })
             .map(|field| field.path.as_str())
@@ -348,7 +346,7 @@ impl Revision {
 pub struct ContractFieldDeclaration {
     pub path: String,
     #[serde(rename = "type")]
-    pub ty: crate::schema::ColumnType,
+    pub ty: wamn_scalar::SqlValueType,
     pub nullable: bool,
     #[serde(default, skip_serializing_if = "Revision::is_absent")]
     pub revision: Revision,
@@ -477,40 +475,6 @@ pub struct CustomOperationResultDeclaration {
     pub signed_reads: BTreeMap<String, crate::SignedFileRead>,
 }
 
-/// Application choices for canonical command identity.
-///
-/// Generated codecs normalize JSON and primitive values before hashing.
-/// Exclusions and line ordering retain the command's own identity semantics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CommandCanonicalization {
-    pub excluded_fields: Vec<String>,
-    /// How a LINE SET is ordered before hashing, when the command has one.
-    ///
-    /// Absent means the command carries no lines, and canonicalization covers
-    /// the top-level fields alone under the shared canonical-JSON authority.
-    /// There is deliberately no enum value meaning "no ordering": that would
-    /// be a null wearing a name, and every command would have to pick one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line_order: Option<CommandLineOrder>,
-}
-
-/// The line members a command names for its canonical identity.
-///
-/// The command states them, because the platform knows no application's line
-/// shape. The published contract spells the profile `<member>_ascending`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CommandLineOrder {
-    /// Line member whose ascending order states the canonical line order.
-    pub ascending_by: String,
-    /// Line member that every line must keep above zero, when one exists.
-    ///
-    /// A command that declares none gets no `nonpositive_quantity` refusal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub positive_member: Option<String>,
-}
-
 /// Closed operation-error detail keys serialized on per request element refusals.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -598,7 +562,7 @@ pub struct StaticSqlStatementDeclaration {
 pub struct StaticSqlValueDeclaration {
     pub name: String,
     #[serde(rename = "type")]
-    pub ty: crate::schema::ColumnType,
+    pub ty: wamn_scalar::SqlValueType,
     /// `wamn build` states it for every value. A compiled `wamn.k` that does
     /// not state it reads as not null, because only the build derives it.
     #[serde(default)]
@@ -1220,7 +1184,7 @@ fn validate_signed_reads(
     for (path, read) in &result.signed_reads {
         let field = result.fields.iter().find(|field| field.path == *path);
         if visibility != OperationVisibility::Public
-            || field.is_none_or(|field| field.ty != crate::schema::ColumnType::Uuid)
+            || field.is_none_or(|field| field.ty != wamn_scalar::SqlValueType::Uuid)
             || read.lifetime_seconds().is_err()
         {
             return Err(ManifestError::new(
@@ -1315,17 +1279,6 @@ fn validate_custom_operation_kind(
                         ),
                     ));
                 }
-            }
-            if !has_local_sql && operation.canonicalization.is_some() {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidOperation,
-                    format!(
-                        "composition-only command {operation_name} must not declare local canonicalization"
-                    ),
-                ));
-            }
-            if let Some(canonicalization) = &operation.canonicalization {
-                validate_command_canonicalization(operation_name, operation, canonicalization)?;
             }
         }
         CustomOperationType::EventHandler => {
@@ -1489,13 +1442,10 @@ fn refuse_command_only_fields(
     if operation.transaction.is_some()
         || operation.automatic_retry.is_some()
         || operation.idempotent_by.is_some()
-        || operation.canonicalization.is_some()
     {
         Err(ManifestError::new(
             ManifestErrorType::InvalidOperation,
-            format!(
-                "{operation_name} declares command-only transaction, idempotence or canonicalization"
-            ),
+            format!("{operation_name} declares command-only transaction or idempotence"),
         ))
     } else {
         Ok(())
@@ -1560,7 +1510,7 @@ fn validate_contract_fields(
             ));
         }
         if !field.values.is_empty()
-            && (field.ty != crate::schema::ColumnType::Text
+            && (field.ty != wamn_scalar::SqlValueType::Text
                 || field.values.iter().any(String::is_empty)
                 || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len())
         {
@@ -1577,7 +1527,7 @@ fn validate_contract_fields(
         if field.revision.is_revision()
             && !matches!(
                 field.ty,
-                crate::schema::ColumnType::Int32 | crate::schema::ColumnType::Int64
+                wamn_scalar::SqlValueType::Int32 | wamn_scalar::SqlValueType::Int64
             )
         {
             return Err(ManifestError::new(
@@ -1622,87 +1572,6 @@ fn validate_contract_path(path: &str, operation_name: &str) -> Result<(), Manife
         ))
     }
 }
-
-fn validate_command_canonicalization(
-    operation_name: &str,
-    operation: &CustomOperationDeclaration,
-    canonicalization: &CommandCanonicalization,
-) -> Result<(), ManifestError> {
-    // THE INPUT DECIDES, not a separate flag: a command with a line set
-    // declares how its lines are ordered,
-    // and a command without one declares no ordering. Tying the two together this
-    // way is what keeps a lineless command from having to name an ordering
-    // over lines it does not have.
-    let declares_lines = canonicalization.line_order.is_some();
-    if declares_lines != operation.input.line.is_some() {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidOperation,
-            format!(
-                "{operation_name} declares a canonical line profile without a line input, or a line input without one"
-            ),
-        ));
-    }
-    if let Some(order) = canonicalization.line_order.as_ref() {
-        let line_member = |member: &str| format!("line[].{member}");
-        let orders = operation.input.fields.iter().any(|field| {
-            field.path.ends_with(&line_member(&order.ascending_by))
-                && !field.nullable
-                && orderable(field.ty)
-        });
-        if !orders {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidOperation,
-                format!(
-                    "{operation_name} canonical line profile orders by {}, which is not a non-null line input that can order",
-                    order.ascending_by
-                ),
-            ));
-        }
-        if let Some(positive) = order.positive_member.as_deref() {
-            let numeric = operation.input.fields.iter().any(|field| {
-                field.path.ends_with(&line_member(positive))
-                    && field.ty == crate::schema::ColumnType::Numeric
-                    && !field.nullable
-            });
-            if !numeric {
-                return Err(ManifestError::new(
-                    ManifestErrorType::InvalidOperation,
-                    format!(
-                        "{operation_name} canonical line profile keeps {positive} positive, which is not a non-null numeric line input"
-                    ),
-                ));
-            }
-        }
-    }
-    let input_paths = operation
-        .input
-        .fields
-        .iter()
-        .map(|field| field.path.as_str())
-        .collect::<BTreeSet<_>>();
-    let excluded = canonicalization
-        .excluded_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if excluded.len() != canonicalization.excluded_fields.len()
-        || excluded.is_empty()
-        || !excluded.is_subset(&input_paths)
-    {
-        return Err(ManifestError::new(
-            ManifestErrorType::InvalidOperation,
-            format!("{operation_name} canonicalization must name unique declared input exclusions"),
-        ));
-    }
-    Ok(())
-}
-
-/// Whether one value of this type has an order a command can hash by.
-const fn orderable(ty: crate::schema::ColumnType) -> bool {
-    use crate::schema::ColumnType;
-    !matches!(ty, ColumnType::Json | ColumnType::Bytes)
-}
-
 fn validate_custom_operation_errors(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
@@ -2443,7 +2312,7 @@ mod tests {
             validate_signed_reads("document.read", OperationVisibility::Public, &result).is_err()
         );
         result.fields[0].path = "document".into();
-        result.fields[0].ty = crate::schema::ColumnType::Text;
+        result.fields[0].ty = wamn_scalar::SqlValueType::Text;
         assert!(
             validate_signed_reads("document.read", OperationVisibility::Public, &result).is_err()
         );

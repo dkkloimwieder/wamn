@@ -162,7 +162,8 @@ pub async fn step_4_19_1_owner_invite(
         .await
         .context("4.19.1 owner_invite_passes_after_provision_org_admin")?;
     ensure!(
-        invited.principal_id.as_str() == principal && invited.invitation.unwrap().status == 201,
+        invited.principal_id.to_string().as_str() == principal
+            && invited.invitation.unwrap().status == 201,
         "4.19.1 owner invitation did not reuse the provisioned owner"
     );
     tokio::time::timeout(Duration::from_secs(10), responder).await???;

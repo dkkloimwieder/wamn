@@ -199,7 +199,10 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             }
             _ => {}
         }
-        for caller in ["00000000-0000-4000-8000-000000000099", other.as_str()] {
+        for caller in [
+            "00000000-0000-4000-8000-000000000099",
+            other.to_string().as_str(),
+        ] {
             assert!(
                 call(&delivery, &path, caller, value.clone())
                     .await
@@ -221,7 +224,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             let mut injected = value.clone();
             injected[field] = "untrusted".into();
             assert!(
-                call(&delivery, &path, owner.as_str(), injected)
+                call(&delivery, &path, owner.to_string().as_str(), injected)
                     .await
                     .is_err(),
                 "{route}: {field}"
@@ -230,7 +233,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
         let mut wrong = value.clone();
         wrong["env"] = "absent".into();
         assert!(
-            call(&delivery, &path, owner.as_str(), wrong)
+            call(&delivery, &path, owner.to_string().as_str(), wrong)
                 .await
                 .unwrap_err()
                 .starts_with("environment_not_found ")
@@ -242,7 +245,9 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
         if route == "operation.status" {
             continue;
         }
-        let result = call(&delivery, &path, owner.as_str(), value).await.unwrap();
+        let result = call(&delivery, &path, owner.to_string().as_str(), value)
+            .await
+            .unwrap();
         started.push(result["job"].as_str().unwrap().to_owned());
         let mut created = None;
         while let Ok((request, body)) = api.requests.try_recv() {
@@ -258,13 +263,13 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             .iter()
             .find(|entry| entry["name"] == "WAMN_DEPLOY_ACTOR")
             .unwrap();
-        assert_eq!(actor["value"], owner.as_str());
+        assert_eq!(actor["value"], owner.to_string().as_str());
     }
     assert!(
         call(
             &delivery,
             "operation/status",
-            owner.as_str(),
+            owner.to_string().as_str(),
             json!({"project":"billing","env":"dev","job":"op-00000000-0000-4000-8000-000000000000"})
         )
         .await
@@ -275,9 +280,14 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
     assert!(api.requests.try_recv().is_err());
     for job in started {
         let value = json!({"project":"billing","env":"dev","job":job});
-        let result = call(&delivery, "operation/status", owner.as_str(), value.clone())
-            .await
-            .unwrap();
+        let result = call(
+            &delivery,
+            "operation/status",
+            owner.to_string().as_str(),
+            value.clone(),
+        )
+        .await
+        .unwrap();
         assert_eq!(result["state"], "succeeded");
         assert_eq!(result["log"].as_str().unwrap().len(), 32 * 1024);
         while let Ok((path, _)) = api.requests.try_recv() {
@@ -289,10 +299,15 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
         let mut wrong = value;
         wrong["project"] = "shop".into();
         assert!(
-            call(&delivery, "operation/status", other.as_str(), wrong)
-                .await
-                .unwrap_err()
-                .starts_with("not_found ")
+            call(
+                &delivery,
+                "operation/status",
+                other.to_string().as_str(),
+                wrong
+            )
+            .await
+            .unwrap_err()
+            .starts_with("not_found ")
         );
         let (path, _) = api.requests.try_recv()?;
         assert!(path.contains("/jobs/"));

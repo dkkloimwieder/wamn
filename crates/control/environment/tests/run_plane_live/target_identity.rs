@@ -30,7 +30,7 @@ async fn seed_target_guard_registry(su: &Client) {
            promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
            cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
-           hibernation text NOT NULL, durability_class text NOT NULL DEFAULT 'standard', PRIMARY KEY (org, name)); \
+           hibernation text NOT NULL, PRIMARY KEY (org, name)); \
          INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) VALUES \
@@ -364,7 +364,7 @@ async fn reconcile_target_identity_guard_live() {
     let projected_row = primary_su
         .query_one(
             &format!(
-                "SELECT expected_environment,durability_class, \
+                "SELECT expected_environment, \
                         source_policy_org,source_policy_hash \
                    FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
             ),
@@ -372,10 +372,9 @@ async fn reconcile_target_identity_guard_live() {
         )
         .await
         .expect("read converged project-local policy");
-    let expected_source_hash = wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+    let expected_source_hash = wamn_digest::canonical_json_sha256(&serde_json::json!({
         "backup-cadence": "",
         "cpu": "100m",
-        "durability-class": "standard",
         "hibernation": "off",
         "image": "postgres",
         "instances": 1,
@@ -388,15 +387,13 @@ async fn reconcile_target_identity_guard_live() {
     }));
     let projected = (
         projected_row.get::<_, String>(0),
-        projected_row.get::<_, String>(1),
+        projected_row.get::<_, Option<String>>(1),
         projected_row.get::<_, Option<String>>(2),
-        projected_row.get::<_, Option<String>>(3),
     );
     assert_eq!(
         projected,
         (
             CLI_ENV.to_string(),
-            "standard".to_string(),
             Some(CLI_ORG.to_string()),
             Some(expected_source_hash.clone()),
         )
@@ -453,18 +450,6 @@ async fn reconcile_target_identity_guard_live() {
         .changed(),
         "repaired projection did not converge"
     );
-    let carrier_present: bool = system_su
-        .query_one(
-            "SELECT EXISTS (SELECT FROM information_schema.columns \
-              WHERE table_schema='registry' AND table_name='env_policies' \
-                AND column_name='durability_class')",
-            &[],
-        )
-        .await
-        .expect("probe converged system durability carrier")
-        .get(0);
-    assert!(carrier_present, "the registry lacks the policy carrier");
-
     let system_converged = target_guard_system_snapshot(&system_su).await;
     let primary_converged = target_guard_database_snapshot(&primary_su).await;
     reconcile_run_plane::reconcile_run_plane(target_guard_args(

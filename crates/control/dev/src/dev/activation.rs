@@ -626,7 +626,7 @@ fn stage_materializer(config: &DevConfig) -> Result<(), DevActivationError> {
                 local.materializer_component.display()
             )
         })?;
-        let digest = wamn_engine::component_admission::component_digest(&bytes);
+        let digest = wamn_digest::bytes_sha256(&bytes);
         let path = wamn_engine::artifact_source::local_component_path(&local.directory, &digest)
             .expect("a computed component digest is valid");
         std::fs::write(path, bytes)?;
@@ -1663,15 +1663,16 @@ mod tests {
         )
         .unwrap();
         let identity = identity();
-        let digest = wamn_engine::component_admission::component_digest(&component_bytes);
+        let digest = wamn_digest::bytes_sha256(&component_bytes);
         let member = json!({"package-id": "fixture", "component": "entry", "digest": digest});
         let manifest: wamn_catalog::ServingManifest = serde_json::from_value(json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             "release": {"packages": [{"package-id": "fixture", "package-version": "1.0.0"}]},
             "components": [{"package-id": "fixture", "descriptor": {
                 "component": "entry", "interface-version": "0.1", "component-digest": digest,
-                "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []
-            }, "operations": {"fixture:item/get@1.0.0": {}}}],
+                "operations": {"fixture:item/get@1.0.0": {"input-ports": [], "output-ports": [], "parameters": []}},
+                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []
+            }}],
             "routes": [], "attachments": {},
             "composed-entry": {
                 "reference": format!("file:{}", wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap().display()),
@@ -1728,8 +1729,7 @@ mod tests {
         let staged = staged_materializer.workload.unwrap();
         assert_eq!(staged.name, format!("{}-materializer", identity.project));
         let service = staged.service.unwrap();
-        let materializer_digest =
-            wamn_engine::component_admission::component_digest(materializer_bytes);
+        let materializer_digest = wamn_digest::bytes_sha256(materializer_bytes);
         assert_eq!(service.image, materializer_digest);
         assert_eq!(service.image_pull_policy, v2::ImagePullPolicy::Never as i32);
         assert_eq!(
@@ -1766,7 +1766,7 @@ mod tests {
         }));
         let component_path = wamn_engine::artifact_source::local_component_path(
             &directory,
-            &wamn_engine::component_admission::component_digest(&component_bytes),
+            &wamn_digest::bytes_sha256(&component_bytes),
         )
         .unwrap();
         std::fs::remove_file(&source).unwrap();

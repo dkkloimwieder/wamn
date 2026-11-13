@@ -2,9 +2,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use jsonwebtoken::{EncodingKey, Header};
 use ring::rand::{SecureRandom as _, SystemRandom};
-use ring::signature;
-use rustls::pki_types::{PrivateKeyDer, pem::PemObject as _};
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
@@ -24,7 +23,7 @@ struct Parameters {
     scope_separator: ScopeSeparator,
 }
 
-#[derive(Clone, Copy, Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Deserialize)]
 enum Algorithm {
     PS256,
     ES256,
@@ -88,18 +87,19 @@ fn build_request(
         serde_json::from_str(material.ok_or_else(|| failure("credential", "missing"))?)
             .map_err(|_| failure("credential", "invalid shape"))?;
     let pem = Zeroizing::new(credential.private_key);
-    let key = Zeroizing::new(
-        PrivateKeyDer::from_pem_slice(pem.as_bytes()).map_err(|_| failure("key", "invalid PEM"))?,
-    );
     let scope = (!parameters.scopes.is_empty()).then(|| {
         parameters.scopes.join(match parameters.scope_separator {
             ScopeSeparator::Space => " ",
             ScopeSeparator::Comma => ",",
         })
     });
-    let header = serde_json::json!({
-        "alg": parameters.algorithm, "kid": parameters.key_id, "typ": "JWT",
-    });
+    let algorithm = match parameters.algorithm {
+        Algorithm::RS256 => jsonwebtoken::Algorithm::RS256,
+        Algorithm::PS256 => jsonwebtoken::Algorithm::PS256,
+        Algorithm::ES256 => jsonwebtoken::Algorithm::ES256,
+    };
+    let mut header = Header::new(algorithm);
+    header.kid = Some(parameters.key_id);
     let random = SystemRandom::new();
     // A fresh 256-bit identifier keeps assertions distinct even within one second.
     let mut nonce = [0_u8; 32];
@@ -114,54 +114,13 @@ fn build_request(
     if let Some(scope) = &scope {
         claims["scope"] = scope.clone().into();
     }
-    let input = format!(
-        "{}.{}",
-        URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&header).map_err(|_| failure("header", "serialization refused"))?
-        ),
-        URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&claims).map_err(|_| failure("claims", "serialization refused"))?
-        ),
-    );
-    let signature = match parameters.algorithm {
-        Algorithm::PS256 | Algorithm::RS256 => {
-            let key = match &*key {
-                PrivateKeyDer::Pkcs8(der) => {
-                    signature::RsaKeyPair::from_pkcs8(der.secret_pkcs8_der())
-                }
-                PrivateKeyDer::Pkcs1(der) => {
-                    signature::RsaKeyPair::from_der(der.secret_pkcs1_der())
-                }
-                _ => return Err(failure("key", "algorithm mismatch")),
-            }
-            .map_err(|_| failure("signature", "key or signing refused"))?;
-            let encoding: &dyn signature::RsaEncoding = match parameters.algorithm {
-                Algorithm::PS256 => &signature::RSA_PSS_SHA256,
-                Algorithm::RS256 => &signature::RSA_PKCS1_SHA256,
-                Algorithm::ES256 => unreachable!(),
-            };
-            let mut signed = vec![0; key.public().modulus_len()];
-            key.sign(encoding, &random, input.as_bytes(), &mut signed)
-                .map_err(|_| failure("signature", "key or signing refused"))?;
-            signed
-        }
-        Algorithm::ES256 => {
-            let PrivateKeyDer::Pkcs8(der) = &*key else {
-                return Err(failure("key", "algorithm mismatch"));
-            };
-            let key = signature::EcdsaKeyPair::from_pkcs8(
-                &signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-                der.secret_pkcs8_der(),
-                &random,
-            )
-            .map_err(|_| failure("signature", "key or signing refused"))?;
-            key.sign(&random, input.as_bytes())
-                .map_err(|_| failure("signature", "key or signing refused"))?
-                .as_ref()
-                .to_vec()
-        }
-    };
-    let assertion = format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature));
+    let key = match parameters.algorithm {
+        Algorithm::RS256 | Algorithm::PS256 => EncodingKey::from_rsa_pem(pem.as_bytes()),
+        Algorithm::ES256 => EncodingKey::from_ec_pem(pem.as_bytes()),
+    }
+    .map_err(|_| failure("key", "invalid PEM or algorithm mismatch"))?;
+    let assertion = jsonwebtoken::encode(&header, &claims, &key)
+        .map_err(|_| failure("signature", "key or signing refused"))?;
     let mut form = url::form_urlencoded::Serializer::new(String::new());
     form.append_pair("grant_type", "client_credentials");
     form.append_pair(

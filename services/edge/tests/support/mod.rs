@@ -23,13 +23,13 @@ use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_dev_control::dev::edge_bundle::{EdgeScope, write_package};
+use wamn_digest::bytes_sha256;
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
 };
 use wamn_edge::serve::{EdgeHost, serve};
-use wamn_execution_contract::bytes_sha256;
-use wamn_session::keys::PublicSessionKey;
-use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
+use wamn_identity_protocol::keys::PublicSessionKey;
+use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
 pub const PACKAGE: &str = "edge_device";
 /// A registered export is keyed by its permission identity.
@@ -55,7 +55,7 @@ pub fn key(kid: &str, seed: u8) -> (Ed25519KeyPair, PublicSessionKey) {
         kid: kid.into(),
         kty: "OKP".into(),
         crv: "Ed25519".into(),
-        alg: "Ed25519".into(),
+        alg: "EdDSA".into(),
         r#use: "sig".into(),
         x: URL_SAFE_NO_PAD.encode(pair.public_key().as_ref()),
     };
@@ -73,18 +73,22 @@ pub fn session(pair: &Ed25519KeyPair, kid: &str, roles: &[&str]) -> String {
     .expect("the clock fits in i64");
     let claims = SessionClaims {
         iss: ISSUER.into(),
-        sub: PRINCIPAL.into(),
+        sub: PRINCIPAL.parse().unwrap(),
         org: ORG.into(),
         aud: AUDIENCE.into(),
-        roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+        roles: roles.iter().map(|role| role.parse().unwrap()).collect(),
         exp: now + 300,
         iat: now - 10,
         jti: "token-1".into(),
-        authority: SessionAuthority::Login(PRINCIPAL.into()),
+        authority: SessionAuthority::Login(PRINCIPAL.parse().unwrap()),
         csrf: None,
     };
-    let header =
-        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&SessionHeader::new(kid)).expect("header"));
+    let header = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(
+            &serde_json::json!({"alg":"EdDSA", "typ":"wamn-session+jwt", "kid":kid}),
+        )
+        .expect("header"),
+    );
     let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).expect("claims"));
     let signed = format!("{header}.{body}");
     let signature = URL_SAFE_NO_PAD.encode(pair.sign(signed.as_bytes()).as_ref());

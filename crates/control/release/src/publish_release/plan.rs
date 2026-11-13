@@ -38,7 +38,7 @@ pub(super) fn application_digests(
         {
             let member = &application_bytes
                 [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
-            digests.insert(wamn_engine::component_admission::component_digest(member));
+            digests.insert(wamn_digest::bytes_sha256(member));
         }
     }
     Ok(digests)
@@ -449,14 +449,13 @@ pub(super) fn project_routes(
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
-            canonicalization: contract.canonicalization.clone(),
         });
     }
     // Workflow nodes also use these contracts to begin request element transactions and
     // claim their keys, for private and registered commands alike. An HTTP
     // attachment is not required to call an operation.
     for component in components.iter() {
-        for operation in component.operations.keys() {
+        for operation in component.descriptor.operations.keys() {
             let Some(contract) =
                 route_contracts.get(&(component.package_id.clone(), operation.clone()))
             else {
@@ -473,7 +472,6 @@ pub(super) fn project_routes(
                 reads: contract.reads.clone(),
                 revision: contract.revision.clone(),
                 idempotency: contract.idempotency.clone(),
-                canonicalization: contract.canonicalization.clone(),
             });
         }
     }

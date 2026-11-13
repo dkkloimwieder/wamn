@@ -58,7 +58,7 @@ mod wiring;
 use serde_json::Value;
 
 #[doc(inline)]
-pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
+pub use outcome::{ErrorDetail, NodeError, NodeOutcome, RateLimitDetail};
 #[doc(inline)]
 pub use resolution::ActiveWiring;
 #[doc(inline)]

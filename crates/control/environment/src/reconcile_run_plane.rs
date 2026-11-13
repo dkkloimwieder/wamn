@@ -13,17 +13,15 @@ use wamn_control_provision::{
     APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
     project_env_database_name, validate_project_env,
 };
-use wamn_control_registry::{DurabilityClass, Triple};
+use wamn_control_registry::Triple;
 use wamn_schema_control::{
     BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
-    RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql, plan_run_plane,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    RunPlanePlan, catalog_schema_present_sql, plan_run_plane, select_app_run_queue_authority_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
     select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
-    select_run_plane_helper_functions_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
@@ -74,8 +72,6 @@ pub struct ReconcileRunPlaneOutcome {
     pub plan: RunPlanePlan,
     /// Whether the tenant's environment policy changed, or would change.
     pub policy_changed: bool,
-    /// Durability class of the source environment policy.
-    pub durability_class: DurabilityClass,
     /// What the tenant's `platform` schema and identity rows needed.
     pub env_key_identity: EnvKeyIdentityOutcome,
 }
@@ -264,7 +260,6 @@ pub async fn reconcile_run_plane_with_migrations(
                 &args.system_database_url,
                 &args.org,
                 &policy,
-                !args.dry_run,
             )
             .await?;
         // Validate completed initialization before any substrate reconciliation writes.
@@ -287,7 +282,6 @@ pub async fn reconcile_run_plane_with_migrations(
         let reset_sources =
             crate::environment::sql::reset::migration_sources(&system, &triple, sources).await?;
         drop(system);
-        let durability_class = source_policy.durability_class();
         let plan = reconcile(&client, &schema, !args.dry_run).await?;
         let policy_changed = converge_environment_policy(
             &mut client,
@@ -342,16 +336,15 @@ pub async fn reconcile_run_plane_with_migrations(
             )
             .await?;
         }
-        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, env_key_identity))
+        Ok::<_, anyhow::Error>((plan, policy_changed, env_key_identity))
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let (plan, policy_changed, durability_class, env_key_identity) = result?;
+    let (plan, policy_changed, env_key_identity) = result?;
     Ok(ReconcileRunPlaneOutcome {
         plan,
         policy_changed,
-        durability_class,
         env_key_identity,
     })
 }
@@ -617,7 +610,7 @@ async fn converge_env_key_identity(
             .query(
                 "SELECT user_id::text FROM platform.user_role \
                   WHERE role_name = $1",
-                &[&wamn_project_state::ADMIN_ROLE],
+                &[&wamn_identity_protocol::ADMIN_ROLE],
             )
             .await
             .context("read the tenant's admin rows")?
@@ -637,7 +630,7 @@ async fn converge_env_key_identity(
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
-            && present_users.contains(&wamn_project_state::workflow_user_id().to_string())
+            && present_users.contains(&wamn_identity_protocol::workflow_user_id().to_string())
             && missing_services.is_empty()
             && missing_users.is_empty()
             && stale_users.is_empty()
@@ -680,7 +673,7 @@ async fn converge_env_key_identity(
         transaction
             .batch_execute(&format!(
                 "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
-                wamn_pg_core::quote_ident(&owner)
+                postgres_protocol::escape::escape_identifier(&owner)
             ))
             .await
             .context("install deploy/sql/app-schema.sql")?;
@@ -722,7 +715,7 @@ async fn converge_env_key_identity(
             .await
             .context("bind wamn:provisioning for the service and user rows")?;
         for service in &missing_services {
-            let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
+            let principal_id: wamn_identity_protocol::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
                 &transaction,
                 env_key,
@@ -766,7 +759,7 @@ async fn converge_env_key_identity(
 ///
 /// `expected_environment` is the environment's name, which the run plane
 /// and publish compare with the scope. The policy the environment row names
-/// supplies the durability class and the source identity
+/// supplies the source identity
 /// (docs/architecture/overview.md#environment-lifecycle).
 pub(crate) async fn converge_environment_policy(
     client: &mut tokio_postgres::Client,
@@ -805,7 +798,7 @@ pub(crate) async fn converge_environment_policy(
         client
             .query_opt(
                 &format!(
-                    "SELECT expected_environment, durability_class, \
+                    "SELECT expected_environment, \
                             source_policy_org, source_policy_hash \
                        FROM {}.environment_policies WHERE env_key = $1",
                     schema.quoted()
@@ -817,23 +810,21 @@ pub(crate) async fn converge_environment_policy(
             .map(|row| {
                 (
                     row.get::<_, String>(0),
-                    row.get::<_, String>(1),
+                    row.get::<_, Option<String>>(1),
                     row.get::<_, Option<String>>(2),
-                    row.get::<_, Option<String>>(3),
                 )
             })
     } else {
         None
     };
-    let wanted_class = source.durability_class().as_sql();
-    let changed = current.as_ref().is_none_or(
-        |(current_environment, current_class, current_org, current_hash)| {
-            current_environment != environment
-                || current_class != wanted_class
-                || current_org.as_deref() != Some(source.source_policy_org.as_ref())
-                || current_hash.as_deref() != Some(source.source_policy_hash.as_ref())
-        },
-    );
+    let changed =
+        current
+            .as_ref()
+            .is_none_or(|(current_environment, current_org, current_hash)| {
+                current_environment != environment
+                    || current_org.as_deref() != Some(source.source_policy_org.as_ref())
+                    || current_hash.as_deref() != Some(source.source_policy_hash.as_ref())
+            });
     if apply && changed {
         anyhow::ensure!(
             table_present && source_carriers_present,
@@ -849,27 +840,24 @@ pub(crate) async fn converge_environment_policy(
             .execute(
                 &format!(
                     "INSERT INTO {}.environment_policies \
-                       (env_key, expected_environment, durability_class, \
+                       (env_key, expected_environment, \
                         source_policy_org, source_policy_hash) \
-                     VALUES ($1, $2, $3, $4, $5) \
+                     VALUES ($1, $2, $3, $4) \
                      ON CONFLICT (env_key) DO UPDATE SET \
                        expected_environment = EXCLUDED.expected_environment, \
-                       durability_class = EXCLUDED.durability_class, \
                        source_policy_org = EXCLUDED.source_policy_org, \
                        source_policy_hash = EXCLUDED.source_policy_hash \
                      WHERE (environment_policies.expected_environment, \
-                            environment_policies.durability_class, \
                             environment_policies.source_policy_org, \
                             environment_policies.source_policy_hash) \
                            IS DISTINCT FROM \
-                           (EXCLUDED.expected_environment, EXCLUDED.durability_class, \
+                           (EXCLUDED.expected_environment, \
                             EXCLUDED.source_policy_org, EXCLUDED.source_policy_hash)",
                     schema.quoted()
                 ),
                 &[
                     &env_key,
                     &environment,
-                    &wanted_class,
                     &source.source_policy_org.as_ref(),
                     &source.source_policy_hash.as_ref(),
                 ],
@@ -915,7 +903,10 @@ pub async fn reconcile(
             .await?
             .get(0);
         client
-            .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+            .batch_execute(&format!(
+                "SET ROLE {}",
+                postgres_protocol::escape::escape_identifier(&owner)
+            ))
             .await?;
         for action in &plan.actions {
             client
@@ -946,58 +937,22 @@ pub async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Re
         .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await
         .context("ensure wamn_app role")?;
-    client
-        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
-        .await
-        .context("ensure host-only wamn_scenario_author role")?;
-    client
-        .batch_execute(
-            "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-             DO $separate$ BEGIN \
-               IF EXISTS (SELECT FROM pg_auth_members m \
-                            JOIN pg_roles g ON g.oid = m.roleid \
-                            JOIN pg_roles r ON r.oid = m.member \
-                           WHERE g.rolname = 'wamn_scenario_author' \
-                             AND r.rolname = 'wamn_app') THEN \
-                 REVOKE wamn_scenario_author FROM wamn_app; \
-               END IF; \
-             END $separate$;",
-        )
-        .await
-        .context("separate guest and scenario-author roles")
+    Ok(())
 }
 
-/// Read everything the pure planner decides on. Read-only.
+/// Read the database facts that the planner uses.
 async fn observe(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
     let mut obs = RunPlaneObservation {
-        scenario_author_role: client
-            .query_opt(select_scenario_author_role_sql(), &[])
+        app_run_queue_authority: client
+            .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
             .await
-            .context("read scenario-author role attributes")?
-            .map(|row| ScenarioAuthorRoleObservation {
-                can_login: row.get(0),
-                is_superuser: row.get(1),
-                can_create_database: row.get(2),
-                can_create_role: row.get(3),
-                inherits_roles: row.get(4),
-                can_replicate: row.get(5),
-                bypasses_rls: row.get(6),
-            }),
+            .context("read guest run-queue authority")?
+            .get(0),
         ..Default::default()
     };
-    obs.app_is_scenario_author_member = client
-        .query_one(select_app_scenario_author_membership_sql(), &[])
-        .await
-        .context("read guest scenario-author membership")?
-        .get(0);
-    obs.app_run_queue_authority = client
-        .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
-        .await
-        .context("read guest run-queue authority")?
-        .get(0);
     let capture_privileges_sql = select_run_capture_privileges_sql();
     let capture_privileges = client
         .query_one(&capture_privileges_sql, &[&schema.as_str()])
@@ -1051,20 +1006,6 @@ async fn observe(
     {
         obs.authoring_table_owners
             .insert((row.get(0), row.get(1)), row.get(2));
-    }
-    for row in client
-        .query(
-            select_scenario_author_schema_usage_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read scenario-author schema usage")?
-    {
-        let schema_name: String = row.get(0);
-        let has_usage: bool = row.get(1);
-        if has_usage {
-            obs.scenario_author_schema_usage.insert(schema_name);
-        }
     }
 
     for row in client

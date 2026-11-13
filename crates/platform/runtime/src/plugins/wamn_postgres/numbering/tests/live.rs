@@ -70,7 +70,7 @@ async fn connect(url: &str) -> tokio_postgres::Client {
 impl Live {
     async fn new() -> Self {
         let lock = wamn_test_postgres::lock();
-        let database = wamn_project_state::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::tenant_platform();
         database
             .execute(&["CREATE SCHEMA wamn_run;"])
             .expect("create the run-plane schema that administration revokes in");

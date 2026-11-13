@@ -98,7 +98,7 @@ async fn issue_pat_secret(
         triple,
         namespace,
         purpose,
-        principal.id().as_str(),
+        principal.id().to_string().as_str(),
         &issued.token,
         &issued.token_prefix,
         &issued.expires_at,
@@ -116,7 +116,7 @@ pub async fn mint_pat(
     triple: &Triple,
     purpose: PatPurpose,
     changes: &Publisher,
-) -> anyhow::Result<(Principal, wamn_identity_client::PatResponse)> {
+) -> anyhow::Result<(Principal, wamn_identity_protocol::wire::PatResponse)> {
     let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
     let principal = resolve_or_create_service(client, &subject, &display_name, changes).await?;
@@ -179,7 +179,7 @@ pub async fn mint_management_author_pat(
     issuer: &wamn_identity_client::PatIssuerConfig,
     triple: &Triple,
     changes: &Publisher,
-) -> anyhow::Result<wamn_identity_client::PatResponse> {
+) -> anyhow::Result<wamn_identity_protocol::wire::PatResponse> {
     let pat_client = PatClient::new(issuer)?;
     super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
     super::read_project_env_instance(system_url, triple).await?;

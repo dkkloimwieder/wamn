@@ -21,8 +21,8 @@ use wamn_environment_control::provision_project_env::{
     OrgWorkloadActionRequest, WorkloadActionOutcome, WorkloadActionVerb, WorkloadGenerationAction,
     provisioning_transaction, run_org_workload_action,
 };
+use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 use wamn_platform_identity::control::{control_projects, control_session_is_active};
-use wamn_session::token::{SessionAuthority, SessionClaims};
 
 const ORG: &str = "ctlorg";
 const ISSUER: &str = "https://identity.example.test";
@@ -126,7 +126,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
                          now() + interval '1 hour') \
                  RETURNING id::text",
                 &[
-                    &user.id().as_str(),
+                    &user.id().to_string().as_str(),
                     &ISSUER,
                     &format!("urn:wamn:control:{ORG}"),
                 ],
@@ -187,14 +187,14 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
     );
     let claims = |login: &str| SessionClaims {
         iss: ISSUER.to_owned(),
-        sub: user.id().as_str().to_owned(),
+        sub: *user.id(),
         org: ORG.to_owned(),
         aud: format!("urn:wamn:control:{ORG}"),
         roles: Vec::new(),
         exp: 0,
         iat: 0,
         jti: "live".to_owned(),
-        authority: SessionAuthority::Login(login.to_owned()),
+        authority: SessionAuthority::Login(login.parse().unwrap()),
         csrf: None,
     };
     assert!(

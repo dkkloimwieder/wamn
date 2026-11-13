@@ -1,12 +1,12 @@
 use std::error::Error;
 use std::fmt;
+use wamn_scalar::SqlValueType;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_catalog::schema::ColumnType;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 
 use wamn_catalog::manifest::CursorDirection;
 
@@ -26,15 +26,15 @@ pub enum CursorValue {
 
 impl CursorValue {
     /// Frozen catalog type represented by this cursor value.
-    pub const fn column_type(&self) -> ColumnType {
+    pub const fn column_type(&self) -> SqlValueType {
         match self {
-            Self::Boolean(_) => ColumnType::Boolean,
-            Self::Int32(_) => ColumnType::Int32,
-            Self::Int64(_) => ColumnType::Int64,
-            Self::Text(_) => ColumnType::Text,
-            Self::Numeric(_) => ColumnType::Numeric,
-            Self::Timestamptz(_) => ColumnType::Timestamptz,
-            Self::Uuid(_) => ColumnType::Uuid,
+            Self::Boolean(_) => SqlValueType::Boolean,
+            Self::Int32(_) => SqlValueType::Int32,
+            Self::Int64(_) => SqlValueType::Int64,
+            Self::Text(_) => SqlValueType::Text,
+            Self::Numeric(_) => SqlValueType::Numeric,
+            Self::Timestamptz(_) => SqlValueType::Timestamptz,
+            Self::Uuid(_) => SqlValueType::Uuid,
         }
     }
 
@@ -44,16 +44,16 @@ impl CursorValue {
             Self::Int32(value) => Value::from(*value),
             Self::Int64(value) => Value::from(*value),
             Self::Text(value) | Self::Uuid(value) => Value::String(value.to_string()),
-            Self::Numeric(value) => Value::String(
-                wamn_execution_contract::canonical_numeric(value).ok_or_else(|| {
+            Self::Numeric(value) => {
+                Value::String(wamn_scalar::canonical_numeric(value).ok_or_else(|| {
                     CursorError::invalid("numeric cursor key must be plain decimal text")
-                })?,
-            ),
-            Self::Timestamptz(value) => Value::String(
-                wamn_execution_contract::canonical_timestamptz(value).ok_or_else(|| {
+                })?)
+            }
+            Self::Timestamptz(value) => {
+                Value::String(wamn_scalar::canonical_timestamptz(value).ok_or_else(|| {
                     CursorError::invalid("timestamptz cursor key must be RFC3339")
-                })?,
-            ),
+                })?)
+            }
         })
     }
 }
@@ -197,7 +197,7 @@ pub fn decode_cursor(
     encoded: &str,
     expected_field: &str,
     expected_direction: CursorDirection,
-    expected_type: ColumnType,
+    expected_type: SqlValueType,
 ) -> Result<CursorV1, CursorError> {
     let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|source| {
         CursorError::invalid_source("cursor is not unpadded base64url", source)
@@ -241,25 +241,27 @@ fn canonical_bytes(cursor: &CursorV1) -> Result<Vec<u8>, CursorError> {
     Ok(canonical_json_bytes(&value))
 }
 
-fn value_from_json(expected: ColumnType, value: Value) -> Result<CursorValue, CursorError> {
+fn value_from_json(expected: SqlValueType, value: Value) -> Result<CursorValue, CursorError> {
     let cursor_value = match (expected, value) {
-        (ColumnType::Boolean, Value::Bool(value)) => CursorValue::Boolean(value),
-        (ColumnType::Int32, Value::Number(value)) => value
+        (SqlValueType::Boolean, Value::Bool(value)) => CursorValue::Boolean(value),
+        (SqlValueType::Int32, Value::Number(value)) => value
             .as_i64()
             .and_then(|value| i32::try_from(value).ok())
             .map(CursorValue::Int32)
             .ok_or_else(|| CursorError::invalid("cursor key is not an int32"))?,
-        (ColumnType::Int64, Value::Number(value)) => value
+        (SqlValueType::Int64, Value::Number(value)) => value
             .as_i64()
             .map(CursorValue::Int64)
             .ok_or_else(|| CursorError::invalid("cursor key is not an int64"))?,
-        (ColumnType::Text, Value::String(value)) => CursorValue::Text(value.into_boxed_str()),
-        (ColumnType::Numeric, Value::String(value)) => CursorValue::Numeric(value.into_boxed_str()),
-        (ColumnType::Timestamptz, Value::String(value)) => {
+        (SqlValueType::Text, Value::String(value)) => CursorValue::Text(value.into_boxed_str()),
+        (SqlValueType::Numeric, Value::String(value)) => {
+            CursorValue::Numeric(value.into_boxed_str())
+        }
+        (SqlValueType::Timestamptz, Value::String(value)) => {
             CursorValue::Timestamptz(value.into_boxed_str())
         }
-        (ColumnType::Uuid, Value::String(value)) => CursorValue::Uuid(value.into_boxed_str()),
-        (ColumnType::Float64 | ColumnType::Bytes | ColumnType::Json, _) => {
+        (SqlValueType::Uuid, Value::String(value)) => CursorValue::Uuid(value.into_boxed_str()),
+        (SqlValueType::Float64 | SqlValueType::Bytes | SqlValueType::Json, _) => {
             return Err(CursorError::invalid(
                 "cursor field type is outside the closed sortable vocabulary",
             ));

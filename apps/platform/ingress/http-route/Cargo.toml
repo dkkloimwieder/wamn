@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+url.workspace = true
+wamn-digest.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true, features = ["async", "async-spawn"] }
-wamn-execution-contract = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

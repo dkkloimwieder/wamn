@@ -387,7 +387,7 @@ async fn model_versions_follow_wal_without_a_counter() {
     database
         .execute(&[&format!(
             "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
-            wamn_pg_core::quote_ident(&role),
+            postgres_protocol::escape::escape_identifier(&role),
             wamn_control_provision::sql::normalize_workload_generation_membership_sql(
                 family, &role, true
             ),

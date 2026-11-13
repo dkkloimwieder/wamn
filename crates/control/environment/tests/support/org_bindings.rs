@@ -266,7 +266,7 @@ manifest.Package {{
         build_record.outputs.components = vec![BuildComponent {
             name: "fixture".into(),
             path: "components/fixture.wasm".into(),
-            sha256: wamn_engine::component_admission::component_digest(&bytes),
+            sha256: wamn_digest::bytes_sha256(&bytes),
         }];
         let target = std::path::PathBuf::from(
             std::env::var_os("CARGO_TARGET_DIR").context("CARGO_TARGET_DIR")?,
@@ -300,7 +300,7 @@ manifest.Package {{
             build_record.outputs.components.push(BuildComponent {
                 name: (*palette).into(),
                 path,
-                sha256: wamn_engine::component_admission::component_digest(&bytes),
+                sha256: wamn_digest::bytes_sha256(&bytes),
             });
         }
         std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;

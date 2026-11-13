@@ -1,6 +1,6 @@
 //! Package object owners and their platform history privileges.
 
-use super::{ensure_acl_role_sql, quote_ident, quote_literal};
+use super::{ensure_acl_role_sql, escape_identifier, escape_literal};
 use crate::package_owner_role;
 
 /// Provision the package owner before creating its schemas and objects.
@@ -18,15 +18,15 @@ pub fn ensure_package_owner_role_sql(package: &str) -> String {
              GRANT {role} TO wamn_provisioner WITH ADMIN TRUE, INHERIT TRUE, SET TRUE; \
            END IF; END $package_owner$;",
         ensure_acl_role_sql(&role),
-        role = quote_ident(&role),
-        role_literal = quote_literal(&role),
+        role = escape_identifier(&role),
+        role_literal = escape_literal(&role),
     )
 }
 
 /// Preserve the history surface formerly used through the database owner.
 /// These invoker routines confer no access to platform tables.
 pub fn package_owner_grants_sql(package: &str) -> String {
-    let role = quote_ident(&package_owner_role(package));
+    let role = escape_identifier(&package_owner_role(package));
     format!(
         "GRANT USAGE, CREATE ON SCHEMA wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION \

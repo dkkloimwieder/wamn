@@ -11,7 +11,7 @@ pub(super) async fn set_package_owner_role(
     tx: &Transaction<'_>,
     package: &str,
 ) -> anyhow::Result<()> {
-    let role = wamn_pg_core::quote_ident(&package_owner_role(package));
+    let role = postgres_protocol::escape::escape_identifier(&package_owner_role(package));
     tx.batch_execute(&format!("SET LOCAL ROLE {role}"))
         .await
         .with_context(|| format!("select owner role of package {package}"))
@@ -77,7 +77,7 @@ pub(super) async fn execute_migration(
             );
             tx.batch_execute(&format!(
                 "GRANT USAGE ON SCHEMA platform TO {}",
-                wamn_pg_core::quote_ident(&role)
+                postgres_protocol::escape::escape_identifier(&role)
             ))
             .await?;
         }
@@ -93,13 +93,13 @@ pub(super) async fn execute_migration(
                 );
                 tx.batch_execute(&format!(
                     "GRANT REFERENCES ON TABLE {table} TO {}",
-                    wamn_pg_core::quote_ident(&role)
+                    postgres_protocol::escape::escape_identifier(&role)
                 ))
                 .await?;
                 granted.push(table);
             }
         }
-        let quoted_role = wamn_pg_core::quote_ident(&role);
+        let quoted_role = postgres_protocol::escape::escape_identifier(&role);
         let scope = if transactional { "LOCAL " } else { "" };
         tx.batch_execute(&format!("SET {scope}ROLE {quoted_role}"))
             .await
@@ -119,14 +119,14 @@ pub(super) async fn execute_migration(
             if provenance_usage {
                 tx.batch_execute(&format!(
                     "REVOKE USAGE ON SCHEMA platform FROM {}",
-                    wamn_pg_core::quote_ident(&role)
+                    postgres_protocol::escape::escape_identifier(&role)
                 ))
                 .await?;
             }
             for table in granted {
                 tx.batch_execute(&format!(
                     "REVOKE REFERENCES ON TABLE {table} FROM {}",
-                    wamn_pg_core::quote_ident(&role)
+                    postgres_protocol::escape::escape_identifier(&role)
                 ))
                 .await?;
             }

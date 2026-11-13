@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
     AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
     ComponentEffectProvenance, normalize_component_fact,
@@ -79,7 +78,7 @@ pub fn validate_integration_admission(
     })?;
     validate_connection_code(&component, label)?;
     Ok(AdmittedIntegration {
-        digest: component_digest(component_bytes),
+        digest: wamn_digest::bytes_sha256(component_bytes),
     })
 }
 
@@ -392,7 +391,7 @@ pub fn validate_component_admission(
             )
         })?;
 
-    let component_digest = component_digest(component_bytes);
+    let component_digest = wamn_digest::bytes_sha256(component_bytes);
     let mut facts = normalize_component_fact(
         request.declaration,
         component_digest,
@@ -544,7 +543,9 @@ fn embedded_components(component_bytes: &[u8]) -> anyhow::Result<EmbeddedCompone
                 let exports = top_level_exports(member)?;
                 embedded.exports.extend(exports.iter().cloned());
                 if depth == 0 {
-                    embedded.members.push((component_digest(member), exports));
+                    embedded
+                        .members
+                        .push((wamn_digest::bytes_sha256(member), exports));
                 }
                 depth += 1;
             }
@@ -574,18 +575,6 @@ fn top_level_exports(component_bytes: &[u8]) -> anyhow::Result<Vec<String>> {
         }
     }
     Ok(exports)
-}
-
-/// SHA-256 identity of exact component bytes.
-pub fn component_digest(component_bytes: &[u8]) -> String {
-    let digest = Sha256::digest(component_bytes);
-    let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        use fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
-    }
-    output
 }
 
 #[cfg(test)]
@@ -815,7 +804,7 @@ mod tests {
     /// The request with `base` pinned as a base of the package.
     fn request_pinning(base: &[u8]) -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
-            base_digests: BTreeSet::from([component_digest(base)]),
+            base_digests: BTreeSet::from([wamn_digest::bytes_sha256(base)]),
             ..request()
         }
     }

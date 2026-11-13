@@ -18,9 +18,9 @@ use anyhow::Context as _;
 /// When the tree cannot be read.
 pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
     wamn_schema_generator::build_record::check_current(root)?;
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut context = wamn_digest::Hasher::new();
     let mut frame = |bytes: &[u8]| {
-        context.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
+        context.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
         context.update(bytes);
     };
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
@@ -48,7 +48,7 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
         let path = migrations.join(&name);
         frame(&std::fs::read(&path).with_context(|| format!("read {}", path.display()))?);
     }
-    Ok(format!("sha256:{}", hex::encode(context.finish())))
+    Ok(wamn_digest::format_sha256(&context.finalize()))
 }
 
 /// Write physical SQL for a synthetic package and its declared relation columns.
@@ -121,10 +121,7 @@ pub fn write_build_record(root: &Path) {
             sqlx: "0.9.0".into(),
         },
         outputs: build_record::BuildOutputs {
-            manifest: format!(
-                "sha256:{}",
-                hex::encode(ring::digest::digest(&ring::digest::SHA256, &manifest_bytes))
-            ),
+            manifest: wamn_digest::bytes_sha256(&manifest_bytes),
             files: std::collections::BTreeMap::new(),
             components: Vec::new(),
         },

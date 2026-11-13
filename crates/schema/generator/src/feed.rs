@@ -1,6 +1,8 @@
 //! Validated catalog facts for authored query feeds.
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use wamn_scalar::SqlValueType;
 
 use pg_query::NodeEnum;
 use pg_query::protobuf::{JoinType, Node, RangeVar, SelectStmt, SetOperation};
@@ -661,7 +663,6 @@ pub(crate) fn missing_indexes(catalog: &CatalogIr, name: &str, source: &FeedSour
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{
         Column, Constraint, ForeignKeyAction, Index, IndexColumn, IndexDirection, ViewBaseTable,
         ViewColumn,
@@ -670,9 +671,9 @@ mod tests {
     fn table(name: &str, references: &[(&str, &str)]) -> Table {
         let mut constraints =
             vec![Constraint::primary_key(format!("{name}_id_pkey"), ["id"]).unwrap()];
-        let mut columns = vec![Column::new("id", ColumnType::Uuid, false, None, None)];
+        let mut columns = vec![Column::new("id", SqlValueType::Uuid, false, None, None)];
         for (field, target) in references {
-            columns.push(Column::new(*field, ColumnType::Uuid, false, None, None));
+            columns.push(Column::new(*field, SqlValueType::Uuid, false, None, None));
             constraints.push(
                 Constraint::foreign_key(
                     format!("{name}_{field}_fkey"),
@@ -696,7 +697,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(name, table, field)| {
-            ViewColumn::new(name, ColumnType::Uuid).with_origin(ViewColumnOrigin {
+            ViewColumn::new(name, SqlValueType::Uuid).with_origin(ViewColumnOrigin {
                 schema: "app".into(),
                 table: table.into(),
                 column: field.into(),
@@ -827,7 +828,7 @@ mod tests {
             .row
             .push(wamn_catalog::manifest::StaticSqlValueDeclaration {
                 name: "row_version".into(),
-                ty: wamn_catalog::schema::ColumnType::Int64,
+                ty: wamn_scalar::SqlValueType::Int64,
                 nullable: false,
             });
         let error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();
@@ -943,7 +944,7 @@ mod tests {
 
     #[test]
     fn affected_keys_follow_each_link_and_both_images() {
-        let catalog = CatalogIr::new(vec![table("line", &[("order_id", "orders")]), table("orders", &[("item_id", "item")]), table("item", &[])]).with_views(vec![View::new("app", "screen", [("id", "line", "id"), ("order_id", "line", "order_id"), ("item_id", "orders", "item_id")].into_iter().map(|(name, table, field)| ViewColumn::new(name, ColumnType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: table.into(), column: field.into() })).collect(), ["line", "orders", "item"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id, line.order_id, orders.item_id FROM app.line JOIN app.orders ON orders.id = line.order_id JOIN app.item ON item.id = orders.item_id".into(), false)]);
+        let catalog = CatalogIr::new(vec![table("line", &[("order_id", "orders")]), table("orders", &[("item_id", "item")]), table("item", &[])]).with_views(vec![View::new("app", "screen", [("id", "line", "id"), ("order_id", "line", "order_id"), ("item_id", "orders", "item_id")].into_iter().map(|(name, table, field)| ViewColumn::new(name, SqlValueType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: table.into(), column: field.into() })).collect(), ["line", "orders", "item"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id, line.order_id, orders.item_id FROM app.line JOIN app.orders ON orders.id = line.order_id JOIN app.item ON item.id = orders.item_id".into(), false)]);
         let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
         let sql = crate::sql::authored_changes(
             &catalog,
@@ -964,7 +965,7 @@ mod tests {
             assert!(sql.contains(expected), "{expected}: {sql}");
         }
 
-        let catalog = CatalogIr::new(vec![table("line", &[]), table("orders", &[("line_id", "line")])]).with_views(vec![View::new("app", "screen", vec![ViewColumn::new("id", ColumnType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: "line".into(), column: "id".into() })], ["line", "orders"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id FROM app.line LEFT JOIN app.orders ON orders.line_id = line.id GROUP BY line.id".into(), false)]);
+        let catalog = CatalogIr::new(vec![table("line", &[]), table("orders", &[("line_id", "line")])]).with_views(vec![View::new("app", "screen", vec![ViewColumn::new("id", SqlValueType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: "line".into(), column: "id".into() })], ["line", "orders"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id FROM app.line LEFT JOIN app.orders ON orders.line_id = line.id GROUP BY line.id".into(), false)]);
         let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
         let sql = crate::sql::authored_changes(
             &catalog,
@@ -993,7 +994,7 @@ mod tests {
             "line",
             vec![Column::new(
                 "id",
-                ColumnType::Int32,
+                SqlValueType::Int32,
                 false,
                 None,
                 Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
@@ -1011,8 +1012,8 @@ mod tests {
             "app",
             "orders",
             vec![
-                Column::new("id", ColumnType::Uuid, false, None, None),
-                Column::new("line_id", ColumnType::Int64, false, None, None),
+                Column::new("id", SqlValueType::Uuid, false, None, None),
+                Column::new("line_id", SqlValueType::Int64, false, None, None),
             ],
             child.constraints().to_vec(),
             Vec::new(),
@@ -1057,7 +1058,7 @@ mod tests {
         let catalog = catalog(RECEIPT);
         let mut columns = catalog.views()[0].columns().to_vec();
         columns.push(
-            ViewColumn::new("other_item_id", ColumnType::Uuid).with_origin(ViewColumnOrigin {
+            ViewColumn::new("other_item_id", SqlValueType::Uuid).with_origin(ViewColumnOrigin {
                 schema: "app".into(),
                 table: "line".into(),
                 column: "other_item_id".into(),

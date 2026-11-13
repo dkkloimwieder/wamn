@@ -60,7 +60,7 @@ pub(super) fn emit_package_publication(
                 "input-schema": schema,
                 "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
             });
-            let hash = wamn_execution_contract::canonical_json_sha256(&definition);
+            let hash = wamn_digest::canonical_json_sha256(&definition);
             attachments.insert(
                 id,
                 json!({

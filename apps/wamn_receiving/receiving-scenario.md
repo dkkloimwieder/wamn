@@ -69,7 +69,7 @@ The timestamp and numeric carriers follow the declared [input contract](wamn.k).
 The same key and canonical body return the original result without another receipt.
 A different body under that key returns `idempotency_conflict`.
 The replay comparison excludes `request_id` and the idempotency key itself.
-Canonicalization orders lines by `purchase_order_line_id` and preserves PostgreSQL numeric scale.
+Request identity preserves line order and scalar spelling. SQL input parsing preserves numeric scale.
 
 The transaction must not receive more than the remaining ordered quantity.
 Competing valid receipts must serialize through the locked order and lines.

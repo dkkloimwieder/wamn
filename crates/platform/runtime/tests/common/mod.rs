@@ -40,7 +40,7 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
             eprintln!("production-claim live connection failed: {error}");
         }
     });
-    let actor = wamn_project_state::PlatformComponent::Provisioning;
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning;
     client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:claim-fixture', false)", &[&actor.principal_id().to_string()]).await?;
     Ok(client)
 }
@@ -121,22 +121,16 @@ pub fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String
     Ok(parsed.into())
 }
 
-/// Seed an admitted, queued run on the `standard` class.
-pub async fn seed_run(
-    client: &Client,
-    run_id: &str,
-    package_id: &str,
-    stream_seq: i64,
-) -> anyhow::Result<()> {
+/// Seed an admitted, queued run.
+pub async fn seed_run(client: &Client, run_id: &str, package_id: &str) -> anyhow::Result<()> {
     client
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
-                    environment,wiring_id,wiring_version,input_json,trigger_source, \
-                    durability_class) \
-                 VALUES ($1,$2,'root',1,'dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
-                         '{{\"input\":true}}','http','standard')"
+                   (env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
+                    environment,wiring_id,wiring_version,input_json,trigger_source) \
+                 VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
+                         '{{\"input\":true}}','http')"
             ),
             &[&ENV_KEY, &run_id, &package_id, &WIRING_ID, &WIRING_VERSION],
         )
@@ -145,10 +139,10 @@ pub async fn seed_run(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (env_key,run_id,available_at,stream_seq) \
-                 VALUES ($1,$2,'2000-01-01 00:00:00+00',$3)"
+                   (env_key,run_id,available_at) \
+                 VALUES ($1,$2,'2000-01-01 00:00:00+00')"
             ),
-            &[&ENV_KEY, &run_id, &stream_seq],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -167,12 +161,8 @@ pub async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<
     Ok(())
 }
 
-pub async fn seed_exhausted_run(
-    client: &Client,
-    run_id: &str,
-    stream_seq: i64,
-) -> anyhow::Result<()> {
-    seed_run(client, run_id, PACKAGE_ID, stream_seq).await?;
+pub async fn seed_exhausted_run(client: &Client, run_id: &str) -> anyhow::Result<()> {
+    seed_run(client, run_id, PACKAGE_ID).await?;
     client
         .execute(
             &format!(
@@ -352,10 +342,10 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?);
-    let executor = wamn_project_state::PlatformComponent::Executor;
+    let executor = wamn_identity_protocol::PlatformComponent::Executor;
     for component in [COMPONENT, ROLLED_COMPONENT] {
         plugin.set_user_id(component, &executor.principal_id().to_string())?;
-        plugin.set_operation(component, executor.principal_name())?;
+        plugin.set_operation(component, &executor.principal_name())?;
     }
     plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;

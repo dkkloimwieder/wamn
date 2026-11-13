@@ -11,7 +11,7 @@ use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::{FailType, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -102,7 +102,7 @@ impl QueueService {
                     runner: Some(config.runner),
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
-                    operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
+                    operation: Some(PlatformComponent::Executor.principal_name().clone()),
                     // The queue serves every application of the release.
                     application: None,
                     release: Some(ReleaseIdentity::from_loaded(release)),
@@ -227,99 +227,6 @@ async fn serve_queue(
         tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)).await;
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[tokio::test]
-    async fn shutdown_finishes_current_turn_without_claiming_again() {
-        let liveness = Liveness::new(Duration::from_secs(90));
-        let turns = AtomicUsize::new(0);
-        let release_turn = tokio::sync::Notify::new();
-        let (entered, entering) = tokio::sync::oneshot::channel();
-        let mut entered = Some(entered);
-        let (stop, stopping) = tokio::sync::watch::channel(false);
-        let serving = serve_queue(
-            stopping,
-            &liveness,
-            async || {
-                turns.fetch_add(1, Ordering::Relaxed);
-                entered
-                    .take()
-                    .expect("one turn")
-                    .send(())
-                    .expect("receiver");
-                release_turn.notified().await;
-                Ok(true)
-            },
-            async || Ok(false),
-        );
-        tokio::pin!(serving);
-        tokio::select! {
-            result = &mut serving => panic!("queue exited during turn: {result:?}"),
-            result = entering => result.expect("queue entered"),
-        }
-        stop.send(true).expect("queue receiver");
-        release_turn.notify_one();
-        tokio::time::timeout(Duration::from_secs(1), &mut serving)
-            .await
-            .expect("drain timeout")
-            .expect("queue drain");
-        assert_eq!(turns.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn shutdown_before_first_turn_never_claims() {
-        let liveness = Liveness::new(Duration::from_secs(90));
-        let (_stop, stopping) = tokio::sync::watch::channel(true);
-        serve_queue(
-            stopping,
-            &liveness,
-            async || panic!("stopped queue claimed"),
-            async || Ok(false),
-        )
-        .await
-        .expect("stopped queue");
-        assert_eq!(liveness.silence(), None);
-    }
-
-    /// R20 (2): after stop the queue claims the runs pinned to its release
-    /// until none remains, then exits. A turn that finds nothing claimable,
-    /// because another replica holds the lease, does not end the drain.
-    #[tokio::test]
-    async fn shutdown_claims_the_pinned_backlog_until_it_is_empty() {
-        let liveness = Liveness::new(Duration::from_secs(90));
-        let backlog = AtomicUsize::new(2);
-        let turns = AtomicUsize::new(0);
-        let (_stop, stopping) = tokio::sync::watch::channel(true);
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            serve_queue(
-                stopping,
-                &liveness,
-                async || {
-                    // The first turn finds the pinned run leased elsewhere.
-                    if turns.fetch_add(1, Ordering::Relaxed) == 0 {
-                        return Ok(false);
-                    }
-                    backlog.fetch_sub(1, Ordering::Relaxed);
-                    Ok(true)
-                },
-                async || Ok(backlog.load(Ordering::Relaxed) > 0),
-            ),
-        )
-        .await
-        .expect("the drain ends when the pinned backlog is empty")
-        .expect("queue drain");
-        assert_eq!(backlog.load(Ordering::Relaxed), 0);
-        assert_eq!(turns.load(Ordering::Relaxed), 3);
-    }
-}
-
-#[cfg(test)]
-mod automation_live;
 
 async fn drain_one(
     driver: &RouterDriver,
@@ -677,3 +584,96 @@ async fn commit_completion(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn shutdown_finishes_current_turn_without_claiming_again() {
+        let liveness = Liveness::new(Duration::from_secs(90));
+        let turns = AtomicUsize::new(0);
+        let release_turn = tokio::sync::Notify::new();
+        let (entered, entering) = tokio::sync::oneshot::channel();
+        let mut entered = Some(entered);
+        let (stop, stopping) = tokio::sync::watch::channel(false);
+        let serving = serve_queue(
+            stopping,
+            &liveness,
+            async || {
+                turns.fetch_add(1, Ordering::Relaxed);
+                entered
+                    .take()
+                    .expect("one turn")
+                    .send(())
+                    .expect("receiver");
+                release_turn.notified().await;
+                Ok(true)
+            },
+            async || Ok(false),
+        );
+        tokio::pin!(serving);
+        tokio::select! {
+            result = &mut serving => panic!("queue exited during turn: {result:?}"),
+            result = entering => result.expect("queue entered"),
+        }
+        stop.send(true).expect("queue receiver");
+        release_turn.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), &mut serving)
+            .await
+            .expect("drain timeout")
+            .expect("queue drain");
+        assert_eq!(turns.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_before_first_turn_never_claims() {
+        let liveness = Liveness::new(Duration::from_secs(90));
+        let (_stop, stopping) = tokio::sync::watch::channel(true);
+        serve_queue(
+            stopping,
+            &liveness,
+            async || panic!("stopped queue claimed"),
+            async || Ok(false),
+        )
+        .await
+        .expect("stopped queue");
+        assert_eq!(liveness.silence(), None);
+    }
+
+    /// R20 (2): after stop the queue claims the runs pinned to its release
+    /// until none remains, then exits. A turn that finds nothing claimable,
+    /// because another replica holds the lease, does not end the drain.
+    #[tokio::test]
+    async fn shutdown_claims_the_pinned_backlog_until_it_is_empty() {
+        let liveness = Liveness::new(Duration::from_secs(90));
+        let backlog = AtomicUsize::new(2);
+        let turns = AtomicUsize::new(0);
+        let (_stop, stopping) = tokio::sync::watch::channel(true);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            serve_queue(
+                stopping,
+                &liveness,
+                async || {
+                    // The first turn finds the pinned run leased elsewhere.
+                    if turns.fetch_add(1, Ordering::Relaxed) == 0 {
+                        return Ok(false);
+                    }
+                    backlog.fetch_sub(1, Ordering::Relaxed);
+                    Ok(true)
+                },
+                async || Ok(backlog.load(Ordering::Relaxed) > 0),
+            ),
+        )
+        .await
+        .expect("the drain ends when the pinned backlog is empty")
+        .expect("queue drain");
+        assert_eq!(backlog.load(Ordering::Relaxed), 0);
+        assert_eq!(turns.load(Ordering::Relaxed), 3);
+    }
+}
+
+#[cfg(test)]
+mod admission_live;

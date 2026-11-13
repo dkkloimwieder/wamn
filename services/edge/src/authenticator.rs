@@ -12,8 +12,8 @@ use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, RouteAuthenticator,
     RouteCredential, authentication_unavailable, check_csrf, route_credential, unauthorized,
 };
-use wamn_session::file_keys::FileKeys;
-use wamn_session::verifier::SessionVerifier;
+use wamn_identity_protocol::file_keys::FileKeys;
+use wamn_identity_protocol::verifier::SessionVerifier;
 
 use crate::release::EdgeRelease;
 
@@ -60,7 +60,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
         }
         Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
-            claims.sub.as_str(),
+            claims.sub.to_string().as_str(),
             CredentialType::Session,
             false,
             self.release
@@ -87,7 +87,7 @@ mod tests {
         ServedAttachment,
     };
     use wamn_engine::flow_http_routing::Header;
-    use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
+    use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 
     use super::*;
 
@@ -104,14 +104,16 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
         SessionClaims {
             iss: ISSUER.into(),
-            sub: "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b".into(),
+            sub: "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b".parse().unwrap(),
             org: "org-a".into(),
             aud: AUDIENCE.into(),
-            roles: vec!["operator".into()],
+            roles: vec!["operator".parse().unwrap()],
             exp: now + 300,
             iat: now - 10,
             jti: "token-one".into(),
-            authority: SessionAuthority::Login("0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b".into()),
+            authority: SessionAuthority::Login(
+                "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b".parse().unwrap(),
+            ),
             csrf: Some("b6a2aca6b182e1a327dbc1bedc8e32cd04c0c9bfb9f3953687b047a4de985ff6".into()),
         }
     }
@@ -124,7 +126,7 @@ mod tests {
             std::fs::write(
                 &path,
                 serde_json::to_vec(&json!({"keys":[{
-                    "kid":"known", "kty":"OKP", "crv":"Ed25519", "alg":"Ed25519", "use":"sig",
+                    "kid":"known", "kty":"OKP", "crv":"Ed25519", "alg":"EdDSA", "use":"sig",
                     "x":URL_SAFE_NO_PAD.encode(pair.public_key().as_ref())
                 }]}))
                 .unwrap(),
@@ -144,10 +146,8 @@ mod tests {
                     package_id: "scale".into(),
                     component: "device".into(),
                     operation: crate::release::test_util::OPERATION.into(),
-                    definition_hash: DefinitionHash::parse(wamn_execution_contract::bytes_sha256(
-                        b"route",
-                    ))
-                    .unwrap(),
+                    definition_hash: DefinitionHash::parse(wamn_digest::bytes_sha256(b"route"))
+                        .unwrap(),
                     definition: json!({}),
                     auth_policy: json!({"modes":["session"]}),
                     registered_operation: None,
@@ -156,8 +156,12 @@ mod tests {
         }
 
         fn token(&self, claims: &SessionClaims) -> String {
-            let header =
-                URL_SAFE_NO_PAD.encode(serde_json::to_vec(&SessionHeader::new("known")).unwrap());
+            let header = URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(
+                    &serde_json::json!({"alg":"EdDSA", "typ":"wamn-session+jwt", "kid":"known"}),
+                )
+                .unwrap(),
+            );
             let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
             let signed = format!("{header}.{body}");
             format!(

@@ -7,10 +7,7 @@ use tokio_postgres::Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
 use wamn_control_registry::Triple;
 use wamn_environment_control::{
-    environment::{
-        delete::{CONTROL_TABLES, delete_registry_rows},
-        lock::LifecycleLock,
-    },
+    environment::{delete::delete_registry_rows, lock::LifecycleLock},
     provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::connections::administration;
@@ -104,7 +101,7 @@ esac
     system
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&project_name)
+            postgres_protocol::escape::escape_identifier(&project_name)
         ))
         .await?;
     let mut project_url = url::Url::parse(database.url())?;
@@ -128,7 +125,7 @@ esac
     let env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let bytes = b"stranded release";
-    let digest = wamn_execution_contract::bytes_sha256(bytes);
+    let digest = wamn_digest::bytes_sha256(bytes);
     let transaction = project.transaction().await?;
     transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -245,19 +242,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         transaction
             .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
             .await?;
-        transaction.execute(
-            "INSERT INTO catalog.authoring_command_audit \
-             (env_key,command_id,command_type,principal_id,principal_type,principal_subject,effective_role,org,project,environment,target_ref,request_hash,outcome_bytes) \
-             VALUES ($1,'delete-fixture','gate','fixture','service','fixture','project-author',$2,$3,$4,'fixture','sha256:'||repeat('a',64),'{}'::bytea)",
-            &[&env_key, &scope.org, &scope.project, &scope.env.as_str()],
-        ).await?;
-        transaction
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key,wiring_hash,passed,summary) \
-             VALUES ($1,'sha256:'||repeat('a',64),true,'{}')",
-                &[&env_key],
-            )
-            .await?;
     }
     transaction.batch_execute(
         "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
@@ -297,8 +281,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let id: String = credential.get(0);
     let reference: String = credential.get(1);
     let version: String = credential.get(2);
-    assert_control_facts(&mut system, &triple, true).await?;
-    assert_control_facts(&mut system, &other, true).await?;
 
     let mut blocker = connect(database.url()).await?;
     let blocker_pid: i32 = blocker
@@ -368,7 +350,6 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .await?;
     assert_eq!(retained.get::<_, String>(0), reference);
     assert_eq!(retained.get::<_, String>(1), version);
-    assert_control_facts(&mut system, &triple, true).await?;
     for _ in 0..2 {
         LifecycleLock::hold(database.url(), &triple, async |_| {
             delete_registry_rows(&mut system, &triple, "aaaaaaa1").await
@@ -386,48 +367,15 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
             .is_none()
     );
     assert!(system.query_opt("SELECT 1 FROM registry.connection WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_none());
-    assert_control_facts(&mut system, &triple, false).await?;
-    assert_control_facts(&mut system, &other, true).await?;
-    Ok(())
-}
+    assert!(
+        system
+            .query_opt(
+                "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+                &[&other.org, &other.project, &other.env.as_str()],
+            )
+            .await?
+            .is_some()
+    );
 
-async fn assert_control_facts(
-    system: &mut Client,
-    triple: &Triple,
-    present: bool,
-) -> anyhow::Result<()> {
-    let env_key =
-        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    for (table, trigger) in CONTROL_TABLES {
-        let transaction = provisioning_transaction(system).await?;
-        transaction
-            .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-            .await?;
-        assert_eq!(
-            transaction
-                .query_opt(
-                    &format!("SELECT 1 FROM {table} WHERE env_key=$1"),
-                    &[&env_key]
-                )
-                .await?
-                .is_some(),
-            present,
-            "control fact in {table} for {triple}"
-        );
-        if present && trigger.is_some() {
-            let error = transaction
-                .execute(
-                    &format!("DELETE FROM {table} WHERE env_key=$1"),
-                    &[&env_key],
-                )
-                .await
-                .expect_err("control facts remain immutable outside environment deletion");
-            assert_eq!(
-                error.code(),
-                Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
-            );
-        }
-        transaction.rollback().await?;
-    }
     Ok(())
 }

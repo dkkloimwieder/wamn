@@ -107,22 +107,26 @@ async fn claims(fixture: &Fixture, body: &Value) -> SessionClaims {
         .await
         .expect_redacted("JWKS");
     let token = body["access_token"].as_str().expect_redacted("token");
-    let kid = session_key_id(token).expect_redacted("kid");
+    let kid = jsonwebtoken::decode_header(token)
+        .expect_redacted("kid")
+        .kid
+        .expect("key ID");
     let key = jwks
         .keys
         .iter()
         .find(|key| key.kid == kid)
         .expect_redacted("public key");
-    verify_session_token(
+    verify(
         token,
         key,
-        SessionScope {
+        Scope {
             issuer: ISSUER,
             org: "demo",
             audience: fixture.targets[0].audience(),
         },
         unix_seconds(),
     )
+    .await
     .expect_redacted("signed session")
 }
 
@@ -148,9 +152,16 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
     let verified = claims(&fixture, &first).await;
-    assert_eq!(first["sub"], verified.sub);
-    assert_eq!(verified.sub, user.id().as_str());
-    assert_eq!(verified.roles, vec!["receiver"]);
+    assert_eq!(first["sub"], serde_json::to_value(verified.sub).unwrap());
+    assert_eq!(verified.sub, *user.id());
+    assert_eq!(
+        verified.roles,
+        vec![
+            "receiver"
+                .parse::<wamn_identity_protocol::RoleName>()
+                .unwrap()
+        ]
+    );
     assert!(active(&fixture, &first).await);
     let second = body(
         request(&https, &fixture, "/password/renew", &first)
@@ -167,7 +178,10 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         assert!(first["renewal_token"] != second["renewal_token"]);
     }
     assert_eq!(first["login_expires_at"], second["login_expires_at"]);
-    assert_eq!(second["sub"], claims(&fixture, &second).await.sub);
+    assert_eq!(
+        second["sub"],
+        serde_json::to_value(claims(&fixture, &second).await.sub).unwrap()
+    );
     assert_failure(
         request(&https, &fixture, "/password/renew", &first)
             .send()
@@ -223,7 +237,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -239,7 +253,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -247,7 +261,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -263,7 +277,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'receiver')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -331,7 +345,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     let near_expiry = login(&https, &fixture).await;
-    fixture.system.client.execute("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().as_str()]).await.unwrap();
+    fixture.system.client.execute("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().to_string().as_str()]).await.unwrap();
     let bounded = body(
         request(&https, &fixture, "/password/renew", &near_expiry)
             .send()
@@ -341,7 +355,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await;
     assert_eq!(bounded["expires_at"], bounded["login_expires_at"]);
     assert!(claims(&fixture, &bounded).await.exp <= unix_seconds() + 60);
-    fixture.system.client.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid",&[&user.id().as_str()]).await.unwrap();
+    fixture.system.client.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid",&[&user.id().to_string().as_str()]).await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &bounded)
             .send()
@@ -486,41 +500,35 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .await
         .expect_redacted("JWKS");
     let token = session["access_token"].as_str().expect_redacted("token");
-    let kid = session_key_id(token).expect_redacted("kid");
+    let kid = jsonwebtoken::decode_header(token)
+        .expect_redacted("kid")
+        .kid
+        .expect("key ID");
     let key = jwks
         .keys
         .iter()
         .find(|key| key.kid == kid)
         .expect_redacted("public key");
-    let claims = verify_session_token(
+    let claims = verify(
         token,
         key,
-        SessionScope {
+        Scope {
             issuer: ISSUER,
             org: "demo",
             audience: CONTROL,
         },
         unix_seconds(),
     )
+    .await
     .expect_redacted("signed control session");
-    assert_eq!(claims.sub, user.id().as_str());
-    assert_eq!(session["sub"], claims.sub);
+    assert_eq!(claims.sub, *user.id());
+    assert_eq!(session["sub"], serde_json::to_value(claims.sub).unwrap());
     assert!(claims.roles.is_empty(), "a control session has no roles");
     assert!(
         wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
             .await
             .expect_redacted("control authority")
     );
-
-    let pat = issue_pat(
-        &fixture.system.client,
-        user.id(),
-        "control test",
-        Duration::from_secs(3600),
-    )
-    .await
-    .expect_redacted("user PAT");
-    super::refuse(&https, pat.token(), CONTROL).await;
 
     let renewed = body(
         post(
@@ -538,7 +546,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .client
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .expect_redacted("revoke project-admin");
@@ -572,7 +580,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .execute(
             "INSERT INTO identity.org_roles (principal_id, org, role) \
              VALUES ($1::text::uuid, 'demo', 'org-admin')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .expect_redacted("org-admin");
@@ -582,16 +590,17 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     );
     let session = body(control_login(&https).await).await;
     let token = session["access_token"].as_str().expect_redacted("token");
-    let claims = verify_session_token(
+    let claims = verify(
         token,
         key,
-        SessionScope {
+        Scope {
             issuer: ISSUER,
             org: "demo",
             audience: CONTROL,
         },
         unix_seconds(),
     )
+    .await
     .expect_redacted("signed org-admin control session");
     assert!(
         wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
@@ -603,7 +612,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .client
         .execute(
             "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .expect_redacted("revoke org-admin");
@@ -624,7 +633,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .client
         .execute(
             "DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .expect_redacted("remove the memberships");
@@ -699,11 +708,11 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         .client
         .query_one(
             "SELECT id FROM identity.principals WHERE id=$1::text::uuid FOR UPDATE",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await
         .unwrap();
-    let reset_principal = user.id().clone();
+    let reset_principal = *user.id();
     let reset = tokio::spawn(async move {
         wamn_platform_identity::password::reset_password(
             &mut reset_connection.client,
@@ -735,7 +744,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
-    assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().as_str()]).await.unwrap().get::<_,i64>(0),0);
+    assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().to_string().as_str()]).await.unwrap().get::<_,i64>(0),0);
     drop(https);
     cleanup(fixture).await;
 }
@@ -892,7 +901,10 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     let started = unix_seconds();
     let (first_body, first) = cookie_body(cookie_login().await.unwrap(), started).await;
     let first_claims = cookie_claims(&fixture, &first).await;
-    assert_eq!(first_body["sub"], first_claims.sub);
+    assert_eq!(
+        first_body["sub"],
+        serde_json::to_value(first_claims.sub).unwrap()
+    );
     assert_eq!(first_body["expires_at"], first_claims.exp);
 
     // The carrier decides where the renewal token may travel.
@@ -956,7 +968,10 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
         assert!(first[index] != second[index], "every cookie rotates");
     }
     let second_claims = cookie_claims(&fixture, &second).await;
-    assert_eq!(second_body["sub"], second_claims.sub);
+    assert_eq!(
+        second_body["sub"],
+        serde_json::to_value(second_claims.sub).unwrap()
+    );
     assert_eq!(second_claims.authority, first_claims.authority);
 
     // A replayed renewal cookie refuses and revokes its family.

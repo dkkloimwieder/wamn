@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 pub const PACKAGE: &str = "edge_device";
 /// The fixture release A: the fixture package, no http attachment, no
 /// registration, a component no host pulls. `@VERSION@` is the package version.
-pub const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
+pub const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The second fixture release, B: the same package, another component digest.
-pub const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
+pub const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The third fixture release, H: the same package with one http attachment,
 /// served with no authentication, so its environments render the http role.
 /// Its one component, `null` here, is the admitted `device` component as
@@ -62,7 +62,7 @@ pub fn release(
         value["components"][0] =
             serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new())?)?;
     }
-    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
+    let bytes = wamn_digest::canonical_json_bytes(&value);
     wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
         .context("the fixture release is a valid canonical manifest")?;
     Ok(bytes)
@@ -612,7 +612,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_gate_harness::run_check::check(
+        let result = wamn_test_postgres::run_check::check(
             work,
             "start_workflow",
             &project,
@@ -643,7 +643,7 @@ pub mod workflow {
             .execute(
                 "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_project_state::PlatformComponent::Provisioning
+                &[&wamn_identity_protocol::PlatformComponent::Provisioning
                     .principal_id()
                     .to_string()],
             )
@@ -696,7 +696,7 @@ pub mod workflow {
             .session_operation_permissions(
                 "default",
                 environment.env_key,
-                &["admin".to_owned()],
+                &["admin".parse().unwrap()],
                 &ENABLER.parse()?,
             )
             .await?;
@@ -754,7 +754,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_gate_harness::run_check::check(
+        let result = wamn_test_postgres::run_check::check(
             work,
             "admit_workflow",
             &project,
@@ -838,7 +838,7 @@ pub mod workflow {
                     workflow_id,
                     workflow_version: workflow.version,
                     wiring_hash: &workflow.wiring_hash,
-                    execution_principal_id: &wamn_project_state::workflow_user_id().to_string(),
+                    execution_principal_id: &wamn_identity_protocol::workflow_user_id().to_string(),
                     execution_role: role,
                     invoked_by_user_id: ENABLER,
                     node_digests: &Value::Object(node_digests),
@@ -901,7 +901,7 @@ pub mod workflow {
             .execute(
                 "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_project_state::PlatformComponent::Provisioning
+                &[&wamn_identity_protocol::PlatformComponent::Provisioning
                     .principal_id()
                     .to_string()],
             )
@@ -957,24 +957,8 @@ pub mod workflow {
             }
             .await?;
         }
-        let (control, control_task) = connect_owned(environment.system_url).await?;
-        control
-            .execute(
-                "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-                &[&env_key, &ENABLER],
-            )
-            .await?;
-        control
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-                &[&env_key, &document.wiring_hash().as_str()],
-            )
-            .await?;
-        control_task.abort();
         author_workflow_in_databases(
             environment.project_url,
-            environment.system_url,
             &AuthorWorkflowRequest {
                 org: &environment.scope.org,
                 project: &environment.scope.project,

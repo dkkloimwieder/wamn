@@ -261,9 +261,6 @@ impl Fixture {
         let mut invocation = invocation();
         invocation.entry = InvocationEntry::Route;
         let mut component = manifest.components.pop_first().unwrap();
-        let operation = component.operations.get_mut(&invocation.operation).unwrap();
-        operation.registered_operation = None;
-        operation.permissions.clear();
         component.descriptor.operations.insert(
             invocation.operation.clone(),
             serde_json::from_value(serde_json::json!({
@@ -280,7 +277,6 @@ impl Fixture {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         let bytes = manifest.canonical_bytes();
         let release = Arc::new(
@@ -294,7 +290,7 @@ impl Fixture {
         let manifest_digest = release.release().manifest_digest.as_str();
         let mut projects = HashMap::new();
         for project in ["project-a", "project-b"] {
-            let database = wamn_project_state::test_database::tenant_platform();
+            let database = wamn_platform_identity::test_database::tenant_platform();
             let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
                 .await
                 .unwrap();

@@ -120,7 +120,7 @@ pub mod test_server;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Repository, sha256_digest};
+    use crate::{Repository, bytes_sha256};
     use oci_client::client::{ClientConfig, ClientProtocol};
     use oci_client::secrets::RegistryAuth;
     use test_server::Server;
@@ -144,7 +144,7 @@ mod tests {
         let start = Instant::now();
         assert_eq!(
             repository(&server).manifest().await.unwrap(),
-            Some((body.clone(), sha256_digest(&body)))
+            Some((body.clone(), bytes_sha256(&body)))
         );
         assert_eq!(server.requests(), 2);
         assert!(start.elapsed() >= Duration::from_secs(1));
@@ -228,7 +228,7 @@ mod tests {
         .unwrap();
         let reference = format!("{address}/components:fixture").parse().unwrap();
         let descriptor = OciDescriptor {
-            digest: sha256_digest(b"component"),
+            digest: bytes_sha256(b"component"),
             ..OciDescriptor::default()
         };
         let result = blob(
@@ -253,7 +253,7 @@ mod tests {
             let server = Server::start(responses).await;
             let repository = repository(&server);
             let descriptor = OciDescriptor {
-                digest: sha256_digest(&body),
+                digest: bytes_sha256(&body),
                 ..OciDescriptor::default()
             };
             let result = blob(
@@ -269,7 +269,7 @@ mod tests {
         let server = Server::start(vec![(200, b"wrong".to_vec())]).await;
         let repository = repository(&server);
         let descriptor = OciDescriptor {
-            digest: sha256_digest(b"expected"),
+            digest: bytes_sha256(b"expected"),
             ..OciDescriptor::default()
         };
         assert!(matches!(

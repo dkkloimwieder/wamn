@@ -16,10 +16,10 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 
+use crate::EffectOutcome;
+use crate::normalize_portable_http_target;
 use tracing::Instrument as _;
 use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
-use wamn_execution_contract::EffectOutcome;
-use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -1077,7 +1077,7 @@ pub(crate) fn authorize_release_closure(
             && candidate.descriptor.component_digest == digest.as_str()
     });
     let operation_admitted = component
-        .and_then(|component| component.operations.get(operation))
+        .and_then(|component| component.descriptor.operations.get(operation))
         .is_some_and(|operation| operation.registered_operation == snapshot.registered_operation);
     let origin = &invocation.origin;
     let entry_released = match &invocation.entry {
@@ -1118,7 +1118,7 @@ fn released_operation_reachable(
     root_operation: &str,
     invocation: &ConnectionInvocation,
 ) -> bool {
-    root.operations.contains_key(root_operation)
+    root.descriptor.operations.contains_key(root_operation)
         && root.package_id == invocation.package_id
         && root.descriptor.component == invocation.component
         && root.descriptor.component_digest.as_str() == invocation.component_digest
@@ -1674,8 +1674,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponentOperation, ServingRelease, ServingRoute,
+        AdmittedComponentOperation, OperationType, PackageCoordinate,
+        SERVING_MANIFEST_FORMAT_VERSION, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1826,24 +1826,31 @@ mod tests {
             components: BTreeSet::from([ServingComponent {
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
-                descriptor: wamn_catalog::ComponentDescriptor::named(
-                    snapshot.component.clone().expect("component"),
-                    snapshot
-                        .interface_version
-                        .clone()
-                        .expect("interface version"),
-                    invocation.component_digest.clone(),
-                ),
+                descriptor: {
+                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                        snapshot.component.clone().expect("component"),
+                        snapshot
+                            .interface_version
+                            .clone()
+                            .expect("interface version"),
+                        invocation.component_digest.clone(),
+                    );
+                    descriptor.operations = BTreeMap::from([(
+                        snapshot.operation.expect("operation"),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+
+                            registered_operation: snapshot.registered_operation,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
                 package_id: invocation.package_id,
-                operations: BTreeMap::from([(
-                    snapshot.operation.expect("operation"),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        permissions: snapshot.registered_operation.iter().cloned().collect(),
-                        registered_operation: snapshot.registered_operation,
-                        statements: BTreeMap::new(),
-                    },
-                )]),
             }]),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
@@ -1897,7 +1904,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         authorize_release_closure(&manifest, &invocation, &snapshot)
             .expect("a released route authorizes its origin export");

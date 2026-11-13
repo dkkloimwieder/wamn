@@ -810,7 +810,9 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     let mut server = Server::start().await;
     let (keys, _key_clock) = server.cache();
     let (verifier, _token_clock) =
-        wamn_session::verifier::SessionVerifier::with_test_clock(keys, ORG, &audience, 1000)?;
+        wamn_identity_protocol::verifier::SessionVerifier::with_test_clock(
+            keys, ORG, &audience, 1000,
+        )?;
     let release = Arc::new(LoadedRelease::control_root());
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

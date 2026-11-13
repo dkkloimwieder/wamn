@@ -21,7 +21,7 @@ use wamn_execution_host::{
     CallIntents, DeadlineAdjustment, InvocationSite, NativeFacts, NodeAcquisition, OperationHost,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,
 };
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_router::{
     ActiveWiring, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome, RateLimitDetail, Step,
 };
@@ -543,7 +543,7 @@ fn lower_node_outcome(
                 payload,
                 port: emission
                     .port
-                    .unwrap_or_else(|| wamn_router::MAIN_PORT.to_owned()),
+                    .unwrap_or_else(|| wamn_catalog::MAIN_PORT.to_owned()),
             })
         }
         Err(node_types::NodeError::Retryable(detail)) => Ok(NodeOutcome::Error(

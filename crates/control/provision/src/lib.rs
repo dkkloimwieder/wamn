@@ -52,13 +52,11 @@ pub mod apply;
 pub mod audit_retention;
 #[cfg(feature = "ops")]
 pub mod backup;
-pub mod control_author;
 pub mod database;
 pub mod environment_names;
 mod error;
 pub mod host_credentials;
 pub mod identity_issuer;
-pub mod management_admitter;
 pub mod materializer_workload;
 mod name;
 pub mod operation_grants;
@@ -87,24 +85,13 @@ pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
-pub use control_author::{
-    ControlAuthoringConnection, ControlAuthoringUrlError, ControlAuthoringUrlErrorType,
-    control_author_generation_role, control_author_scope_hash, parse_control_authoring_url,
-};
 pub use database::render_project_env_database;
 pub use error::{ProvisionError, check_env_key_environment_identity};
-pub use management_admitter::{
-    ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorType,
-    management_admitter_generation_role, management_admitter_scope_hash,
-    parse_management_admission_url,
-};
 pub use name::{
-    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
-    DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX,
-    MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
-    NAMESPACE_PREFIX, cdc_object_name, compose_url, control_administration_key,
-    control_administration_secret_name, control_author_secret_name,
-    management_admitter_secret_name, org_workload_secret_name, package_owner_role,
+    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
+    INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
+    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_administration_key,
+    control_administration_secret_name, org_workload_secret_name, package_owner_role,
     project_env_cdc_secret_name, project_env_database_name, project_env_guest_secret_name,
     project_env_key, project_env_namespace, project_env_secret_name, validate_instance_suffix,
     validate_project_env, validate_project_env_cdc, validate_project_id, workload_secret_name,
@@ -125,19 +112,18 @@ pub use system_reader::{
 
 pub use secret::{
     WorkloadSecretBody, render_control_administration_patch,
-    render_control_administration_secret_manifest, render_control_author_secret_manifest,
-    render_guest_secret_manifest, render_management_admitter_secret_manifest,
+    render_control_administration_secret_manifest, render_guest_secret_manifest,
     render_org_workload_secret_manifest, render_project_env_cdc_secret_manifest,
     render_project_env_secret_manifest, render_workload_secret_manifest,
 };
 /// The platform component list, for callers that bind a component as the actor.
-pub use wamn_project_state::PlatformComponent;
+pub use wamn_identity_protocol::PlatformComponent;
 pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
-    ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_AUTHOR_ROLE, CONTROL_ROLE,
-    MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE, SERVICE_READER_ROLE,
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError, WorkloadRoleScopeKind,
-    WorkloadSecretBodyKind, workload_generation_role, workload_role_scope_hash,
+    ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
+    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError,
+    WorkloadRoleScopeKind, WorkloadSecretBodyKind, workload_generation_role,
+    workload_role_scope_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.
@@ -152,16 +138,11 @@ pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
-/// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
-pub const CONTROL_PORTABLE_STORE_SQL: &str = concat!(
-    include_str!("../../../../deploy/sql/control-portable-store-prefix.sql"),
-    include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
-    include_str!("../../../../deploy/sql/control-portable-store.sql"),
-);
+/// Environment declarations and scoped connection-reader authority.
+pub const CONTROL_PORTABLE_STORE_SQL: &str =
+    include_str!("../../../../deploy/sql/control-portable-store.sql");
 
-/// Ordered fresh-control bootstrap record. Keeping the portable extension in
-/// this composition prevents a caller from provisioning the legacy registry
-/// floor while silently omitting the control authoring/release store.
+/// The declarations applied to a fresh control database, in order.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
 
 /// The per-tenant authorization and configuration schema, applied to a project

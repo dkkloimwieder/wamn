@@ -156,7 +156,6 @@ impl EdgeDelivery {
                 package: &target.package_id,
                 kind: route.type_,
                 key_field: route.idempotency.as_deref(),
-                canonicalization: route.canonicalization.as_ref(),
             });
         let result = async {
             let fact = route_component(components, &target.package_id, component, operation)?;

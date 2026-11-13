@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use serde_json::json;
-use wamn_session::verifier::SessionVerifier;
+use wamn_identity_protocol::verifier::SessionVerifier;
 
 #[path = "support/session_fixture.rs"]
 #[expect(
@@ -88,7 +88,7 @@ async fn pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authori
     let server = Server::start().await;
     let (verifier, _, _) = server.verifier();
     for (field, value) in [
-        ("alg", "EdDSA"),
+        ("alg", "Ed25519"),
         ("alg", "none"),
         ("typ", "JWT"),
         ("kid", ""),

@@ -178,16 +178,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
     let a = role(CredentialGeneration::A);
     let b = role(CredentialGeneration::B);
     let mut roles = vec![a.clone(), b.clone(), FAMILY.acl_role().to_owned()];
-    roles.extend(
-        [
-            "wamn_app",
-            "wamn_scenario_author",
-            "wamn_control_author",
-            "wamn_run_retention",
-            "wamn_platform",
-        ]
-        .map(str::to_owned),
-    );
+    roles.extend(["wamn_app", "wamn_run_retention", "wamn_platform"].map(str::to_owned));
     reset(&admin, &roles);
     let other = server
         .create_database("session_reader_other")
@@ -197,8 +188,8 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
     let outcome = std::panic::catch_unwind(|| {
         run(
             &admin,
-            "CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN; \
-            CREATE ROLE wamn_control_author NOLOGIN;",
+            "CREATE ROLE wamn_app NOLOGIN;  \
+            ",
         );
         for artifact in [
             wamn_catalog::CATALOG_SCHEMA_SQL,

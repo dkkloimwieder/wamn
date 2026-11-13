@@ -1,4 +1,5 @@
 use wamn_runtime::plugins::connection_http::WiringPosition;
+use wamn_scalar::SqlValueType;
 
 use super::*;
 use wamn_engine::router_delivery::{OperationRefusalType, authorize_registered_operation};
@@ -6,19 +7,16 @@ use wamn_engine::router_delivery::{OperationRefusalType, authorize_registered_op
 #[test]
 fn admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary() {
     let cases = [
-        (ComponentSqlValueType::Boolean, StatementValueType::Boolean),
-        (ComponentSqlValueType::Int32, StatementValueType::Int32),
-        (ComponentSqlValueType::Int64, StatementValueType::Int64),
-        (ComponentSqlValueType::Float64, StatementValueType::Float64),
-        (ComponentSqlValueType::Text, StatementValueType::Text),
-        (ComponentSqlValueType::Bytes, StatementValueType::Bytes),
-        (ComponentSqlValueType::Numeric, StatementValueType::Numeric),
-        (
-            ComponentSqlValueType::Timestamptz,
-            StatementValueType::Timestamptz,
-        ),
-        (ComponentSqlValueType::Json, StatementValueType::Json),
-        (ComponentSqlValueType::Uuid, StatementValueType::Uuid),
+        (SqlValueType::Boolean, SqlValueType::Boolean),
+        (SqlValueType::Int32, SqlValueType::Int32),
+        (SqlValueType::Int64, SqlValueType::Int64),
+        (SqlValueType::Float64, SqlValueType::Float64),
+        (SqlValueType::Text, SqlValueType::Text),
+        (SqlValueType::Bytes, SqlValueType::Bytes),
+        (SqlValueType::Numeric, SqlValueType::Numeric),
+        (SqlValueType::Timestamptz, SqlValueType::Timestamptz),
+        (SqlValueType::Json, SqlValueType::Json),
+        (SqlValueType::Uuid, SqlValueType::Uuid),
     ];
 
     for (index, (admitted, runtime)) in cases.into_iter().enumerate() {

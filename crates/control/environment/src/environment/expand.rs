@@ -137,7 +137,7 @@ pub(super) async fn prepare_at(
     super::stage::write_release(project_url, &env_key, digest, manifest, actor).await?;
     let tx = project.transaction().await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_project_state::PlatformComponent::Provisioning,
+        wamn_identity_protocol::PlatformComponent::Provisioning,
     ))
     .await?;
     tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])

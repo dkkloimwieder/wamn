@@ -12,6 +12,7 @@ path = "lib.rs"
 
 [dev-dependencies]
 wamn-broker = { workspace = true }
+wamn-digest.workspace = true
 base64 = { workspace = true }
 serde_yaml = { workspace = true }
 pg_walstream = { workspace = true }
@@ -29,7 +30,6 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_
 uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
 wamn-component-composer = { workspace = true }
-wamn-execution-contract = { workspace = true }
 
 async-nats = { workspace = true }
 bytes = { workspace = true }
@@ -41,12 +41,11 @@ wamn-release-control = { workspace = true }
 wamn-environment-control = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true }
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-gate-harness = { workspace = true }
 wamn-integration-tests = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
@@ -59,13 +58,11 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
 rustix = { workspace = true }
-wamn-client = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.254.2"
 
-wamn-authoring-model = { workspace = true }
 
 [lints]
 workspace = true

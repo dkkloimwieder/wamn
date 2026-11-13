@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use wamn_scalar::SqlValueType;
 
 use serde_json::{Value, json};
-use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
+use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
@@ -334,26 +335,26 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("code", ColumnType::Text, false, None, None),
-            Column::new("note", ColumnType::Text, note_nullable, None, None),
+            Column::new("code", SqlValueType::Text, false, None, None),
+            Column::new("note", SqlValueType::Text, note_nullable, None, None),
             // The one column that names another model's record. A selector
             // for it is derived from this foreign key alone.
-            Column::new("maker_id", ColumnType::Uuid, true, None, None),
+            Column::new("maker_id", SqlValueType::Uuid, true, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int32,
+                SqlValueType::Int32,
                 false,
                 Some(ColumnDefault::int32(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
@@ -395,22 +396,22 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("name", ColumnType::Text, false, None, None),
+            Column::new("name", SqlValueType::Text, false, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
@@ -427,15 +428,15 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new("label", SqlValueType::Text, false, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(1)),
                 None,
@@ -450,36 +451,36 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("number", ColumnType::Text, false, None, None),
-            Column::new("stock_id", ColumnType::Text, false, None, None),
+            Column::new("number", SqlValueType::Text, false, None, None),
+            Column::new("stock_id", SqlValueType::Text, false, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 Some(ColumnDefault::int64(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
-            Column::new("created_by", ColumnType::Uuid, false, None, None),
+            Column::new("created_by", SqlValueType::Uuid, false, None, None),
             Column::new(
                 "updated_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
-            Column::new("updated_by", ColumnType::Uuid, false, None, None),
+            Column::new("updated_by", SqlValueType::Uuid, false, None, None),
         ],
         vec![
             Constraint::primary_key("numbered_label_id_pkey", ["id"]).unwrap(),
@@ -493,24 +494,24 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![
             Column::new(
                 "id",
-                ColumnType::Int64,
+                SqlValueType::Int64,
                 false,
                 None,
                 Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
                     mode: wamn_schema_introspection::ir::IdentityMode::Always,
                 }),
             ),
-            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new("label", SqlValueType::Text, false, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int32,
+                SqlValueType::Int32,
                 false,
                 Some(ColumnDefault::int32(1)),
                 None,
             ),
             Column::new(
                 "created_at",
-                ColumnType::Timestamptz,
+                SqlValueType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
@@ -525,8 +526,8 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
             "inventory",
             name,
             vec![
-                Column::new("id", ColumnType::Uuid, false, None, None),
-                Column::new("label", ColumnType::Text, false, None, None),
+                Column::new("id", SqlValueType::Uuid, false, None, None),
+                Column::new("label", SqlValueType::Text, false, None, None),
             ],
             vec![Constraint::primary_key(format!("{name}_id_pkey"), ["id"]).unwrap()],
             Vec::new(),
@@ -536,13 +537,13 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         "inventory",
         "feed_line",
         vec![
-            Column::new("id", ColumnType::Uuid, false, None, None),
-            Column::new("order_id", ColumnType::Uuid, true, None, None),
-            Column::new("item_id", ColumnType::Uuid, true, None, None),
-            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new("id", SqlValueType::Uuid, false, None, None),
+            Column::new("order_id", SqlValueType::Uuid, true, None, None),
+            Column::new("item_id", SqlValueType::Uuid, true, None, None),
+            Column::new("label", SqlValueType::Text, false, None, None),
             Column::new(
                 "enabled",
-                ColumnType::Boolean,
+                SqlValueType::Boolean,
                 false,
                 Some(ColumnDefault::boolean(true)),
                 None,
@@ -581,13 +582,13 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
             .collect(),
     ));
     let columns = [
-        ("id", "feed_line", "id", ColumnType::Uuid),
-        ("order_id", "feed_line", "order_id", ColumnType::Uuid),
-        ("item_id", "feed_line", "item_id", ColumnType::Uuid),
-        ("label", "feed_line", "label", ColumnType::Text),
-        ("enabled", "feed_line", "enabled", ColumnType::Boolean),
-        ("order_label", "feed_order", "label", ColumnType::Text),
-        ("item_label", "feed_item", "label", ColumnType::Text),
+        ("id", "feed_line", "id", SqlValueType::Uuid),
+        ("order_id", "feed_line", "order_id", SqlValueType::Uuid),
+        ("item_id", "feed_line", "item_id", SqlValueType::Uuid),
+        ("label", "feed_line", "label", SqlValueType::Text),
+        ("enabled", "feed_line", "enabled", SqlValueType::Boolean),
+        ("order_label", "feed_order", "label", SqlValueType::Text),
+        ("item_label", "feed_item", "label", SqlValueType::Text),
     ]
     .into_iter()
     .map(|(name, table, field, ty)| {
@@ -621,12 +622,12 @@ pub(crate) fn unread_table() -> Table {
         vec![
             Column::new(
                 "entry_id",
-                ColumnType::Uuid,
+                SqlValueType::Uuid,
                 false,
                 Some(ColumnDefault::GenRandomUuid),
                 None,
             ),
-            Column::new("note", ColumnType::Text, false, None, None),
+            Column::new("note", SqlValueType::Text, false, None, None),
         ],
         vec![
             Constraint::primary_key("widget_ledger_entry_id_pkey", ["entry_id"])

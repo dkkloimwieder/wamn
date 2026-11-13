@@ -64,7 +64,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, 'dev', 'standard')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment) VALUES ($1, 'dev')", &[&ENV_KEY]).await?;
     for package in ["consumer", "integration"] {
         admin.execute("INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)", &[&ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
     }
@@ -87,16 +87,22 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     manifest.components.insert(wamn_catalog::ServingComponent {
         package_id: "consumer".into(),
         runtime_schema: None,
-        descriptor,
-        operations: std::collections::BTreeMap::from([(
-            OPERATION.into(),
-            wamn_catalog::ServingComponentOperation {
-                registered_operation: Some(OPERATION.into()),
-                permissions: [OPERATION.into()].into(),
-                committed_result_schema: None,
-                statements: std::collections::BTreeMap::new(),
-            },
-        )]),
+        descriptor: {
+            let mut descriptor = descriptor;
+            descriptor.operations = std::collections::BTreeMap::from([(
+                OPERATION.into(),
+                wamn_catalog::AdmittedComponentOperation {
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    registered_operation: Some(OPERATION.into()),
+                    committed_result_schema: None,
+                    statements: std::collections::BTreeMap::new(),
+                },
+            )]);
+            descriptor
+        },
         statement_instances: std::collections::BTreeMap::new(),
     });
     let mut package: wamn_catalog::manifest::PackageManifest = serde_json::from_str(include_str!(
@@ -117,11 +123,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         serde_json::from_value(json!({
             "input-ports": [], "output-ports": [], "parameters": []
         }))?,
-    );
-    application.operations.clear();
-    application.operations.insert(
-        "integration:sync/finish@1.0.0".into(),
-        serde_json::from_value(json!({}))?,
     );
     application
         .descriptor
@@ -175,7 +176,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     }
     // The workflow user is the other service row
     // (docs/architecture/execution.md#environment-workflows).
-    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     let row = admin
         .query_one(
             "SELECT count(*), min(id::text) FROM platform.\"user\" \

@@ -1,7 +1,7 @@
 //! Workload credential preparation, retirement, and observed role state.
 
 use super::{
-    WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal,
+    WorkloadRoleFamily, escape_identifier, escape_literal, platform_group_membership_sql,
     stable_surface_sql,
 };
 
@@ -26,7 +26,7 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
            END IF; \
          END $workload_acl$;",
         nosuperuser = revoke_superuser_sql("role_name"),
-        role_lit = quote_literal(role),
+        role_lit = escape_literal(role),
     )
 }
 
@@ -52,8 +52,8 @@ pub fn prepare_workload_generation_sql(
     password: &str,
     expires_at: &str,
 ) -> String {
-    let role_ident = quote_ident(role);
-    let role_lit = quote_literal(role);
+    let role_ident = escape_identifier(role);
+    let role_lit = escape_literal(role);
     let membership = normalize_workload_generation_membership_sql(family, role, true);
     let stable_surface =
         stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family));
@@ -69,9 +69,9 @@ pub fn prepare_workload_generation_sql(
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
         stable_surface = stable_surface,
-        password = quote_literal(password),
-        expires_at = quote_literal(expires_at),
-        database = quote_ident(database),
+        password = escape_literal(password),
+        expires_at = escape_literal(expires_at),
+        database = escape_identifier(database),
     )
 }
 
@@ -83,12 +83,12 @@ pub fn normalize_workload_generation_membership_sql(
     role: &str,
     active: bool,
 ) -> String {
-    let role_ident = quote_ident(role);
+    let role_ident = escape_identifier(role);
     let grant = if active {
         format!(
             "GRANT {acl_role} TO {role_ident} \
                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;",
-            acl_role = quote_ident(family.acl_role()),
+            acl_role = escape_identifier(family.acl_role()),
         )
     } else {
         String::new()
@@ -100,7 +100,7 @@ pub fn normalize_workload_generation_membership_sql(
          {grant}",
         ensure = ensure_workload_acl_role_sql(family),
         platform_arm = platform_group_membership_sql(family),
-        acl_role = quote_ident(family.acl_role()),
+        acl_role = escape_identifier(family.acl_role()),
         grant = grant,
     )
 }
@@ -115,13 +115,13 @@ pub fn retire_workload_generation_sql(
 }
 
 pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &str) -> String {
-    let role_ident = quote_ident(role);
+    let role_ident = escape_identifier(role);
     format!(
         "REVOKE {acl_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = quote_ident(acl_role),
-        database = quote_ident(database),
+        acl_role = escape_identifier(acl_role),
+        database = escape_identifier(database),
     )
 }
 
@@ -131,7 +131,7 @@ pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &s
 /// A zero timeout only acknowledges the signal. Callers must still require the
 /// inactive state to reject termination failures.
 pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
-    let role_lit = quote_literal(role);
+    let role_lit = escape_literal(role);
     format!(
         "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
            WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
@@ -254,67 +254,4 @@ pub fn forget_generation_password_sql() -> &'static str {
 /// narrower scope would let a stale cross-scope read regrant a retired member.
 pub fn workload_scope_lock_sql() -> &'static str {
     "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
-}
-
-// --- Control-database author provisioning (wamn-0h0g.8.18) --------------------
-//
-// The management service's authoring/report store moved to the control database.
-// Its principal is a scoped A/B LOGIN generation of the stable NOLOGIN
-// [`CONTROL_AUTHOR_ROLE`]; `deploy/sql/control-portable-store.sql` owns what that
-// role may touch, and these builders own the role identities themselves.
-//
-// The public family-specific functions below delegate to the closed generic
-// lifecycle builders. The family enum, rather than an arbitrary role string,
-// preserves the authority boundary while keeping prepare/retire semantics in
-// one implementation. `wamn_scenario_author` never appears here — it is the
-// project plane's author role and is never granted control-database CONNECT.
-
-/// Idempotently create or harden the stable control-author ACL role as NOLOGIN.
-///
-/// Create-or-*harden* under the shared `wamn_role_bootstrap` advisory lock, the
-/// same shape as `wamn_ops` and `wamn_scenario_author`: a replay that finds the
-/// role with a drifted attribute re-ALTERs it instead of reporting success.
-/// Table and schema grants deliberately do not live here — the control
-/// portable-store artifact owns them, applied as its owner after this role
-/// exists.
-pub fn ensure_control_author_acl_role_sql() -> String {
-    ensure_workload_acl_role_sql(WorkloadRoleFamily::ControlAuthor)
-}
-
-/// Prepare one inactive scoped control-author generation for authenticated use.
-///
-/// `role` is the validated deterministic generation name from
-/// [`crate::control_author_generation_role`]; `database` is the control
-/// database. Create-then-`ALTER … LOGIN` in that order so a crash between the two
-/// statements leaves an inert role and the same batch converges on replay.
-/// Membership is exactly the one stable ACL role, and direct database authority
-/// is solely `CONNECT` on the control database — never on a project database.
-pub fn prepare_control_author_generation_sql(
-    database: &str,
-    role: &str,
-    password: &str,
-    expires_at: &str,
-) -> String {
-    prepare_workload_generation_sql(
-        WorkloadRoleFamily::ControlAuthor,
-        database,
-        role,
-        password,
-        expires_at,
-    )
-}
-
-/// Retire one old control-author generation after replacement use was verified.
-///
-/// Authority leaves before authentication does, so a session that survives the
-/// first statement still cannot read or write. The caller commits this batch
-/// before terminating sessions with
-/// [`terminate_control_author_generation_sessions_sql`].
-pub fn retire_control_author_generation_sql(database: &str, role: &str) -> String {
-    retire_workload_generation_sql(WorkloadRoleFamily::ControlAuthor, database, role)
-}
-
-/// Terminate sessions only after control-author authority removal has committed.
-pub fn terminate_control_author_generation_sessions_sql(role: &str) -> String {
-    terminate_workload_generation_sessions_sql(role)
 }

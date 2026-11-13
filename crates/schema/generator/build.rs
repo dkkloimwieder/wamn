@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use sha2::{Digest as _, Sha256};
+use wamn_digest::Hasher;
 
 const INPUTS: &[&str] = &[
     "src",
@@ -35,20 +35,20 @@ fn main() -> io::Result<()> {
     println!("cargo:rerun-if-changed=../../../deploy/sql/record-history.sql");
     println!("cargo:rerun-if-changed=../../../deploy/sql/record-history-app-grants.sql");
 
-    let mut digest = Sha256::new();
+    let mut digest = Hasher::new();
     // Templates live in Rust emitters and KCL modules. Hash whole trees so
     // new emitters and templates join the fingerprint without a file list.
     for path in INPUTS {
         hash_path(Path::new(path), &mut digest)?;
     }
     println!(
-        "cargo:rustc-env=WAMN_GENERATOR_FINGERPRINT=sha256:{}",
-        hex::encode(digest.finalize())
+        "cargo:rustc-env=WAMN_GENERATOR_FINGERPRINT={}",
+        wamn_digest::format_sha256(&digest.finalize())
     );
     Ok(())
 }
 
-fn hash_path(path: &Path, digest: &mut Sha256) -> io::Result<()> {
+fn hash_path(path: &Path, digest: &mut Hasher) -> io::Result<()> {
     if path.is_dir() {
         let mut entries = fs::read_dir(path)?
             .map(|entry| entry.map(|entry| entry.path()))
@@ -61,7 +61,7 @@ fn hash_path(path: &Path, digest: &mut Sha256) -> io::Result<()> {
         // A NUL separates the path from the fixed-length content digest.
         digest.update(path.as_os_str().as_encoded_bytes());
         digest.update([0]);
-        digest.update(Sha256::digest(fs::read(path)?));
+        digest.update(wamn_digest::sha256(&fs::read(path)?));
     }
     Ok(())
 }

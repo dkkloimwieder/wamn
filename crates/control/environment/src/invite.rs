@@ -10,15 +10,14 @@
 //! grant. Identity mails the invitation only when the user has no password
 //! credential.
 
+use wamn_identity_protocol::PrincipalId;
+
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
-use wamn_platform_identity::{
-    PrincipalId,
-    org::{MemberGrants, invite_member},
-};
+use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 use crate::provision_project_env::provisioning_transaction;
 use wamn_identity_client::{self, InvitationReply, PatIssuerConfig};
@@ -109,7 +108,7 @@ pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Res
         .await
         .context("write the org membership and the grants")?;
         let mut drops = AuthDrops::default();
-        drops.identity(user.principal_id.as_str());
+        drops.identity(user.principal_id.to_string().as_str());
         transaction
             .commit()
             .await

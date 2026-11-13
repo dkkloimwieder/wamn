@@ -45,7 +45,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     observer
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOBYPASSRLS; \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOBYPASSRLS; \
+         \
          CREATE SCHEMA wamn_run",
         )
         .await?;
@@ -253,9 +253,7 @@ pub async fn registry(
     bootstrap
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await?;
-    bootstrap
-        .batch_execute(&sql::ensure_control_author_acl_role_sql())
-        .await?;
+
     bootstrap
         .batch_execute(
             "CREATE ROLE wamn_system LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \

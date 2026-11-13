@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
 use tokio_postgres::NoTls;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
@@ -42,7 +42,7 @@ use crate::materialize::{
 use wamn_catalog::manifest::{
     CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
 };
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
@@ -812,7 +812,7 @@ async fn migrate(
         if !schemas.is_empty() {
             let quoted = schemas
                 .iter()
-                .map(|schema| quote(schema))
+                .map(|schema| postgres_protocol::escape::escape_identifier(schema))
                 .collect::<Vec<_>>();
             let mut sql = String::new();
             for schema in &quoted {
@@ -821,7 +821,7 @@ async fn migrate(
             write!(
                 sql,
                 "ALTER DATABASE {} SET search_path TO {}, public",
-                quote(database_name(database_url)?.as_str()),
+                postgres_protocol::escape::escape_identifier(database_name(database_url)?.as_str()),
                 quoted.join(", ")
             )
             .expect("writing to a String cannot fail");
@@ -920,10 +920,6 @@ async fn create_history_tables(
     Ok(())
 }
 
-fn quote(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
-
 fn database_name(database_url: &str) -> Result<String> {
     let url = url::Url::parse(database_url).context("parse the database URL")?;
     Ok(url.path().trim_start_matches('/').to_owned())
@@ -950,9 +946,15 @@ impl VerificationDatabase {
         );
         let mut url = url::Url::parse(server_url).context("parse the PostgreSQL server URL")?;
         url.set_path(&name);
-        execute_on_server(server_url, &format!("CREATE DATABASE {}", quote(&name)))
-            .await
-            .context("create the verification database")?;
+        execute_on_server(
+            server_url,
+            &format!(
+                "CREATE DATABASE {}",
+                postgres_protocol::escape::escape_identifier(&name)
+            ),
+        )
+        .await
+        .context("create the verification database")?;
         Ok(Self {
             server_url: server_url.to_owned(),
             name,
@@ -963,7 +965,10 @@ impl VerificationDatabase {
     async fn drop(self) -> Result<()> {
         execute_on_server(
             &self.server_url,
-            &format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", quote(&self.name)),
+            &format!(
+                "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+                postgres_protocol::escape::escape_identifier(&self.name)
+            ),
         )
         .await
         .with_context(|| format!("drop the verification database {}", self.name))

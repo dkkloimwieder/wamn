@@ -31,7 +31,7 @@ use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::{
     ComponentArtifactBase, MAX_SERVING_MANIFEST_BYTES, parse_component_artifact_base,
 };
-use wamn_engine::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 use wamn_package_artifact::registry_credentials::{
     RegistryCredentialSource, read_registry_credentials,
 };
@@ -438,7 +438,7 @@ fn verify_transferred_body(
     // manifest's identity is that same function over its canonical encoding, so
     // this checks the transferred body against the pod template's name rather
     // than against the registry's own bookkeeping.
-    if component_digest(canonical_bytes) != expected_digest {
+    if bytes_sha256(canonical_bytes) != expected_digest {
         return Err(ReleaseManifestFetchError::mismatched(
             reference,
             "release-manifest-artifact-body-digest-mismatch",
@@ -458,16 +458,12 @@ mod tests {
         let canonical = br#"{"format-version":1}"#;
         let exact = i64::try_from(canonical.len()).expect("fixture length fits");
 
-        verify_transferred_body(canonical, exact, &component_digest(canonical), REFERENCE)
+        verify_transferred_body(canonical, exact, &bytes_sha256(canonical), REFERENCE)
             .expect("a body served exactly as the descriptor declares verifies");
 
-        let error = verify_transferred_body(
-            canonical,
-            exact + 1,
-            &component_digest(canonical),
-            REFERENCE,
-        )
-        .expect_err("a descriptor declaring more bytes than were served refuses");
+        let error =
+            verify_transferred_body(canonical, exact + 1, &bytes_sha256(canonical), REFERENCE)
+                .expect_err("a descriptor declaring more bytes than were served refuses");
 
         assert_eq!(
             error.error_type(),
@@ -487,10 +483,10 @@ mod tests {
         assert_eq!(served.len(), canonical.len());
         let exact = i64::try_from(served.len()).expect("fixture length fits");
 
-        verify_transferred_body(served, exact, &component_digest(served), REFERENCE)
+        verify_transferred_body(served, exact, &bytes_sha256(served), REFERENCE)
             .expect("a body the descriptor and the name both address verifies");
 
-        let error = verify_transferred_body(served, exact, &component_digest(canonical), REFERENCE)
+        let error = verify_transferred_body(served, exact, &bytes_sha256(canonical), REFERENCE)
             .expect_err("a body the named digest does not address refuses");
 
         assert_eq!(

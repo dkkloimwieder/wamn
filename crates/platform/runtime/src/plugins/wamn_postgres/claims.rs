@@ -85,7 +85,7 @@ impl HeldOperationGrants {
         let mut held = Self::default();
         for row in rows {
             let role: String = row.try_get(0)?;
-            held.admin |= role == wamn_project_state::ADMIN_ROLE;
+            held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
             if let Some(reference) = row.try_get::<_, Option<String>>(1)? {
                 held.references.insert(reference);
             }
@@ -109,7 +109,7 @@ impl HeldOperationGrants {
     /// Service callers never inherit the role of a user session.
     pub fn pat_role(&self) -> Option<Box<str>> {
         if self.admin {
-            return Some(wamn_project_state::ADMIN_ROLE.into());
+            return Some(wamn_identity_protocol::ADMIN_ROLE.into());
         }
         let mut roles = self.roles.iter();
         match (roles.next(), roles.next()) {
@@ -192,7 +192,7 @@ fn principal_read_error(context: &'static str, source: tokio_postgres::Error) ->
 /// `signed` roles it still holds.
 fn session_grants(
     grants: &crate::auth_cache::PrincipalGrants,
-    roles: &[String],
+    roles: &[wamn_identity_protocol::RoleName],
 ) -> anyhow::Result<HeldOperationGrants> {
     if !grants.active || grants.user != Some(true) {
         return Err(SessionGrantRefusal {
@@ -200,7 +200,10 @@ fn session_grants(
         }
         .into());
     }
-    if !roles.iter().all(|role| grants.roles.contains_key(role)) {
+    if !roles
+        .iter()
+        .all(|role| grants.roles.contains_key(role.as_str()))
+    {
         return Err(SessionGrantRefusal {
             kind: "session principal does not hold a signed role",
         }
@@ -211,7 +214,7 @@ fn session_grants(
 
 fn held_grants(
     grants: &crate::auth_cache::PrincipalGrants,
-    signed: Option<&[String]>,
+    signed: Option<&[wamn_identity_protocol::RoleName]>,
 ) -> HeldOperationGrants {
     let mut held = HeldOperationGrants {
         user: grants.user == Some(true),
@@ -221,10 +224,10 @@ fn held_grants(
         return held;
     }
     for (role, permissions) in &grants.roles {
-        if signed.is_some_and(|signed| !signed.contains(role)) {
+        if signed.is_some_and(|signed| !signed.iter().any(|signed| signed.as_str() == role)) {
             continue;
         }
-        held.admin |= role == wamn_project_state::ADMIN_ROLE;
+        held.admin |= role == wamn_identity_protocol::ADMIN_ROLE;
         held.references.extend(permissions.iter().cloned());
         held.roles.insert(role.clone());
     }
@@ -1056,7 +1059,9 @@ fn validate_claims(
         )));
     }
     if let Some(role) = role
-        && !valid_role(role)
+        && !role
+            .parse::<wamn_identity_protocol::RoleName>()
+            .is_ok_and(|parsed| parsed.as_str() == role)
     {
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
@@ -1088,14 +1093,6 @@ fn validate_claims(
         )));
     }
     Ok(())
-}
-
-/// A caller's `app.role`: a non-empty `roles.name`. The column is free-form
-/// `text` and the value binds as a parameter, so no charset rule applies —
-/// but `''` is the deny floor every compiled role gate coalesces to, so it must
-/// not be spellable as a claim.
-fn valid_role(role: &str) -> bool {
-    !role.is_empty()
 }
 
 /// An `app.operation`: a non-empty operation token or platform component name.
@@ -1434,7 +1431,8 @@ impl WamnPostgres {
     /// an in-band override.
     pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
-            valid_role(role),
+            role.parse::<wamn_identity_protocol::RoleName>()
+                .is_ok_and(|parsed| parsed.as_str() == role),
             "invalid caller role {role:?}: a non-empty roles.name is required"
         );
         self.roles
@@ -2341,8 +2339,8 @@ impl WamnPostgres {
         &self,
         project: &str,
         env_key: &str,
-        roles: &[String],
-        principal: &wamn_platform_identity::PrincipalId,
+        roles: &[wamn_identity_protocol::RoleName],
+        principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         let grants = self.principal_grants(project, env_key, principal).await?;
         session_grants(&grants, roles)
@@ -2377,7 +2375,7 @@ impl WamnPostgres {
         &self,
         project: &str,
         env_key: &str,
-        principal_id: &wamn_platform_identity::PrincipalId,
+        principal_id: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         let grants = self
             .principal_grants(project, env_key, principal_id)
@@ -2393,7 +2391,7 @@ impl WamnPostgres {
         &self,
         project: &str,
         env_key: &str,
-        principal: &wamn_platform_identity::PrincipalId,
+        principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
@@ -2403,7 +2401,7 @@ impl WamnPostgres {
             valid_env_key(env_key),
             "invalid operation-permission env_key"
         );
-        let ticket = match self.auth.grants(env_key, principal.as_str()) {
+        let ticket = match self.auth.grants(env_key, principal.to_string().as_str()) {
             Ok(grants) => return Ok(grants),
             Err(ticket) => ticket,
         };
@@ -2419,13 +2417,18 @@ impl WamnPostgres {
             }
         };
         let rows = connection
-            .query(&statement, &[&principal.as_str()])
+            .query(&statement, &[&principal.to_string().as_str()])
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read the principal grants")?;
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
-            .keep_grants(env_key, principal.as_str(), ticket, grants.clone())
+            .keep_grants(
+                env_key,
+                principal.to_string().as_str(),
+                ticket,
+                grants.clone(),
+            )
             .await;
         Ok(grants)
     }
@@ -2437,13 +2440,16 @@ impl WamnPostgres {
         &self,
         project: &str,
         env_key: &str,
-        principal_id: &wamn_platform_identity::PrincipalId,
+        principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
         let rows = self
             .administration_transaction(project, env_key, principal_id, operation, async |client| {
                 client
-                    .query(USER_OPERATION_PERMISSIONS_SQL, &[&principal_id.as_str()])
+                    .query(
+                        USER_OPERATION_PERMISSIONS_SQL,
+                        &[&principal_id.to_string().as_str()],
+                    )
                     .await
                     .context("read held operation grants")
             })
@@ -2496,7 +2502,7 @@ impl WamnPostgres {
         &self,
         project: &str,
         env_key: &str,
-        principal_id: &wamn_platform_identity::PrincipalId,
+        principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &str,
         work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
@@ -2515,7 +2521,7 @@ impl WamnPostgres {
                 None,
                 None,
                 None,
-                Some(principal_id.as_str()),
+                Some(principal_id.to_string().as_str()),
                 Some(operation),
                 None,
                 None,
@@ -2566,7 +2572,7 @@ impl WamnPostgres {
         principal_id: &str,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
-        let principal: wamn_platform_identity::PrincipalId = principal_id
+        let principal: wamn_identity_protocol::PrincipalId = principal_id
             .parse()
             .context("the run's principal is not a principal id")?;
         let grants = self.principal_grants(project, env_key, &principal).await?;
@@ -2574,7 +2580,7 @@ impl WamnPostgres {
             .active
             .then(|| {
                 crate::plugins::route_authentication::role_caller(
-                    principal.as_str(),
+                    principal.to_string().as_str(),
                     role,
                     &grants.roles,
                 )

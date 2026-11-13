@@ -1,6 +1,6 @@
 //! Content digests of the full schemas applied to fresh databases.
 
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 /// Hash the system schema and portable store in bootstrap order.
 pub fn system_sha256() -> String {

@@ -1,7 +1,7 @@
 use super::{
-    Arc, AttachmentType, DEV_STAGE_ORDER, DevStage, DevStageFailure, Duration, GateRefusal,
-    GateResult, PackageCoordinate, ReleaseCarrier, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest,
+    AdmittedComponentOperation, Arc, AttachmentType, DEV_STAGE_ORDER, DevStage, DevStageFailure,
+    Duration, PackageCoordinate, ReleaseCarrier, ServingAttachment, ServingComponent,
+    ServingManifest,
 };
 
 /// Number of stages in one development-loop run.
@@ -31,25 +31,6 @@ pub enum DevStageState {
 pub struct DevStageSnapshot {
     pub(super) stage: DevStage,
     pub(super) state: DevStageState,
-}
-
-/// Exact typed outcome returned by Gate.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DevGateVerdict {
-    /// Gate accepted the wiring and returned its immutable result.
-    Accepted(GateResult),
-    /// Gate refused the wiring with its owning contract type.
-    Refused(GateRefusal),
-}
-
-/// Gate outcome bound to the package wiring that produced it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DevGateOutcome {
-    pub(crate) package_id: String,
-    pub(crate) package_version: String,
-    pub(crate) wiring_id: String,
-    pub(crate) wiring_version: u32,
-    pub(crate) verdict: DevGateVerdict,
 }
 
 /// Exact release document and the carrier derived from those bytes.
@@ -82,7 +63,6 @@ pub struct DevRuntimeEndpoint {
 pub struct DevSnapshot {
     pub(super) revision: u64,
     pub(super) stages: [DevStageSnapshot; DEV_STAGE_COUNT],
-    pub(super) gate_outcomes: Vec<DevGateOutcome>,
     pub(super) release: Option<Arc<DevReleaseSnapshot>>,
     pub(super) runtime_endpoint: Option<DevRuntimeEndpoint>,
     pub(super) traces: Vec<DevTraceObservation>,
@@ -97,33 +77,6 @@ impl DevStageSnapshot {
     /// Latest state for this stage.
     pub const fn state(&self) -> &DevStageState {
         &self.state
-    }
-}
-
-impl DevGateOutcome {
-    /// Package that owns the gated wiring.
-    pub fn package_id(&self) -> &str {
-        &self.package_id
-    }
-
-    /// Exact package version that was gated.
-    pub fn package_version(&self) -> &str {
-        &self.package_version
-    }
-
-    /// Package-local wiring identity.
-    pub fn wiring_id(&self) -> &str {
-        &self.wiring_id
-    }
-
-    /// Exact wiring version submitted to Gate.
-    pub const fn wiring_version(&self) -> u32 {
-        self.wiring_version
-    }
-
-    /// Typed Gate result or refusal.
-    pub const fn verdict(&self) -> &DevGateVerdict {
-        &self.verdict
     }
 }
 
@@ -199,7 +152,6 @@ impl DevSnapshot {
                 stage,
                 state: DevStageState::Awaiting,
             }),
-            gate_outcomes: Vec::new(),
             release: None,
             runtime_endpoint: None,
             traces: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
@@ -214,11 +166,6 @@ impl DevSnapshot {
     /// All ten stages in execution order.
     pub const fn stages(&self) -> &[DevStageSnapshot; DEV_STAGE_COUNT] {
         &self.stages
-    }
-
-    /// Typed outcomes produced by the latest Gate suffix.
-    pub fn gate_outcomes(&self) -> &[DevGateOutcome] {
-        &self.gate_outcomes
     }
 
     /// Exact manifest and serving carrier produced by Release.
@@ -241,12 +188,13 @@ impl DevSnapshot {
     /// Exact operation facts derived from the serving manifest.
     pub fn operations(
         &self,
-    ) -> impl Iterator<Item = (&ServingComponent, &str, &ServingComponentOperation)> {
+    ) -> impl Iterator<Item = (&ServingComponent, &str, &AdmittedComponentOperation)> {
         self.release
             .iter()
             .flat_map(|release| release.manifest.components.iter())
             .flat_map(|component| {
                 component
+                    .descriptor
                     .operations
                     .iter()
                     .map(move |(token, facts)| (component, token.as_str(), facts))

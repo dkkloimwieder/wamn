@@ -1,5 +1,8 @@
 //! Timed Receiving calls, mixed traffic, and shared-order contention.
 
+#[path = "../../../services/ctl/src/read_query.rs"]
+mod read_query;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +12,6 @@ use anyhow::{Context as _, bail, ensure};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use wamn_execution_contract::encode_read_query;
 
 /// The most rows one query returns (`limit.maximum` in the Receiving manifest).
 const PAGE: i64 = 100;
@@ -715,7 +717,7 @@ async fn statement_calls(database: &tokio_postgres::Client) -> anyhow::Result<i6
 /// One read route, with its item in the query string.
 async fn read(target: &Target, name: &str, item: &Value) -> anyhow::Result<Value> {
     let item: &Map<String, Value> = item.as_object().context("a read item is an object")?;
-    let query = encode_read_query(item);
+    let query = read_query::encode_read_query(item);
     let url = if query.is_empty() {
         format!("{}/{name}", target.base)
     } else {

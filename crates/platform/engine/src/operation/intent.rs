@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::{Map, Value, json};
 use tracing::Instrument as _;
-use wamn_catalog::{OperationType, RouteCanonicalization};
+use wamn_catalog::OperationType;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 
@@ -52,9 +52,6 @@ pub struct IntentContext<'a> {
     /// The request element field of the idempotency key, such as
     /// `value.idempotency_key`. `None` keys each request element by its `request_id`.
     pub key_field: Option<&'a str>,
-    /// The canonical form of a request element, from the route. `None` takes each
-    /// request element as it is sent.
-    pub canonicalization: Option<&'a RouteCanonicalization>,
 }
 
 impl fmt::Debug for IntentContext<'_> {
@@ -66,7 +63,6 @@ impl fmt::Debug for IntentContext<'_> {
             .field("package", &self.package)
             .field("kind", &self.kind)
             .field("key_field", &self.key_field)
-            .field("canonicalization", &self.canonicalization)
             .finish_non_exhaustive()
     }
 }
@@ -127,15 +123,23 @@ fn request_elements<'v>(
 }
 
 /// The request hash of one request element's intent: the canonical JSON SHA-256 of the
-/// request element without its `request_id`, with the key kept. A retry under one
+/// request element without its `request_id` and key field. A retry under one
 /// idempotency key with a new request id is the same request.
 #[must_use]
-pub fn request_element_hash(request_element: &Value) -> String {
+pub fn request_element_hash(request_element: &Value, key_field: Option<&str>) -> String {
     let mut body = request_element.clone();
     if let Some(object) = body.as_object_mut() {
         object.remove(REQUEST_ID);
     }
-    wamn_execution_contract::canonical_json_sha256(&body)
+    let segments: Vec<_> = key_field.unwrap_or(REQUEST_ID).split('.').collect();
+    if let Some((last, parents)) = segments.split_last()
+        && let Some(Value::Object(object)) = parents
+            .iter()
+            .try_fold(&mut body, |value, key| value.get_mut(*key))
+    {
+        object.remove(*last);
+    }
+    wamn_digest::canonical_json_sha256(&body)
 }
 
 /// A request element body that answers with an error and runs nothing.
@@ -183,20 +187,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
     call: OperationCall<'_, H::Policy>,
     intent: IntentContext<'_>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    let canonical;
-    let input = match intent.canonicalization {
-        Some(form) => {
-            let mut input = call.input.clone();
-            if let Some(request_elements) = input.as_array_mut() {
-                for request_element in request_elements {
-                    form.apply(request_element);
-                }
-            }
-            canonical = input;
-            &canonical
-        }
-        None => call.input,
-    };
+    let input = call.input;
     let request_elements = match request_elements(input, intent.key_field) {
         Ok(request_elements) => request_elements,
         Err(message) => {
@@ -365,9 +356,6 @@ async fn settle_request_element<H: ApplicationHost>(
         commit: false,
         port: None,
     };
-    let hashed = intent
-        .canonicalization
-        .map(|form| form.hashed(request_element.value));
     let begun = intent
         .store
         .begin(&Intent {
@@ -376,7 +364,7 @@ async fn settle_request_element<H: ApplicationHost>(
             package: intent.package,
             operation: call.operation,
             idempotency_key: request_element.key,
-            input_hash: &request_element_hash(hashed.as_ref().unwrap_or(request_element.value)),
+            input_hash: &request_element_hash(request_element.value, intent.key_field),
             deadline_ms: call.deadline_ms,
         })
         .instrument(tracing::info_span!("wamn.write_log.claim"))
@@ -465,10 +453,9 @@ async fn settle_request_element<H: ApplicationHost>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
 
     use serde_json::json;
-    use wamn_catalog::{CanonicalSpelling, OperationType, RouteCanonicalization, RouteLineOrder};
+    use wamn_catalog::OperationType;
 
     use super::{logs_intent, request_element_hash, request_elements};
 
@@ -540,114 +527,44 @@ mod tests {
     #[test]
     fn a_new_request_id_under_one_key_is_the_same_input() {
         assert_eq!(
-            request_element_hash(&json!({"request_id": "r-1", "value": {"idempotency_key": "k"}})),
-            request_element_hash(&json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}))
+            request_element_hash(
+                &json!({"request_id": "r-1", "value": {"idempotency_key": "k"}}),
+                Some("value.idempotency_key")
+            ),
+            request_element_hash(
+                &json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}),
+                Some("value.idempotency_key")
+            )
         );
         assert_ne!(
-            request_element_hash(&json!({"request_id": "r-1", "value": 1})),
-            request_element_hash(&json!({"request_id": "r-1", "value": 2}))
+            request_element_hash(
+                &json!({"request_id": "r-1", "value": 1}),
+                Some("value.idempotency_key")
+            ),
+            request_element_hash(
+                &json!({"request_id": "r-1", "value": 2}),
+                Some("value.idempotency_key")
+            )
         );
     }
 
     #[test]
-    fn the_request_hash_keeps_the_key_and_is_the_request_element_alone() {
+    fn the_request_hash_excludes_the_key_and_is_the_request_element_alone() {
         let request_element =
             json!({"request_id": "r-1", "value": {"idempotency_key": "k", "n": 1}});
-        assert_ne!(
-            request_element_hash(&request_element),
+        assert_eq!(
+            request_element_hash(&request_element, Some("value.idempotency_key")),
             request_element_hash(
-                &json!({"request_id": "r-1", "value": {"idempotency_key": "other", "n": 1}})
+                &json!({"request_id": "r-1", "value": {"idempotency_key": "other", "n": 1}}),
+                Some("value.idempotency_key")
             ),
-            "the key is part of the request"
+            "the key is excluded from the request hash"
         );
         assert_eq!(
-            request_element_hash(&request_element),
-            wamn_execution_contract::canonical_json_sha256(&json!({
-                "value": {"idempotency_key": "k", "n": 1}
+            request_element_hash(&request_element, Some("value.idempotency_key")),
+            wamn_digest::canonical_json_sha256(&json!({
+                "value": {"n": 1}
             }))
-        );
-    }
-
-    /// The canonical form of a command with lines, as publish derives it from
-    /// the fixture's `widget.record_batch` contract.
-    fn record_batch() -> RouteCanonicalization {
-        RouteCanonicalization {
-            excluded: BTreeSet::from(["value.note".to_owned()]),
-            lines: Some(RouteLineOrder {
-                path: "value.line".to_owned(),
-                ascending_by: "widget_id".to_owned(),
-            }),
-            spelling: BTreeMap::from([
-                ("value.line[].amount".to_owned(), CanonicalSpelling::Numeric),
-                (
-                    "value.occurred_at".to_owned(),
-                    CanonicalSpelling::Timestamptz,
-                ),
-            ]),
-        }
-    }
-
-    fn canonical_hash(
-        form: &RouteCanonicalization,
-        mut request_element: serde_json::Value,
-    ) -> String {
-        form.apply(&mut request_element);
-        request_element_hash(&form.hashed(&request_element))
-    }
-
-    #[test]
-    fn reordered_lines_and_other_spellings_are_one_request() {
-        let form = record_batch();
-        let sent = json!({"request_id": "r-1", "value": {
-            "idempotency_key": "k",
-            "note": "first",
-            "occurred_at": "2026-09-29T12:00:00Z",
-            "line": [
-                {"widget_id": "b", "amount": "2"},
-                {"widget_id": "a", "amount": "1.50"},
-            ],
-        }});
-        let retried = json!({"request_id": "r-2", "value": {
-            "idempotency_key": "k",
-            "note": "an excluded field",
-            "occurred_at": "2026-09-29T14:00:00.000000+02:00",
-            "line": [
-                {"widget_id": "a", "amount": "01.50"},
-                {"widget_id": "b", "amount": "2."},
-            ],
-        }});
-        assert_eq!(
-            canonical_hash(&form, sent.clone()),
-            canonical_hash(&form, retried)
-        );
-        let changed = json!({"request_id": "r-2", "value": {
-            "idempotency_key": "k",
-            "note": "first",
-            "occurred_at": "2026-09-29T12:00:00Z",
-            "line": [
-                {"widget_id": "a", "amount": "1.5"},
-                {"widget_id": "b", "amount": "2"},
-            ],
-        }});
-        assert_ne!(
-            canonical_hash(&form, sent.clone()),
-            canonical_hash(&form, changed),
-            "a numeric keeps its scale"
-        );
-        // The component gets the canonical request element, excluded fields kept.
-        let mut request_element = sent;
-        form.apply(&mut request_element);
-        assert_eq!(
-            request_element["value"],
-            json!({
-                "idempotency_key": "k",
-                "note": "first",
-                "occurred_at": "2026-09-29T12:00:00.000000Z",
-                "line": [
-                    {"widget_id": "a", "amount": "1.50"},
-                    {"widget_id": "b", "amount": "2"},
-                ],
-            })
         );
     }
 }

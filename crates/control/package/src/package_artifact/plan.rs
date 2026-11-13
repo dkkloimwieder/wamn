@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, ComponentConnection, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE,
-    PackageManifest, PackedLayer, Path, PathBuf, ensure, sha256_digest,
+    PackageManifest, PackedLayer, Path, PathBuf, bytes_sha256, ensure,
 };
 use anyhow::Context as _;
 
@@ -39,21 +39,21 @@ pub(super) fn image_manifest(
         "artifactType": PACKAGE_ARTIFACT_TYPE,
         "config": {
             "mediaType": EMPTY_CONFIG_MEDIA_TYPE,
-            "digest": sha256_digest(EMPTY_CONFIG),
+            "digest": bytes_sha256(EMPTY_CONFIG),
             "size": EMPTY_CONFIG.len(),
         },
         "layers": layers
             .iter()
             .map(|layer| serde_json::json!({
                 "mediaType": layer.media_type,
-                "digest": sha256_digest(&layer.bytes),
+                "digest": bytes_sha256(&layer.bytes),
                 "size": layer.bytes.len(),
                 "annotations": layer.annotations,
             }))
             .collect::<Vec<_>>(),
         "annotations": annotations,
     });
-    wamn_execution_contract::canonical_json_bytes(&manifest)
+    wamn_digest::canonical_json_bytes(&manifest)
 }
 
 /// The package id and version of a package manifest.

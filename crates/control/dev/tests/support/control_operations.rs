@@ -1,50 +1,24 @@
 //! DEP6 observes authenticated workers and selection isolation on one platform.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::HostRouteSet;
-use wamn_client::credentials::{PasswordCredentials, SecretInput, SessionTarget};
-use wamn_client::{
-    ClientError, CredentialProvider, HttpRequest, HttpResponse, StaticPat, Transport,
-};
 use wamn_environment_control::platform::{artifact_plan, document::Provider};
 
-use super::{Journey, get, success};
-
-#[derive(Debug)]
-struct IdentityTransport(reqwest::Client);
-
-#[async_trait::async_trait]
-impl Transport for IdentityTransport {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
-        let result = async {
-            let mut builder = self.0.request(request.method.parse()?, &request.url);
-            for (name, value) in request.headers {
-                builder = builder.header(name, value);
-            }
-            let response = builder.body(request.body).send().await?;
-            Ok::<_, anyhow::Error>(HttpResponse {
-                status: response.status().as_u16(),
-                body: response.text().await?,
-            })
-        }
-        .await;
-        result.map_err(|error| ClientError::Transport {
-            detail: error.to_string(),
-        })
-    }
-}
+use super::{Journey, get, route_request, success};
 
 struct Control<'a> {
     journey: &'a Journey<'a>,
     client: &'a reqwest::Client,
     url: &'a str,
-    credentials: &'a dyn CredentialProvider,
+    identity_url: &'a str,
+    email: &'a str,
+    password: &'a str,
+    session: tokio::sync::Mutex<Value>,
 }
 
 impl Control<'_> {
@@ -57,33 +31,39 @@ impl Control<'_> {
             value["project"] = self.journey.project.into();
             value["env"] = self.journey.environment.into();
         }
-        let path = attachment.definition["route"]["path"]
-            .as_str()
-            .context("control path")?;
-        let url = format!("{}{path}", self.url);
-        let request = if attachment.route.type_.is_read() {
-            let query =
-                wamn_execution_contract::encode_read_query(value.as_object().context("query")?);
-            self.client.get(format!("{url}?{query}"))
-        } else {
-            self.client
-                .post(url)
-                .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
-        };
+        let mut session = self.session.lock().await;
+        if session["expires_at"].as_i64().context("session expiry")?
+            <= chrono::Utc::now().timestamp() + 30
+        {
+            *session = super::super::password_session(
+                self.journey.run,
+                self.client,
+                self.identity_url,
+                self.email,
+                self.password,
+                false,
+            )
+            .await?;
+        }
+        let mut request = route_request::request(
+            self.client,
+            self.url,
+            session["access_token"]
+                .as_str()
+                .context("session access token")?,
+            attachment,
+            &value,
+        )?;
+        drop(session);
         // Only the kind port-forward URL needs the route host. The GKE URL
         // already names it, and the load balancer refuses a second Host over HTTP/2.
-        let request = match self.journey.run.document.provider {
-            Provider::Kind => request.header(
+        if self.journey.run.document.provider == Provider::Kind {
+            request.headers_mut().insert(
                 reqwest::header::HOST,
-                &self.journey.run.document.route_hosts.control,
-            ),
-            Provider::Gcp => request,
-        };
-        let response = request
-            .bearer_auth(self.credentials.bearer().await?)
-            .send()
-            .await?
-            .error_for_status()?;
+                self.journey.run.document.route_hosts.control.parse()?,
+            );
+        }
+        let response = self.client.execute(request).await?.error_for_status()?;
         let [answer]: [Value; 1] = response.json().await?;
         Ok(answer)
     }
@@ -197,25 +177,23 @@ pub(super) async fn exercise(
             .arg(&journey.run.checkout),
     )
     .await?;
-    let credentials = PasswordCredentials::new(
-        SessionTarget::new(
-            identity_url,
-            format!("urn:wamn:control:{}", journey.run.document.org),
-        )?,
-        // The authentication transport shares the configured TLS identity and CA with route calls.
-        Arc::new(IdentityTransport(identity.clone())),
-    );
-    credentials
-        .login(
-            &journey.run.document.owner_email,
-            SecretInput::new(password.to_owned())?,
-        )
-        .await?;
+    let session = super::super::password_session(
+        journey.run,
+        identity,
+        identity_url,
+        &journey.run.document.owner_email,
+        password,
+        false,
+    )
+    .await?;
     let control = Control {
         journey,
         client: identity,
         url: control_url,
-        credentials: &credentials,
+        identity_url,
+        email: &journey.run.document.owner_email,
+        password,
+        session: tokio::sync::Mutex::new(session),
     };
     let coordinate = wamn_control_provision::environment_names::environment_resource_name(
         &journey.run.document.org,
@@ -313,21 +291,24 @@ async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> any
         .await?;
     let email = format!("{other}@example.invalid");
     control.call("user.invite", json!({"email":email,"display_name":"Other project administrator","project_admins":[other]})).await?;
-    let mut login = super::super::password_session(
+    let password = uuid::Uuid::new_v4().to_string();
+    let login = super::super::password_session(
         control.journey.run,
         control.client,
         identity_url,
         &email,
-        &uuid::Uuid::new_v4().to_string(),
+        &password,
         true,
     )
     .await?;
-    let credentials = StaticPat::new(serde_json::from_value::<String>(
-        login["access_token"].take(),
-    )?)?;
     let outsider = Control {
-        credentials: &credentials,
-        ..*control
+        journey: control.journey,
+        client: control.client,
+        url: control.url,
+        identity_url,
+        email: &email,
+        password: &password,
+        session: tokio::sync::Mutex::new(login),
     };
     // A valid control session for another project reaches authorization, rather than failing authentication.
     outsider.call("control.mine", json!({})).await?;

@@ -47,24 +47,6 @@ fn psql_ok(url: &str, stage: &str, script: &str) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn as_role(url: &str, role: &str, password: &str) -> String {
-    let mut parsed = url::Url::parse(url).expect("the control PG URL parses");
-    parsed
-        .set_username(role)
-        .expect("a postgres URL carries a username");
-    parsed
-        .set_password(Some(password))
-        .expect("a postgres URL carries a password");
-    parsed.into()
-}
-
-fn database(url: &str) -> String {
-    let parsed = url::Url::parse(url).expect("the control PG URL parses");
-    let database = parsed.path().trim_start_matches('/').to_owned();
-    assert!(!database.is_empty(), "the control PG URL names a database");
-    database
-}
-
 fn reset_and_apply(url: &str, before_store: &str) {
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     script.push_str(
@@ -82,7 +64,7 @@ fn reset_and_apply(url: &str, before_store: &str) {
            END IF;\n\
          END $roles$;\n",
     );
-    script.push_str(&wamn_control_provision::sql::ensure_control_author_acl_role_sql());
+
     script.push('\n');
     script.push_str(wamn_control_provision::sql::ensure_db_owner_role_sql());
     script.push_str(before_store);
@@ -161,20 +143,9 @@ SET ROLE wamn_system;
 SET app.env_key = 'tenant-a';
 DO $shape$
 DECLARE
-  catalog_tables text[];
-  run_tables text[];
   rls_gap text;
   public_acl text;
 BEGIN
-  SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
-    FROM pg_tables WHERE schemaname = 'catalog';
-  ASSERT catalog_tables = ARRAY[
-    'authoring_command_audit', 'tenant_environments'
-  ]::text[], format('catalog table list drifted: %s', catalog_tables);
-  SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
-    FROM pg_tables WHERE schemaname = 'wamn_run';
-  ASSERT run_tables = ARRAY['gate_reports']::text[];
-
   SELECT string_agg(n.nspname || '.' || c.relname, ', ' ORDER BY 1) INTO rls_gap
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname IN ('catalog', 'wamn_run') AND c.relkind = 'r'
@@ -198,192 +169,5 @@ $shape$;
 
 RESET ROLE;
 ",
-    );
-}
-
-#[test]
-fn control_author_is_env_key_bound_and_exactly_scoped_on_postgres() {
-    const PASSWORD: &str = "control-author-live-test";
-
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-    let database = database(&url);
-    let author_a = wamn_control_provision::control_author_generation_role(
-        "acme",
-        "widgets",
-        "dev",
-        &database,
-        wamn_control_provision::CredentialGeneration::A,
-    );
-    let author_b = wamn_control_provision::control_author_generation_role(
-        "acme",
-        "shipping",
-        "dev",
-        &database,
-        wamn_control_provision::CredentialGeneration::B,
-    );
-    let mut generations = String::new();
-    for role in [&author_a, &author_b] {
-        generations.push_str(
-            &wamn_control_provision::sql::prepare_control_author_generation_sql(
-                &database,
-                role,
-                PASSWORD,
-                "2099-01-01T00:00:00Z",
-            ),
-        );
-        generations.push('\n');
-    }
-    reset_and_apply(&url, &generations);
-
-    psql_ok(
-        &url,
-        "seed two control tenants",
-        &format!(
-            r"
-SET ROLE wamn_system;
-INSERT INTO wamn_authority.author_login_tenants
-  (login_identity, env_key, org_id, project_id, environment)
-VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
-       ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
-RESET ROLE;
-"
-        ),
-    );
-
-    psql_ok(
-        &as_role(&url, &author_a, PASSWORD),
-        "check tenant-a author authority",
-        &format!(
-            r"
-DO $identity$ BEGIN
-  ASSERT session_user = '{author_a}';
-  ASSERT current_user = session_user;
-  ASSERT wamn_authority.session_author_env_key() = 'tenant-a';
-  ASSERT pg_has_role(session_user, 'wamn_control_author', 'USAGE');
-  ASSERT NOT pg_has_role(session_user, 'wamn_system', 'USAGE');
-END
-$identity$;
-
-SET app.env_key = 'tenant-a';
-INSERT INTO catalog.authoring_command_audit
-  (env_key, command_id, command_type, principal_id, principal_type,
-   principal_subject, effective_role, org, project, environment, target_ref,
-   request_hash, outcome_bytes)
-VALUES
-  ('tenant-a', 'command-1', 'gate', 'principal-1', 'user', 'someone',
-   'project-author', 'acme', 'widgets', 'dev', 'widgets@1.0.0',
-   'sha256:' || repeat('1', 64), '\x7b7d'::bytea);
-INSERT INTO wamn_run.gate_reports
-  (env_key, wiring_hash, passed, summary)
-VALUES ('tenant-a', 'sha256:' || repeat('2', 64), true, '{{}}');
-
-SET app.env_key = 'tenant-b';
-DO $narrowed$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
-  BEGIN
-    INSERT INTO catalog.authoring_command_audit
-      (env_key, command_id, command_type, principal_id, principal_type,
-       principal_subject, effective_role, org, project, environment, target_ref,
-       request_hash, outcome_bytes)
-    VALUES
-      ('tenant-b', 'forged', 'gate', 'principal-1', 'user', 'someone',
-       'project-author', 'acme', 'shipping', 'dev', 'forged',
-       'sha256:' || repeat('3', 64), '\x7b7d'::bytea);
-    ASSERT false, 'app.env_key widened the author mapping';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
-  END;
-END
-$narrowed$;
-
-SET app.env_key = 'tenant-a';
-DO $denied$ BEGIN
-  BEGIN PERFORM 1 FROM wamn_authority.author_login_tenants;
-    ASSERT false, 'the author read its tenant mapping';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN CREATE TABLE catalog.author_owned (id int);
-    ASSERT false, 'the author created a catalog relation';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-END
-$denied$;
-"
-        ),
-    );
-
-    psql_ok(
-        &as_role(&url, &author_b, PASSWORD),
-        "check tenant-b author isolation",
-        &format!(
-            r"
-SET app.env_key = 'tenant-b';
-DO $second$ BEGIN
-  ASSERT session_user = '{author_b}';
-  ASSERT wamn_authority.session_author_env_key() = 'tenant-b';
-  ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
-  ASSERT (SELECT count(*) FROM wamn_run.gate_reports) = 0;
-END
-$second$;
-"
-        ),
-    );
-
-    psql_ok(
-        &url,
-        "retire tenant-a author",
-        &format!(
-            "{}\n\
-             DO $retired$ BEGIN \
-               ASSERT NOT (SELECT rolcanlogin FROM pg_roles WHERE rolname = '{author_a}'); \
-               ASSERT NOT has_database_privilege('{author_a}', current_database(), 'CONNECT'); \
-               ASSERT NOT pg_has_role('{author_a}', 'wamn_control_author', 'USAGE'); \
-             END $retired$;",
-            wamn_control_provision::sql::retire_control_author_generation_sql(&database, &author_a)
-        ),
-    );
-}
-
-#[test]
-fn gate_reports_refuse_update_and_delete() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-    reset_and_apply(&url, "");
-    psql_ok(
-        &url,
-        "gate report immutability",
-        r#"
-SET ROLE wamn_system;
-SET app.env_key = 'tenant-a';
-INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary)
-VALUES ('tenant-a', 'sha256:' || repeat('a', 64), true, '{"cases": 1}');
-DO $immutable$
-DECLARE
-  original wamn_run.gate_reports%ROWTYPE;
-BEGIN
-  ASSERT current_user = 'wamn_system';
-  SELECT * INTO STRICT original FROM wamn_run.gate_reports
-   WHERE env_key = 'tenant-a' AND wiring_hash = 'sha256:' || repeat('a', 64);
-  BEGIN
-    UPDATE wamn_run.gate_reports SET passed = false, summary = '{"cases": 0}'
-     WHERE env_key = original.env_key AND wiring_hash = original.wiring_hash;
-    ASSERT false, 'a gate report allowed UPDATE';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';
-  END;
-  BEGIN
-    DELETE FROM wamn_run.gate_reports
-     WHERE env_key = original.env_key AND wiring_hash = original.wiring_hash;
-    ASSERT false, 'a gate report allowed DELETE';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';
-  END;
-  ASSERT EXISTS (
-    SELECT FROM wamn_run.gate_reports AS report WHERE report = original
-  ), 'the gate report changed after refused writes';
-END
-$immutable$;
-RESET ROLE;
-"#,
     );
 }

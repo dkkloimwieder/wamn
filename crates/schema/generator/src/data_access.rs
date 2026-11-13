@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, history_table_name};
 use wamn_schema_introspection::ir::CatalogIr;
 
@@ -468,10 +468,10 @@ pub fn render_effective_data_access_sql(
             "effective data-access authority is empty or uses the wrong carrier",
         ));
     }
-    let role = quote_identifier(&effective.role);
+    let role = postgres_protocol::escape::escape_identifier(&effective.role);
     let mut sql = String::new();
     for schema in &effective.schemas {
-        let schema = quote_identifier(schema);
+        let schema = postgres_protocol::escape::escape_identifier(schema);
         writeln!(
             sql,
             "REVOKE ALL PRIVILEGES ON SCHEMA {schema} FROM PUBLIC, {role};"
@@ -483,8 +483,8 @@ pub fn render_effective_data_access_sql(
     for relation in &effective.relations {
         let target = format!(
             "{}.{}",
-            quote_identifier(&relation.schema),
-            quote_identifier(&relation.table)
+            postgres_protocol::escape::escape_identifier(&relation.schema),
+            postgres_protocol::escape::escape_identifier(&relation.table)
         );
         writeln!(
             sql,
@@ -505,7 +505,7 @@ pub fn render_effective_data_access_sql(
             writeln!(
                 sql,
                 "-- FOR KEY SHARE carrier on {target}: UPDATE ({}) is PostgreSQL lock mechanics, not declared DML update authority.",
-                quote_identifier(carrier)
+                postgres_protocol::escape::escape_identifier(carrier)
             )
             .expect("writing SQL to a String cannot fail");
         }
@@ -1029,13 +1029,9 @@ fn grant_columns(sql: &mut String, privilege: &str, fields: &[String], target: &
 fn field_list(fields: &[String]) -> String {
     fields
         .iter()
-        .map(|field| quote_identifier(field))
+        .map(|field| postgres_protocol::escape::escape_identifier(field))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn quote_identifier(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 fn valid_identifier(value: &str) -> bool {

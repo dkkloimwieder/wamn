@@ -6,8 +6,9 @@ description = "Package-grain Receiving operation component"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 wamn-data-access = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-record-history = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

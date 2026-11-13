@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
 use super::{CatalogIr, Projection, insert_bytes, sql};
@@ -10,9 +11,8 @@ use wamn_catalog::manifest::{CustomOperationDeclaration, rust_identifier, rust_t
 use wamn_catalog::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
-use wamn_catalog::schema::ColumnType;
 
-fn value(name: &str, ty: ColumnType, nullable: bool) -> StaticSqlValueDeclaration {
+fn value(name: &str, ty: SqlValueType, nullable: bool) -> StaticSqlValueDeclaration {
     StaticSqlValueDeclaration {
         name: name.to_owned(),
         ty,
@@ -93,7 +93,7 @@ pub(super) fn prepare(
             path: page_path,
             fetch: StaticSqlFetch::BoundedList,
             parameters: statement.parameters.clone(),
-            row: std::iter::once(value("feed_cursor", ColumnType::Int64, true))
+            row: std::iter::once(value("feed_cursor", SqlValueType::Int64, true))
                 .chain(nullable.clone())
                 .collect(),
         },
@@ -108,17 +108,17 @@ pub(super) fn prepare(
                 .iter()
                 .cloned()
                 .chain([
-                    value("cursor_transaction", ColumnType::Int64, true),
+                    value("cursor_transaction", SqlValueType::Int64, true),
                     value("cursor_id", key_type, true),
-                    value("feed_limit", ColumnType::Int64, false),
+                    value("feed_limit", SqlValueType::Int64, false),
                 ])
                 .collect(),
             row: [
-                value("feed_end", ColumnType::Int64, true),
-                value("expired", ColumnType::Boolean, true),
+                value("feed_end", SqlValueType::Int64, true),
+                value("expired", SqlValueType::Boolean, true),
                 value("change_id", key_type, true),
-                value("change_transaction", ColumnType::Int64, true),
-                value("present", ColumnType::Boolean, true),
+                value("change_transaction", SqlValueType::Int64, true),
+                value("present", SqlValueType::Boolean, true),
             ]
             .into_iter()
             .chain(nullable)
@@ -139,7 +139,7 @@ fn emit_data(
     package: &wamn_catalog::manifest::PackageIdentity,
     name: &str,
     operation: &CustomOperationDeclaration,
-    key_type: ColumnType,
+    key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
     let stem = custom_artifact_stem(name);
     let statement = operation
@@ -228,12 +228,12 @@ fn emit_data(
     } else {
         "input"
     };
-    let row_id = if key_type == ColumnType::Uuid {
+    let row_id = if key_type == SqlValueType::Uuid {
         "row.change_id.clone()"
     } else {
         "row.change_id"
     };
-    let change_id = if key_type == ColumnType::Uuid {
+    let change_id = if key_type == SqlValueType::Uuid {
         "id.clone()"
     } else {
         "id"
@@ -312,7 +312,7 @@ fn emit_component(
     namespace: &str,
     name: &str,
     operation: &CustomOperationDeclaration,
-    key_type: ColumnType,
+    key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
     let stem = custom_artifact_stem(name);
     let (group, local) = name.split_once('.').expect("validated operation");
@@ -338,7 +338,7 @@ fn emit_component(
             .expect("writing to a String cannot fail");
             inputs
         });
-    let id = if key_type == ColumnType::Uuid {
+    let id = if key_type == SqlValueType::Uuid {
         "change.id.0"
     } else {
         "change.id"

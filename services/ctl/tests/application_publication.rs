@@ -58,7 +58,7 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
         serde_json::to_vec(&json!({
             "get": {"type": "http", "package-id": id, "component": "entry", "operation": reference,
                 "registered-operation": reference, "auth-policy": {"modes": ["pat"]},
-                "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+                "definition-hash": wamn_digest::canonical_json_sha256(&definition),
                 "definition": definition}
         }))?,
     )?;
@@ -104,7 +104,7 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     record.outputs.components.push(BuildComponent {
         name: "entry".into(),
         path: path.into(),
-        sha256: wamn_execution_contract::bytes_sha256(&bytes),
+        sha256: wamn_digest::bytes_sha256(&bytes),
     });
     std::fs::write(
         output.join(build_record::BUILD_RECORD_FILE),

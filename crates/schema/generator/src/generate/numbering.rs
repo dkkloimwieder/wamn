@@ -10,12 +10,12 @@
 //! overlay numbers, stamps and keys only the relation owner's fields.
 
 use wamn_number_pattern::{Key, Pattern, Scope};
+use wamn_scalar::SqlValueType;
 
 use super::{BTreeMap, CatalogIr, Table, column, relation};
 use crate::key::primary_key;
 use wamn_catalog::manifest::{CrudAction, ModelDeclaration, PackageManifest, validate_identifier};
 use wamn_catalog::manifest::{FieldRole, Target};
-use wamn_catalog::schema::ColumnType;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Refuse what the package's numbering declarations cannot mean.
@@ -109,7 +109,7 @@ fn validate_model_fields(
             let ty = column(table, field)
                 .expect("the field was resolved")
                 .column_type();
-            if !matches!(field.as_str(), "created_by" | "updated_by") || ty != ColumnType::Uuid {
+            if !matches!(field.as_str(), "created_by" | "updated_by") || ty != SqlValueType::Uuid {
                 return Err(invalid(format!(
                     "{model_name}.{field} is an actor field, which must be a uuid field named created_by or updated_by"
                 )));
@@ -156,13 +156,16 @@ fn validate_numbered_field(
     let ty = column(table, field)
         .expect("model fields were validated")
         .column_type();
-    if !matches!(ty, ColumnType::Text | ColumnType::Int32 | ColumnType::Int64) {
+    if !matches!(
+        ty,
+        SqlValueType::Text | SqlValueType::Int32 | SqlValueType::Int64
+    ) {
         return Err(invalid(format!(
             "{model_name}.{field} is {}; a numbered field must be text, int32 or int64",
             ty.as_str()
         )));
     }
-    if ty != ColumnType::Text && !pattern.is_bare_counter() {
+    if ty != SqlValueType::Text && !pattern.is_bare_counter() {
         return Err(invalid(format!(
             "{model_name}.{field} is {}, not text, so sequence {sequence} takes a bare {{seq:<counter>}} pattern only",
             ty.as_str()
@@ -197,7 +200,10 @@ fn validate_numbered_field(
                 model.owner
             )));
         }
-        if matches!(named.column_type(), ColumnType::Bytes | ColumnType::Json) {
+        if matches!(
+            named.column_type(),
+            SqlValueType::Bytes | SqlValueType::Json
+        ) {
             return Err(invalid(format!(
                 "sequence {sequence} names {model_name}.{name}, a {} field, which has no text to render or key by",
                 named.column_type().as_str()

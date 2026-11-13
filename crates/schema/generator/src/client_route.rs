@@ -101,7 +101,7 @@ fn component_schema(
         let mut main = operation
             .output_ports
             .iter()
-            .filter(|port| port.name == wamn_execution_contract::MAIN_PORT);
+            .filter(|port| port.name == wamn_catalog::MAIN_PORT);
         if let Some(port) = main.next() {
             selected = Some(read_schema(&path, "main output-port schema", &port.schema)?);
         }

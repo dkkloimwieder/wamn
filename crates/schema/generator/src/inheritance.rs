@@ -29,7 +29,7 @@ pub(crate) fn load_base_manifests(
             let bytes = fs::read(output.join(crate::authoring::COMPILED_MANIFEST_NAME))
                 .with_context(|| format!("read the manifest of base {}", dependency.package))?;
             ensure!(
-                wamn_execution_contract::bytes_sha256(&bytes) == build_record.outputs.manifest,
+                wamn_digest::bytes_sha256(&bytes) == build_record.outputs.manifest,
                 "base {} manifest differs from its build record",
                 dependency.package
             );

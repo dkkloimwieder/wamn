@@ -120,7 +120,7 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
         "attachments": {ATTACHMENT: {
             "type": "http", "package-id": "file_fixture", "component": "signed_read", "operation": OPERATION,
             "registered-operation": OPERATION,
-            "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+            "definition-hash": wamn_digest::canonical_json_sha256(&definition),
             "definition": definition, "auth-policy": {"modes": ["session"]}
         }},
         "host-routes": [HostRouteSet::Application]

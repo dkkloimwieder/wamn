@@ -29,7 +29,7 @@ use anyhow::{Context as _, ensure};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
+use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_pull;
 
 use wamn_release_control::release_chart::{ImageSet, stamp};

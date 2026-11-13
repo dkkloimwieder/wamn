@@ -177,12 +177,12 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         let endpoint: Value = serde_json::from_slice(&std::fs::read(root.join("application-endpoint.json"))?)?;
         let (mut admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
         let driver = tokio::spawn(driver);
-        let actor: wamn_platform_identity::PrincipalId =
+        let actor: wamn_identity_protocol::PrincipalId =
             PlatformComponent::Provisioning.principal_id().to_string().parse()?;
         // Bind the caller for the existing platform verbs. No identity table SQL belongs here.
         admin.execute(
             "SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:platform-ui-test', false)",
-            &[&actor.as_str()],
+            &[&actor.to_string().as_str()],
         ).await?;
         // dev up calls provision-org --admin through its shared implementation.
         let user = create_or_reuse_user(&admin, DEVELOPER_EMAIL, "Developer").await?.principal_id;
@@ -191,7 +191,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         let web: Value = serde_json::from_slice(&std::fs::read(root.join("web.json"))?)?;
         let url = web["url"].as_str().context("local platform URL")?;
         let enrolled = reqwest::Client::new().post(format!("{url}/password/enroll"))
-            .json(&json!({"principal_id": user.as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
+            .json(&json!({"principal_id": user.to_string().as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
             .send().await?;
         ensure!(enrolled.status() == reqwest::StatusCode::NO_CONTENT, "password enrollment refused: {}", enrolled.status());
         let mut browser = Command::new("pnpm").current_dir(&repository)

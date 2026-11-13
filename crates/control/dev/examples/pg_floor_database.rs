@@ -17,9 +17,7 @@ async fn main() -> anyhow::Result<()> {
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
                  CREATE ROLE wamn_app NOLOGIN;
                END IF;
-               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author') THEN
-                 CREATE ROLE wamn_scenario_author NOLOGIN;
-               END IF;
+
              END $roles$;",
         )
         .await?;
@@ -44,8 +42,8 @@ async fn main() -> anyhow::Result<()> {
     client
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
-            wamn_pg_core::quote_ident(row.get(1)),
-            wamn_pg_core::quote_literal(&marker),
+            postgres_protocol::escape::escape_identifier(row.get(1)),
+            postgres_protocol::escape::escape_literal(&marker),
         ))
         .await?;
     apply_local_package(

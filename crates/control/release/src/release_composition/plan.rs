@@ -37,7 +37,7 @@ pub(super) fn built_component(
     entry: &wamn_schema_generator::build_record::BuildComponent,
     bytes: &[u8],
 ) -> Result<SelectedComponentArtifact, CompositionError> {
-    let digest = wamn_engine::component_admission::component_digest(bytes);
+    let digest = wamn_digest::bytes_sha256(bytes);
     if digest != entry.sha256 {
         return Err(CompositionError::invalid(
             "read built component",

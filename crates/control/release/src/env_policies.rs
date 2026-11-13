@@ -10,12 +10,12 @@
 
 use anyhow::Context as _;
 use tokio_postgres::Row;
-use wamn_control_registry::{DurabilityClass, Env, EnvPolicy, RecoveryDomain};
+use wamn_control_registry::{Env, EnvPolicy, RecoveryDomain};
 
 /// Map one `select_env_policies_sql` / `select_env_policy_sql` row into an
 /// [`EnvPolicy`]. Column order: `name, recovery_domain::text, promotion_rank,
 /// instances, storage, cpu, memory, image, backup_cadence, wal_retention,
-/// hibernation, durability_class`.
+/// hibernation`.
 pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
     let recovery_text: String = row.get(1);
     let recovery_domain: RecoveryDomain =
@@ -32,8 +32,6 @@ pub fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
         backup_cadence: row.get(8),
         wal_retention: row.get(9),
         hibernation: row.get(10),
-        durability_class: DurabilityClass::from_sql(row.get::<_, &str>(11))
-            .context("invalid env-policy durability_class")?,
     })
 }
 
@@ -52,49 +50,4 @@ pub async fn read_env_policy(
         .await
         .context("select env_policy")?;
     rows.first().map(env_policy_from_row).transpose()
-}
-
-/// Observe one complete policy without mutating a pre-durability registry.
-/// Older rows receive the same `standard` value that the additive carrier
-/// migration would persist, so their canonical policy identity is stable
-/// across that migration.
-pub async fn observe_env_policy(
-    client: &tokio_postgres::Client,
-    org: &str,
-    name: &str,
-) -> anyhow::Result<Option<EnvPolicy>> {
-    let durability_present = env_policy_durability_carrier_present(client).await?;
-    if durability_present {
-        return read_env_policy(client, org, name).await;
-    }
-    let rows = client
-        .query(
-            "SELECT name, recovery_domain::text, promotion_rank, instances, \
-                    storage, cpu, memory, image, backup_cadence, wal_retention, \
-                    hibernation, 'standard'::text \
-               FROM registry.env_policies WHERE org = $1 AND name = $2",
-            &[&org, &name],
-        )
-        .await
-        .context("observe pre-durability env_policy")?;
-    rows.first().map(env_policy_from_row).transpose()
-}
-
-async fn env_policy_durability_carrier_present(
-    client: &tokio_postgres::Client,
-) -> anyhow::Result<bool> {
-    client
-        .query_one(
-            "SELECT EXISTS ( \
-               SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
-                WHERE attribute.attrelid = \
-                        pg_catalog.to_regclass('registry.env_policies') \
-                  AND attribute.attname = 'durability_class' \
-                  AND attribute.attnum > 0 \
-                  AND NOT attribute.attisdropped)",
-            &[],
-        )
-        .await
-        .context("observe registry env-policy durability carrier")
-        .map(|row| row.get(0))
 }

@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use syn::ext::IdentExt as _;
 use syn::parse::Parser as _;
 use syn::visit::Visit as _;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 
 use crate::materialize::{GENERATOR_ID, TOOLCHAIN_ID};
-use wamn_execution_contract::bytes_sha256;
+use wamn_digest::bytes_sha256;
 
 /// The build record's file name in a package's build output directory.
 pub const BUILD_RECORD_FILE: &str = "build.json";
@@ -41,7 +41,8 @@ const WORKSPACE_LOCK: &str = "../Cargo.lock";
 /// against an older interface.
 const PLATFORM_INPUTS: &[&str] = &[
     "platform/data",
-    "platform/execution/contract",
+    "../crates/platform/digest",
+    "../crates/platform/scalar",
     "platform/execution/jsonata",
 ];
 

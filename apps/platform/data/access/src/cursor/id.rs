@@ -3,7 +3,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_postgres_statements::Uuid;
 
 use super::{Direction, Key, VERSION};

@@ -1,5 +1,7 @@
 //! Password endpoints share bounded work, database throttling, and session authority.
 
+use wamn_identity_protocol::PrincipalId;
+
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -18,7 +20,7 @@ use tokio_postgres::Client;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
 use wamn_platform_identity::{
-    IdentityErrorType, PrincipalId,
+    IdentityErrorType,
     control::{control_audience, control_audience_org, control_orgs_page},
     create_or_reuse_user,
     paging::{ListPage, Order},
@@ -68,17 +70,7 @@ impl State {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InvitationRequest {
-    principal_id: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UserRequest {
-    email: String,
-    display_name: String,
-}
+use wamn_identity_protocol::wire::{InvitationRequest, UserRequest, UserResponse};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnrollmentRequest {
@@ -147,7 +139,7 @@ fn discovery_page(
     ListPage::new(
         input,
         "/password/environments",
-        serde_json::json!({"principal":principal.as_str(), "org":scope.org, "project":scope.project}),
+        serde_json::json!({"principal":principal.to_string().as_str(), "org":scope.org, "project":scope.project}),
         Order::Audience,
     )
 }
@@ -229,7 +221,7 @@ struct ResetRequest {
 
 #[derive(Serialize)]
 struct RenewableResponse<'a> {
-    sub: &'a str,
+    sub: &'a PrincipalId,
     access_token: &'a str,
     token_type: &'static str,
     expires_at: i64,
@@ -239,7 +231,7 @@ struct RenewableResponse<'a> {
 
 #[derive(Serialize)]
 struct CookieResponse<'a> {
-    sub: &'a str,
+    sub: &'a PrincipalId,
     expires_at: i64,
     login_expires_at: i64,
 }
@@ -327,10 +319,8 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
                 return invalid();
             };
-            let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
-                return invalid();
-            };
-            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
+            let principal = request.principal_id;
+            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'", &[&principal.to_string().as_str()]).await else { return unavailable(); };
             let Some(row) = row else {
                 tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
                 return invalid();
@@ -350,7 +340,7 @@ async fn handle(
                 .mail
                 .invite(
                     &email,
-                    principal.as_str(),
+                    principal.to_string().as_str(),
                     invitation.secret(),
                     invitation.expires_at(),
                 )
@@ -364,7 +354,7 @@ async fn handle(
                     let _ = tx
                         .execute(
                             "SELECT set_config('app.user_id', $1, true)",
-                            &[&actor.as_str()],
+                            &[&actor.to_string().as_str()],
                         )
                         .await;
                     if tx.execute("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE token_hash = $1 AND consumed_at IS NULL", &[&hash]).await.is_ok() { let _ = tx.commit().await; }
@@ -558,7 +548,7 @@ async fn handle(
             if tx
                 .execute(
                     "SELECT set_config('app.user_id',$1,true)",
-                    &[&principal.principal().id().as_str()],
+                    &[&principal.principal().id().to_string().as_str()],
                 )
                 .await
                 .is_err()
@@ -577,7 +567,12 @@ async fn handle(
                 Ok(None) => return session::unauthorized(),
                 Err(_) => return unavailable(),
             };
-            let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
+            let authority = wamn_identity_protocol::token::SessionAuthority::Login(
+                match renewal.login.id.parse() {
+                    Ok(id) => id,
+                    Err(_) => return unavailable(),
+                },
+            );
             let claims = match session::claims_for_audience(
                 inner, &tx, &principal, &target, authority,
             )
@@ -669,7 +664,7 @@ async fn handle(
                 {
                     let hash = Sha256::digest(token.secret().as_bytes()).to_vec();
                     if let Ok(tx) = database.client.transaction().await
-                        && tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor.as_str()]).await.is_ok()
+                        && tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor.to_string().as_str()]).await.is_ok()
                         && tx.execute("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL", &[&hash]).await.is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
@@ -765,7 +760,12 @@ async fn handle(
                 }
                 Err(_) => return unavailable(),
             };
-            let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
+            let authority = wamn_identity_protocol::token::SessionAuthority::Login(
+                match renewal.login.id.parse() {
+                    Ok(id) => id,
+                    Err(_) => return unavailable(),
+                },
+            );
             let claims = match session::claims_for_audience(
                 inner, &tx, &principal, &target, authority,
             )
@@ -789,7 +789,7 @@ fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> 
 
 async fn finish_session(
     tx: tokio_postgres::Transaction<'_>,
-    mut claims: wamn_session::token::SessionClaims,
+    mut claims: wamn_identity_protocol::token::SessionClaims,
     renewal: password_login::Renewal,
     started_at: i64,
     carrier: Carrier,
@@ -984,7 +984,7 @@ async fn enrollment_refusal(
         match client
             .query_opt(
                 "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
-                &[&principal.as_str()],
+                &[&principal.to_string().as_str()],
             )
             .await
         {
@@ -1040,16 +1040,16 @@ async fn create_user(
         return unavailable();
     }
     let mut drops = AuthDrops::default();
-    drops.identity(account.principal_id.as_str());
+    drops.identity(account.principal_id.to_string().as_str());
     changes.publish(drops).await;
-    let body = serde_json::json!({
-        "principal_id": account.principal_id.as_str(),
-        "enrolled": account.enrolled,
-    });
+    let body = UserResponse {
+        principal_id: account.principal_id,
+        enrolled: account.enrolled,
+    };
     response(
         StatusCode::OK,
         "application/json",
-        body.to_string().into_bytes(),
+        serde_json::to_vec(&body).expect("user response"),
     )
 }
 
@@ -1446,7 +1446,7 @@ mod tests {
             .unwrap();
         let reply = client
             .post(format!("{endpoint}/invitations"))
-            .json(&json!({"principal_id":alice.id().as_str()}))
+            .json(&json!({"principal_id":alice.id().to_string().as_str()}))
             .send()
             .await
             .unwrap();
@@ -1463,11 +1463,11 @@ mod tests {
             .find_map(|l| l.strip_prefix("Invitation code: "))
             .and_then(|code| code.split_once(':').map(|(_, secret)| secret))
             .unwrap();
-        let reply = client.post(format!("{endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
+        let reply = client.post(format!("{endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().to_string().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
         assert_eq!(reply.status(), 204);
         let reply = client
             .post(format!("{endpoint}/invitations"))
-            .json(&json!({"principal_id":bob.id().as_str()}))
+            .json(&json!({"principal_id":bob.id().to_string().as_str()}))
             .send()
             .await
             .unwrap();
@@ -1515,11 +1515,11 @@ mod tests {
                 (200, json!({"principal_id": carol, "enrolled": false})),
                 (
                     200,
-                    json!({"principal_id": alice.id().as_str(), "enrolled": true})
+                    json!({"principal_id": alice.id().to_string().as_str(), "enrolled": true})
                 ),
                 (
                     200,
-                    json!({"principal_id": bob.id().as_str(), "enrolled": false})
+                    json!({"principal_id": bob.id().to_string().as_str(), "enrolled": false})
                 ),
                 (
                     400,

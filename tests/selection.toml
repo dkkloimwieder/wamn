@@ -12,39 +12,26 @@ targets = [
   { workspace="root", package="wamn-ctl", target="test:reset_lock_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:platform_update", tier="live-postgres" },
   { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
-  { workspace="root", package="wamn-authoring-model", target="lib:wamn_authoring_model", tier="contract" },
-  { workspace="root", package="wamn-authoring-model", target="test:contract", tier="contract" },
   { workspace="root", package="wamn-bench", target="bin:wamn-bench", tier="contract" },
   { workspace="root", package="wamn-catalog", target="lib:wamn_catalog", tier="contract" },
-  { workspace="root", package="wamn-catalog", target="test:identity", tier="contract" },
   { workspace="root", package="wamn-catalog", target="test:record_history", tier="live-postgres" },
   { workspace="root", package="wamn-catalog", target="test:serving_manifest_digest", tier="contract" },
   { workspace="root", package="wamn-cdc-reader", target="bin:wamn-cdc-reader", tier="live-nats" },
   { workspace="root", package="wamn-cdc-reader", target="lib:wamn_cdc_reader", tier="live-nats" },
   { workspace="root", package="wamn-cdc-reader", target="test:event_reader_live", tier="live-nats" },
-  { workspace="root", package="wamn-client", target="lib:wamn_client", tier="contract" },
-  { workspace="root", package="wamn-client", target="test:captured", tier="contract" },
-  { workspace="root", package="wamn-client", target="test:generated_schema", tier="contract" },
-  { workspace="root", package="wamn-client", target="test:invoke", tier="contract" },
-  { workspace="root", package="wamn-client", target="test:request", tier="contract" },
-  { workspace="root", package="wamn-client", target="test:session", tier="contract" },
   { workspace="root", package="wamn-component-composer", target="lib:wamn_component_composer", tier="contract" },
   { workspace="root", package="wamn-component-policy", target="lib:wamn_component_policy", tier="contract" },
   { workspace="root", package="wamn-component-virtualizer", target="bin:wamn-component-virtualizer", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="bin:wamn-benchmark-gate", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="lib:wamn_conformance_tests", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:capability_registry", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:chart_seam_governance", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:component_export_index", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:contract_diff", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:cranelift_dev", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:delivery_native_build", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:package_build", tier="live-postgres" },
   { workspace="root", package="wamn-conformance-tests", target="test:packages_alone", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:registry_image_archive", tier="kind" },
   { workspace="root", package="wamn-conformance-tests", target="test:repo_lint", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_changes", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
@@ -123,6 +110,7 @@ targets = [
   { workspace="root", package="wamn-ctl", target="bin:wamn-ctl-ops", tier="unit" },
   { workspace="root", package="wamn-ctl", target="lib:wamn_ctl", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:dev_command", tier="contract" },
+  { workspace="root", package="wamn-ctl", target="test:read_query", tier="unit" },
   { workspace="root", package="wamn-ctl", target="test:identity_issuer_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:pat_bootstrap_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:platform_ui_live", tier="live-nats" },
@@ -142,8 +130,6 @@ targets = [
   { workspace="root", package="wamn-execution-host", target="test:control_route_live", tier="live-nats" },
   { workspace="root", package="wamn-execution-host", target="test:files_live", tier="live-postgres" },
   { workspace="root", package="wamn-execution-host", target="test:host_route_live", tier="live-postgres" },
-  { workspace="root", package="wamn-gate-harness", target="lib:wamn_gate_harness", tier="contract" },
-  { workspace="root", package="wamn-gates", target="bin:wamn-gates", tier="contract" },
   { workspace="root", package="wamn-host", target="bin:wamn-host", tier="live-nats" },
   { workspace="root", package="wamn-host", target="test:native_descriptor_limits", tier="contract" },
   { workspace="root", package="wamn-host", target="test:native_lifecycle_live", tier="live-nats" },
@@ -157,7 +143,6 @@ targets = [
   { workspace="root", package="wamn-number-pattern", target="lib:wamn_number_pattern", tier="unit" },
   { workspace="root", package="wamn-package-artifact", target="lib:wamn_package_artifact", tier="contract" },
   { workspace="root", package="wamn-package-artifact", target="test:registry_credentials", tier="contract" },
-  { workspace="root", package="wamn-pg-core", target="lib:wamn_pg_core", tier="contract" },
   { workspace="root", package="wamn-platform-identity", target="lib:wamn_platform_identity", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:auth_drops_live", tier="live-nats" },
   { workspace="root", package="wamn-platform-identity", target="test:connection_drops_live", tier="live-nats" },
@@ -173,10 +158,10 @@ targets = [
   { workspace="root", package="wamn-platform-identity", target="test:pat_live", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:session_keys_live", tier="live-postgres" },
   { workspace="root", package="wamn-platform-identity", target="test:session_token", tier="contract" },
-  { workspace="root", package="wamn-project-state", target="lib:wamn_project_state", tier="live-postgres" },
-  { workspace="root", package="wamn-project-state", target="test:authority", tier="live-postgres" },
-  { workspace="root", package="wamn-project-state", target="test:connections", tier="live-postgres" },
-  { workspace="root", package="wamn-project-state", target="test:schema", tier="live-postgres" },
+  { workspace="root", package="wamn-identity-protocol", target="lib:wamn_identity_protocol", tier="contract" },
+  { workspace="root", package="wamn-platform-identity", target="test:project_authority", tier="live-postgres" },
+  { workspace="root", package="wamn-platform-identity", target="test:project_connections", tier="live-postgres" },
+  { workspace="root", package="wamn-platform-identity", target="test:project_schema", tier="live-postgres" },
   { workspace="root", package="wamn-receiving-tests", target="lib:wamn_receiving_tests", tier="live-nats" },
   { workspace="root", package="wamn-router", target="lib:wamn_router", tier="unit" },
   { workspace="root", package="wamn-router", target="test:route", tier="unit" },
@@ -203,11 +188,7 @@ targets = [
   { workspace="root", package="wamn-runtime", target="test:session_route_authentication", tier="live-postgres" },
   { workspace="root", package="wamn-runtime", target="test:session_verifier", tier="contract" },
   { workspace="root", package="wamn-runtime", target="test:sqlx_transaction_live", tier="live-postgres" },
-  { workspace="root", package="wamn-scenario-worker", target="bin:wamn-scenario-worker", tier="live-postgres" },
-  { workspace="root", package="wamn-scenario-worker", target="lib:wamn_scenario_worker", tier="live-postgres" },
-  { workspace="root", package="wamn-scenario-worker", target="test:management_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-control", target="lib:wamn_schema_control", tier="contract" },
-  { workspace="root", package="wamn-schema-control", target="test:run_grant_confinement", tier="live-postgres" },
   { workspace="root", package="wamn-schema-generator", target="lib:wamn_schema_generator", tier="live-postgres" },
   { workspace="root", package="wamn-schema-generator", target="test:build_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-generator", target="test:client_component", tier="contract" },
@@ -228,18 +209,17 @@ targets = [
   { workspace="root", package="wamn-schema-introspection", target="test:migration_policy", tier="contract" },
   { workspace="root", package="wamn-schema-introspection", target="test:postgres_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:provenance_live", tier="live-postgres" },
-  { workspace="root", package="wamn-session", target="test:file_keys", tier="contract" },
+  { workspace="root", package="wamn-identity-protocol", target="test:file_keys", tier="contract" },
   { workspace="root", package="wamn-submodule-check", target="bin:wamn-submodule-check", tier="contract" },
-  { workspace="root", package="wamn-system-tests", target="lib:wamn_system_tests", tier="contract" },
-  { workspace="root", package="wamn-system-tests", target="test:deployment_declarations", tier="contract" },
   { workspace="root", package="wamn-test-infrastructure", target="bin:wamn-test-postgres", tier="live-postgres" },
   { workspace="root", package="wamn-test-infrastructure", target="lib:wamn_test_infrastructure", tier="live-postgres" },
   { workspace="root", package="wamn-test-postgres", target="lib:wamn_test_postgres", tier="live-postgres" },
   { workspace="root", package="wamn-wms-tests", target="lib:wamn_wms_tests", tier="live-nats" },
   { workspace="root", package="wamn-workflow", target="lib:wamn_workflow", tier="live-postgres" },
-  { workspace="root", package="wamn-workflow", target="test:port_constant_agreement", tier="contract" },
   { workspace="root", package="wamn-workflow", target="test:schedule_decisions", tier="unit" },
   { workspace="root", package="wamn-workflow", target="test:wiring_lowering", tier="contract" },
+  { workspace="root", package="wamn-digest", target="lib:wamn_digest", tier="contract" },
+  { workspace="root", package="wamn-scalar", target="lib:wamn_scalar", tier="contract" },
   { workspace="apps", package="fixture", target="cdylib:fixture", tier="contract" },
   { workspace="apps", package="samples", target="cdylib:samples", tier="unit" },
   { workspace="apps", package="wms", target="cdylib:wms", tier="contract" },
@@ -258,7 +238,6 @@ targets = [
   { workspace="apps", package="wamn-event-reg", target="lib:wamn_event_reg", tier="contract" },
   { workspace="apps", package="wamn-event-reg", target="test:event_reg", tier="contract" },
   { workspace="apps", package="wamn-event-wire", target="lib:wamn_event_wire", tier="contract" },
-  { workspace="apps", package="wamn-execution-contract", target="lib:wamn_execution_contract", tier="contract" },
   { workspace="apps", package="wamn-integration", target="cdylib:wamn_integration", tier="contract" },
   { workspace="apps", package="wamn-materializer", target="lib:wamn_materializer", tier="contract" },
   { workspace="apps", package="wamn-postgres-statements", target="lib:wamn_postgres_statements", tier="contract" },
@@ -560,11 +539,6 @@ target = ["lib:wamn_control_provision", "test:deploy_sql_authority"]
 prerequisites = ["fixture"]
 
 [[preparation]]
-packages = ["wamn-client"]
-target = ["test:generated_schema"]
-prerequisites = ["fixture-components"]
-
-[[preparation]]
 packages = ["wamn-schema-generator"]
 target = ["test:platform_generation", "test:client_plan", "test:client_projection", "test:client_component", "test:client_ts_emitter"]
 prerequisites = ["fixture"]
@@ -860,22 +834,6 @@ inputs = ["^crates/control/dev/tests/support/platform_upgrade\\.rs$"]
 execution = "libtest"
 mode = "local"
 select_packages = ["wamn-release-control", "wamn-environment-control", "wamn-dev-control"]
-ignored = true
-resource_lock = ""
-
-[[suites]]
-id = "registry-image-kind"
-tier = "kind"
-workspace = "root"
-package = "wamn-conformance-tests"
-target = ["test:registry_image_archive"]
-tests = ["kind_nodes_import_the_pinned_digest_and_hold_no_credential"]
-features = []
-prerequisites = ["docker", "kind", "helm", "kubectl"]
-inputs = []
-execution = "libtest"
-mode = "local"
-select_packages = ["wamn-conformance-tests"]
 ignored = true
 resource_lock = ""
 

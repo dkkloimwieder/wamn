@@ -39,8 +39,8 @@ required-features = ["ops"]
 
 [dependencies]
 wamn-broker = { workspace = true }
+wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
-wamn-execution-contract = { workspace = true }
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed
@@ -86,16 +86,17 @@ wamn-workflow = { workspace = true }
 tokio-postgres = { workspace = true }
 
 [dev-dependencies]
+wamn-identity-protocol = { workspace = true }
 wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 wamn-environment-control = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }

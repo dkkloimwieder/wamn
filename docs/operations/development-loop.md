@@ -299,7 +299,6 @@ A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
-The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
 The `wamn build` of a package builds each palette component that a wiring of the package names.
 The loop admits it into the scope of that package, with the platform packages that its declaration states.

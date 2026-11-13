@@ -68,7 +68,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
-         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_http_admitter'))",
+         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))",
         &[],
     ).await?.get(0);
     anyhow::ensure!(
@@ -79,7 +79,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
         .batch_execute(
             "CREATE EXTENSION pg_stat_statements; \
          CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+          \
          CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;
@@ -170,7 +170,7 @@ fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Va
         "host": "purchase.example.test", "path": path, "method": "POST"
     }});
     json!({"type": "http", "package-id": "session_test", "component": "purchase",
-        "operation": operation, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+        "operation": operation, "definition-hash": wamn_digest::canonical_json_sha256(&definition),
         "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": operation})
 }
 
@@ -185,7 +185,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
         .map(|operation| {
             (
                 (*operation).to_owned(),
-                json!({"registered-operation": operation, "permissions": [operation]}),
+                json!({"registered-operation": operation, "input-ports": [], "output-ports": [], "parameters": []}),
             )
         })
         .collect();
@@ -195,8 +195,8 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
-        "components": [{"package-id": "session_test", "operations": operations,
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
+        "components": [{"package-id": "session_test",
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": operations, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
@@ -205,12 +205,12 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
             WRITE_ROUTE: route_attachment(WRITE_ROUTE, "/purchase/write", WRITE, modes),
             ATTACHMENT: {"type":"http","package-id":"session_test","component":"purchase","operation":READ,
-                "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
+                "definition-hash":wamn_digest::canonical_json_sha256(&definition),
                 "definition":definition,"auth-policy":{"modes":modes},"registered-operation":READ}}
 
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "session route test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             [(
@@ -651,7 +651,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
             "{field}"
         );
     }
-    for (field, value) in [("alg", "EdDSA"), ("typ", "JWT"), ("kid", "unknown-key")] {
+    for (field, value) in [("alg", "Ed25519"), ("typ", "JWT"), ("kid", "unknown-key")] {
         let mut bad = header();
         bad[field] = json!(value);
         assert_eq!(

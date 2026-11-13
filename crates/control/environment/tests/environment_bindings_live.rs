@@ -268,7 +268,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
     let mut system = connect(system_database.url()).await;
     seed(&mut system).await;
     system.batch_execute("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
-    let environment_database = wamn_project_state::test_database::tenant_platform();
+    let environment_database = wamn_platform_identity::test_database::tenant_platform();
     let mut environment = connect(environment_database.url()).await;
     environment
         .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
@@ -682,13 +682,13 @@ async fn publish_refuses_write_interfaces_outside_the_exports() {
 #[tokio::test]
 async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let client = connect(database.url()).await;
     client
         .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
         .await
         .unwrap();
-    client.batch_execute(&format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", wamn_pg_core::quote_ident(database.name()))).await.unwrap();
+    client.batch_execute(&format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", postgres_protocol::escape::escape_identifier(database.name()))).await.unwrap();
     let fingerprint = format!("sha256:{}", "a".repeat(64));
     client
         .batch_execute(&format!(

@@ -21,7 +21,7 @@ use wamn_engine::router_delivery::{
     SourceRef, resolve_authorized_host_route,
 };
 use wamn_identity_client::PatIssuerConfig;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_platform_identity::paging::Order;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
@@ -204,7 +204,7 @@ impl HostRouteDelivery {
                 });
         }
         let principal: PrincipalId = caller.principal_id().parse().map_err(
-            |error: wamn_platform_identity::IdentityError| Refusal::Failed(error.into()),
+            |error: wamn_identity_protocol::ParseIdentityError| Refusal::Failed(error.into()),
         )?;
         match (attachment.route.handler, &self.handlers) {
             (
@@ -344,7 +344,7 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
     let registered = manifest
         .components
         .iter()
-        .flat_map(|component| component.operations.values())
+        .flat_map(|component| component.descriptor.operations.values())
         .filter_map(|operation| operation.registered_operation.as_deref())
         .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned());
     let host = manifest

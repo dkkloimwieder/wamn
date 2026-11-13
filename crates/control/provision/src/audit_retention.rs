@@ -9,7 +9,7 @@
 //! The same job prunes successful write-log claims after 30 days and keeps
 //! uncertain claims. The write log provides idempotency protection.
 
-use wamn_pg_core::{quote_ident, quote_literal};
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 
 use crate::workload_role::AUDIT_RETENTION_ROLE;
 
@@ -92,7 +92,7 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
 pub fn reconcile_audit_retention_grants_sql() -> String {
     let read_columns = AUDIT_RETENTION_READ_COLUMNS
         .iter()
-        .map(|column| quote_ident(column))
+        .map(|column| escape_identifier(column))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -150,7 +150,7 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
              EXECUTE format('GRANT DELETE, SELECT (created_at, result) ON TABLE platform.write_log TO %I', role_name); \
            END IF; \
          END $audit_retention_grants$;",
-        role = quote_literal(AUDIT_RETENTION_ROLE),
+        role = escape_literal(AUDIT_RETENTION_ROLE),
         targets = AUDIT_RETENTION_TARGETS_SQL.trim(),
     )
 }

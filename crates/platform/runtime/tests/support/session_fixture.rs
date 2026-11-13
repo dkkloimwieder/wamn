@@ -13,8 +13,8 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
+use wamn_identity_protocol::verifier::{SessionTestClock, SessionVerifier};
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig, TestClock};
-use wamn_session::verifier::{SessionTestClock, SessionVerifier};
 
 pub(super) const ISSUER: &str = "https://identity.example.test/issuer";
 pub(super) const ORG: &str = "org-a";
@@ -27,12 +27,12 @@ fn pair() -> Ed25519KeyPair {
 
 fn jwks() -> Value {
     json!({"keys": [{"kid": "key-one", "kty": "OKP", "crv": "Ed25519",
-        "alg": "Ed25519", "use": "sig",
+        "alg": "EdDSA", "use": "sig",
         "x": URL_SAFE_NO_PAD.encode(pair().public_key().as_ref())}]})
 }
 
 pub(super) fn header() -> Value {
-    json!({"alg": "Ed25519", "typ": "wamn-session+jwt", "kid": "key-one"})
+    json!({"alg": "EdDSA", "typ": "wamn-session+jwt", "kid": "key-one"})
 }
 
 pub(super) fn claims() -> Value {

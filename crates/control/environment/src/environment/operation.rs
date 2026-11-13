@@ -90,7 +90,7 @@ pub struct Request<'a> {
 pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
     let actor = std::env::var("WAMN_DEPLOY_ACTOR")
         .context("authenticated deploy actor is absent")?
-        .parse::<wamn_platform_identity::PrincipalId>()
+        .parse::<wamn_identity_protocol::PrincipalId>()
         .context("authenticated deploy actor is not a principal id")?;
     ensure!(
         matches!(
@@ -165,7 +165,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
                 &platform,
                 file,
                 request.release.context("deploy requires a release")?,
-                Some(actor.as_str()),
+                Some(actor.to_string().as_str()),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
@@ -178,7 +178,7 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
                     .application
                     .context("rollback requires an application")?,
                 super::document::SelectionChange::Rollback(request.release),
-                Some(actor.as_str()),
+                Some(actor.to_string().as_str()),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))

@@ -6,12 +6,12 @@ use wamn_broker::auth_changes::AuthDrops;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
+use wamn_identity_protocol::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
-    IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_service, create_user,
-    disable_principal, issue_pat, list_pats, revoke_pat,
+    IdentityErrorType, PrincipalType, authenticate_pat, create_service, disable_principal,
+    issue_pat, list_pats, revoke_pat,
 };
-
-use wamn_session::PAT_TOKEN_PREFIX;
 
 const TTL: Duration = Duration::from_secs(3600);
 
@@ -49,17 +49,17 @@ async fn platform_pat_round_trip_on_postgres() {
 
     // Issuance binds wamn:provisioning in its own transaction.
     let transaction = provisioning_transaction(&mut client).await;
-    let user = create_user(
+    let user = create_service(
         &transaction,
-        "author@example.com",
-        "author@example.com",
+        "author",
         "Widget Author",
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
-    .expect("create user principal");
+    .expect("create service principal");
     let issued = issue_pat(&transaction, user.id(), " laptop ", TTL)
         .await
-        .expect("issue user token from trusted context");
+        .expect("issue service token from trusted context");
     transaction.commit().await.expect("commit the issuance");
     let issued_stamps = pat_stamps(&client, issued.record().prefix()).await;
     assert_eq!(issued_stamps.created_by, provisioning);
@@ -380,11 +380,11 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
             .await
             .expect_err("a platform principal must not gain a token")
             .error_type(),
-        IdentityErrorType::Database
+        IdentityErrorType::NotFound
     );
     for (kind, code) in [
         ("platform", SqlState::CHECK_VIOLATION),
-        ("user", SqlState::FOREIGN_KEY_VIOLATION),
+        ("user", SqlState::CHECK_VIOLATION),
         ("service", SqlState::FOREIGN_KEY_VIOLATION),
     ] {
         let error = client
@@ -459,9 +459,9 @@ async fn token_rows_refuse_malformed_values(
                 &format!(
                     "INSERT INTO identity.pats \
                        (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-                     VALUES ($1::text::uuid, 'user', $2, $3, 'malformed', {expiry})"
+                     VALUES ($1::text::uuid, 'service', $2, $3, 'malformed', {expiry})"
                 ),
-                &[&principal.as_str(), &token_prefix, &token_hash],
+                &[&principal.to_string().as_str(), &token_prefix, &token_hash],
             )
             .await
             .expect_err("a malformed token row must refuse");
@@ -470,7 +470,7 @@ async fn token_rows_refuse_malformed_values(
     let error = client
         .execute(
             "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .expect_err("a principal that holds a token must not be deleted");

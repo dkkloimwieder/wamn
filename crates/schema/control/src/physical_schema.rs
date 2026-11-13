@@ -5,10 +5,10 @@ pub mod history;
 use crate::MigrationSource;
 use history::{generated_function_name, log_function_sql, stamp_function_sql};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use wamn_catalog::manifest::{ModelDeclaration, PackageManifest, RecordHistoryColumn};
+use wamn_digest::Hasher;
 use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
 
 pub const PHYSICAL_SCHEMA_PATH: &str = "generated/physical-schema.json";
@@ -51,7 +51,7 @@ impl PhysicalSchema {
     /// Hash each owner and SQL byte in execution order with length delimiters.
     /// A match compares recipes, not the live database or SQL equivalence.
     pub fn fingerprint(&self) -> String {
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::new();
         for statement in &self.statements {
             let owner = match &statement.owner {
                 ExecutionOwner::Platform => "platform",
@@ -66,11 +66,7 @@ impl PhysicalSchema {
                 hash.update(bytes);
             }
         }
-        let mut digest = String::from("sha256:");
-        for byte in hash.finalize() {
-            write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        digest
+        wamn_digest::format_sha256(&hash.finalize())
     }
 }
 
@@ -132,7 +128,7 @@ fn quoted_name(name: &str) -> String {
     {
         name.to_owned()
     } else {
-        wamn_pg_core::quote_ident(name)
+        postgres_protocol::escape::escape_identifier(name)
     }
 }
 
@@ -198,11 +194,11 @@ pub fn history_triggers(
             "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{stamp_ident}()"))
     });
     let log = model.log_retention().map(|retention| {
-        let history = format!("{}.{}", wamn_pg_core::quote_ident(&model.schema),
-            wamn_pg_core::quote_ident(&history_table_name(&model.table)));
+        let history = format!("{}.{}", postgres_protocol::escape::escape_identifier(&model.schema),
+            postgres_protocol::escape::escape_identifier(&history_table_name(&model.table)));
         (log_function_sql(&log_ident, &history, columns), "$log$", format!(
             "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{log_ident}({})",
-            wamn_pg_core::quote_literal(retention)))
+            postgres_protocol::escape::escape_literal(retention)))
     });
     Ok([
         HistoryTrigger {
@@ -224,8 +220,8 @@ pub fn history_triggers(
 pub fn history_table_sql(model: &ModelDeclaration) -> String {
     format!(
         "SELECT wamn_history.create_history_table({}, {}, false)",
-        wamn_pg_core::quote_literal(&model.schema),
-        wamn_pg_core::quote_literal(&model.table)
+        postgres_protocol::escape::escape_literal(&model.schema),
+        postgres_protocol::escape::escape_literal(&model.table)
     )
 }
 

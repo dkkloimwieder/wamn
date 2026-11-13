@@ -48,26 +48,25 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     }});
     let attachment: Value = json!({"type": "http", "package-id": "status_test",
         "component": "purchase", "operation": READ,
-        "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
+        "definition-hash": wamn_digest::canonical_json_sha256(&definition),
         "definition": definition, "auth-policy": {"modes": ["none"]}});
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "status_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "status_test",
             "descriptor": {"component": "purchase", "interface-version": "0.1.0",
-                "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {},
-                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
-            "operations": {READ: {"registered-operation": READ, "permissions": [READ]}}}],
+                "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []}},
+                "imports": [], "imports-fingerprint": "", "effects": [], "connections": []}}],
         "routes": [{"package-id": "status_test", "component": "purchase", "operation": READ,
             "type": "get"}],
         "attachments": {ROUTE: attachment, "purchase-http": {"type":"http","package-id":"status_test",
             "component":"purchase","operation":READ,
-            "definition-hash":wamn_execution_contract::canonical_json_sha256(&wiring_route),
+            "definition-hash":wamn_digest::canonical_json_sha256(&wiring_route),
             "definition":wiring_route,"auth-policy":{"modes":["none"]}}}
 
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        &wamn_digest::canonical_json_bytes(&manifest),
         "environment status test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             [(
@@ -112,8 +111,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOBYPASSRLS; \
+             \
              CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

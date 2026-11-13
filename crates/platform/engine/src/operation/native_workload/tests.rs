@@ -31,7 +31,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
     ))
     .expect("valid scalar loader fixture");
     let imports: Vec<String> = import.into_iter().map(str::to_owned).collect();
-    let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
+    let imports_fingerprint = wamn_digest::canonical_json_sha256(
         &serde_json::to_value(&imports).expect("import list serializes"),
     );
     NativeComponent {
@@ -55,7 +55,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                     statements: BTreeMap::new(),
                 },
             )]),
-            component_digest: crate::component_admission::component_digest(&bytes),
+            component_digest: wamn_digest::bytes_sha256(&bytes),
             imports,
             imports_fingerprint,
             effects: Vec::new(),
@@ -181,7 +181,7 @@ async fn native_mixed_workload_keeps_each_component_lifetime() {
             (export "{export}" (instance $exports)))"#
         ))
         .expect("counter fixture");
-        input.fact.component_digest = crate::component_admission::component_digest(&input.bytes);
+        input.fact.component_digest = wamn_digest::bytes_sha256(&input.bytes);
         input
     }
 

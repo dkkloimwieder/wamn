@@ -9,8 +9,7 @@
 //! component, interface version and operation, and the graph is judged over
 //! those per-node facts.
 //!
-//! The hash is bound exactly as the graph gate binds it: the gate
-//! produces it, and the control store must hold a green gate report under it.
+//! The release validator produces the hash of the admitted graph.
 //! An exact resubmission converges. Other bytes under the same version refuse.
 //! A version is authored disabled; [`crate::workflow_lifecycle`] enables it.
 //!
@@ -25,10 +24,9 @@
 //! model and uses the registration validator for its operations and condition.
 
 pub(super) mod plan;
-pub(crate) use plan::require_green_report;
 
 use anyhow::Context as _;
-use tokio_postgres::{Client, NoTls, Transaction};
+use tokio_postgres::{NoTls, Transaction};
 use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workflow_schedule};
 
 use std::path::Path;
@@ -75,8 +73,6 @@ pub enum AuthorWorkflowErrorType {
     /// The graph does not resolve against, or is not compatible with, the
     /// serving release.
     Gate,
-    /// No GREEN gate report covers this document's own hash.
-    Report,
     Conflict,
     /// The schedule is not a five-field UTC cron.
     Schedule,
@@ -91,7 +87,6 @@ impl AuthorWorkflowErrorType {
             Self::Storage => "storage",
             Self::Document => "document",
             Self::Gate => "gate",
-            Self::Report => "report",
             Self::Conflict => "conflict",
             Self::Schedule => "schedule",
             Self::Application => "application",
@@ -292,7 +287,7 @@ pub(crate) async fn validate_event_trigger(
         let schema: String = row.get(0);
         let sql = format!(
             "SELECT m.entity_id FROM {}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE m.package_id = $1 AND n.nspname = $2 AND c.relname = m.table_name",
-            wamn_pg_core::quote_ident(&schema)
+            postgres_protocol::escape::escape_identifier(&schema)
         );
         for model in transaction
             .query(&sql, &[&source_package, &schema])
@@ -326,12 +321,8 @@ pub(crate) async fn validate_event_trigger(
     )
 }
 
-/// Gate and append one disabled workflow version in the caller's transaction.
-///
-/// `control` is the CONTROL-database connection the gate report is read on,
-/// as for workflow authoring.
+/// Validate and append one disabled workflow version in the caller's transaction.
 pub async fn author_workflow(
-    control: &Client,
     transaction: &Transaction<'_>,
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
@@ -367,8 +358,6 @@ pub async fn author_workflow(
         document,
     )
     .await?;
-    let verdict = read_gate_verdict(control, &request.env_key(), &hash).await?;
-    require_green_report(verdict, document, &hash)?;
 
     let version = i32::try_from(document.version).map_err(|error| {
         AuthorWorkflowError::with_source(
@@ -439,30 +428,21 @@ pub async fn author_workflow(
     Ok(hash)
 }
 
-/// Author one workflow version over its own project and control connections.
+/// Author one workflow version over its own project connection.
 pub async fn author_workflow_in_databases(
     database_url: &str,
-    control_database_url: &str,
     request: &AuthorWorkflowRequest<'_>,
 ) -> anyhow::Result<DefinitionHash> {
-    let (control, control_connection) = tokio_postgres::connect(control_database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
-        .context("connect to the control store holding the gate reports")?;
-    let control_task = tokio::spawn(control_connection);
-    let (mut client, connection) = match tokio_postgres::connect(database_url, NoTls).await {
-        Ok(opened) => opened,
-        Err(error) => {
-            control_task.abort();
-            return Err(error).context("connect to the project database");
-        }
-    };
+        .context("connect to the project database")?;
     let connection_task = tokio::spawn(connection);
     let authored = async {
         let transaction = client
             .transaction()
             .await
             .context("begin the workflow authorship")?;
-        let hash = author_workflow(&control, &transaction, request).await?;
+        let hash = author_workflow(&transaction, request).await?;
         transaction
             .commit()
             .await
@@ -471,7 +451,6 @@ pub async fn author_workflow_in_databases(
     }
     .await;
     connection_task.abort();
-    control_task.abort();
     authored
 }
 
@@ -500,26 +479,6 @@ pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflo
             error,
         )
     })
-}
-
-pub(crate) async fn read_gate_verdict(
-    control: &Client,
-    env_key: &str,
-    wiring_hash: &DefinitionHash,
-) -> Result<Option<bool>, AuthorWorkflowError> {
-    control
-        .query_one("SELECT set_config('app.env_key', $1, false)", &[&env_key])
-        .await
-        .map_err(|error| storage("claim the gate-report tenant", error))?;
-    let hash = wiring_hash.as_str();
-    let report = control
-        .query_opt(
-            "SELECT passed FROM wamn_run.gate_reports WHERE env_key = $1 AND wiring_hash = $2",
-            &[&env_key, &hash],
-        )
-        .await
-        .map_err(|error| storage("read the wiring's gate report", error))?;
-    Ok(report.map(|row| row.get(0)))
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use anyhow::Context as _;
+use postgres_protocol::escape::escape_identifier;
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 use url::Url;
@@ -19,7 +20,6 @@ use wamn_control_provision::{
     CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, WorkloadRoleScope,
     project_env_database_name, sql, workload_generation_role,
 };
-use wamn_pg_core::quote_ident;
 use wamn_test_infrastructure::locked_database;
 
 /// The generation state with the role's real password state. The test connects
@@ -215,7 +215,7 @@ async fn reset(admin: &Client) -> anyhow::Result<()> {
         admin
             .batch_execute(&format!(
                 "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-                quote_ident(&database(instance))
+                escape_identifier(&database(instance))
             ))
             .await?;
     }
@@ -233,8 +233,8 @@ async fn reset(admin: &Client) -> anyhow::Result<()> {
             admin
                 .batch_execute(&format!(
                     "DROP OWNED BY {}; DROP ROLE {}",
-                    quote_ident(&role),
-                    quote_ident(&role)
+                    escape_identifier(&role),
+                    escape_identifier(&role)
                 ))
                 .await?;
         }
@@ -265,7 +265,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         admin
             .batch_execute(&format!(
                 "CREATE DATABASE {}",
-                quote_ident(&database(instance))
+                escape_identifier(&database(instance))
             ))
             .await?;
     }
@@ -273,7 +273,6 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     project
         .batch_execute(&sql::ensure_app_acl_role_sql())
         .await?;
-    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;").await?;
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;
@@ -284,7 +283,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     project
         .batch_execute(&format!(
             "REVOKE TEMPORARY ON DATABASE {} FROM PUBLIC",
-            quote_ident(&database(INSTANCE))
+            escape_identifier(&database(INSTANCE))
         ))
         .await?;
     // The fixture writes as its test principal, whose rows stamp themselves.

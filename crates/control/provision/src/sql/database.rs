@@ -1,10 +1,10 @@
 //! Database creation, ownership, and extensions.
 
-use super::{DB_OWNER_ROLE, quote_ident};
+use super::{DB_OWNER_ROLE, escape_identifier};
 
 /// Idempotently create or harden the database-owner role [`DB_OWNER_ROLE`] as
 /// NOLOGIN, under the shared `wamn_role_bootstrap` advisory lock — the
-/// [`super::ensure_control_author_acl_role_sql`] shape, so a replay that finds a
+/// shared role bootstrap shape, so a replay that finds a
 /// drifted attribute re-`ALTER`s it instead of reporting success.
 ///
 /// **Zero grants, zero memberships, no generation pair.** The role exists only
@@ -48,8 +48,8 @@ pub fn ensure_db_owner_role_sql() -> &'static str {
 pub fn set_database_owner_sql(database: &str) -> String {
     format!(
         "ALTER DATABASE {db} OWNER TO {owner}",
-        db = quote_ident(database),
-        owner = quote_ident(DB_OWNER_ROLE),
+        db = escape_identifier(database),
+        owner = escape_identifier(DB_OWNER_ROLE),
     )
 }
 
@@ -93,14 +93,19 @@ pub const PLATFORM_EXTENSIONS: [&str; 2] = ["btree_gist", "pg_stat_statements"];
 pub fn install_platform_extensions_sql() -> String {
     PLATFORM_EXTENSIONS
         .iter()
-        .map(|extension| format!("CREATE EXTENSION IF NOT EXISTS {}", quote_ident(extension)))
+        .map(|extension| {
+            format!(
+                "CREATE EXTENSION IF NOT EXISTS {}",
+                escape_identifier(extension)
+            )
+        })
         .collect::<Vec<_>>()
         .join(";\n")
         + ";\n"
 }
 
 pub fn create_database_named_sql(database: &str) -> String {
-    format!("CREATE DATABASE {}", quote_ident(database))
+    format!("CREATE DATABASE {}", escape_identifier(database))
 }
 
 /// `DROP DATABASE IF EXISTS "<database>" WITH (FORCE)`, naming the database
@@ -108,6 +113,6 @@ pub fn create_database_named_sql(database: &str) -> String {
 pub fn drop_database_named_sql(database: &str) -> String {
     format!(
         "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-        quote_ident(database)
+        escape_identifier(database)
     )
 }

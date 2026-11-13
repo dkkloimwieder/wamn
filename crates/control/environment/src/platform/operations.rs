@@ -33,9 +33,7 @@ pub(super) async fn prepare(
         "release-base":format!("{registry}/wamn/releases"),"configuration.json":configuration.to_string(),
         "Chart.yaml":std::fs::read_to_string(chart.directory().join("Chart.yaml"))?,
         "values.yaml":std::fs::read_to_string(chart.directory().join("values.yaml"))?});
-    let digest = wamn_execution_contract::bytes_sha256(
-        &wamn_execution_contract::canonical_json_bytes(&data),
-    );
+    let digest = wamn_digest::bytes_sha256(&wamn_digest::canonical_json_bytes(&data));
     let inputs = format!("wamn-operation-{}-{}", document.org, &digest[7..23]);
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","immutable":true,
         "metadata":{"name":inputs,"namespace":"platform"},"data":data});

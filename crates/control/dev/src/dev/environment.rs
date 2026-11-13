@@ -16,12 +16,11 @@
 
 use std::fmt::Write as _;
 
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::Duration;
 
+use crate::identifier::Identifier;
 use anyhow::Context as _;
 use reqwest::Url;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
@@ -34,7 +33,6 @@ use wamn_environment_control::provision_project_env::{
 };
 use wamn_environment_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_identity_client::PatIssuerConfig;
-use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
 use wamn_control_registry::Template;
@@ -205,15 +203,9 @@ pub async fn provision(
     )?;
 
     reconcile_journey_run_plane(&scope, system_url, &route.database_url).await?;
-    let credentials = prepare_journey_credentials(
-        &scope,
-        system_url,
-        &route.database_url,
-        root,
-        root,
-        "wamn-system",
-    )
-    .await?;
+    let credentials =
+        prepare_journey_credentials(&scope, system_url, &route.database_url, root, "wamn-system")
+            .await?;
     // The template is taken HERE, while the project database is provisioned and
     // still pristine: the loop applies package migrations, the standup does not.
     // A clone of this is what every run starts from.
@@ -435,10 +427,6 @@ async fn prepare_route_database(
         .await
         .context("apply emitted role SQL")?;
     admin
-        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
-        .await
-        .context("ensure the catalog author role")?;
-    admin
         .batch_execute(&format!(
             "{} OWNER wamn_db_owner",
             provision_sql::create_database_named_sql(&database)
@@ -488,8 +476,6 @@ pub struct JourneyCredentials {
     pub administration: String,
     pub identity_reader: String,
     pub connection_reader: String,
-    pub control_author: String,
-    pub management_admitter: String,
 }
 
 /// The email of the journey org's admin, the first user of the store, who
@@ -580,7 +566,7 @@ pub async fn prepare_target_template(
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
             Identifier::new(template.clone())?.quoted(),
-            wamn_pg_core::quote_literal(&fingerprint)
+            postgres_protocol::escape::escape_literal(&fingerprint)
         ))
         .await
         .context("stamp the template with its standup fingerprint")?;
@@ -600,7 +586,7 @@ pub async fn prepare_target_template(
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
             Identifier::new(target)?.quoted(),
-            wamn_pg_core::quote_literal(&marker),
+            postgres_protocol::escape::escape_literal(&marker),
         ))
         .await
         .context("stamp the provisioned local target")?;
@@ -803,7 +789,6 @@ pub async fn prepare_journey_credentials(
     scope: &JourneyScope,
     system_url: &str,
     project_url: &str,
-    root: &Path,
     host_secret_directory: &Path,
     host_secret_namespace: &str,
 ) -> anyhow::Result<JourneyCredentials> {
@@ -896,195 +881,7 @@ pub async fn prepare_journey_credentials(
             "conn-reader",
         )
         .await?,
-        control_author: prepare(
-            scope,
-            WorkloadRoleFamily::ControlAuthor,
-            system_url,
-            None,
-            root,
-            "wamn-system",
-            "control-author",
-        )
-        .await?,
-        management_admitter: prepare(
-            scope,
-            WorkloadRoleFamily::ManagementAdmitter,
-            system_url,
-            Some(project_url),
-            root,
-            "wamn-system",
-            "management-admitter",
-        )
-        .await?,
     })
-}
-
-/// How often readiness retries a connection to the spawned Gate.
-const GATE_READINESS_INTERVAL: Duration = Duration::from_millis(250);
-
-/// How many times readiness retries before it refuses and names the port.
-///
-/// The Gate settles three separate database connections before it listens, so
-/// the bound is generous; what matters is that it is bounded.
-const GATE_READINESS_ATTEMPTS: u32 = 120;
-
-/// One remote-boundary test Gate and the authority it listens on.
-///
-/// The local development coordinator validates authoring in-process. Retained
-/// delivery and authentication tests use this real process to exercise the
-/// authenticated HTTP boundary itself.
-#[derive(Debug)]
-pub struct JourneyManagementGate {
-    child: tokio::process::Child,
-    bind: String,
-}
-
-impl JourneyManagementGate {
-    /// The `host:port` authority the Gate was asked to listen on.
-    ///
-    /// It is what the operator named, not what the kernel picked: a fixed port
-    /// is the whole reason the written configuration keeps working.
-    #[must_use]
-    pub fn bind(&self) -> &str {
-        &self.bind
-    }
-
-    /// Wait for the Gate to exit on its own.
-    pub async fn wait(&mut self) -> anyhow::Result<std::process::ExitStatus> {
-        self.child
-            .wait()
-            .await
-            .context("wait for the spawned management Gate")
-    }
-
-    /// Stop the Gate and reap it.
-    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        self.child
-            .kill()
-            .await
-            .context("stop the spawned management Gate")
-    }
-}
-
-/// Settle the address a remote-boundary test Gate will listen on.
-///
-/// A fixed nameable port is not a preference. The in-process launch could hand
-/// the ephemeral port the kernel picked back to its caller; a spawned child
-/// cannot, and the configuration written from that port outlives the process
-/// that writes it. Port 0 is therefore a refusal, and it names the input.
-pub fn gate_listen_address(bind: &str) -> anyhow::Result<SocketAddr> {
-    let address: SocketAddr = bind
-        .parse()
-        .with_context(|| format!("the management Gate address {bind} is not host:port"))?;
-    anyhow::ensure!(
-        address.port() != 0,
-        "the management Gate needs a fixed nameable port, and {bind} asks the kernel \
-         for an ephemeral one: the configuration written from it outlives the process \
-         that writes it"
-    );
-    Ok(address)
-}
-
-/// Spawn a remote-boundary `wamn-scenario-worker serve` test fixture.
-///
-/// Readiness is a bounded TCP connect against the port the caller named. The
-/// management surface answers `POST /authoring` and 404s everything else, and
-/// an unauthenticated health route added to a production service for a
-/// development readiness poll would be a new attack surface bought with a
-/// convenience — so the poll observes the listener itself (wamn-10yt.10.32).
-///
-/// Every credential-carrying input crosses as an environment variable, never as
-/// an argument: `/proc/<pid>/cmdline` is world-readable and these values carry
-/// passwords, while `/proc/<pid>/environ` is not.
-pub async fn spawn_journey_management_gate(
-    scope: &JourneyScope,
-    scenario_worker_binary: &Path,
-    credentials: &JourneyCredentials,
-    management_admission_database_url: &str,
-    package_registry: &wamn_package_control::package_artifact::PackageRegistry,
-    bind: &str,
-) -> anyhow::Result<JourneyManagementGate> {
-    let address = gate_listen_address(bind)?;
-
-    // REFUSE A PORT SOMEONE ELSE HOLDS, BEFORE SPAWNING. Readiness below is a
-    // bounded TCP connect, and a connect cannot tell this Gate from a stranger:
-    // with the port held, the child dies on `Address already in use` while the
-    // first poll still connects to the other listener and reports ready. The
-    // run then continues past a dead Gate and fails later, somewhere else
-    // (wamn-10yt.10.35).
-    match std::net::TcpListener::bind(address) {
-        Ok(probe) => drop(probe),
-        Err(source) => {
-            anyhow::bail!("the management Gate cannot take {bind}: {source}");
-        }
-    }
-
-    let mut child = tokio::process::Command::new(scenario_worker_binary)
-        .arg("serve")
-        .args(
-            package_registry
-                .insecure_registry
-                .then_some("--insecure-registry"),
-        )
-        .env("WAMN_MANAGEMENT_BIND", bind)
-        .env("WAMN_SYSTEM_URL", &credentials.identity_reader)
-        .env("WAMN_CONTROL_AUTHORING_PG_URL", &credentials.control_author)
-        .env(
-            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-            management_admission_database_url,
-        )
-        .env("WAMN_MANAGEMENT_ORG", &scope.org)
-        .env("WAMN_MANAGEMENT_PROJECT", &scope.project)
-        .env("WAMN_MANAGEMENT_ENVIRONMENT", &scope.environment)
-        .env("WAMN_MANAGEMENT_ENV_KEY", scope.env_key())
-        // The gate reads component facts from verified package artifacts.
-        .env(
-            "WAMN_PACKAGE_ARTIFACT_BASE",
-            &package_registry.artifact_base,
-        )
-        .env(
-            "WAMN_REGISTRY_AUTH_FILE",
-            &package_registry.registry_auth_file,
-        )
-        // A panicking caller must not leave a Gate holding the port.
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| {
-            format!(
-                "spawn the management Gate from {}",
-                scenario_worker_binary.display()
-            )
-        })?;
-
-    for _ in 0..GATE_READINESS_ATTEMPTS {
-        if let Some(status) = child
-            .try_wait()
-            .context("check whether the spawned management Gate is still running")?
-        {
-            anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
-        }
-        if tokio::net::TcpStream::connect(address).await.is_ok() {
-            // A connect shows SOMETHING listens. Re-check the child so a Gate
-            // that died between the two reads is never reported ready.
-            if let Some(status) = child
-                .try_wait()
-                .context("check whether the spawned management Gate is still running")?
-            {
-                anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
-            }
-            return Ok(JourneyManagementGate {
-                child,
-                bind: bind.to_owned(),
-            });
-        }
-        tokio::time::sleep(GATE_READINESS_INTERVAL).await;
-    }
-
-    let _ = child.kill().await;
-    anyhow::bail!(
-        "the management Gate never accepted a connection on {bind} within {} seconds",
-        (GATE_READINESS_INTERVAL * GATE_READINESS_ATTEMPTS).as_secs()
-    )
 }
 
 /// The identity declared by the local environment document.

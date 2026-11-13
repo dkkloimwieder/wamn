@@ -3,40 +3,23 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use wamn_pg_core::{Identifier, InvalidIdentifier};
+use postgres_protocol::escape::escape_identifier;
 
 use super::RUN_PLANE_FILES;
 
-/// A validated project schema name usable in both quoted SQL and bare DDL rewrites.
-///
-/// PostgreSQL's identifier representation, byte limit, and quoting live in
-/// [`Identifier`]. This wrapper adds only the lowercase unquoted grammar required
-/// by [`rewrite_schema`], which substitutes the name into canonical deploy SQL as
-/// a bare identifier.
+/// A checked schema name usable in quoted SQL and bare DDL rewrites.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BareSchemaName(Identifier);
+pub struct BareSchemaName(String);
 
 /// Why a value cannot be used as a bare project schema name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidBareSchemaName {
-    kind: InvalidBareSchemaNameKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum InvalidBareSchemaNameKind {
-    PostgreSql(InvalidIdentifier),
-    BareSyntax,
+    reason: &'static str,
 }
 
 impl InvalidBareSchemaName {
-    /// The violated PostgreSQL or bare-schema invariant.
-    pub fn reason(&self) -> &str {
-        match &self.kind {
-            InvalidBareSchemaNameKind::PostgreSql(error) => error.reason(),
-            InvalidBareSchemaNameKind::BareSyntax => {
-                "schema name must match the lowercase bare identifier syntax [a-z_][a-z0-9_]*"
-            }
-        }
+    pub fn reason(&self) -> &'static str {
+        self.reason
     }
 }
 
@@ -46,46 +29,35 @@ impl fmt::Display for InvalidBareSchemaName {
     }
 }
 
-impl std::error::Error for InvalidBareSchemaName {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.kind {
-            InvalidBareSchemaNameKind::PostgreSql(error) => Some(error),
-            InvalidBareSchemaNameKind::BareSyntax => None,
-        }
-    }
-}
-
-impl From<InvalidIdentifier> for InvalidBareSchemaName {
-    fn from(error: InvalidIdentifier) -> Self {
-        Self {
-            kind: InvalidBareSchemaNameKind::PostgreSql(error),
-        }
-    }
-}
+impl std::error::Error for InvalidBareSchemaName {}
 
 impl BareSchemaName {
-    /// Validate a schema name before it reaches generated SQL or an admin effect.
+    /// Check a schema name before it reaches generated SQL.
     pub fn new(value: impl Into<String>) -> Result<Self, InvalidBareSchemaName> {
-        let identifier = Identifier::new(value)?;
-        let mut bytes = identifier.as_str().bytes();
-        if !matches!(bytes.next(), Some(b'a'..=b'z' | b'_'))
+        let value = value.into();
+        let mut bytes = value.bytes();
+        let reason = if value.is_empty() {
+            "identifier is empty"
+        } else if value.as_bytes().contains(&0) {
+            "identifier contains NUL"
+        } else if value.len() > 63 {
+            "identifier exceeds PostgreSQL's 63-byte limit"
+        } else if !matches!(bytes.next(), Some(b'a'..=b'z' | b'_'))
             || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         {
-            return Err(InvalidBareSchemaName {
-                kind: InvalidBareSchemaNameKind::BareSyntax,
-            });
-        }
-        Ok(Self(identifier))
+            "schema name must match the lowercase bare identifier syntax [a-z_][a-z0-9_]*"
+        } else {
+            return Ok(Self(value));
+        };
+        Err(InvalidBareSchemaName { reason })
     }
 
-    /// The validated identifier in the bare representation used by deploy SQL.
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        &self.0
     }
 
-    /// The validated identifier quoted by the canonical pg-core implementation.
     pub fn quoted(&self) -> String {
-        self.0.quoted()
+        escape_identifier(&self.0)
     }
 }
 
@@ -99,7 +71,7 @@ impl fmt::Display for BareSchemaName {
 /// its table that the live definition does not (word-boundary token match, so
 /// `run_id` never matches inside `event_root_run_id`). This is deliberately the
 /// narrow, real drift class — notably the pre-E4 `run_queue_claimable` without
-/// `stream_seq` — not a general definition difference.
+/// the ordering columns. It does not compare other definition differences.
 pub(super) fn index_definition_stale(
     file: &str,
     table: &str,
@@ -128,9 +100,7 @@ fn ident_tokens(sql: &str) -> BTreeSet<&str> {
         .collect()
 }
 
-pub(super) fn quote_ident(s: &str) -> String {
-    wamn_pg_core::quote_ident(s)
-}
+pub(super) use postgres_protocol::escape::escape_identifier as quote_ident;
 
 pub(super) fn record_table_names() -> BTreeSet<String> {
     RUN_PLANE_FILES

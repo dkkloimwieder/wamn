@@ -4,7 +4,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 
 use crate::{IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId};
 
@@ -57,7 +57,7 @@ fn valid_key(order: Order, key: &Value) -> bool {
             text(email)
                 && id.as_str().is_some_and(|id| {
                     id.parse::<PrincipalId>()
-                        .is_ok_and(|parsed| parsed.as_str() == id)
+                        .is_ok_and(|parsed| parsed.to_string().as_str() == id)
                 })
         }
         (Order::Audience, [kind, audience]) => {

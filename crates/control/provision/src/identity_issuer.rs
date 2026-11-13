@@ -8,9 +8,9 @@ use std::fmt::Write as _;
 
 use std::fmt;
 
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 use sha2::{Digest as _, Sha256};
 use url::Url;
-use wamn_pg_core::{quote_ident, quote_literal};
 
 use crate::CredentialGeneration;
 
@@ -365,7 +365,7 @@ pub fn parse_identity_issuer_url(
 /// The driver must first refuse unexpected grants, ownership, or memberships.
 /// A builder test freezes the generated SQL. Live tests exercise its permissions.
 pub fn grant_identity_issuer_surface_sql() -> String {
-    let role = quote_ident(IDENTITY_ISSUER_ROLE);
+    let role = escape_identifier(IDENTITY_ISSUER_ROLE);
     let mut sql = format!(
         "{} GRANT USAGE ON SCHEMA identity, registry TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
@@ -375,20 +375,20 @@ pub fn grant_identity_issuer_surface_sql() -> String {
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
         let columns = columns
             .iter()
-            .map(|column| quote_ident(column))
+            .map(|column| escape_identifier(column))
             .collect::<Vec<_>>()
             .join(", ");
         write!(
             sql,
             " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
-            schema = quote_ident(schema),
-            table = quote_ident(table),
+            schema = escape_identifier(schema),
+            table = escape_identifier(table),
         )
         .expect("writing to a String cannot fail");
     }
     let columns = IDENTITY_ISSUER_PAT_INSERT_COLUMNS
         .iter()
-        .map(|column| quote_ident(column))
+        .map(|column| escape_identifier(column))
         .collect::<Vec<_>>()
         .join(", ");
     write!(
@@ -399,13 +399,13 @@ pub fn grant_identity_issuer_surface_sql() -> String {
     for (table, privilege, columns) in IDENTITY_ISSUER_PASSWORD_COLUMNS {
         let columns = columns
             .iter()
-            .map(|c| quote_ident(c))
+            .map(|c| escape_identifier(c))
             .collect::<Vec<_>>()
             .join(", ");
         write!(
             sql,
             " GRANT {privilege} ({columns}) ON TABLE identity.{} TO {role};",
-            quote_ident(table)
+            escape_identifier(table)
         )
         .expect("string write");
     }
@@ -422,7 +422,7 @@ pub fn prepare_identity_issuer_generation_sql(
     expires_at: &str,
 ) -> Result<String, IdentityIssuerUrlError> {
     let role = identity_issuer_generation_role(issuer, generation)?;
-    let role_ident = quote_ident(&role);
+    let role_ident = escape_identifier(&role);
     Ok(format!(
         "{surface} DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
@@ -433,11 +433,11 @@ pub fn prepare_identity_issuer_generation_sql(
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
         surface = grant_identity_issuer_surface_sql(),
-        role_lit = quote_literal(&role),
-        acl_role = quote_ident(IDENTITY_ISSUER_ROLE),
-        password = quote_literal(password),
-        expires_at = quote_literal(expires_at),
-        database = quote_ident(IDENTITY_ISSUER_DATABASE),
+        role_lit = escape_literal(&role),
+        acl_role = escape_identifier(IDENTITY_ISSUER_ROLE),
+        password = escape_literal(password),
+        expires_at = escape_literal(expires_at),
+        database = escape_identifier(IDENTITY_ISSUER_DATABASE),
     ))
 }
 

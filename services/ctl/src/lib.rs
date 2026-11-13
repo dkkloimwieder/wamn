@@ -26,6 +26,7 @@ pub mod platform_verbs;
 pub mod provisioning_verbs;
 pub mod release_verbs;
 pub mod role_verbs;
+mod route_request;
 pub mod schema_verbs;
 #[cfg(target_os = "linux")]
 pub mod web;

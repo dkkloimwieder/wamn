@@ -6,14 +6,13 @@
 //! barrier, not an estimate of the last signature. Retirement retains public
 //! evidence for the approved 930 seconds without per-token writes.
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::{
     rand::SystemRandom,
     signature::{Ed25519KeyPair, KeyPair as _},
 };
 use tokio_postgres::{Client, GenericClient};
 
-use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
 use crate::{IdentityError, IdentityErrorType};
 
@@ -46,7 +45,7 @@ pub async fn publish_session_key(
         )
         .await
         .map_err(key_database_error)?;
-    let key = public_key(row.get(0), pair.public_key().as_ref());
+    let key = PublicSessionKey::new(row.get(0), pair.public_key().as_ref());
     transaction.commit().await.map_err(key_database_error)?;
     Ok(key)
 }
@@ -107,7 +106,7 @@ pub async fn session_jwks(
         .map_err(key_database_error)?;
     let mut keys = Vec::with_capacity(rows.len());
     for row in rows {
-        let key = public_key(row.get(0), row.get::<_, &[u8]>(1));
+        let key = PublicSessionKey::new(row.get(0), row.get::<_, &[u8]>(1));
         decode_public_key(&key).map_err(|_| corrupt_key())?;
         keys.push(key);
     }
@@ -167,7 +166,7 @@ pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u6
 pub(crate) async fn sign_message(
     transaction: &tokio_postgres::Transaction<'_>,
     issuer: &str,
-    message: impl FnOnce(&str) -> Result<String, IdentityError>,
+    message: impl FnOnce(&str, &jsonwebtoken::EncodingKey) -> Result<String, IdentityError>,
 ) -> Result<String, IdentityError> {
     let row = transaction.query_opt(
         "SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = $1 FOR SHARE",
@@ -186,11 +185,8 @@ pub(crate) async fn sign_message(
             .await
             .map_err(key_database_error)?;
         let document: Option<&[u8]> = row.get(0);
-        let pair = Ed25519KeyPair::from_pkcs8(document.ok_or_else(corrupt_key)?)
-            .map_err(|_| corrupt_key())?;
-        let message = message(&kid)?;
-        let signature = pair.sign(message.as_bytes());
-        format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
+        let key = jsonwebtoken::EncodingKey::from_ed_der(document.ok_or_else(corrupt_key)?);
+        message(&kid, &key)?
     };
     Ok(token)
 }
@@ -202,7 +198,7 @@ async fn bind_provisioning(
     transaction
         .execute(
             "SELECT set_config('app.user_id', $1, true)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
+            &[&wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()],
         )
@@ -228,17 +224,6 @@ async fn lock_issuer(
     })
 }
 
-fn public_key(kid: String, bytes: &[u8]) -> PublicSessionKey {
-    PublicSessionKey {
-        kid,
-        kty: "OKP".into(),
-        crv: "Ed25519".into(),
-        alg: "Ed25519".into(),
-        r#use: "sig".into(),
-        x: URL_SAFE_NO_PAD.encode(bytes),
-    }
-}
-
 fn validate_issuer(issuer: &str) -> Result<(), IdentityError> {
     if issuer.trim().is_empty() {
         return Err(invalid("session issuer must be nonempty"));
@@ -246,7 +231,7 @@ fn validate_issuer(issuer: &str) -> Result<(), IdentityError> {
     Ok(())
 }
 
-fn corrupt_key() -> IdentityError {
+pub(crate) fn corrupt_key() -> IdentityError {
     IdentityError::new(
         IdentityErrorType::CorruptData,
         "stored session signing key is invalid",

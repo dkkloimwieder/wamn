@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use wamn_engine::component_admission::component_digest;
+use wamn_digest::bytes_sha256;
 use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
@@ -142,13 +142,13 @@ fn route() -> Vec<u8> {
 
 fn assert_composition(route: &[u8]) {
     let application = admit(&application("")).expect("admit the application");
-    let pin = component_digest(route);
+    let pin = bytes_sha256(route);
     let first = compose_application(&application, route, &pin).expect("first composition");
     let second = compose_application(&application, route, &pin).expect("second composition");
     assert_eq!(first.bytes(), second.bytes());
     assert_eq!(first.digest(), second.digest(), "two builds, one digest");
     assert_ne!(first.digest(), application.component_digest());
-    assert_eq!(first.digest(), component_digest(first.bytes()));
+    assert_eq!(first.digest(), bytes_sha256(first.bytes()));
 
     let engine = wamn_engine::build_engine(&[]).expect("build inspection engine");
     let component =
@@ -181,7 +181,7 @@ fn publication_records_the_exact_entry_and_members() {
 
     let application = admit(&application("")).unwrap();
     let route = route();
-    let pin = component_digest(&route);
+    let pin = bytes_sha256(&route);
     let entry = compose_application(&application, &route, &pin).unwrap();
     let fact = application.facts();
     let manifest = ServingManifest::new(
@@ -240,7 +240,7 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
             .expect("set WAMN_FLOW_HTTP_COMPONENT to the pinned http-route guest"),
     )
     .expect("read the built HTTP route guest");
-    let pin = component_digest(&route);
+    let pin = bytes_sha256(&route);
     let error = compose_application(&node, &route, &pin).expect_err("a node does not compose");
     assert!(
         format!("{error:#}").contains("dependency cycle"),
@@ -404,11 +404,11 @@ fn composition_refuses_a_wrapper_that_forwards_sql_to_the_wrong_leaf() {
     let expected = BTreeMap::from([
         (
             "sql-0".to_owned(),
-            component_digest(&wat::parse_str(&base).expect("encode base")),
+            bytes_sha256(&wat::parse_str(&base).expect("encode base")),
         ),
         (
             "sql-1".to_owned(),
-            component_digest(&wat::parse_str(&overlay).expect("encode overlay")),
+            bytes_sha256(&wat::parse_str(&overlay).expect("encode overlay")),
         ),
     ]);
     let record = serde_json::to_string(&serde_json::to_string(&expected).expect("encode record"))

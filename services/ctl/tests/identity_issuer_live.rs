@@ -21,8 +21,8 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
-use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
-
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::{authenticate_pat, issue_pat};
 use wamn_test_infrastructure::locked_database;
 
 /// The generation state with the role's real password state. The test connects
@@ -560,7 +560,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
     let id: String = admin
         .query_one(
             "INSERT INTO identity.principals (type,subject,email,display_name) \
-         VALUES ('user','issuer-pat-test','issuer-pat-test@example.invalid', \
+         VALUES ('service','issuer-pat-test',NULL, \
                  'Issuer PAT test') RETURNING id::text",
             &[],
         )

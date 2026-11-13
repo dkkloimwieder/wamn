@@ -57,9 +57,6 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         .await?;
     admin.batch_execute(&sql::ensure_app_acl_role_sql()).await?;
     admin
-        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
-        .await?;
-    admin
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .context("install the production catalog schema")?;
@@ -122,7 +119,6 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
                 terminal: Some(WiringTerminal::Respond),
             },
         )]),
-        Vec::new(),
         Vec::new(),
     )?;
     admin

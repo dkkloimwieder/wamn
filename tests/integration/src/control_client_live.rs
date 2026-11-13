@@ -18,20 +18,15 @@ use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::RouteDelivery;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::create_or_reuse_user;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
-use wamn_platform_identity::{PrincipalId, create_or_reuse_user};
-
 use wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator;
 use wash_runtime::wasmtime::component::Component;
 
 use crate::local_application::serve;
 
-#[path = "../../../crates/platform/runtime/tests/support/session_fixture.rs"]
-#[expect(
-    dead_code,
-    reason = "The shared fixture also provides verifier-only fetch barriers."
-)]
-mod session_fixture;
+use crate::session_fixture;
 use session_fixture::{ISSUER, ORG, Server, claims, header, signed};
 
 #[path = "../../../crates/execution/host/tests/support/application_fixture.rs"]
@@ -195,7 +190,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
                    (id, principal_id, issuer, audience, authenticated_at, expires_at, renewal_expires_at) \
                  VALUES ($1::text::uuid, $1::text::uuid, $2, $3, now(), now() + interval '8 hours', \
                    now() + interval '30 minutes')",
-                &[&principal.as_str(), &ISSUER, &audience],
+                &[&principal.to_string().as_str(), &ISSUER, &audience],
             )
             .await?;
     }
@@ -207,7 +202,9 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     let mut server = Server::start().await;
     let (keys, _key_clock) = server.cache();
     let (verifier, _token_clock) =
-        wamn_session::verifier::SessionVerifier::with_test_clock(keys, ORG, &audience, 1000)?;
+        wamn_identity_protocol::verifier::SessionVerifier::with_test_clock(
+            keys, ORG, &audience, 1000,
+        )?;
     let release = Arc::new(LoadedRelease::control_root());
     let routing = Arc::new(
         FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
@@ -245,10 +242,10 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
 
     let token = |principal: &PrincipalId| {
         let mut session = claims();
-        session["sub"] = json!(principal.as_str());
+        session["sub"] = json!(principal.to_string().as_str());
         session["aud"] = json!(audience);
         session["roles"] = json!([]);
-        session["authority"] = json!({"login": principal.as_str()});
+        session["authority"] = json!({"login": principal.to_string().as_str()});
         signed(&header(), &session)
     };
     vitest(
@@ -257,10 +254,22 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             ("WAMN_CONTROL_ORG_CLIENT_BASE_URL", endpoint),
             ("WAMN_CONTROL_ORG_CLIENT_BOSS_TOKEN", token(&boss)),
             ("WAMN_CONTROL_ORG_CLIENT_CAT_TOKEN", token(&cat)),
-            ("WAMN_CONTROL_ORG_CLIENT_BOSS_ID", boss.as_str().to_owned()),
-            ("WAMN_CONTROL_ORG_CLIENT_CAT_ID", cat.as_str().to_owned()),
-            ("WAMN_CONTROL_ORG_CLIENT_ANN_ID", ann.as_str().to_owned()),
-            ("WAMN_CONTROL_ORG_CLIENT_DAN_ID", dan.as_str().to_owned()),
+            (
+                "WAMN_CONTROL_ORG_CLIENT_BOSS_ID",
+                boss.to_string().as_str().to_owned(),
+            ),
+            (
+                "WAMN_CONTROL_ORG_CLIENT_CAT_ID",
+                cat.to_string().as_str().to_owned(),
+            ),
+            (
+                "WAMN_CONTROL_ORG_CLIENT_ANN_ID",
+                ann.to_string().as_str().to_owned(),
+            ),
+            (
+                "WAMN_CONTROL_ORG_CLIENT_DAN_ID",
+                dan.to_string().as_str().to_owned(),
+            ),
         ],
     )
     .await?;

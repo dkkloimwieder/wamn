@@ -499,7 +499,6 @@ mod tests {
                 },
             )]),
             Vec::new(),
-            Vec::new(),
         )
         .expect("the fixture workflow is structurally valid")
     }

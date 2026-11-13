@@ -48,7 +48,7 @@ async fn auth_drops_create_service_records_the_created_identity() {
     let principal = create_service(&tx, "new-service", "New service", &mut drops)
         .await
         .unwrap();
-    assert_eq!(principal.id().as_str(), PRINCIPAL);
+    assert_eq!(principal.id().to_string().as_str(), PRINCIPAL);
     tx.commit().await.unwrap();
     let mut expected = AuthDrops::default();
     expected.identity(PRINCIPAL);
@@ -116,7 +116,7 @@ async fn auth_drops_resolve_or_create_service_returns_only_the_created_identity(
     let mut expected = AuthDrops::default();
     expected.identity(PRINCIPAL);
     assert_eq!(drops, expected);
-    assert_eq!(principal.id().as_str(), PRINCIPAL);
+    assert_eq!(principal.id().to_string().as_str(), PRINCIPAL);
     let reader = system_client(system.url()).await;
     assert_eq!(
         resolve_subject(&reader, PrincipalType::Service, "resolved-service")

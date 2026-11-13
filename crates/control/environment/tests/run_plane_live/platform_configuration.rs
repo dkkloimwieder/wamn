@@ -85,7 +85,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
     let target_url = database_url(system_url, &database);
     let target = connect(&target_url).await;
     reset(&target).await;
-    seed_system_env_policy(su, "standard").await;
+    seed_system_env_policy(su).await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
@@ -223,7 +223,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     let target_url = database_url(&url, &database);
     let target = connect(&target_url).await;
     reset(&target).await;
-    seed_system_env_policy(&su, "standard").await;
+    seed_system_env_policy(&su).await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         changes: Publisher::default(),
         system_database_url: url.to_string(),
@@ -279,7 +279,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
             .map(|row| row.get(0))
             .collect()
     };
-    let provisioning = wamn_project_state::PlatformComponent::Provisioning
+    let provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
     assert_eq!(

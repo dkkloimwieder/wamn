@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import vectors from "../../../apps/platform/execution/contract/read-query-vectors.json" with { type: "json" };
+import vectors from "../../../services/ctl/read-query-vectors.json" with { type: "json" };
 import { encodeReadQuery } from "../src/readQuery.js";
 import type { JsonValue } from "../src/wire.js";
 

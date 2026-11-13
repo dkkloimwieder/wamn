@@ -4,29 +4,27 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
-mod cdc_reader_process;
-pub mod cdcbench;
 #[cfg(test)]
 mod control_client_live;
-pub mod dashboard_test;
-pub mod host_session_test;
 mod hot_route_trace;
-pub mod identity_keys_test;
-pub mod identity_session_test;
 pub mod local_application;
-pub mod measure;
-mod measurement_schema;
-pub mod membership_test;
-pub mod readerbench;
 #[cfg(test)]
 mod route_authentication_live;
 #[cfg(test)]
 mod route_interface_live;
-pub mod streambench;
-pub mod throughput_bench;
 pub mod trusted_http_route;
 #[cfg(test)]
 mod virtualized_std_guest;
-pub mod walbench;
 #[cfg(test)]
 mod write_log_live;
+
+#[cfg(test)]
+mod fixture_membership;
+
+#[cfg(test)]
+#[path = "../../../crates/platform/runtime/tests/support/session_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also serves verifier lifecycle tests."
+)]
+mod session_fixture;

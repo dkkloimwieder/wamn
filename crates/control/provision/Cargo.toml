@@ -13,6 +13,7 @@ ops = []
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+wamn-digest.workspace = true
 wamn-event-wire = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # The per-project-env credential Secrets render as JSON (kubectl apply accepts
@@ -27,21 +28,17 @@ serde_yaml = { workspace = true }
 # the rendered clusters and the org's registry.orgs row name the same clusters.
 # A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
 wamn-control-registry = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
-wamn-execution-contract = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the platform model.
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true, features = ["tenant-key"] }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }
 
-# wamn-0h0g.8.18 control_author: the scoped A/B generation role name is a
-# domain-separated digest of (org, project, environment, database), and the
-# fail-closed connection-input check parses that URL without opening it. Pure
-# text and pure hashing — still no DB / K8s / tokio / clock dependency.
+# Scoped login identities use a domain-separated digest.
 hex = { workspace = true }
 sha2 = { workspace = true }
 url = { workspace = true }
@@ -52,7 +49,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 # the tokio_postgres connection; the optional live-apply gate (tests/provision.rs)
 # shells out to `psql` — so there is no database dependency even in dev, the same
 # pattern as wamn-run-state. PostgreSQL quoting comes from the guest-safe
-# wamn-pg-core leaf.
+# postgres-protocol quoting functions.
 
 [dev-dependencies]
 wamn-schema-generator = { workspace = true }

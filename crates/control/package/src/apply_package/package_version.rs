@@ -161,7 +161,7 @@ pub fn environment_fingerprint(
     project: &str,
     packages: &std::collections::BTreeMap<&str, &str>,
 ) -> String {
-    wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+    wamn_digest::canonical_json_sha256(&serde_json::json!({
         "project": project,
         "packages": packages,
     }))

@@ -231,7 +231,7 @@ fn applications_in_one_environment_have_independent_release_resources() {
         input.route_host = format!("{application}.example");
         let entry = format!(
             "entries@{}",
-            wamn_execution_contract::bytes_sha256(application.as_bytes())
+            wamn_digest::bytes_sha256(application.as_bytes())
         );
         input.roles[0].entry = Some(entry.clone());
         let values = values(&input).unwrap();
