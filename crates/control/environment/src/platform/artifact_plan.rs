@@ -113,7 +113,7 @@ impl SelectedChart {
             }
             UpgradeTarget::Host { release, group } => {
                 ensure!(
-                    release != &format!("c-{}", document.org),
+                    release != &wamn_registry::name::control_resource(&document.org),
                     "select the control service with --only control"
                 );
                 let groups = installed
@@ -635,7 +635,8 @@ mod tests {
             let mut after = wamn_kubernetes::helm::template(&entry)?;
             let deployment = |object: &&Value| {
                 object["kind"] == "Deployment"
-                    && object["metadata"]["name"] == format!("hostgroup-{group}")
+                    && object["metadata"]["name"]
+                        == wamn_registry::name::resource_suffix("hostgroup", group)
             };
             let previous = before
                 .iter()

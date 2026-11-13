@@ -39,7 +39,7 @@ async fn recorded_disposable(
     let system = wamn_package_control::database::connect(config.system_database_url()).await?;
     Ok(system
         .query_opt(
-            "SELECT disposable FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+            wamn_registry::sql::CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE,
             &[&document.org, &document.project, &document.env],
         )
         .await?
@@ -268,13 +268,7 @@ pub async fn schema_operation(
         validate_schema_reset(&document, &roots, &diffs)?;
         tracing::warn!(affected = ?diffs.iter().flat_map(|diff| &diff.affected_applications).collect::<std::collections::BTreeSet<_>>(),
             "reset development database; all application data is discarded");
-        let instance = lease.recreate(&config).await?;
-        super::coordinator::assign_environment_instance(
-            config.system_database_url(),
-            &config.activation_identity().project_env_key(),
-            &instance,
-        )
-        .await?;
+        lease.recreate(&config).await?;
     } else {
         for diff in &diffs {
             for (id, package) in &diff.packages {
@@ -424,12 +418,6 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
     let lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let instance = lease.recreate(&config).await?;
-    super::coordinator::assign_environment_instance(
-        config.system_database_url(),
-        &config.activation_identity().project_env_key(),
-        &instance,
-    )
-    .await?;
     Ok(instance)
 }
 
@@ -1135,7 +1123,7 @@ mod tests {
         let system_client = wamn_package_control::database::connect(system.url()).await?;
         system_client
             .batch_execute(&format!(
-                "{} UPDATE registry.project_envs SET disposable=true;",
+                "{} UPDATE registry.environments SET disposable=true;",
                 wamn_control_provision::test_database::seed_org_project_env_sql(
                     "acme",
                     "fixture",
@@ -1272,7 +1260,7 @@ mod tests {
         document.schema.mode = Some(SchemaMode::Reset);
         system_client
             .batch_execute(&format!(
-                "BEGIN; {} UPDATE registry.project_envs SET disposable=false; COMMIT;",
+                "BEGIN; {} UPDATE registry.environments SET disposable=false; COMMIT;",
                 wamn_control_provision::bind_platform_principal_sql(
                     wamn_control_provision::PlatformComponent::Provisioning
                 ),

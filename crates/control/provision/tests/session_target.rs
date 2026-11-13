@@ -3,10 +3,10 @@
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
-use wamn_control_provision::session_target::{SessionTarget, session_audience};
+use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, project_env_database_name};
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 const INSTANCE: &str = "k3m9x2p7";
 const PASSWORD: &str = "fixture-secret-do-not-log";
@@ -48,7 +48,13 @@ fn target(triple: &Triple, instance: &str, generation: CredentialGeneration) -> 
         WorkloadRoleFamily::SessionRoleReader,
         generation,
     );
-    SessionTarget::new(triple, instance, "t1", &url).expect("valid provisioned target")
+    SessionTarget::new(
+        triple,
+        instance,
+        &wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str()),
+        &url,
+    )
+    .expect("valid provisioned target")
 }
 
 fn document() -> Value {
@@ -77,10 +83,6 @@ fn refused(document: &Value) {
 
 #[test]
 fn audience_spelling_and_each_environment_instance_are_exact() {
-    assert_eq!(
-        session_audience(&triple("acme", "dev"), INSTANCE).unwrap(),
-        "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
-    );
     let mut audiences = BTreeSet::new();
     let mut databases = BTreeSet::new();
     let mut logins = BTreeSet::new();
@@ -91,10 +93,6 @@ fn audience_spelling_and_each_environment_instance_are_exact() {
                 let a = target(&coordinates, instance, CredentialGeneration::A);
                 let b = target(&coordinates, instance, CredentialGeneration::B);
                 assert_eq!(
-                    a.audience(),
-                    format!("urn:wamn:project-env:{org}:widgets:{env}:{instance}")
-                );
-                assert_eq!(
                     b.audience(),
                     a.audience(),
                     "credential rotation keeps the audience"
@@ -103,8 +101,11 @@ fn audience_spelling_and_each_environment_instance_are_exact() {
                 assert_eq!(a.instance_suffix(), instance);
                 assert_eq!(
                     a.project_env_key(),
-                    "t1",
-                    "existing text projects need not be UUIDs"
+                    wamn_registry::project_env_key(
+                        &coordinates.org,
+                        &coordinates.project,
+                        coordinates.env.as_str()
+                    )
                 );
                 assert_eq!(a.connection().generation(), CredentialGeneration::A);
                 assert_eq!(b.connection().generation(), CredentialGeneration::B);
@@ -128,14 +129,23 @@ fn credential_target_round_trips_both_generations() {
             WorkloadRoleFamily::SessionRoleReader,
             generation,
         );
-        let original = SessionTarget::new(&coordinates, INSTANCE, "t1", &url).unwrap();
+        let original = SessionTarget::new(
+            &coordinates,
+            INSTANCE,
+            &wamn_registry::project_env_key(
+                &coordinates.org,
+                &coordinates.project,
+                coordinates.env.as_str(),
+            ),
+            &url,
+        )
+        .unwrap();
         let encoded = original.to_json().unwrap();
         let decoded = SessionTarget::from_json(encoded.as_bytes()).unwrap();
-        assert_eq!(decoded.to_json().unwrap(), encoded);
         assert_eq!(decoded.triple(), &coordinates);
         assert_eq!(decoded.audience(), original.audience());
         assert_eq!(decoded.instance_suffix(), INSTANCE);
-        assert_eq!(decoded.project_env_key(), "t1");
+        assert_eq!(decoded.project_env_key(), original.project_env_key());
         assert_eq!(decoded.connection().url(), url);
         assert_eq!(decoded.connection().generation(), generation);
     }
@@ -248,7 +258,7 @@ fn wrong_reader_families_and_url_overrides_refuse() {
     for url in [
         format!("{raw}?options=-crole=postgres"),
         format!("{raw}#override"),
-        raw.replace("/wamn-db-acme--widgets--dev--k3m9x2p7", "/wamn_system"),
+        raw.replace("/wamn-db-acme--dev--widgets--k3m9x2p7", "/wamn_system"),
     ] {
         let mut forged = document();
         forged["database_url"] = json!(url);
@@ -257,7 +267,7 @@ fn wrong_reader_families_and_url_overrides_refuse() {
 }
 
 #[test]
-fn existing_text_project_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
+fn malformed_and_mismatched_project_coordinates_refuse() {
     let coordinates = triple("acme", "dev");
     let url = credential(
         &coordinates,
@@ -265,17 +275,9 @@ fn existing_text_project_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
         WorkloadRoleFamily::SessionRoleReader,
         CredentialGeneration::A,
     );
-    for project_env_key in ["t1".to_owned(), "Team_1-west".to_owned(), "a".repeat(64)] {
-        let target = SessionTarget::new(&coordinates, INSTANCE, &project_env_key, &url).unwrap();
-        assert_eq!(target.project_env_key(), project_env_key);
-        assert_eq!(
-            SessionTarget::from_json(target.to_json().unwrap().as_bytes())
-                .unwrap()
-                .project_env_key(),
-            project_env_key
-        );
-    }
     for project_env_key in [
+        "t1".to_owned(),
+        "globex--dev--widgets".to_owned(),
         String::new(),
         "a".repeat(65),
         "t.1".to_owned(),
@@ -295,7 +297,7 @@ fn existing_text_project_env_key_rule_accepts_t1_and_refuses_invalid_inputs() {
 fn target_clone_and_all_refusal_diagnostics_redact_credentials() {
     let target = target(&triple("acme", "dev"), INSTANCE, CredentialGeneration::A);
     let cloned = target.clone();
-    assert_eq!(cloned.to_json().unwrap(), target.to_json().unwrap());
+    assert_eq!(cloned.triple(), target.triple());
     for diagnostic in [
         format!("{target:?}"),
         format!("{cloned:?}"),

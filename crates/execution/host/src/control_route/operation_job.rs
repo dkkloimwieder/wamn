@@ -78,7 +78,7 @@ impl Operation {
         ];
         if !metadata {
             needs.push((
-                format!("wamn-operation-registry-{org}"),
+                wamn_registry::name::operation_registry(org),
                 "registry",
                 "/credentials/registry",
             ));
@@ -118,11 +118,17 @@ impl ControlRoutes<'_> {
         // Repeat authority in the write transaction before contacting Kubernetes.
         let mut writer = self.writer.lock().await;
         let transaction = self
-            .begin_in(&mut writer, attachment, caller, Some(&request.project))
+            .begin_in_environment(
+                &mut writer,
+                attachment,
+                caller,
+                Some(&request.project),
+                Some(&request.env),
+            )
             .await?;
         let exists = transaction
             .query_opt(
-                "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+                wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_OPERATION_JOB_OPERATION_JOB,
                 &[&self.org, &request.project, &request.env],
             )
             .await?
@@ -187,7 +193,8 @@ impl ControlRoutes<'_> {
         let inputs = configuration["data"]["inputs"]
             .as_str()
             .filter(|name| {
-                kubernetes_name(name) && name.starts_with(&format!("wamn-operation-{}-", self.org))
+                kubernetes_name(name)
+                    && name.starts_with(&wamn_registry::name::operation_inputs(self.org, ""))
             })
             .context("worker input selection is absent")?;
         let configuration = api

@@ -157,7 +157,7 @@ fn render_host_objects(root: &Path) -> (Vec<Value>, String) {
                 project: "wms".into(),
                 environment: "dev".into(),
             },
-            guest_secret_name: "wamn-guest-acme--wms--dev".into(),
+            guest_secret_name: "wamn-guest-acme--dev--wms".into(),
             role_secrets: Vec::new(),
             object_store_secret_name: None,
         },

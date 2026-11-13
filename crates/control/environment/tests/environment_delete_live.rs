@@ -5,12 +5,12 @@ use std::time::Duration;
 use serde_json::json;
 use tokio_postgres::Client;
 use wamn_broker::{Publisher, auth_changes::AuthDrops, connection_changes::ConnectionDrops};
-use wamn_control_registry::Triple;
 use wamn_environment_control::{
     environment::{delete::delete_registry_rows, lock::LifecycleLock},
     provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::connections::administration;
+use wamn_registry::Triple;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[tokio::test]
@@ -77,7 +77,7 @@ esac
     let database = wamn_control_provision::test_database::system();
     let mut system = connect(database.url()).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
-    let triple = Triple::new("acme", "app", "dev");
+    let triple = Triple::new("acme", "dev", "app");
     let transaction = provisioning_transaction(&mut system).await?;
     transaction
         .batch_execute(
@@ -181,7 +181,10 @@ esac
     };
     system.batch_execute("SET ROLE wamn_system").await?;
     let before: serde_json::Value = system
-        .query_one("SELECT to_jsonb(e) FROM registry.project_envs e", &[])
+        .query_one(
+            "SELECT to_jsonb(e) FROM registry.environment_projects e",
+            &[],
+        )
         .await?
         .get(0);
     let error = delete(&platform, &triple, false, database.url())
@@ -200,7 +203,10 @@ esac
         "refusal must precede every external mutation"
     );
     let after: serde_json::Value = system
-        .query_one("SELECT to_jsonb(e) FROM registry.project_envs e", &[])
+        .query_one(
+            "SELECT to_jsonb(e) FROM registry.environment_projects e",
+            &[],
+        )
         .await?
         .get(0);
     assert_eq!(after, before);
@@ -224,8 +230,8 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let database = wamn_control_provision::test_database::system();
     let mut system = connect(database.url()).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
-    let triple = Triple::new("acme", "app", "dev");
-    let other = Triple::new("acme", "app", "prod");
+    let triple = Triple::new("acme", "dev", "app");
+    let other = Triple::new("acme", "prod", "app");
     let transaction = provisioning_transaction(&mut system).await?;
     for target in [&triple, &other] {
         transaction
@@ -248,7 +254,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     }
     transaction.batch_execute(
         "INSERT INTO registry.target(name,type,status) VALUES ('delete-fixture','local','active'); \
-         UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')",
+         UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='delete-fixture')",
     ).await?;
     let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     let mut auth = AuthDrops::default();
@@ -291,7 +297,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .await?
         .get(0);
     let held = blocker.transaction().await?;
-    held.batch_execute("LOCK TABLE catalog.project_environments IN SHARE MODE")
+    held.batch_execute("LOCK TABLE wamn_authority.author_login_projects IN SHARE MODE")
         .await?;
     let mut deleting = connect(database.url()).await?;
     deleting.batch_execute("SET ROLE wamn_system").await?;
@@ -344,7 +350,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         }
     })
     .await??;
-    assert!(system.query_opt("SELECT 1 FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_some());
+    assert!(system.query_opt("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_some());
     let retained = system
         .query_one(
             "SELECT ref, version FROM identity.credential WHERE id=$1::text::uuid",
@@ -359,7 +365,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         })
         .await?;
     }
-    assert!(system.query_opt("SELECT 1 FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_none());
+    assert!(system.query_opt("SELECT 1 FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev'", &[]).await?.is_none());
     assert!(
         system
             .query_opt(
@@ -373,7 +379,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     assert!(
         system
             .query_opt(
-                "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+                "SELECT 1 FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
                 &[&other.org, &other.project, &other.env.as_str()],
             )
             .await?

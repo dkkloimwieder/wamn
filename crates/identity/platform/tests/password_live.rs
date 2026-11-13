@@ -62,8 +62,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
         INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
         VALUES ('password-test', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18');
-        INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-        VALUES ('password-test', 'widgets', 'dev', 'password-test-secret', 'a1b2c3d4', 'dev')").await.unwrap();
+        WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('password-test','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('password-test','widgets','dev','password-test-secret','a1b2c3d4')").await.unwrap();
     wamn_platform_identity::org::activate_org_membership(&client, user.id(), "password-test")
         .await
         .unwrap();

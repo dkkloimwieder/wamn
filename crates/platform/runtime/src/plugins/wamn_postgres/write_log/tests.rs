@@ -109,7 +109,7 @@ async fn the_two_step_write_log_keeps_the_intent_rules() {
 
 fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
     Intent {
-        partition: "writelogtx",
+        partition: "test--dev--writelogtx",
         release: "release-1",
         package: "base",
         operation: "base:widget/create@1.0.0",
@@ -123,7 +123,7 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
 #[tokio::test]
 async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
     database
         .execute(&[
             "ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
@@ -137,7 +137,7 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
         .bind_session_identity(
             SCOPE,
             &SessionIdentity {
-                project_env_key: "writelogtx".into(),
+                project_env_key: "test--dev--writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/delete@1.0.0".into()),
                 ..SessionIdentity::default()
@@ -209,12 +209,12 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
 #[tokio::test]
 async fn the_claim_of_a_request_element_commits_with_its_transaction() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
             &SessionIdentity {
-                project_env_key: "writelogtx".into(),
+                project_env_key: "test--dev--writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
                 ..SessionIdentity::default()
@@ -334,12 +334,12 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
 #[tokio::test]
 async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
             &SessionIdentity {
-                project_env_key: "writelogtx".into(),
+                project_env_key: "test--dev--writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
                 ..SessionIdentity::default()

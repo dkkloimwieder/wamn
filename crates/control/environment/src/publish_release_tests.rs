@@ -69,7 +69,7 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
                 "applications": {"erp": {"current": published.digest.as_str(), "hostname": "erp.acme.example", "packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
     let mut authorities = Authorities {
-        release_name: "acme--erp--dev".to_owned(),
+        release_name: "acme--dev--erp".to_owned(),
         artifact_bindings: BTreeSet::new(),
         connections: BTreeMap::new(),
         policy: Policy {

@@ -41,11 +41,12 @@ pub struct KubernetesSource;
 impl StatusSource for KubernetesSource {
     async fn read(&self, org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
         let api = KubernetesApi::in_cluster()?;
-        let observed =
-            observe_environment(&api.namespace, &format!("{org}/{project}/{env}"), |path| {
-                api.get(path)
-            })
-            .await?;
+        let observed = observe_environment(
+            &api.namespace,
+            &wamn_registry::name::host_status(org, project, env),
+            |path| api.get(path),
+        )
+        .await?;
         let applications = application_states(&observed);
         let mut summary = EnvironmentState {
             deployment: None,

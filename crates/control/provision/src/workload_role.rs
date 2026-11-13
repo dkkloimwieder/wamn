@@ -318,7 +318,7 @@ impl WorkloadRoleFamily {
     pub fn secret_prefix(self) -> String {
         match self {
             Self::App => GUEST_SECRET_PREFIX.to_string(),
-            _ => format!("wamn-{}-", self.cli_stem()),
+            _ => wamn_registry::name::workload_secret_prefix(&self.cli_stem()),
         }
     }
 
@@ -535,10 +535,9 @@ pub fn workload_generation_role(
     identity: WorkloadRoleIdentity<'_>,
     generation: CredentialGeneration,
 ) -> Result<String, WorkloadRoleIdentityError> {
-    Ok(format!(
-        "{}_{}_{}",
+    Ok(wamn_registry::name::credential_login(
         family.generation_prefix(),
-        workload_role_identity_hash(family, identity)?,
+        &workload_role_identity_hash(family, identity)?,
         generation.as_str(),
     ))
 }
@@ -793,11 +792,11 @@ mod tests {
         let longest = "t".repeat(64);
         let short = WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: "t",
-            database: "wamn-db-acme--billing--dev",
+            database: "wamn-db-acme--dev--billing",
         };
         let long = WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: &longest,
-            database: "wamn-db-acme--billing--dev",
+            database: "wamn-db-acme--dev--billing",
         };
         for family in [
             WorkloadRoleFamily::App,

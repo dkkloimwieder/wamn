@@ -5,7 +5,7 @@ use ring::rand::SecureRandom as _;
 
 use super::{
     INSTANCE_SUFFIX_LEN, NoTls, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
-    sql, validate_instance_suffix,
+    validate_instance_suffix,
 };
 
 /// Alphabet of the provision-minted instance suffix: `[a-z0-9]`, 36 symbols, so
@@ -71,10 +71,7 @@ pub(crate) async fn resolve_cluster_on(
     env: &str,
 ) -> anyhow::Result<String> {
     let row = client
-        .query_opt(
-            wamn_control_registry::sql::select_org_placement_sql(),
-            &[&org],
-        )
+        .query_opt(wamn_registry::sql::select_org_placement_sql(), &[&org])
         .await
         .context("read org placement")?
         .with_context(|| {
@@ -120,11 +117,11 @@ pub async fn read_project_env_instance(
         let env = triple.env.as_str();
         let row = client
             .query_opt(
-                &wamn_control_registry::sql::select_project_env_sql(),
+                &wamn_registry::sql::select_project_env_sql(),
                 &[&triple.org, &triple.project, &env],
             )
             .await
-            .context("read registry.project_envs row")?
+            .context("read registry.environment_projects row")?
             .with_context(|| format!("project-env {triple} is not recorded"))?;
         let stored: String = row.get("instance_suffix");
         validate_instance_suffix(&stored)
@@ -148,12 +145,11 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
         let env = triple.env.as_str();
         client
             .query_opt(
-                "SELECT policy_name FROM registry.project_envs \
-                  WHERE org = $1 AND project = $2 AND env = $3",
+                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_READ_PROJECT_ENV_POLICY,
                 &[&triple.org, &triple.project, &env],
             )
             .await
-            .context("read the policy name of registry.project_envs")?
+            .context("read the policy name of registry.environment_projects")?
             .map(|row| row.get::<_, String>(0))
             .with_context(|| format!("project-env {triple} is not recorded"))
     }
@@ -179,25 +175,20 @@ pub(super) async fn record_project_env(
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
-    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<String> {
     let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let project_env_key =
-        wamn_control_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
     let result = do_record_project_env(
         &mut client,
         triple,
-        Some(&project_env_key),
         policy,
         target,
         secret_name,
         secret_namespace,
         minted,
         disposable,
-        changes,
     )
     .await;
     drop(client);
@@ -209,19 +200,17 @@ pub(super) async fn record_project_env(
 pub(super) async fn do_record_project_env(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
-    project_env_key: Option<&str>,
     policy: Option<&str>,
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
-    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<String> {
     let transaction = super::provisioning_transaction(client).await?;
     transaction
         .execute(
-            wamn_control_registry::sql::upsert_project_sql(),
+            wamn_registry::sql::upsert_project_sql(),
             &[&triple.org, &triple.project],
         )
         .await
@@ -229,7 +218,7 @@ pub(super) async fn do_record_project_env(
     let env = triple.env.as_str();
     let target_id: String = transaction
         .query_opt(
-            "SELECT id::text FROM registry.target WHERE name = $1",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV,
             &[&target],
         )
         .await
@@ -238,7 +227,7 @@ pub(super) async fn do_record_project_env(
         .get(0);
     let row = transaction
         .query_one(
-            wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
+            wamn_registry::sql::upsert_project_env_with_policy_sql(),
             &[
                 &triple.org,
                 &triple.project,
@@ -252,33 +241,11 @@ pub(super) async fn do_record_project_env(
             ],
         )
         .await
-        .context("upsert registry.project_envs row")?;
-    // The current org admins and project admins reach a new project or
-    // environment in the same way a grant reaches an existing one
-    // (docs/architecture/overview.md#organization-membership-and-administration).
-    wamn_platform_identity::org::materialize_admin_grants(
-        &transaction,
-        &triple.org,
-        &triple.project,
-        env,
-    )
-    .await
-    .context("give the environment the rows of the current administrators")?;
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    for row in transaction
-        .query(
-            "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",
-            &[&triple.org, &triple.project],
-        )
-        .await?
-    {
-        drops.identity(row.get(0));
-    }
+        .context("upsert registry.environment_projects row")?;
     transaction
         .commit()
         .await
-        .context("commit the administrator rows")?;
-    changes.publish(drops).await;
+        .context("commit registry coordinates")?;
     // Read-or-mint: the upsert RETURNS the STORED suffix, which is the freshly
     // minted one on a first provision and the EXISTING one when this triple was
     // already provisioned — the upsert deliberately never refreshes it, because
@@ -286,138 +253,9 @@ pub(super) async fn do_record_project_env(
     // is a trust boundary, so the value is re-validated before any name derives
     // from it.
     let stored: String = row.get(0);
-    let stored_disposable: bool = row.get(1);
     validate_instance_suffix(&stored)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
-    project_env_key_environment(client, triple, project_env_key, &stored, stored_disposable)
-        .await?;
     Ok(stored)
-}
-
-/// Probe for the control store's environment projection without assuming it.
-const CONTROL_PROJECTION_INSTALLED_SQL: &str =
-    "SELECT to_regclass('catalog.project_environments') IS NOT NULL";
-
-/// Bind the projected project identity for the transaction's RLS policy.
-const ASSIGN_PROJECTED_PROJECT_ENV_KEY_SQL: &str =
-    "SELECT set_config('app.project_env_key', $1, true)";
-
-/// Project the recorded project-env into the control store, beside the facts its
-/// `disposable` marker governs (wamn-10yt.38).
-///
-/// `registry.project_envs` stays the AUTHORITY. This copy carries that row's
-/// identity — the triple plus the STORED instance suffix, read back from the
-/// upsert rather than assumed — so the admit path resolves the marker locally
-/// and a disagreement between the two planes refuses instead of passing.
-///
-/// ABSENCE MEANS DURABLE, so a system database with no control store, or a
-/// provisioning that names no project, records nothing here and admits exactly as
-/// it always did. Only a DISPOSABLE environment insists, because for it the
-/// missing projection would be the difference between an author's edit landing
-/// and an author's edit being refused.
-pub async fn project_env_key_environment(
-    client: &mut tokio_postgres::Client,
-    triple: &Triple,
-    project_env_key: Option<&str>,
-    instance_suffix: &str,
-    disposable: bool,
-) -> anyhow::Result<()> {
-    let installed: bool = client
-        .query_one(CONTROL_PROJECTION_INSTALLED_SQL, &[])
-        .await
-        .context("probe the control store's environment projection")?
-        .get(0);
-    if !installed {
-        anyhow::ensure!(
-            !disposable,
-            "a disposable project-env needs catalog.project_environments: apply \
-             wamn_control_provision::CONTROL_PORTABLE_STORE_SQL to the system database first"
-        );
-        return Ok(());
-    }
-    let Some(project_env_key) = project_env_key else {
-        anyhow::ensure!(
-            !disposable,
-            "a disposable project-env needs its derived project_env_key: the admit path resolves the \
-             marker by the project_env_key its component facts are keyed on"
-        );
-        return Ok(());
-    };
-    let env = triple.env.as_str();
-    let transaction = super::provisioning_transaction(client)
-        .await
-        .context("begin the project-env control projection")?;
-    transaction
-        .query_one(ASSIGN_PROJECTED_PROJECT_ENV_KEY_SQL, &[&project_env_key])
-        .await
-        .context("bind the projected project identity")?;
-    transaction
-        .execute(
-            sql::insert_project_env_key_environment_sql(),
-            &[
-                &project_env_key,
-                &triple.org,
-                &triple.project,
-                &env,
-                &instance_suffix,
-                &disposable,
-            ],
-        )
-        .await
-        .context("project the project-env into the control store")?;
-    // A losing insert waits, then this read locks the committed winner.
-    let row = transaction
-        .query_one(
-            sql::read_project_env_key_environment_sql(),
-            &[&project_env_key],
-        )
-        .await
-        .context("read the projected environment identity")?;
-    let recorded = Triple::new(
-        row.try_get::<_, String>(0)?,
-        row.try_get::<_, String>(1)?,
-        row.try_get::<_, String>(2)?,
-    );
-    wamn_control_provision::require_project_env_key_environment_identity(
-        project_env_key,
-        &recorded,
-        triple,
-    )?;
-    transaction
-        .execute(
-            sql::refresh_project_env_key_environment_sql(),
-            &[&project_env_key, &instance_suffix, &disposable],
-        )
-        .await
-        .context("refresh the projected environment")?;
-
-    transaction
-        .commit()
-        .await
-        .context("commit the project-env control projection")
-}
-
-/// Stamp the creation the recreate just minted onto the project's projected
-/// environment, so every control-plane fact this run writes keys to it
-/// (wamn-10yt.52).
-///
-/// The routine refuses a project that provisioning never projected — absence
-/// means durable, and a durable environment is never recreated.
-pub async fn assign_environment_instance(
-    client: &mut tokio_postgres::Client,
-    project_env_key: &str,
-    instance: &str,
-) -> anyhow::Result<()> {
-    let transaction = super::provisioning_transaction(client).await?;
-    let affected_rows = transaction
-        .execute(
-            wamn_schema_control::assign_environment_instance_sql(),
-            &[&project_env_key, &instance],
-        )
-        .await?;
-    wamn_schema_control::require_environment_instance_assignment(project_env_key, affected_rows)?;
-    transaction.commit().await?;
-    Ok(())
 }
 
 /// Read the pending database without allocating or changing its identity.
@@ -426,7 +264,7 @@ pub(crate) async fn pending_database(
     triple: &Triple,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     let row = client.query_opt(
-        "SELECT pending_database FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_PENDING_DATABASE,
         &[&triple.org, &triple.project, &triple.env.as_str()],
     ).await?.with_context(|| format!("project-env {triple} is not recorded"))?;
     Ok(row.get(0))
@@ -442,8 +280,7 @@ pub(crate) async fn record_reset(
     let tx = super::provisioning_transaction(client).await?;
     let row = tx
         .query_opt(
-            "SELECT instance_suffix, disposable, pending_database FROM registry.project_envs \
-         WHERE org=$1 AND project=$2 AND env=$3 FOR UPDATE",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET_2,
             &[&triple.org, &triple.project, &triple.env.as_str()],
         )
         .await?
@@ -469,9 +306,10 @@ pub(crate) async fn record_reset(
             .get(0);
         let pending = serde_json::json!({"initialization_identity":identity, "inputs":inputs});
         tx.execute(
-            "UPDATE registry.project_envs SET pending_database=$4 WHERE org=$1 AND project=$2 AND env=$3",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_RECORD_RESET,
             &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
-        ).await?;
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -485,8 +323,7 @@ pub async fn finish_database(
 ) -> anyhow::Result<()> {
     let tx = super::provisioning_transaction(client).await?;
     let changed = tx.execute(
-        "UPDATE registry.project_envs SET pending_database=NULL WHERE org=$1 AND project=$2 AND env=$3 \
-         AND disposable AND pending_database=$4",
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_FINISH_DATABASE,
         &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
     ).await?;
     anyhow::ensure!(
@@ -511,7 +348,7 @@ pub(crate) async fn require_no_reset(
     triple: &Triple,
 ) -> anyhow::Result<()> {
     let row = client.query_opt(
-        "SELECT pending_database IS NULL FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_REQUIRE_NO_RESET,
         &[&triple.org, &triple.project, &triple.env.as_str()],
     ).await?;
     anyhow::ensure!(

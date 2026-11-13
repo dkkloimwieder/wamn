@@ -955,6 +955,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-materializer",
+ "wamn-registry",
  "wit-bindgen 0.62.0",
 ]
 
@@ -1729,6 +1730,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -1766,6 +1768,15 @@ name = "wamn-record-history"
 version = "0.1.0"
 dependencies = [
  "wamn-scalar",
+]
+
+[[package]]
+name = "wamn-registry"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "wamn-digest",
 ]
 
 [[package]]

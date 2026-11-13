@@ -79,7 +79,7 @@ pub struct WorkflowTarget {
 
 impl WorkflowTarget {
     fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.target.environment)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.target.environment)
     }
 }
 
@@ -162,10 +162,7 @@ pub struct EnableArgs {
 }
 
 impl VersionArgs {
-    fn workflow<'a>(
-        &'a self,
-        coordinate: &'a wamn_control_registry::Triple,
-    ) -> WorkflowVersion<'a> {
+    fn workflow<'a>(&'a self, coordinate: &'a wamn_registry::Triple) -> WorkflowVersion<'a> {
         WorkflowVersion {
             org: &coordinate.org,
             project: &coordinate.project,
@@ -238,7 +235,7 @@ async fn project(target: &WorkflowDatabase) -> anyhow::Result<tokio_postgres::Cl
 }
 
 async fn serving_facts(
-    triple: &wamn_control_registry::Triple,
+    triple: &wamn_registry::Triple,
     dev_root: Option<&std::path::Path>,
     application: &str,
 ) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
@@ -574,7 +571,7 @@ mod tests {
         )
         .unwrap();
         let facts = serving_facts(
-            &wamn_control_registry::Triple::new("org", "project", "dev"),
+            &wamn_registry::Triple::new("org", "dev", "project"),
             Some(&directory),
             applications.keys().next().unwrap(),
         )

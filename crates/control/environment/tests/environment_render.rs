@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Instant;
 use wamn_control_provision::WorkloadRoleFamily;
-use wamn_control_registry::Triple;
 use wamn_environment_control::enable_cdc_project_env::reader_deployment;
 use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_registry::Triple;
 #[path = "support/release_documents.rs"]
 pub mod release_documents;
 use release_documents::workflow as integration;
@@ -27,7 +27,7 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 fn prekind_deploy_connections_cover_the_wms_environment() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let document =
-        EnvironmentDocument::compile(&repository.join("deploy/gcp/environments/dkk--wms--dev.k"))?;
+        EnvironmentDocument::compile(&repository.join("deploy/gcp/environments/dkk--dev--wms.k"))?;
     let directory = repository.join("deploy/gcp/connections");
     for name in document
         .applications
@@ -379,9 +379,9 @@ fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
     // cert-manager issues the environment's NATS certificate, which the host
     // mounts as its data certificate (docs/plan/alignment.md R5).
     let project_env_key =
-        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
+        wamn_registry::project_env_key(&document.org, &document.project, &document.env);
     secrets.push(prerequisite(
-        &format!("wamn-nats-{project_env_key}"),
+        &wamn_registry::name::nats_certificate(&project_env_key),
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
     ));
@@ -455,7 +455,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_release_control::release_chart::ValuesInput;
     use wamn_test_infrastructure::rendering::{EventIdentity, HostRoleSecret, HostValuesInput};
-    let target = Triple::new("acme", project, "dev");
+    let target = Triple::new("acme", "dev", project);
     let secrets = credential_secrets(&target, NAMESPACE);
     let guest = wamn_control_provision::workload_secret_name(
         WorkloadRoleFamily::App,
@@ -483,8 +483,14 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         environment: "dev".into(),
     };
     let manifest = manifest(&fixture_releases()?[2])?;
-    let object_store_secret_name =
-        (project == "wms").then(|| format!("wamn-object-store-credentials-acme--{project}--dev"));
+    let object_store_secret_name = (project == "wms").then(|| {
+        wamn_registry::name::workload_secret_name(
+            "wamn-object-store-credentials-",
+            "acme",
+            project,
+            "dev",
+        )
+    });
     let mut secrets = secrets;
     if let Some(name) = &object_store_secret_name {
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
@@ -550,7 +556,9 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         wamn_environment_control::platform::control::registry_pull_secret(&cluster, &auth_file)?,
     );
     secrets.push(prerequisite(
-        &format!("wamn-nats-acme--{project}--dev"),
+        &wamn_registry::name::nats_certificate(&wamn_registry::project_env_key(
+            "acme", project, "dev",
+        )),
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
     ));
@@ -738,7 +746,7 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
 
 #[test]
 fn reader_uses_the_environments_owned_credentials() {
-    let target = Triple::new("acme", "apps", "dev");
+    let target = Triple::new("acme", "dev", "apps");
     let image = format!("registry/host@sha256:{}", "a".repeat(64));
     let first = reader_deployment(&target, "hosts", &image, 1, 120);
     let pod = &first["spec"]["template"]["spec"];
@@ -771,7 +779,7 @@ fn reader_uses_the_environments_owned_credentials() {
         assert!(binding.get("value").is_none());
     }
     let other = reader_deployment(
-        &Triple::new("acme", "apps", "other"),
+        &Triple::new("acme", "other", "apps"),
         "hosts",
         &image,
         1,

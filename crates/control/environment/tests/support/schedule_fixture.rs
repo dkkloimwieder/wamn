@@ -14,7 +14,6 @@ pub use wamn_catalog::{
 pub use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
-pub use wamn_control_registry::Triple;
 pub use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 pub use wamn_engine::component_admission::{
     ComponentAdmissionRequest, validate_component_admission,
@@ -31,6 +30,7 @@ pub use wamn_environment_control::workflow_lifecycle::{
 };
 pub use wamn_execution_host::{OperationHost, OperationHostConfig};
 pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
+pub use wamn_registry::Triple;
 pub use wamn_runtime::connection_credentials::ConnectionCredentials;
 pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
@@ -42,7 +42,7 @@ pub use wamn_runtime::plugins::wamn_postgres::{
 pub use wamn_schema_control::BareSchemaName;
 pub use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
-pub const PROJECT_ENV_KEY: &str = "schedule-live--default--dev";
+pub const PROJECT_ENV_KEY: &str = "schedule-live--dev--default";
 pub const PROJECT: &str = "default";
 pub const ENVIRONMENT: &str = "dev";
 pub const APPLICATION: &str = "orders";
@@ -427,7 +427,7 @@ impl Fixture {
     pub async fn enable(&mut self, id: &str, enabler: &str) -> Result<(), WorkflowLifecycleError> {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", APPLICATION, ENVIRONMENT),
+            &Triple::new("acme", ENVIRONMENT, APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "schedule-live",
@@ -448,7 +448,7 @@ impl Fixture {
     pub async fn disable(&mut self, id: &str) -> Result<(), WorkflowLifecycleError> {
         disable_workflow(
             &self.url,
-            &Triple::new("acme", APPLICATION, ENVIRONMENT),
+            &Triple::new("acme", ENVIRONMENT, APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "schedule-live",

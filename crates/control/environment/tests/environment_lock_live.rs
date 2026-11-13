@@ -10,14 +10,14 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
-use wamn_control_registry::Triple;
 use wamn_environment_control::environment::lock::LifecycleLock;
+use wamn_registry::Triple;
 
 #[tokio::test]
 async fn a_second_verb_refuses_until_the_holder_is_gone() {
     let database = wamn_test_postgres::database();
     let url = database.url();
-    let prod = Triple::new("acme", "wms", "prod");
+    let prod = Triple::new("acme", "prod", "wms");
 
     LifecycleLock::hold(url, &prod, async |_| {
         assert!(
@@ -30,7 +30,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
                 .await
                 .is_err()
         );
-        let other = LifecycleLock::acquire(url, &Triple::new("acme", "wms", "dev")).await?;
+        let other = LifecycleLock::acquire(url, &Triple::new("acme", "dev", "wms")).await?;
         other.release().await;
         Ok(())
     })
@@ -83,7 +83,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
 #[tokio::test]
 async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
     let database = wamn_test_postgres::database();
-    let triple = Triple::new("acme", "wms", "prod");
+    let triple = Triple::new("acme", "prod", "wms");
     let mut tasks = JoinSet::new();
     let (observer, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await

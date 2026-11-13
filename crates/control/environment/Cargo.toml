@@ -58,7 +58,7 @@ url = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 postgres-protocol = { workspace = true }

@@ -26,8 +26,8 @@ serde_yaml = { workspace = true }
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
 # Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so
 # the rendered clusters and the org's registry.orgs row name the same clusters.
-# A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
-wamn-control-registry = { workspace = true }
+# A lean pure→pure edge (wamn-registry deps serde + serde_json only).
+wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.

@@ -130,7 +130,7 @@ pub async fn build_fixture(
     }
     std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
     let coordinate = wamn_catalog::ComponentPackageCoordinate::new(
-        wamn_control_registry::project_env_key(ORG, PROJECT, "files"),
+        wamn_registry::project_env_key(ORG, PROJECT, "files"),
         "file_fixture",
         "0.1.0",
     )?;

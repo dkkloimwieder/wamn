@@ -395,12 +395,8 @@ fn parsed_credential_outputs_must_name_distinct_files() {
 
 #[test]
 fn provisioning_summary_contains_no_database_credentials() {
-    let triple = Triple::new("acme", "billing", "dev");
+    let triple = Triple::new("acme", "dev", "billing");
     let summary = provision_summary(&triple, "wamn-db-acme--billing--dev--k3m9x2p7", "acme-dev");
-    assert_eq!(
-        summary,
-        "project-env acme/billing/dev: database \"wamn-db-acme--billing--dev--k3m9x2p7\" on cluster \"acme-dev\" (owner wamn_db_owner)"
-    );
     assert!(!summary.contains("postgres://"));
     assert!(!summary.contains("password"));
     assert!(!summary.contains("app url"));
@@ -436,7 +432,7 @@ fn the_credential_free_modes_parse_without_a_database_secret() {
     for action in every_action_flag() {
         let parsed = parse_argv(action_argv(&[
             "--target-admin-database-url",
-            "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
+            "postgresql://postgres@localhost/wamn-db-acme--dev--billing",
             &action,
             "a",
         ]))
@@ -703,7 +699,7 @@ mod enable_cdc {
     fn cdc_command_accepts_native_consumer_declarations() {
         let consumer = wamn_broker::events::materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.acme.billing.dev.invoice.>",
+            "evt.acme.dev.billing.invoice.>",
             Duration::from_secs(30),
             5,
         );

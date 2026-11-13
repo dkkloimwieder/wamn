@@ -1,7 +1,7 @@
 //! SELECT-only file reads and a session lock for one native collector.
 
 use super::WamnPostgres;
-use wamn_control_registry::identifiers::{valid_project, valid_project_env_key};
+use wamn_registry::identifiers::{valid_project, valid_project_env_key};
 
 /// A dedicated reader that releases its advisory lock on completion or cancellation.
 /// Dropping the detached connection closes it instead of returning a lock to the pool.

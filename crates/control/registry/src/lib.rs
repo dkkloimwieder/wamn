@@ -1,58 +1,12 @@
-//! Canonical control-plane registry model (wamn-q3n.1; generalized in
-//! wamn-8df.3, `docs/archive/platform/deployment-model.md`).
-//!
-//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
-//!
-//! The registry is the platform's system-of-record for **identity** and
-//! **placement** — the foundation of the four-tier Postgres topology
-//! (`docs/archive/platform/postgres-topology.md`, epic `wamn-q3n`). It answers two questions and
-//! deliberately nothing else:
-//!
-//! - *who exists* — [`Org`] / [`Project`] / [`ProjectEnv`] membership, keyed by
-//!   the first-class [`Triple`] `(org, project, env)` every subsystem speaks;
-//! - *where does it live and how is it credentialed* —
-//!   [`Registry::resolve`] maps a triple to the CNPG [`ClusterRef`] holding the
-//!   database (**derived** by [`cluster_of`] from the org's [`Placement`] and the
-//!   env's [`EnvPolicy`]) and a [`SecretRef`] (a **reference**, never the
-//!   credential — R8b).
-//!
-//! The generic deployment model (D18) replaces the closed `Env` / `Tier` enums:
-//! `env` is a validated [`Env`] slug resolving a named [`EnvPolicy`], and an org
-//! carries a minimal [`Placement`] (`pooled` | `dedicated`) from which clusters
-//! derive. Policies are **org-targeted** ([`OrgEnvPolicy`], wamn-8df.4): a
-//! [`Template`] preset (`trials` / `standard` / `dedicated` — the `Tier`
-//! successor) stamps an org's placement + initial policy set in one step, and
-//! the org customizes its own rows per-env.
-//!
-//! It is a **pure model** (SR6 rule 1: no DB, clock, or wasm): types +
-//! [`validate`] + [`Registry::from_json`] / [`Registry::to_json`]. The live
-//! system-DB tables that persist this model and their DB-enforced invariants are
-//! `deploy/sql/system-schema.sql` (`wamn-q3n.3`, tied here by a drift guard); the
-//! environment lifecycle threads into `wamn-schema-control` (3.4). This is a store model,
-//! not a published contract, so — like `wamn-run-state` — there is no generated
-//! JSON-Schema file.
+//! Registry coordinates, resource names, and system database statements.
 
 pub mod identifiers;
-mod resolve;
+pub mod name;
 pub mod sql;
-mod template;
 mod types;
-mod validate;
 
-pub use resolve::{RegistryError, Resolution};
-pub use template::Template;
-pub use types::{
-    ClusterRef, DEFAULT_PG_IMAGE, Env, EnvPolicy, EventReader, Org, OrgEnvPolicy, OrgId, Placement,
-    Project, ProjectEnv, ProjectId, RecoveryDomain, Registry, SCHEMA_VERSION, SecretRef, Triple,
-    cluster_of, control_nats_user, environment_nats_user, project_env_key,
+pub use name::{
+    control_nats_user, credential_secret_name, environment_nats_user, project_env_key,
+    service_account_name,
 };
-pub use validate::{Issue, Severity, validate, validate_org_id};
-
-/// The Secret that stores an environment's credential values.
-pub fn credential_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-credential-{}", project_env_key(org, project, env))
-}
-/// The account used by the environment's hosts.
-pub fn service_account_name(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-host-{}", project_env_key(org, project, env))
-}
+pub use types::{Env, Environment, OrgId, ProjectId, Triple};

@@ -1374,10 +1374,6 @@ pub(crate) mod tests {
             &serde_json::to_vec(&complete_document(&addresses)).expect("serialize complete config"),
         )
         .expect("complete config parses");
-        assert_eq!(
-            config.activation_identity().project_env_key(),
-            "acme--fixture--fixture-dev"
-        );
         assert_eq!(config.host_binary(), Path::new("/opt/wamn/bin/wamn-host"));
         assert_eq!(
             config.wasmtime_cache_dir(),

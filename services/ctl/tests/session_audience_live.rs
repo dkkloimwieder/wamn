@@ -38,7 +38,7 @@ const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const OTHER_INSTANCE: &str = "p7x2m9k3";
-const PROJECT_ENV_KEY: &str = "sessioncli--widgets--dev";
+const PROJECT_ENV_KEY: &str = "sessioncli--dev--widgets";
 
 fn database(instance: &str) -> String {
     project_env_database_name(ORG, PROJECT, ENVIRONMENT, instance)
@@ -162,7 +162,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
     let secret: Value = serde_json::from_slice(&fs::read(path)?)?;
     anyhow::ensure!(
         secret["kind"] == "Secret"
-            && secret["metadata"]["name"] == "wamn-session-role-reader-sessioncli--widgets--dev"
+            && secret["metadata"]["name"] == "wamn-session-role-reader-sessioncli--dev--widgets"
             && secret["metadata"]["namespace"] == "wamn-system",
         "session-target Secret has the wrong identity"
     );
@@ -258,8 +258,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image)
           VALUES ('{ORG}','{ENVIRONMENT}','"own"',0,1,'1Gi','1','1Gi','postgres:18');
         INSERT INTO registry.projects (org,id) VALUES ('{ORG}','{PROJECT}');
-        INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix,policy_name)
-          VALUES ('{ORG}','{PROJECT}','{ENVIRONMENT}','fixture-db','{INSTANCE}','{ENVIRONMENT}');
+        WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('{ORG}','{ENVIRONMENT}','{ENVIRONMENT}') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('{ORG}','{PROJECT}','{ENVIRONMENT}','fixture-db','{INSTANCE}');
     "#)).await?;
     for instance in [INSTANCE, OTHER_INSTANCE] {
         admin

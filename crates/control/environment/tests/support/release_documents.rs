@@ -172,7 +172,7 @@ pub fn fixture_http_entry(
         .context("the fixture build contains its device component")?;
     let declaration = wamn_package_control::component_declaration::render_declaration_document(
         &package.join("publication/components/device.json.in"),
-        &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
+        &wamn_registry::project_env_key(ORG, PROJECT, "http"),
     )?;
     let declaration_path = work.join("device-declaration.json");
     std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
@@ -285,7 +285,7 @@ pub mod http {
             &template
                 .replace(
                     "__PROJECT_ENV_KEY__",
-                    &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
+                    &wamn_registry::project_env_key(ORG, PROJECT, "http"),
                 )
                 .replace("__PACKAGE_ID__", package)
                 .replace("__PACKAGE_VERSION__", version),
@@ -383,7 +383,7 @@ pub mod http {
         components: Vec<ComponentDescriptor>,
     ) -> anyhow::Result<Vec<u8>> {
         let target = ComponentPackageCoordinate {
-            project_env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
+            project_env_key: wamn_registry::project_env_key(ORG, PROJECT, "http"),
             package_id: "http_fixture".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
@@ -492,7 +492,7 @@ pub mod http {
         values: &Value,
         references: &mut serde_json::Map<String, Value>,
     ) -> anyhow::Result<Value> {
-        let name = wamn_control_registry::credential_secret_name(ORG, PROJECT, environment);
+        let name = wamn_registry::credential_secret_name(ORG, PROJECT, environment);
         let mut data = serde_json::Map::new();
         for reference in references.values_mut() {
             let version = reference["version"].as_str().context("fixture version")?;
@@ -565,7 +565,7 @@ pub mod workflow {
     pub struct WorkflowEnvironment<'a> {
         pub system_url: &'a str,
         pub project_url: &'a str,
-        pub target: &'a wamn_control_registry::Triple,
+        pub target: &'a wamn_registry::Triple,
         pub project_env_key: &'a str,
         /// The release the environment serves.
         pub digest: &'a str,

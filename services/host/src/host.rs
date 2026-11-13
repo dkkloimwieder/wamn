@@ -29,7 +29,6 @@ mod commands;
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
-use wamn_control_registry::{Triple, control_nats_user, environment_nats_user, project_env_key};
 use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -46,6 +45,7 @@ use wamn_execution_host::{
 use wamn_identity_client::PatIssuerConfig;
 use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_platform_identity::operator_subject;
+use wamn_registry::{Triple, control_nats_user, environment_nats_user, project_env_key};
 use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -837,7 +837,7 @@ fn session_verifier(
         .session_instance_suffix
         .as_deref()
         .context("a session route requires --session-instance-suffix")?;
-    let audience = session_audience(&Triple::new(org, &args.project, environment), suffix)?;
+    let audience = session_audience(&Triple::new(org, environment, &args.project), suffix)?;
     let database = project_env_database_name(org, &args.project, environment, suffix);
     // Compare trusted deployment coordinates, not anything carried by a token.
     // Parsing failures never attach the credential-bearing URL to diagnostics.
@@ -951,7 +951,9 @@ async fn connect_data_nats(
         .max_reconnects(None)
         .client_capacity(SCHEDULER_NATS_BUFFER);
     if let Some(user) = user {
-        opts = opts.custom_inbox_prefix(format!("_INBOX_{user}"));
+        opts = opts.custom_inbox_prefix(wamn_registry::name::nats_subject(&[
+            &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
+        ]));
     }
     opts = wamn_broker::nats::tls_options(
         opts,
@@ -2748,7 +2750,7 @@ mod tests {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "startup release",
-                ReleaseTarget::new("acme--wms--dev", "dev").with_applications(
+                ReleaseTarget::new("acme--dev--wms", "dev").with_applications(
                     serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
                 ),
             )
@@ -2833,9 +2835,9 @@ host:
       bindings:
         events:
           config:
-            inbox-prefix: _INBOX_wamn-env-fixture--widgets--prod
-            stream-allow: EVT_7_fixture_7_widgets_4_prod
-            subject-allow: evt.fixture.widgets.prod.>
+            inbox-prefix: _INBOX_wamn-env-fixture--prod--widgets
+            stream-allow: EVT_7_fixture_4_prod_7_widgets
+            subject-allow: evt.fixture.prod.widgets.>
 ";
         let bindings = plugin_bindings(&args, source).unwrap();
         let declared = bindings.for_plugin(plugin::wasmcloud_nats::PLUGIN_NATS_ID);
@@ -2854,7 +2856,7 @@ host:
         assert_eq!(events.get("tls-cert"), Some("/data-cert/tls.crt"));
         assert_eq!(
             events.get("stream-allow"),
-            Some("EVT_7_fixture_7_widgets_4_prod")
+            Some("EVT_7_fixture_4_prod_7_widgets")
         );
         assert!(resolve("foreign", &wash_runtime::wit::Config::new()).is_err());
         // R6: workloadConfig deny refuses a workload's connection or wider grant.

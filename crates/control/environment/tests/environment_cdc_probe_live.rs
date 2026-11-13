@@ -6,12 +6,12 @@
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{cdc_object_name, sql};
-use wamn_control_registry::Triple;
-use wamn_control_registry::sql::{
-    stamp_env_policy_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
-};
 use wamn_environment_control::enable_cdc_project_env::record_event_reader;
 use wamn_environment_control::environment::ensure::cdc_in_place;
+use wamn_registry::Triple;
+use wamn_registry::sql::{
+    stamp_env_policy_sql, upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql,
+};
 
 const ORG: &str = "cp0";
 const PROJECT: &str = "app";
@@ -66,28 +66,30 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .await
     .expect("env-policy row");
     db.execute(
-        upsert_project_env_sql(),
+        upsert_project_env_with_policy_sql(),
         &[
             &ORG,
             &PROJECT,
             &ENV,
-            &"wamn-db-cp0--app--dev",
+            &"wamn-db-cp0--dev--app",
             &None::<&str>,
             &INSTANCE,
             &false,
+            &ENV,
+            &Option::<String>::None,
         ],
     )
     .await
     .expect("project-env row");
 
     db.batch_execute(
-        "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+        "ALTER TABLE registry.environment_projects OWNER TO wamn_system; \
          ALTER TABLE registry.event_readers OWNER TO wamn_system",
     )
     .await
     .expect("registry owner");
 
-    let triple = Triple::new(ORG, PROJECT, ENV);
+    let triple = Triple::new(ORG, ENV, PROJECT);
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let schemas = vec!["app".to_owned(), "other".to_owned()];
     let in_place = || cdc_in_place(&db, &cdc_name, &schemas);

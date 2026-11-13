@@ -35,7 +35,7 @@ use crate::plugins::wamn_postgres::{
 };
 
 const WORKLOAD: &str = "entry-fixture";
-const PROJECT_ENV_KEY: &str = "entryfixture";
+const PROJECT_ENV_KEY: &str = "test--dev--entryfixture";
 const OPERATION: &str = "base:widget/update@1.0.0";
 const READ_OPERATION: &str = "base:widget/get@1.0.0";
 const RESULT: &str = "{ \"value\" : 7 }";

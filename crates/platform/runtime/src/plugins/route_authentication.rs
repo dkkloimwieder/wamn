@@ -154,6 +154,7 @@ impl RouteAuthentication {
         expected_subject: impl Into<Box<str>>,
     ) -> Result<Self, wamn_platform_identity::IdentityError> {
         let prepared = PreparedIdentityReads::prepare(identity_reader.as_ref()).await?;
+        postgres.set_hierarchy_reader(Arc::clone(&identity_reader));
         Ok(Self {
             identity_reader,
             prepared,
@@ -226,6 +227,7 @@ impl SessionRouteAuthentication {
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         project: impl Into<Box<str>>,
     ) -> Self {
+        postgres.set_hierarchy_reader(Arc::clone(&identity_reader));
         Self {
             identity_reader,
             verifier,
@@ -771,7 +773,11 @@ pub(crate) mod tests {
         let release = LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "fixture",
-            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "prod").with_applications(
+            wamn_engine::release_manifest::ReleaseTarget::new(
+                wamn_registry::project_env_key("acme", "host-project", "dev"),
+                "dev",
+            )
+            .with_applications(
                 [(
                     "catalog".to_owned(),
                     wamn_catalog::ApplicationDefinition {

@@ -27,7 +27,6 @@ use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_gener
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
 };
-use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::SessionJwks;
 use wamn_identity_protocol::test_util::{Audience, verify};
@@ -37,13 +36,13 @@ use wamn_platform_identity::{
     Principal, create_user, disable_principal, grant_project_env_membership,
     revoke_project_env_membership,
 };
+use wamn_registry::Triple;
 
 #[path = "session_exchange/password_lifecycle.rs"]
 mod password_lifecycle;
 
 const ISSUER: &str = "https://identity.session-test.internal";
 const PASSWORD: &str = "session-exchange-disposable-fixture-password";
-const PROJECT_ENV_KEY: &str = "session-org-a";
 const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
@@ -293,7 +292,7 @@ async fn setup(raw: &str) -> Fixture {
         let target = SessionTarget::new(
             &triple,
             SUFFIX,
-            PROJECT_ENV_KEY,
+            &wamn_registry::project_env_key(org, "widgets", env),
             &login_url(&admin, &name, &role),
         )
         .expect_redacted("production target capability");
@@ -429,7 +428,7 @@ async fn setup(raw: &str) -> Fixture {
         system.client.execute("INSERT INTO registry.orgs (id,placement_type) VALUES ($1,'dedicated') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture org");
         system.client.execute("INSERT INTO registry.projects (org,id) VALUES ($1,'widgets') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture project");
         system.client.execute("INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ($1,$2,'\"own\"',0,1,'1Gi','1','1Gi','fixture')", &[&triple.org, &triple.env.as_str()]).await.expect_redacted("fixture environment policy");
-        system.client.execute("INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix,policy_name) VALUES ($1,'widgets',$2,'fixture-reference',$3,$2)", &[&triple.org, &triple.env.as_str(), &SUFFIX]).await.expect_redacted("current environment registry entry");
+        system.client.execute("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$2,$2) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,'widgets',$2,'fixture-reference',$3)", &[&triple.org, &triple.env.as_str(), &SUFFIX]).await.expect_redacted("current environment registry entry");
         environments.push(environment);
     }
     Fixture {
@@ -748,7 +747,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     assert_eq!(throttled.headers()["retry-after"], "60");
     // Advance only the owned counters, without sleeping, to test recovery.
     fixture.system.client.batch_execute("UPDATE identity.password_attempts SET started_at=clock_timestamp()-interval '61 seconds'; UPDATE identity.principals SET status='active', disabled_at=NULL WHERE subject='password-alice'").await.unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         post(&replica, "/password/session", login.clone())
             .send()
@@ -757,7 +756,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     verify_response(
         post(&replica, "/password/session", login)
             .send()
@@ -888,9 +887,9 @@ async fn password_environment_discovery_requires_current_authority() {
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     seed_user(&fixture.environments[0].client, &alice, "receiver").await;
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // An inactive environment is not offered.
     discovery_window(&fixture).await;
@@ -898,7 +897,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .system
         .client
         .batch_execute(
-            "UPDATE registry.project_envs SET status='inactive' WHERE org='demo' AND env='dev'",
+            "UPDATE registry.environments SET status='inactive' WHERE org='demo' AND env='dev'",
         )
         .await
         .unwrap();
@@ -907,7 +906,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .system
         .client
         .batch_execute(
-            "UPDATE registry.project_envs SET status='active' WHERE org='demo' AND env='dev'",
+            "UPDATE registry.environments SET status='active' WHERE org='demo' AND env='dev'",
         )
         .await
         .unwrap();

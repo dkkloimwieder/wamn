@@ -21,7 +21,8 @@
 //! Templates are **code presets** (versioned, drift-guarded with the model), not
 //! registry rows — a template is consulted only at stamp time.
 
-use crate::types::{Env, EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain};
+use crate::placement::{EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain};
+use wamn_registry::Env;
 
 /// A named org preset: a placement shape plus the env-policy set it stamps.
 #[derive(Debug, Clone, PartialEq, Eq)]

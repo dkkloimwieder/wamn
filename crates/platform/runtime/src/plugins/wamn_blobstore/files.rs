@@ -249,7 +249,7 @@ impl FileStore {
         generation: i64,
         environment: &str,
     ) -> Result<Self, FileStorageError> {
-        if let Some(reason) = wamn_control_registry::identifiers::project_id_reason(environment) {
+        if let Some(reason) = wamn_registry::identifiers::project_id_reason(environment) {
             return Err(FileStorageError::new(
                 FileStorageErrorType::Refused,
                 "environment",

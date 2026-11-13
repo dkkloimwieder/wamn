@@ -25,7 +25,7 @@ use wamn_platform_identity::configuration::PlatformConfiguration;
 #[path = "../support/platform_configuration.rs"]
 mod rows;
 
-const PROJECT_ENV_KEY: &str = "acme--billing--dev";
+const PROJECT_ENV_KEY: &str = "acme--dev--billing";
 const ADMINISTRATION_PASSWORD: &str = "administration-generation-configuration-probe";
 
 /// Mint generation a of the environment's administration login through the

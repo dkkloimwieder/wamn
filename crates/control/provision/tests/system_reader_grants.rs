@@ -310,7 +310,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
         "identity.project_roles",
         "registry.orgs",
         "registry.projects",
-        "registry.project_envs",
+        "registry.environment_projects",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(
@@ -351,7 +351,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
             &format!(
                 "PREPARE probe (text,text,text) AS {select}; \
                  EXECUTE probe('{ORG}','{PROJECT}','{ENV}'); DEALLOCATE probe;",
-                select = wamn_control_registry::sql::select_event_reader_sql(),
+                select = wamn_registry::sql::select_event_reader_sql(),
             ),
         ),
         None,

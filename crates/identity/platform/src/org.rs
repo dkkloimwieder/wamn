@@ -27,27 +27,13 @@ const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
 const ACTIVE_MEMBER_SQL: &str = "SELECT status FROM identity.org_memberships \
     WHERE principal_id = $1::text::uuid AND org = $2 FOR UPDATE";
 
-const PROJECT_IN_ORG_SQL: &str =
-    "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
+const PROJECT_IN_ORG_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL;
 
 const ORG_ROLE_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, role) \
     VALUES ($1::text::uuid, $2, $3) ON CONFLICT DO NOTHING";
 
-/// `project-admin` in every project of the org, or of one project when `$4`
-/// names it.
 const PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
-    (principal_id, org, project, role) \
-    SELECT $1::text::uuid, p.org, p.id, $3 FROM registry.projects p \
-    WHERE p.org = $2 AND ($4::text IS NULL OR p.id = $4) \
-    ON CONFLICT DO NOTHING";
-
-/// A membership in every environment of the org, or of one project when `$3`
-/// names it.
-const ENV_MEMBERSHIPS_SQL: &str = "INSERT INTO identity.project_env_memberships \
-    (principal_id, org, project, env) \
-    SELECT $1::text::uuid, e.org, e.project, e.env FROM registry.project_envs e \
-    WHERE e.org = $2 AND ($3::text IS NULL OR e.project = $3) \
-    ON CONFLICT DO NOTHING";
+    (principal_id, org, project, role) VALUES ($1::text::uuid, $2, $4, $3) ON CONFLICT DO NOTHING";
 
 /// Create the user's active membership of `org`, or make an inactive
 /// membership active. It restores no project, environment or role access.
@@ -67,9 +53,7 @@ pub async fn activate_org_membership(
     Ok(())
 }
 
-/// Write the `org-admin` row of an active org member, then `project-admin` in
-/// every project of the org and a membership in every environment of the
-/// org. Rows that exist stay as they are.
+/// Write the explicit org administration grant. Lower authority is derived.
 pub async fn grant_org_admin(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -78,28 +62,14 @@ pub async fn grant_org_admin(
     let org = active_member(client, principal_id, org).await?;
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
-    let all: Option<&str> = None;
     client
         .execute(ORG_ROLE_SQL, &[&principal, &org, &ORG_ADMIN_ROLE])
-        .await
-        .map_err(|error| database_error(&error))?;
-    client
-        .execute(
-            PROJECT_ADMIN_SQL,
-            &[&principal, &org, &control::PROJECT_ADMIN_ROLE, &all],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
-    client
-        .execute(ENV_MEMBERSHIPS_SQL, &[&principal, &org, &all])
         .await
         .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
-/// Write the `project-admin` row of an active org member in one project of
-/// the org, then a membership in every environment of that project. A
-/// project outside the org is refused.
+/// Write the explicit project administration grant of an active org member.
 pub async fn grant_project_admin(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -130,15 +100,10 @@ pub async fn grant_project_admin(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    client
-        .execute(ENV_MEMBERSHIPS_SQL, &[&principal, &org, &one])
-        .await
-        .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
-const ENV_IN_PROJECT_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
-    WHERE org = $1 AND project = $2 AND env = $3)";
+const ENV_IN_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ENV_IN_PROJECT_SQL;
 
 /// Grant a membership of one environment of the org to an active org member.
 /// An environment outside the org is refused.
@@ -170,9 +135,6 @@ pub async fn grant_member(
 const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
     WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)";
 
-const HOLDS_PROJECT_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.project_roles \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND role = $4)";
-
 /// Revoke a membership of one environment. The user's org membership and
 /// other environments stay. While `org-admin` or `project-admin` covers the
 /// environment, the revoke is refused: the covering grant goes first.
@@ -188,19 +150,8 @@ pub async fn revoke_member(
     lock_membership(client, principal_id, &org).await?;
     let project = require_target_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
-    let covered: bool = client
-        .query_one(
-            HOLDS_PROJECT_ADMIN_SQL,
-            &[
-                &principal_id.to_string().as_str(),
-                &org,
-                &project,
-                &control::PROJECT_ADMIN_ROLE,
-            ],
-        )
-        .await
-        .map_err(|error| database_error(&error))?
-        .get(0);
+    let covered =
+        control::is_project_admin(client, principal_id, &org, &project, Some(env)).await?;
     if covered {
         return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
@@ -273,66 +224,9 @@ async fn refuse_under_org_admin(
     Ok(())
 }
 
-/// `project-admin` in the project for every holder of `org-admin` in the
-/// org.
-const ORG_ADMINS_PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
-    (principal_id, org, project, role) \
-    SELECT r.principal_id, r.org, $2, $3 FROM identity.org_roles r \
-    WHERE r.org = $1 AND r.role = $4 AND EXISTS (SELECT 1 FROM identity.org_memberships m \
-    WHERE m.principal_id=r.principal_id AND m.org=r.org AND m.status='active') \
-    ON CONFLICT DO NOTHING";
+const CREATE_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL;
 
-/// A membership in the environment for every holder of `project-admin` in
-/// its project.
-const PROJECT_ADMINS_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
-    (principal_id, org, project, env) \
-    SELECT r.principal_id, r.org, r.project, $3 FROM identity.project_roles r \
-    WHERE r.org = $1 AND r.project = $2 AND r.role = $4 AND EXISTS (SELECT 1 FROM identity.org_memberships m \
-    WHERE m.principal_id=r.principal_id AND m.org=r.org AND m.status='active') \
-    ON CONFLICT DO NOTHING";
-
-/// Give a new project, or a new environment, the rows of the current
-/// administrators: `project-admin` in the project for each `org-admin` of the
-/// org, then a membership in the environment for each `project-admin` of the
-/// project, which now includes every `org-admin`. Rows that exist stay as
-/// they are, so provisioning the same environment again changes nothing.
-pub async fn materialize_admin_grants(
-    client: &(impl GenericClient + Sync),
-    org: &str,
-    project: &str,
-    env: &str,
-) -> Result<(), IdentityError> {
-    let org = require_target_segment("org", org)?;
-    lock_org_memberships(client, &org).await?;
-    let project = require_target_segment("project", project)?;
-    let env = require_target_segment("env", env)?;
-    client
-        .execute(
-            ORG_ADMINS_PROJECT_ADMIN_SQL,
-            &[
-                &org,
-                &project,
-                &control::PROJECT_ADMIN_ROLE,
-                &ORG_ADMIN_ROLE,
-            ],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
-    client
-        .execute(
-            PROJECT_ADMINS_MEMBERSHIP_SQL,
-            &[&org, &project, &env, &control::PROJECT_ADMIN_ROLE],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-const CREATE_PROJECT_SQL: &str =
-    "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
-
-/// Create a project of the org with no environment, and give each `org-admin`
-/// of the org `project-admin` in it. A project that exists refuses.
+/// Create an org-level project definition. An existing project is refused.
 pub async fn create_project(
     client: &(impl GenericClient + Sync),
     org: &str,
@@ -352,18 +246,6 @@ pub async fn create_project(
             format!("project {project} exists in org {org}"),
         ));
     }
-    client
-        .execute(
-            ORG_ADMINS_PROJECT_ADMIN_SQL,
-            &[
-                &org,
-                &project,
-                &control::PROJECT_ADMIN_ROLE,
-                &ORG_ADMIN_ROLE,
-            ],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
     Ok(())
 }
 
@@ -486,6 +368,13 @@ pub async fn deactivate_org_membership(
         .await
         .map_err(|error| database_error(&error))?;
     client
+        .execute(
+            "DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2",
+            &[&principal, &org],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
         .execute(DROP_ORG_ROLES_SQL, &[&principal, &org, &every])
         .await
         .map_err(|error| database_error(&error))?;
@@ -496,8 +385,7 @@ pub async fn deactivate_org_membership(
     Ok(())
 }
 
-/// Remove `project-admin` throughout the org, then the `org-admin` row.
-/// Ordinary memberships stay.
+/// Revoke only the explicit org grant. Other explicit grants stay.
 pub async fn revoke_org_admin(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -509,13 +397,6 @@ pub async fn revoke_org_admin(
     let principal_text = principal_id.to_string();
     let principal = principal_text.as_str();
     drops.identity(principal);
-    client
-        .execute(
-            DROP_PROJECT_ROLES_SQL,
-            &[&principal, &org, &Some(control::PROJECT_ADMIN_ROLE)],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
     client
         .execute(
             DROP_ORG_ROLES_SQL,
@@ -578,8 +459,8 @@ pub async fn org_users_page(
         .collect()
 }
 
-const ORG_ENVIRONMENTS_SQL: &str = "SELECT project, env FROM registry.project_envs \
-    WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
+const ORG_ENVIRONMENTS_SQL: &str =
+    wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL;
 
 /// The environments of `org`, or of one project of it, as `(project, env)`.
 pub async fn org_environments(
@@ -626,7 +507,7 @@ impl EnvironmentStatus {
 pub struct EnvironmentSummary {
     /// The environment name.
     pub name: String,
-    /// The state from registry.project_envs.status.
+    /// The state from registry.environments.status.
     pub state: String,
 }
 
@@ -677,8 +558,8 @@ pub async fn status_environments(
     Ok(vec![env])
 }
 
-const ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.project_envs SET status = $4 \
-    WHERE org = $1 AND project = $2 AND env = ANY($3)";
+const ENVIRONMENT_STATUS_SQL: &str =
+    wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL;
 
 /// Write the status of the named environments of one project of `org`.
 /// The control routes read them with [`status_environments`] first.
@@ -732,8 +613,7 @@ pub async fn user_contact(
     Ok((email, row.get(1)))
 }
 
-const PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.project_envs WHERE org = $1 AND project = $2 \
-    AND ($3::text IS NULL OR env > $3) ORDER BY env LIMIT $4";
+const PROJECT_ENVS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_ENVS_SQL;
 
 /// The environments of one project of `org`.
 pub async fn project_envs(
@@ -769,22 +649,7 @@ pub async fn project_envs_page(
 /// Every user with a membership or a project role in the project, with the
 /// administrative grants that cover the project. An environment `$8` keeps
 /// only its members and only its name in `environments`.
-const PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, \
-    EXISTS (SELECT 1 FROM identity.org_roles o \
-        WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $4), \
-    EXISTS (SELECT 1 FROM identity.project_roles r \
-        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2 AND r.role = $3), \
-    ARRAY(SELECT m.env FROM identity.project_env_memberships m \
-        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 \
-        AND ($8::text IS NULL OR m.env = $8) ORDER BY m.env) \
-    FROM identity.principals p \
-    WHERE p.type = 'user' AND (EXISTS (SELECT 1 FROM identity.project_env_memberships m \
-        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 \
-        AND ($8::text IS NULL OR m.env = $8)) \
-    OR $8::text IS NULL AND EXISTS (SELECT 1 FROM identity.project_roles r \
-        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2)) \
-    AND ($5::text IS NULL OR (p.email, p.id) > ($5, $6::text::uuid)) \
-    ORDER BY p.email, p.id LIMIT $7";
+const PROJECT_MEMBERS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL;
 
 /// One user of a project.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -897,5 +762,34 @@ pub async fn lock_org_memberships(
 ) -> Result<(), IdentityError> {
     client.query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE", &[&org])
         .await.map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+/// Grant explicit administration of one environment to an active org member.
+pub async fn grant_environment_admin(
+    client: &(impl GenericClient + Sync),
+    principal: &PrincipalId,
+    org: &str,
+    env: &str,
+) -> Result<(), IdentityError> {
+    let org = active_member(client, principal, org).await?;
+    let env = require_target_segment("environment", env)?;
+    client.execute("INSERT INTO identity.environment_roles (principal_id,org,env,role) VALUES ($1::text::uuid,$2,$3,'environment-admin') ON CONFLICT DO NOTHING",
+        &[&principal.to_string(), &org, &env]).await.map_err(|error| database_error(&error))?;
+    Ok(())
+}
+/// Revoke only the explicit environment grant.
+pub async fn revoke_environment_admin(
+    client: &(impl GenericClient + Sync),
+    principal: &PrincipalId,
+    org: &str,
+    env: &str,
+    drops: &mut AuthDrops,
+) -> Result<(), IdentityError> {
+    let org = require_target_segment("org", org)?;
+    let env = require_target_segment("environment", env)?;
+    lock_membership(client, principal, &org).await?;
+    client.execute("DELETE FROM identity.environment_roles WHERE principal_id=$1::text::uuid AND org=$2 AND env=$3", &[&principal.to_string(),&org,&env]).await.map_err(|error| database_error(&error))?;
+    drops.identity(principal.to_string().as_str());
     Ok(())
 }

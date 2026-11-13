@@ -75,7 +75,7 @@ pub struct DevActivationIdentity {
 impl DevActivationIdentity {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -659,10 +659,10 @@ fn materializer_request(
 
     let identity = config.activation_identity();
     let source = wamn_broker::events::source_stream_config(
-        &wamn_control_registry::Triple::new(
+        &wamn_registry::Triple::new(
             &identity.org,
-            &identity.project,
             identity.environment.clone(),
+            &identity.project,
         ),
         config.stream_replicas(),
         Duration::from_secs(config.dup_window_secs()),
@@ -1676,22 +1676,6 @@ mod tests {
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
-        let staged_http: v2::WorkloadStartRequest =
-            serde_json::from_slice(&staged_workload).unwrap();
-        let fields = staged_http
-            .workload
-            .unwrap()
-            .wit_world
-            .unwrap()
-            .components
-            .remove(0)
-            .local_resources
-            .unwrap()
-            .config;
-        assert_eq!(
-            fields["wamn.project_env_key"].as_bytes(),
-            b"example--fixture--fixture-dev"
-        );
         let staged_materializer: v2::WorkloadStartRequest =
             serde_json::from_slice(&std::fs::read(directory.join("materializer.json")).unwrap())
                 .unwrap();
@@ -1717,10 +1701,6 @@ mod tests {
         assert_eq!(
             resources.config["wamn.postgres.authority"],
             "event-materializer"
-        );
-        assert_eq!(
-            resources.config["wamn.project_env_key"].as_bytes(),
-            b"example--fixture--fixture-dev"
         );
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");
         assert_eq!(

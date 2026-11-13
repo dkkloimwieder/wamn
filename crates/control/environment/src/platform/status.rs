@@ -178,12 +178,12 @@ async fn target_status(
             "app.kubernetes.io/name=wamn-identity".to_owned(),
         ),
         UpgradeTarget::Control => (
-            format!("hostgroup-{name}"),
-            format!("wasmcloud.com/hostgroup={name}"),
+            wamn_registry::name::resource_suffix("hostgroup", &name),
+            wamn_registry::name::host_selector(&name),
         ),
         UpgradeTarget::Host { group, .. } => (
-            format!("hostgroup-{group}"),
-            format!("wasmcloud.com/hostgroup={group}"),
+            wamn_registry::name::resource_suffix("hostgroup", group),
+            wamn_registry::name::host_selector(group),
         ),
     };
     let mut observations = Vec::new();
@@ -303,7 +303,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         let Some(name) = release["name"].as_str() else {
             continue;
         };
-        if name == format!("c-{}", document.org) {
+        if name == wamn_registry::name::control_resource(&document.org) {
             continue;
         }
         let installed = owner_values(target, "hosts", name).await;
@@ -371,7 +371,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ));
     }
     let mut warnings = Vec::new();
-    let control = format!("c-{}", document.org);
+    let control = wamn_registry::name::control_resource(&document.org);
     for (namespace, name) in [
         ("platform", "wamn"),
         ("identity", "identity"),
@@ -394,8 +394,8 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         observations.push(helm_status(namespace, name, result.as_ref().ok()));
     }
     let control_http = format!("{control}-http");
-    let control_certificate = format!("wamn-nats-control-{}", document.org);
-    let operator_certificate = format!("operator-{}", document.org);
+    let control_certificate = wamn_registry::name::control_nats_certificate(&document.org);
+    let operator_certificate = wamn_registry::name::resource_suffix("operator", &document.org);
     for (namespace, type_, name) in [
         ("cert-manager", "Deployment", "cert-manager"),
         ("cert-manager", "Deployment", "cert-manager-cainjector"),
@@ -1085,7 +1085,14 @@ async fn probe(
     let (namespace, service, port) = if identity {
         ("identity", "identity".to_owned(), 443)
     } else {
-        ("hosts", format!("c-{}-http", document.org), 80)
+        (
+            "hosts",
+            wamn_registry::name::resource_suffix(
+                &wamn_registry::name::control_resource(&document.org),
+                "http",
+            ),
+            80,
+        )
     };
     if get(target, namespace, "service", &service).await?.is_none() {
         return Ok(observation(

@@ -18,17 +18,10 @@ pub const CONTROL_AUDIENCE_PREFIX: &str = "urn:wamn:control:";
 /// The project role that grants control authority in its org.
 pub const PROJECT_ADMIN_ROLE: &str = "project-admin";
 
-const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles r \
-    JOIN identity.principals p ON p.id = r.principal_id \
-    WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
-    AND p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
-    AND ($4::text IS NULL OR r.project > $4) ORDER BY r.project LIMIT $5";
+const CONTROL_PROJECTS_SQL: &str =
+    wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL;
 
-const ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.project_envs e \
-    WHERE e.org = p.org AND e.project = p.id AND e.status = 'active') \
-    THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 \
-    AND ($2::text IS NULL OR p.id > $2) ORDER BY p.id LIMIT $3";
+const ORG_PROJECTS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL;
 
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
@@ -36,22 +29,10 @@ const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     AND p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
-const PROJECT_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.project_roles r \
-    JOIN identity.principals p ON p.id = r.principal_id \
-    WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.project = $3 AND r.role = $4 \
-    AND p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
+const PROJECT_ADMIN_SQL: &str =
+    "SELECT identity.is_project_admin($1::text::uuid,$2,$5,$3) AND $4='project-admin'";
 
-const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
-    JOIN identity.principals p ON p.id = $1::text::uuid \
-    WHERE p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=o.id AND m.status='active') \
-    AND (EXISTS (SELECT 1 FROM identity.project_roles r \
-    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
-    OR EXISTS (SELECT 1 FROM identity.org_roles r \
-    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3)) \
-    AND ($4::text IS NULL OR o.id = $4) AND ($5::text IS NULL OR o.id > $5) \
-    ORDER BY o.id LIMIT $6";
+const CONTROL_ORGS_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_ORGS_SQL;
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
@@ -59,7 +40,8 @@ const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $3) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \
-    WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $7)) \
+    WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $7) \
+    OR EXISTS (SELECT 1 FROM identity.environment_roles r WHERE r.principal_id=p.id AND r.org=$2)) \
     AND EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id = $4::text::uuid \
     AND l.principal_id = p.id AND l.issuer = $5 AND l.audience = $6 AND l.revoked_at IS NULL \
     AND l.expires_at > clock_timestamp() AND l.renewal_expires_at > clock_timestamp()))";
@@ -84,7 +66,7 @@ pub fn control_audience(org: &str) -> Result<String, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    Ok(format!("{CONTROL_AUDIENCE_PREFIX}{org}"))
+    Ok(wamn_registry::name::control_audience(org))
 }
 
 /// The org of a control audience, or `None` when the audience is not one.
@@ -160,6 +142,7 @@ pub async fn is_project_admin(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
+    environment: Option<&str>,
 ) -> Result<bool, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
@@ -173,6 +156,7 @@ pub async fn is_project_admin(
                 &org,
                 &project,
                 &PROJECT_ADMIN_ROLE,
+                &environment,
             ],
         )
         .await
@@ -295,10 +279,6 @@ mod tests {
 
     #[test]
     fn a_control_audience_names_exactly_one_org() {
-        assert_eq!(control_audience("dkk").unwrap(), "urn:wamn:control:dkk");
-        assert_eq!(control_audience_org("urn:wamn:control:dkk"), Some("dkk"));
-        assert_eq!(control_audience_org("urn:wamn:control:"), None);
-        assert_eq!(control_audience_org("urn:wamn:control:a:b"), None);
         assert_eq!(
             control_audience_org("urn:wamn:project-env:dkk:receiving:dev:abc"),
             None

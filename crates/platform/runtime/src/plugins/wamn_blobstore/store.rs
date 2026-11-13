@@ -391,7 +391,7 @@ mod tests {
             wamn_broker::Publisher::default(),
             Arc::new(reader),
             Arc::new(postgres),
-            &format!("acme--{project}--dev"),
+            &wamn_registry::project_env_key("acme", project, "dev"),
             project,
             "dev",
         ))

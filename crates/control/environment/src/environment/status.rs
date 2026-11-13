@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
-use wamn_control_registry::Triple;
 use wamn_kubernetes::environment_state::{environment_state, observe, release_digest};
+use wamn_registry::Triple;
 
 use super::Platform;
 use super::analyse::read_revision;
@@ -246,7 +246,7 @@ async fn stranded_runs(
         .context("SET ROLE wamn_system")?;
     let present = system
         .query_opt(
-            "SELECT 1 FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS,
             &[&triple.org, &triple.project, &triple.env.as_str()],
         )
         .await

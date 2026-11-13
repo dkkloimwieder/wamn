@@ -139,7 +139,7 @@ pub struct CarriedRelease {
 /// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseTarget {
-    /// The composed `org--project--env` key of the project environment.
+    /// The composed `org--env--project` key of the project environment.
     pub project_env_key: String,
     /// The short environment name, such as `dev`.
     pub environment: String,

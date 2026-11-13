@@ -174,7 +174,7 @@ async fn recorded_substrate(
 /// Select only pinned applied files during reset initialization and retries.
 pub(crate) async fn migration_sources(
     system: &impl tokio_postgres::GenericClient,
-    triple: &wamn_control_registry::Triple,
+    triple: &wamn_registry::Triple,
     sources: &[wamn_schema_control::MigrationSource],
 ) -> anyhow::Result<Option<Vec<wamn_schema_control::MigrationSource>>> {
     let pending = registry::pending_database(system, triple).await?;
@@ -616,7 +616,7 @@ async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyh
         &[
             "delete",
             "workloaddeployment",
-            &format!("{shared}-materializer"),
+            &wamn_registry::name::resource_suffix(&shared, "materializer"),
             "--ignore-not-found",
             "--wait=true",
             "--timeout=120s",
@@ -884,7 +884,7 @@ async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> an
     let control = crate::platform::resources::release_values(
         &platform.target,
         &platform.target.namespace,
-        &format!("c-{}", document.org),
+        &wamn_registry::name::control_resource(&document.org),
     )
     .await?
     .context("installed control host")?;

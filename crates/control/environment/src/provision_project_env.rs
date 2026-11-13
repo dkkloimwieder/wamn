@@ -4,7 +4,7 @@
 //!
 //! Identity is the `(org, project, env)` [`Triple`], and the database lives on
 //! the cluster **derived** by
-//! [`cluster_of`](wamn_control_registry::cluster_of) (D18) from the org's placement + the
+//! [`cluster_of`](wamn_control_provision::cluster_of) (D18) from the org's placement + the
 //! env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` sharing prod
 //! lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool for a
 //! pooled org. One derivation path serves every placement.
@@ -42,7 +42,7 @@
 //!
 //! What this tool does directly (given `--system-database-url`): read the org's
 //! placement to pick the target cluster, and record `registry.projects` +
-//! `registry.project_envs` (as the `wamn_system` owner); when requested, resolve
+//! `registry.environment_projects` (as the `wamn_system` owner); when requested, resolve
 //! or create stable service principals and assign project roles. The CLI requests
 //! PATs from `wamn-identity` over HTTPS with an operator client certificate, then
 //! authenticates each PAT against the system database. Kubernetes artifacts are
@@ -88,11 +88,12 @@ use wamn_control_provision::{
     render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
     workload_generation_role,
 };
-use wamn_control_registry::{Org, Placement, Triple, cluster_of};
+use wamn_control_provision::{Org, Placement, cluster_of};
 use wamn_platform_identity::{
     IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
     authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,
 };
+use wamn_registry::Triple;
 
 use wamn_identity_client::{PatClient, PatIssuerConfig};
 use wamn_release_control::env_policies::read_env_policy;
@@ -122,15 +123,13 @@ pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };
 pub use registry::{
-    assign_environment_instance, finish_database, project_env_key_environment,
-    read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
+    finish_database, read_project_env_instance, read_project_env_policy, require_connected,
+    resolve_cluster,
 };
 pub use workload::{run_org_workload_action, run_workload_action};
 
 #[cfg(test)]
 use output::SECRET_TEMP_SEQUENCE;
-#[cfg(test)]
-use pat_secrets::{MANAGEMENT_AUTHOR, OPERATOR, PAT_TTL, render_pat_secret};
 
 /// Inputs of one project-environment provisioning.
 ///
@@ -439,7 +438,7 @@ pub async fn provision_project_env(
     let org = args.org.as_str();
     let project = args.project.as_str();
     let env = args.env.as_str();
-    let triple = Triple::new(org, project, env);
+    let triple = Triple::new(org, env, project);
 
     // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
     // namespace and `wamn-db-<org>--<project>--<env>--<instance>` database lengths
@@ -464,7 +463,6 @@ pub async fn provision_project_env(
             args.secret_namespace.as_deref(),
             &mint_instance_suffix()?,
             args.disposable,
-            &args.changes,
         )
         .await?
     };

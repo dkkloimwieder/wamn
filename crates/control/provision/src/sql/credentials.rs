@@ -221,30 +221,24 @@ pub fn workload_generation_state_sql() -> &'static str {
 /// (`docs/plan/platform-ui.md` §4.10). The password itself never leaves the
 /// provisioner.
 pub fn record_generation_password_sql() -> &'static str {
-    "INSERT INTO registry.generation_passwords (role, sha256) VALUES ($1, $2) \
-     ON CONFLICT (role) DO UPDATE SET sha256 = EXCLUDED.sha256, recorded_at = now()"
+    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_RECORD_GENERATION_PASSWORD_SQL
 }
 
 /// Whether a password fingerprint is recorded for generation `$1`.
 pub fn generation_password_recorded_sql() -> &'static str {
-    "SELECT EXISTS (SELECT FROM registry.generation_passwords WHERE role = $1)"
+    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_GENERATION_PASSWORD_RECORDED_SQL
 }
 
 /// [`workload_generation_state_sql`] with a `password_set` column, for a role
 /// whose database is the system database that holds its fingerprint.
 pub fn system_generation_state_sql() -> String {
-    format!(
-        "SELECT state.*, EXISTS (SELECT FROM registry.generation_passwords p \
-                                  WHERE p.role = $1::text) AS password_set \
-           FROM ({}) state",
-        workload_generation_state_sql()
-    )
+    wamn_registry::sql::system_generation_state(workload_generation_state_sql())
 }
 
 /// Remove the password fingerprint of generation `$1` after its retirement
 /// set `PASSWORD NULL`.
 pub fn forget_generation_password_sql() -> &'static str {
-    "DELETE FROM registry.generation_passwords WHERE role = $1"
+    wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CREDENTIALS_FORGET_GENERATION_PASSWORD_SQL
 }
 
 /// Session-targeted serialization primitive for workload credential mutation.

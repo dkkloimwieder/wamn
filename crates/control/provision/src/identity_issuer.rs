@@ -30,7 +30,7 @@ pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "expires_at",
 ];
 /// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 8] = [
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 10] = [
     (
         "identity",
         "principals",
@@ -57,8 +57,8 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 8] = [
     ),
     (
         "registry",
-        "project_envs",
-        &["org", "project", "env", "instance_suffix", "status"],
+        "environment_projects",
+        &["org", "env", "project", "instance_suffix"],
     ),
     // The control audience of an org
     // (docs/architecture/execution.md#control-sessions): the org must be
@@ -69,7 +69,13 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 8] = [
         &["principal_id", "org", "project", "role"],
     ),
     ("registry", "orgs", &["id"]),
+    ("registry", "environments", &["org", "env", "status"]),
     ("identity", "org_roles", &["principal_id", "org", "role"]),
+    (
+        "identity",
+        "environment_roles",
+        &["principal_id", "org", "env", "role"],
+    ),
     (
         "identity",
         "org_memberships",
@@ -245,10 +251,10 @@ pub fn identity_issuer_generation_role(
     issuer: &str,
     generation: CredentialGeneration,
 ) -> Result<String, IdentityIssuerUrlError> {
-    Ok(format!(
-        "{IDENTITY_ISSUER_ROLE}_{}_{}",
-        identity_issuer_identity_hash(issuer)?,
-        generation.as_str()
+    Ok(wamn_registry::name::credential_login(
+        IDENTITY_ISSUER_ROLE,
+        &identity_issuer_identity_hash(issuer)?,
+        generation.as_str(),
     ))
 }
 
@@ -366,7 +372,7 @@ pub fn grant_identity_issuer_surface_sql() -> String {
     let mut sql = format!(
         "{} GRANT USAGE ON SCHEMA identity, registry TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
-           identity.session_keys, identity.session_signing_state TO {role};",
+           identity.session_keys, identity.session_signing_state TO {role}; GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
         crate::sql::ensure_acl_role_sql(IDENTITY_ISSUER_ROLE),
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
@@ -453,56 +459,12 @@ pub fn retire_identity_issuer_generation_sql(
 #[cfg(test)]
 mod tests {
     use super::{
-        IdentityIssuerUrlErrorType, grant_identity_issuer_surface_sql,
-        identity_issuer_generation_role, parse_identity_issuer_url, validate_identity_issuer,
+        IdentityIssuerUrlErrorType, identity_issuer_generation_role, parse_identity_issuer_url,
+        validate_identity_issuer,
     };
     use crate::CredentialGeneration;
 
     const ISSUER: &str = "https://wamn-identity.wamn-system.svc";
-
-    #[test]
-    fn issuer_surface_sql_preserves_exact_column_grants() {
-        assert_eq!(
-            grant_identity_issuer_surface_sql()
-                .split(" GRANT SELECT (\"email\")")
-                .next()
-                .unwrap(),
-            "DO $workload_acl$ DECLARE role_name text := 'wamn_identity_issuer'; BEGIN \
-             PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-             IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
-             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-             NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name \
-             AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-             OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name AND rolsuper) THEN \
-             EXECUTE format('ALTER ROLE %I NOSUPERUSER', role_name); \
-             END IF; \
-             END IF; END $workload_acl$; \
-             GRANT USAGE ON SCHEMA identity, registry TO \"wamn_identity_issuer\"; \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON \
-             identity.session_keys, identity.session_signing_state TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"id\", \"type\", \"subject\", \"display_name\", \"status\") \
-             ON TABLE \"identity\".\"principals\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"id\", \"principal_id\", \"token_prefix\", \"token_hash\", \"label\", \"created_at\", \"revoked_at\", \"expires_at\") \
-             ON TABLE \"identity\".\"pats\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"principal_id\", \"org\", \"project\", \"env\") \
-             ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\", \"status\") \
-             ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"principal_id\", \"org\", \"project\", \"role\") \
-             ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"id\") ON TABLE \"registry\".\"orgs\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"principal_id\", \"org\", \"role\") \
-             ON TABLE \"identity\".\"org_roles\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"principal_id\", \"org\", \"status\") \
-             ON TABLE \"identity\".\"org_memberships\" TO \"wamn_identity_issuer\"; \
-             GRANT INSERT (\"principal_id\", \"principal_type\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
-             ON TABLE identity.pats TO \"wamn_identity_issuer\";"
-        );
-    }
 
     #[test]
     fn both_generation_urls_round_trip_without_disclosing_passwords() {

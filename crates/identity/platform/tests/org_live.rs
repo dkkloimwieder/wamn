@@ -1,17 +1,11 @@
 //! Real-PostgreSQL test of the org grants
 //! (docs/architecture/overview.md#organization-membership-and-administration):
-//! `org-admin` and `project-admin` write their row, then the project roles and
-//! memberships below it, and refuse a target outside the member's org.
+//! Administration is inherited from explicit grants. Invalid targets are refused.
 
-use wamn_identity_protocol::PrincipalId;
-
-use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
     IdentityErrorType, create_or_reuse_user,
-    org::{
-        activate_org_membership, grant_org_admin, grant_project_admin, materialize_admin_grants,
-    },
+    org::{activate_org_membership, grant_org_admin, grant_project_admin},
 };
 
 /// Two orgs. `acme` has two projects and three environments. `other` has a
@@ -26,30 +20,11 @@ const SEED_SQL: &str = "\
       ('other', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
     INSERT INTO registry.projects (org, id) VALUES \
       ('acme', 'billing'), ('acme', 'shop'), ('other', 'billing'); \
-    INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES \
-      ('acme', 'billing', 'dev', 's1', 'aaaaaaa1', 'dev'), ('acme', 'billing', 'prod', 's2', 'aaaaaaa2', 'prod'), \
-      ('acme', 'shop', 'dev', 's3', 'aaaaaaa3', 'dev'), ('other', 'billing', 'dev', 's4', 'aaaaaaa4', 'dev');";
-
-/// The org roles, project roles and memberships of one principal, one row per
-/// line.
-async fn grants(client: &Client, principal: &PrincipalId) -> Vec<String> {
-    client
-        .query(
-            "SELECT 'org ' || org || ' ' || role FROM identity.org_roles \
-               WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'project ' || org || '/' || project || ' ' || role \
-               FROM identity.project_roles WHERE principal_id = $1::text::uuid \
-             UNION ALL SELECT 'env ' || org || '/' || project || '/' || env \
-               FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid \
-             ORDER BY 1",
-            &[&principal.to_string().as_str()],
-        )
-        .await
-        .expect("read the grants")
-        .iter()
-        .map(|row| row.get(0))
-        .collect()
-}
+    INSERT INTO registry.environments (org, env, policy_name) VALUES \
+      ('acme', 'dev', 'dev'), ('acme', 'prod', 'prod'), ('other', 'dev', 'dev'); \
+    INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix) VALUES \
+      ('acme', 'dev', 'billing', 's1', 'aaaaaaa1'), ('acme', 'prod', 'billing', 's2', 'aaaaaaa2'), \
+      ('acme', 'dev', 'shop', 's3', 'aaaaaaa3'), ('other', 'dev', 'billing', 's4', 'aaaaaaa4');";
 
 #[tokio::test]
 async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
@@ -93,177 +68,124 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         .expect("create ben")
         .principal_id;
 
-    let refused = grant_org_admin(&client, &ann, "acme")
-        .await
-        .expect_err("org-admin needs an active membership");
+    use wamn_platform_identity::org::{
+        grant_environment_admin, revoke_environment_admin, revoke_org_admin,
+    };
+    use wamn_platform_identity::{control::is_project_admin, has_project_env_membership};
+    let refused = grant_org_admin(&client, &ann, "acme").await.unwrap_err();
     assert_eq!(refused.error_type(), IdentityErrorType::NotFound);
-    assert_eq!(
-        refused.to_string(),
-        format!("principal {ann} is not an active member of org acme")
-    );
-
     activate_org_membership(&client, &ann, "acme")
         .await
-        .expect("ann joins acme");
-    for _ in 0..2 {
-        grant_org_admin(&client, &ann, "acme")
-            .await
-            .expect("grant org-admin, then grant it again");
+        .unwrap();
+    grant_org_admin(&client, &ann, "acme").await.unwrap();
+    for row in client
+        .query(
+            "SELECT org,env,project FROM registry.environment_projects WHERE org='acme'",
+            &[],
+        )
+        .await
+        .unwrap()
+    {
+        let org: String = row.get(0);
+        let env: String = row.get(1);
+        let project: String = row.get(2);
+        assert!(
+            is_project_admin(&client, &ann, &org, &project, Some(&env))
+                .await
+                .unwrap()
+        );
+        assert!(
+            has_project_env_membership(&client, &ann, &org, &project, &env)
+                .await
+                .unwrap()
+        );
     }
-    assert_eq!(
-        grants(&client, &ann).await,
-        [
-            "env acme/billing/dev",
-            "env acme/billing/prod",
-            "env acme/shop/dev",
-            "org acme org-admin",
-            "project acme/billing project-admin",
-            "project acme/shop project-admin",
-        ]
-    );
-
+    assert!(!client.query_one("SELECT EXISTS (SELECT FROM identity.project_roles WHERE principal_id=$1::text::uuid) OR EXISTS (SELECT FROM identity.project_env_memberships WHERE principal_id=$1::text::uuid)",&[&ann.to_string()]).await.unwrap().get::<_,bool>(0));
     activate_org_membership(&client, &ben, "acme")
         .await
-        .expect("ben joins acme");
+        .unwrap();
+    grant_environment_admin(&client, &ben, "acme", "dev")
+        .await
+        .unwrap();
+    assert!(
+        is_project_admin(&client, &ben, "acme", "shop", Some("dev"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !is_project_admin(&client, &ben, "acme", "shop", Some("prod"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !wamn_platform_identity::control::is_org_admin(&client, &ben, "acme")
+            .await
+            .unwrap()
+    );
+    assert!(
+        grant_project_admin(&client, &ben, "acme", "missing")
+            .await
+            .is_err()
+    );
+    assert!(
+        grant_project_admin(&client, &ben, "other", "billing")
+            .await
+            .is_err()
+    );
+    assert!(
+        grant_environment_admin(&client, &ben, "other", "dev")
+            .await
+            .is_err()
+    );
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
+    revoke_environment_admin(&client, &ben, "acme", "dev", &mut drops)
+        .await
+        .unwrap();
+    assert!(
+        !has_project_env_membership(&client, &ben, "acme", "shop", "dev")
+            .await
+            .unwrap()
+    );
     grant_project_admin(&client, &ben, "acme", "billing")
         .await
-        .expect("grant project-admin in billing");
-    assert_eq!(
-        grants(&client, &ben).await,
-        [
-            "env acme/billing/dev",
-            "env acme/billing/prod",
-            "project acme/billing project-admin",
-        ]
-    );
-    let outside = grant_project_admin(&client, &ben, "acme", "store")
-        .await
-        .expect_err("a project outside the org is refused");
-    assert_eq!(
-        outside.to_string(),
-        "project store is not a project of org acme"
-    );
-    let other = grant_project_admin(&client, &ben, "other", "billing")
-        .await
-        .expect_err("an org without the membership is refused");
-    assert_eq!(
-        other.to_string(),
-        format!("principal {ben} is not an active member of org other")
-    );
-
-    // A new project and a new environment receive the rows of the current
-    // administrators, and a second run changes nothing.
-    client
-        .batch_execute(
-            "INSERT INTO registry.env_policies \
-               (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
-               VALUES ('acme', 'test', '\"own\"', 2, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-             INSERT INTO registry.projects (org, id) VALUES ('acme', 'store'); \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES \
-               ('acme', 'store', 'dev', 's5', 'aaaaaaa5', 'dev'), ('acme', 'billing', 'test', 's6', 'aaaaaaa6', 'test');",
-        )
-        .await
-        .expect("add a project and an environment");
-    for _ in 0..2 {
-        materialize_admin_grants(&client, "acme", "store", "dev")
+        .unwrap();
+    assert!(
+        is_project_admin(&client, &ben, "acme", "billing", Some("prod"))
             .await
-            .expect("materialize the new project");
-        materialize_admin_grants(&client, "acme", "billing", "test")
+            .unwrap()
+    );
+    assert!(
+        !is_project_admin(&client, &ben, "acme", "shop", Some("dev"))
             .await
-            .expect("materialize the new environment");
-    }
-    assert_eq!(
-        grants(&client, &ann).await,
-        [
-            "env acme/billing/dev",
-            "env acme/billing/prod",
-            "env acme/billing/test",
-            "env acme/shop/dev",
-            "env acme/store/dev",
-            "org acme org-admin",
-            "project acme/billing project-admin",
-            "project acme/shop project-admin",
-            "project acme/store project-admin",
-        ]
+            .unwrap()
     );
-    assert_eq!(
-        grants(&client, &ben).await,
-        [
-            "env acme/billing/dev",
-            "env acme/billing/prod",
-            "env acme/billing/test",
-            "project acme/billing project-admin",
-        ]
+    client.execute("UPDATE identity.org_memberships SET status='inactive' WHERE principal_id=$1::text::uuid",&[&ben.to_string()]).await.unwrap();
+    assert!(
+        !has_project_env_membership(&client, &ben, "acme", "billing", "dev")
+            .await
+            .unwrap()
     );
-
-    // An inactive membership refuses a grant, and activation makes it active.
-    client
-        .execute(
-            "UPDATE identity.org_memberships SET status = 'inactive' \
-             WHERE principal_id = $1::text::uuid",
-            &[&ben.to_string().as_str()],
-        )
-        .await
-        .expect("deactivate ben");
     assert!(
         grant_project_admin(&client, &ben, "acme", "shop")
             .await
             .is_err()
     );
-    activate_org_membership(&client, &ben, "acme")
+    grant_project_admin(&client, &ann, "acme", "billing")
         .await
-        .expect("ben is active again");
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT status FROM identity.org_memberships WHERE principal_id = $1::text::uuid",
-                &[&ben.to_string().as_str()],
-            )
+        .unwrap();
+    revoke_org_admin(&client, &ann, "acme", &mut drops)
+        .await
+        .unwrap();
+    assert!(
+        is_project_admin(&client, &ann, "acme", "billing", Some("dev"))
             .await
-            .expect("read ben's membership")
-            .get::<_, String>(0),
-        "active"
+            .unwrap()
     );
-
-    client.batch_execute("BEGIN").await.unwrap();
-    client
-        .execute(
-            "SELECT set_config('app.user_id', $1, true)",
-            &[&ann.to_string().as_str()],
-        )
-        .await
-        .unwrap();
-    wamn_platform_identity::org::create_project(&client, "acme", "history")
-        .await
-        .unwrap();
-    wamn_platform_identity::org::set_environment_status(
-        &client,
-        "acme",
-        "billing",
-        &["dev".to_owned()],
-        wamn_platform_identity::org::EnvironmentStatus::Inactive,
-    )
-    .await
-    .unwrap();
-    wamn_test_infrastructure::record_history::assert_stamp(
-        &client,
-        "registry.projects",
-        "org='acme' AND id='history'",
-        ann.to_string().as_str(),
-        ann.to_string().as_str(),
-    )
-    .await;
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    wamn_test_infrastructure::record_history::assert_stamp(
-        &client,
-        "registry.project_envs",
-        "org='acme' AND project='billing' AND env='dev'",
-        &actor,
-        ann.to_string().as_str(),
-    )
-    .await;
-    client.batch_execute("COMMIT").await.unwrap();
-
+    assert!(
+        !is_project_admin(&client, &ann, "acme", "shop", Some("dev"))
+            .await
+            .unwrap()
+    );
     drop(client);
-    connection_task.await.expect("close the test database");
+    connection_task.await.unwrap();
 }

@@ -1,5 +1,4 @@
-//! The application rows of org and project administration in one project
-//! database
+//! Project database identities and authored application grants
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
 //! System writers commit authority before projection. Projection reads current
@@ -135,29 +134,6 @@ pub async fn write_service(
     Ok(())
 }
 
-/// Write the user row and the `admin` row of `user`, and the `admin` role
-/// when the environment has none yet.
-pub async fn write_admin(
-    client: &(impl GenericClient + Sync),
-    project_env_key: &str,
-    user: ApplicationUser<'_>,
-    drops: &mut AuthDrops,
-) -> Result<(), IdentityError> {
-    write_user(client, project_env_key, user, drops).await?;
-    client
-        .execute(ROLE_SQL, &[&ADMIN_ROLE])
-        .await
-        .map_err(|error| database_error(&error))?;
-    client
-        .execute(
-            USER_ROLE_SQL,
-            &[&user.principal_id.to_string().as_str(), &ADMIN_ROLE],
-        )
-        .await
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &(impl GenericClient + Sync),
@@ -212,7 +188,7 @@ pub enum AdministrationRefusal {
     /// The environment has no application user with the id.
     UserNotFound { user_id: String },
     /// `admin` stays while the user holds `project-admin` in the project,
-    /// which `org-admin` also writes (§2.8).
+    /// including administration inherited from its org or environment.
     AdminCovered { user_id: String },
     /// The role does not hold the operation.
     NotHeld { role: String, reference: String },
@@ -556,9 +532,9 @@ pub async fn project_authority(
     let row = system.query_opt(
         "SELECT p.type, p.status, p.email, p.display_name, p.subject, \
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
-         EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.project=$3 AND m.env=$4), \
+         identity.has_project_access(p.id,$2,$4,$3), \
          EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
-         OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.role='org-admin') \
+         OR identity.is_project_admin(p.id,$2,$4,$3) \
          FROM identity.principals p WHERE p.id=$1::text::uuid",
         &[&principal.to_string().as_str(), &coordinate.org, &coordinate.project, &coordinate.env],
     ).await.map_err(|error| database_error(&error))?;
@@ -580,7 +556,10 @@ pub async fn project_authority(
             .is_some();
         if active && admin && !present {
             let domain: String = system
-                .query_one("SELECT platform_domain FROM registry.meta", &[])
+                .query_one(
+                    wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
+                    &[],
+                )
                 .await
                 .map_err(|error| database_error(&error))?
                 .get(0);
@@ -625,12 +604,7 @@ pub async fn project_authority(
         email: &email,
         display_name: &display_name,
     };
-    if admin {
-        write_admin(target, coordinate.project_env_key, user, drops).await
-    } else {
-        write_user(target, coordinate.project_env_key, user, drops).await?;
-        remove_admin(target, coordinate.project_env_key, principal, drops).await
-    }
+    write_user(target, coordinate.project_env_key, user, drops).await
 }
 
 /// The explicit environment of one authority projection.

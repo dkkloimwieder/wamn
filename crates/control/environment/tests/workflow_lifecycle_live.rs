@@ -18,7 +18,6 @@ use wamn_catalog::{
     ServingComponent, ServingManifest, ServingRelease, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_control_registry::Triple;
 use wamn_environment_control::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
     WorkflowTrigger, author_workflow,
@@ -28,8 +27,9 @@ use wamn_environment_control::workflow_lifecycle::{
     APPLY_IN_PROGRESS, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
     enable_workflow,
 };
+use wamn_registry::Triple;
 
-const PROJECT_ENV_KEY: &str = "workflow-project--fixture--dev";
+const PROJECT_ENV_KEY: &str = "workflow-project--dev--fixture";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 
@@ -258,7 +258,7 @@ impl Fixture {
 }
 
 fn triple() -> Triple {
-    Triple::new("acme", "orders", ENVIRONMENT)
+    Triple::new("acme", ENVIRONMENT, "orders")
 }
 
 fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
@@ -648,11 +648,11 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     let config = source_stream_config(&target, 1, Duration::from_secs(120));
     let name = config.name.clone();
     let mut stream = broker.create_stream(config).await.unwrap();
-    let subject = format!(
-        "evt.{}.{}.{}.order.update",
-        target.org,
-        target.project,
-        target.env.as_str()
+    let subject = wamn_registry::name::event_subject(
+        &(target.org),
+        &(target.project),
+        &(target.env.as_str()),
+        &("order.update"),
     );
     let consumer = materializer_consumer_config("unread", &subject, Duration::from_secs(30), 5);
     let mut consumer = stream.create_consumer(consumer).await.unwrap();

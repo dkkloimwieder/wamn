@@ -14,7 +14,7 @@
 --
 -- DISTINCT FROM the T1 control-plane registry (deploy/sql/system-schema.sql,
 -- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /
--- project_envs / sagas), owned by wamn_system, NOT project-targeted, NO RLS base grants.
+-- environment_projects / sagas), owned by wamn_system, NOT project-targeted, NO RLS base grants.
 -- THIS schema belongs to one project environment database. Its tables have no
 -- row security. The shared catalog retains its project policies. wamn_app's
 -- WRITE authority is NOT uniform across these tables — see WRITE AUTHORITY
@@ -330,7 +330,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- ---------------------------------------------------------------------------
 -- Environment — the status of this environment, mirrored from
--- registry.project_envs.status in the system database (docs/plan/platform-ui.md
+-- registry.environments.status in the system database (docs/plan/platform-ui.md
 -- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
 -- wamn_app on each request and answers environment-inactive while it is
 -- inactive. No row means active: the first status route of the control host

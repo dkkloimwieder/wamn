@@ -165,7 +165,7 @@ pub async fn prune_record_history(args: PruneRecordHistoryArgs) -> anyhow::Resul
     .await?;
     print_pruned_record_history(
         &pruned,
-        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment),
+        &wamn_registry::project_env_key(&args.org, &args.project, &args.environment),
     );
     Ok(())
 }
@@ -203,7 +203,7 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
              pruned in schema {} (project_env_key {})",
             args.retention_days,
             args.schema,
-            wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
+            wamn_registry::project_env_key(&args.org, &args.project, &args.environment)
         );
     } else {
         println!(
@@ -211,7 +211,7 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
              (project_env_key {})",
             args.retention_days,
             args.schema,
-            wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
+            wamn_registry::project_env_key(&args.org, &args.project, &args.environment)
         );
     }
     Ok(())

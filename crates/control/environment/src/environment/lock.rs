@@ -5,12 +5,12 @@ use anyhow::{Context as _, bail};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls, types::ToSql};
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 /// The refusal when another verb holds the lock.
 pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
-use wamn_control_registry::sql::{
+use wamn_registry::sql::{
     ENVIRONMENT_LOCK_SQL as TRY_LOCK_SQL, ENVIRONMENT_SHARED_LOCK_SQL as TRY_SHARED_LOCK_SQL,
 };
 

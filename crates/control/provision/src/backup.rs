@@ -21,8 +21,8 @@
 //! **Cluster** that references it (via `.spec.plugins`), and the
 //! **ScheduledBackup** after the cluster exists.
 
+use crate::EnvPolicy;
 use serde_json::{Value, json};
-use wamn_control_registry::EnvPolicy;
 
 /// The Barman Cloud plugin name a Cluster references (`.spec.plugins[].name`) and
 /// a `Backup`/`ScheduledBackup` targets (`spec.pluginConfiguration.name`).
@@ -38,12 +38,12 @@ pub const MINIO_ENDPOINT: &str = "http://minio.wamn-system.svc:9000";
 
 /// The `ObjectStore` CR name for a cluster: `<cluster>-store`.
 pub fn object_store_name(cluster: &str) -> String {
-    format!("{cluster}-store")
+    wamn_registry::name::resource_suffix(cluster, "store")
 }
 
 /// The `ScheduledBackup` CR name for a cluster: `<cluster>-backup`.
 pub fn scheduled_backup_name(cluster: &str) -> String {
-    format!("{cluster}-backup")
+    wamn_registry::name::resource_suffix(cluster, "backup")
 }
 
 /// Labels stamped on a backup CR — platform ownership + the cluster it backs, so

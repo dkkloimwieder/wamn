@@ -104,7 +104,7 @@ fn active_resources_are_unique_per_target() {
              WHERE id='00000000-0000-0000-0000-000000000031';
              ASSERT false, 'an active replacement prevents re-enabling the old resource holder';
            EXCEPTION WHEN unique_violation THEN NULL; END;
-           UPDATE registry.project_envs SET target_id='00000000-0000-0000-0000-000000000052'
+           UPDATE registry.environments SET target_id='00000000-0000-0000-0000-000000000052'
            WHERE org='acme' AND project='app' AND env='prod';
            UPDATE registry.connection SET env='prod', target_id='00000000-0000-0000-0000-000000000052',status='active'
            WHERE id='00000000-0000-0000-0000-000000000031';
@@ -360,7 +360,7 @@ fn environment_delete_removes_its_connections_and_disables_their_principals() {
              WHERE c.org='acme' AND c.project='app' AND c.env='dev';
            EXECUTE $sql${}$sql$ INTO removed USING 'acme','app','dev';
            ASSERT removed=expected;
-           DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
+           DELETE FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev';
            ASSERT NOT EXISTS(SELECT FROM registry.connection);
            ASSERT NOT EXISTS(SELECT FROM registry.connection_generation);
            ASSERT NOT EXISTS(SELECT FROM identity.credential);
@@ -370,14 +370,14 @@ fn environment_delete_removes_its_connections_and_disables_their_principals() {
            ASSERT EXISTS(SELECT FROM registry.integration WHERE name='first');
            ASSERT EXISTS(SELECT FROM registry.external_system WHERE name='erp');
          END $test$;",
-        wamn_control_registry::sql::delete_environment_connections_sql()
+        wamn_registry::sql::delete_environment_connections_sql()
     ));
 }
 
 #[test]
 fn environment_row_delete_cascades_to_its_connections() {
     run("DO $$ BEGIN
-           DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
+           DELETE FROM registry.environment_projects WHERE org='acme' AND project='app' AND env='dev';
            ASSERT NOT EXISTS(SELECT FROM registry.connection);
            ASSERT NOT EXISTS(SELECT FROM identity.credential);
          END $$;");

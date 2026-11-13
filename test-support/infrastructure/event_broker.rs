@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::{consumer::pull, stream};
 use serde::Serialize;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 use crate::nats_tls::{Authority, ClientCertificate, DEVELOPMENT_USER};
 
@@ -125,11 +125,11 @@ fn prepare_with(
             "event broker identity must use subject-safe tokens"
         );
     }
-    let subject = format!(
-        "evt.{}.{}.{}.>",
-        target.org,
-        target.project,
-        target.env.as_str()
+    let subject = wamn_registry::name::event_subject(
+        &(target.org),
+        &(target.project),
+        target.env.as_str(),
+        ">",
     );
     ensure!(
         source.subjects == [subject.clone()],
@@ -361,10 +361,10 @@ mod tests {
     }
 
     fn declarations() -> (Triple, stream::Config, stream::Config, pull::Config) {
-        let target = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "dev", "fixture");
         let source = stream::Config {
-            name: "EVT_7_example_7_fixture_3_dev".into(),
-            subjects: vec!["evt.example.fixture.dev.>".into()],
+            name: "EVT_7_example_3_dev_7_fixture".into(),
+            subjects: vec!["evt.example.dev.fixture.>".into()],
             ..Default::default()
         };
         let advisory = stream::Config {
@@ -446,7 +446,7 @@ mod tests {
                     provisioning || !management,
                     "runtime management permission: {subject}"
                 );
-                assert!(subject.contains(&source.name) || subject == "evt.example.fixture.dev.>");
+                assert!(subject.contains(&source.name) || subject == "evt.example.dev.fixture.>");
             }
             assert_eq!(manages, provisioning);
             let subscriptions = user["permissions"]["subscribe"]["allow"]
@@ -465,7 +465,7 @@ mod tests {
     fn invalid_target_and_repeated_durables_leave_no_broker_files() {
         let root = directory();
         let (target, mut source, advisory, consumer) = declarations();
-        source.subjects = vec!["evt.example.*.dev.>".into()];
+        source.subjects = vec!["evt.example.dev.*.>".into()];
         assert!(
             prepare(
                 root.path(),
@@ -477,7 +477,7 @@ mod tests {
             )
             .is_err()
         );
-        source.subjects = vec!["evt.example.fixture.dev.>".into()];
+        source.subjects = vec!["evt.example.dev.fixture.>".into()];
         assert!(
             prepare(
                 root.path(),

@@ -6,8 +6,8 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
     workload_generation_role,
 };
-use wamn_control_registry::Triple;
 use wamn_package_control::database::connect;
+use wamn_registry::Triple;
 
 pub(super) async fn delete_control_roles(
     admin_url: &str,

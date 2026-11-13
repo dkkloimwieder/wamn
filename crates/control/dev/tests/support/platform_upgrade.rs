@@ -132,12 +132,12 @@ async fn snapshot(journey: &Journey<'_>, target: &UpgradeTarget) -> anyhow::Resu
             "app.kubernetes.io/name=wamn-identity".into(),
         ),
         UpgradeTarget::Control => (
-            format!("hostgroup-{name}"),
-            format!("wasmcloud.com/hostgroup={name}"),
+            wamn_registry::name::resource_suffix("hostgroup", name),
+            wamn_registry::name::host_selector(name),
         ),
         UpgradeTarget::Host { group, .. } => (
-            format!("hostgroup-{group}"),
-            format!("wasmcloud.com/hostgroup={group}"),
+            wamn_registry::name::resource_suffix("hostgroup", group),
+            wamn_registry::name::host_selector(group),
         ),
     };
     let deployment = get(run, namespace, "deployment", &deployment).await?;

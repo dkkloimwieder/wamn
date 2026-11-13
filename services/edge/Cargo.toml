@@ -25,7 +25,7 @@ wamn-identity-protocol = { workspace = true }
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
 # The project of the box's environment coordinate (R1).
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
 wash-runtime = { workspace = true }
 # The samples table lives in the run-state file beside the intents.

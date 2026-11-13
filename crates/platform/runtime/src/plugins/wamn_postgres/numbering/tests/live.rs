@@ -23,7 +23,7 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 
-const PROJECT_ENV_KEY: &str = "numbering";
+const PROJECT_ENV_KEY: &str = "test--dev--numbering";
 const APPLICATION: &str = "receiving";
 const OTHER_APPLICATION: &str = "shipping";
 const ADMINISTRATION_PASSWORD: &str = "numbering-administration";

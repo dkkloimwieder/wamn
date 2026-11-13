@@ -47,7 +47,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     let admin = connect(database.url()).await?;
     let control_url = install(&admin, database.url()).await?;
     let (logins, billing, _shop) = environments(&admin, database.url(), "candidate-health").await?;
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.test'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.test'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning))).await?;
     let boss = create_or_reuse_user(&admin, "health-admin@example.test", "Admin")
         .await?
         .principal_id;
@@ -376,8 +376,8 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     .await
     .unwrap();
     let canonical = b"{}".as_slice();
-    let digest: String = billing.query_one("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&canonical]).await?.get(0);
-    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&connection["id"].as_str().unwrap()]).await?;
+    let digest: String = billing.query_one("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,'sha256:'||encode(sha256($2::bytea),'hex'),$2) RETURNING manifest_digest",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&canonical]).await?.get(0);
+    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,2)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&connection["id"].as_str().unwrap()]).await?;
     *live.0.lock().await = Some(digest);
     let before = counts(&admin).await?;
     assert_eq!(

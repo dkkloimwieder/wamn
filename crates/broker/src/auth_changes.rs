@@ -73,13 +73,13 @@ pub const BUCKET: &str = "wamn-auth";
 /// The key of the grants of `principal` in the environment named `project_env_key`.
 /// This shared cache key stays targeted after the table project columns leave.
 pub fn principal_key(project_env_key: &str, principal: &str) -> String {
-    format!("{project_env_key}.{principal}")
+    wamn_registry::name::nats_subject(&[project_env_key, principal])
 }
 
 /// The key of the environment status of `project_env_key`. A principal id is a UUID,
 /// so it is never `environment`.
 pub fn project_env_key(project_env_key: &str) -> String {
-    format!("{project_env_key}.environment")
+    wamn_registry::name::nats_subject(&[project_env_key, "environment"])
 }
 
 /// The first token of the key of an identity fact. A project name holds only
@@ -88,7 +88,7 @@ pub const IDENTITY_TOKEN: &str = "=identity";
 
 /// The key a change of an identity fact of `principal` deletes.
 pub fn identity_key(principal: &str) -> String {
-    format!("{IDENTITY_TOKEN}.{principal}")
+    wamn_registry::name::nats_subject(&[IDENTITY_TOKEN, principal])
 }
 
 /// Open the bucket. Identity makes it ([`crate::kv_memory::create_buckets`]).

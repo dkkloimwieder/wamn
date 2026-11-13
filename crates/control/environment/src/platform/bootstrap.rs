@@ -268,7 +268,7 @@ fn service_credentials(document: &ClusterDocument, image: &str) -> anyhow::Resul
         Credential {
             job: control_credential_job(document, image),
             namespace: "hosts",
-            secret: format!("wamn-control-{}", document.org),
+            secret: wamn_registry::control_nats_user(&document.org),
             roles: [
                 control_role(CredentialGeneration::A)?,
                 control_role(CredentialGeneration::B)?,

@@ -159,10 +159,10 @@ async fn enable_cdc(
     target_url: &str,
     identity: &super::activation::DevActivationIdentity,
 ) -> anyhow::Result<super::config::CdcReader> {
-    let coordinate = wamn_control_registry::Triple::new(
+    let coordinate = wamn_registry::Triple::new(
         &identity.org,
-        &identity.project,
         identity.environment.clone(),
+        &identity.project,
     );
     let manifests = inputs
         .package_sources

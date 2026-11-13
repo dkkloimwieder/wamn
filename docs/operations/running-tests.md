@@ -715,7 +715,7 @@ The reset, platform runtime, and platform SQL bodies use those same explicit com
 Code reapply reads the canonical selection through `status`.
 Platform recovery publishes no applications.
 
-After a body succeeds, `wamn-ctl env delete <org/project/env> --data` deletes its environment, database, and roles.
+After a body succeeds, `wamn-ctl env delete <org/env/project> --data` deletes its environment, database, and roles.
 Reset and platform schema cases also delete their isolation environments after all assertions succeed.
 Failed bodies retain their resources and logs.
 Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).

@@ -247,7 +247,7 @@ async fn invite_owner(
         &target.context,
         "identity",
         "secret",
-        &format!("operator-{}", document.org),
+        &wamn_registry::name::resource_suffix("operator", &document.org),
     )
     .await?
     .context("missing identity operator Secret")?;

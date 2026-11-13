@@ -14,7 +14,7 @@ struct RecordingStore(Mutex<Vec<Vec<u8>>>);
 impl Store for RecordingStore {
     async fn put(
         &self,
-        _target: &wamn_control_registry::Triple,
+        _target: &wamn_registry::Triple,
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, wamn_kubernetes::Error> {
@@ -91,7 +91,7 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate() 
             .await
             .unwrap();
     }
-    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
     let store = RecordingStore::default();
     execute(
         &mut client,
@@ -189,7 +189,7 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
         )
         .await
         .unwrap();
-    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
     let store = RecordingStore::default();
     execute(&mut client, &store, "integration.write", json!({"project":"app","name":"oauth","integration_type":"http","auth_type":"oauth2_client_credentials"})).await;
     let mut parameters = json!({"primary-authority":"https://example.invalid","tls-verification":"disabled",
@@ -258,7 +258,7 @@ async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
         )
         .await
         .unwrap();
-    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
     let store = RecordingStore::default();
     execute(&mut client, &store, "integration.write", json!({"project":"app","name":"jwt","integration_type":"http","auth_type":"oauth2_client_credentials_jwt"})).await;
     let valid = json!({"project":"app","env":"dev","name":"jwt",

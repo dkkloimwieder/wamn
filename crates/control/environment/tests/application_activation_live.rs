@@ -20,7 +20,7 @@ use wamn_environment_control::provision_project_env::{
 use wamn_environment_control::provision_project_env::{finish_database, require_connected};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const PROJECT_ENV_KEY: &str = "acme--apps--dev";
+const PROJECT_ENV_KEY: &str = "acme--dev--apps";
 const STATE_DIGEST: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -387,7 +387,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     admin
         .batch_execute(&wamn_control_provision::sql::grant_control_surface_sql())
         .await?;
-    admin.batch_execute(&format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev"))).await?;
+    admin.batch_execute(&format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev"))).await?;
     let admin_url = url::Url::parse(system.url())?;
     let secret = scratch.path().join("apply.json");
     wamn_environment_control::provision_system::emit_apply_credential(
@@ -1131,7 +1131,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .is_err()
     );
     admin.batch_execute(&format!(
-        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.project_envs SET disposable=true WHERE org='acme' AND project='apps' AND env='dev'; COMMIT;",
+        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true WHERE org='acme' AND project='apps' AND env='dev'; COMMIT;",
         wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
     )).await?;
     // Published SQL can retain a deferred policy refusal. Reset must reject it
@@ -1155,7 +1155,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .downcast_ref::<wamn_schema_introspection::migration_policy::MigrationPolicyError>()
         .context("reset reports the package owner's migration policy refusal")?;
     assert!(policy.path().ends_with("migrations/0001_data.sql"));
-    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
     assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
     assert_eq!(before_schema, rows(&observer, schema_query).await?);
     assert_eq!(before_b, rows(&observer, stable_b).await?);
@@ -1175,7 +1175,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await
         .is_err()
     );
-    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
     assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
     assert_eq!(before_schema, rows(&observer, schema_query).await?);
     assert_eq!(before_b, rows(&observer, stable_b).await?);
@@ -1196,7 +1196,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await?;
     let pending: serde_json::Value = admin.query_one(
-        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+        "SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[],
     ).await?.get(0);
     let mut changed_policy = document.clone();
     changed_policy.policy = "unprovisioned-policy".into();
@@ -1209,7 +1209,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await?;
     let retried: serde_json::Value = admin.query_one(
-        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+        "SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[],
     ).await?.get(0);
     assert_eq!(pending, retried);
     let installed_before = sql::schema::state(&platform, &document).await?;
@@ -1445,7 +1445,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .await?;
     let start: chrono::DateTime<chrono::Utc> = tx.query_one("SELECT now()", &[]).await?.get(0);
     tx.query_one(
-        wamn_control_registry::sql::insert_capture_gap_sql(),
+        wamn_registry::sql::insert_capture_gap_sql(),
         &[
             &document.org,
             &document.project,
@@ -1464,7 +1464,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(
         capture_owner
             .query_one(
-                wamn_control_registry::sql::select_capture_gap_sql(),
+                wamn_registry::sql::select_capture_gap_sql(),
                 &[&document.org, &document.project, &document.env]
             )
             .await?
@@ -1565,7 +1565,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     }
     sql::reset::prepare_retained(&platform, &stopped, system.url()).await?;
     let retained: serde_json::Value = admin.query_one(
-        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+        "SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[],
     ).await?.get(0);
     assert_ne!(
         retained["initialization_identity"],
@@ -1639,7 +1639,7 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
         auth_nats: None,
     };
     let document = EnvironmentDocument::from_json(br#"{"org":"reset","project":"substrate","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.project_envs SET disposable=true WHERE org='reset' AND project='substrate' AND env='dev'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.environments SET disposable=true WHERE org='reset' AND project='substrate' AND env='dev'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let name =
         wamn_control_provision::project_env_database_name("reset", "substrate", "dev", "aaaaaaa1");
     admin
@@ -1728,11 +1728,11 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
                 .get::<_, i32>(0),
             8
         );
-        assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get::<_, bool>(0));
+        assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get::<_, bool>(0));
     }
     sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
         .await?;
-    let pending: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.project_envs WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get(0);
+    let pending: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.environment_projects WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get(0);
     // CNPG owns deletion/recreation. This case observes the SQL restoration boundary only.
     drop(project);
     connection.await??;

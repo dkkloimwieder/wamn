@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use wamn_control_registry::project_env_key;
 use wamn_engine::release_manifest::ReleaseTarget;
+use wamn_registry::project_env_key;
 
 /// The variable that names the configuration file.
 pub const CONFIG_VARIABLE: &str = "WAMN_EDGE_CONFIG";
@@ -339,7 +339,10 @@ mod tests {
         assert!(from_variables.device.is_none(), "no device, no loop");
         assert_eq!(
             from_variables.target.release_target(),
-            ReleaseTarget::new("org-a--plant--edge", "edge")
+            ReleaseTarget::new(
+                &wamn_registry::project_env_key("org-a", "plant", "edge"),
+                "edge"
+            )
         );
     }
 

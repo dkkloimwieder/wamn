@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand};
-use wamn_control_registry::Triple;
 use wamn_environment_control::environment::{self, Platform};
+use wamn_registry::Triple;
 
 /// One `env` verb.
 #[derive(Debug, Subcommand)]
@@ -146,7 +146,7 @@ pub struct RollbackArgs {
 
 #[derive(Debug, Args)]
 pub struct DeleteArgs {
-    /// The coordinate, `org/project/env`.
+    /// The coordinate, `org/env/project`.
     pub coordinate: String,
     /// Drop the database and its data too. The coordinate is read again from
     /// the terminal.
@@ -451,14 +451,14 @@ fn confirm_data(coordinate: &str) -> anyhow::Result<()> {
 
 pub(crate) fn parse_coordinate(coordinate: &str) -> anyhow::Result<Triple> {
     let mut parts = coordinate.split('/');
-    let (Some(org), Some(project), Some(env), None) =
+    let (Some(org), Some(env), Some(project), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
-        anyhow::bail!("coordinate {coordinate:?} is not org/project/env");
+        anyhow::bail!("coordinate {coordinate:?} is not org/env/project");
     };
     wamn_control_provision::validate_project_env(org, project, env)
         .with_context(|| format!("coordinate {coordinate:?} is not valid"))?;
-    Ok(Triple::new(org, project, env))
+    Ok(Triple::new(org, env, project))
 }
 
 #[cfg(test)]

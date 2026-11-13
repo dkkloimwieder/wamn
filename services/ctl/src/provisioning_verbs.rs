@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use serde_json::Value;
+use wamn_control_provision::Template;
 use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
-use wamn_control_registry::{Template, Triple};
 use wamn_environment_control::capture_gap::{
     self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
@@ -28,6 +28,7 @@ use wamn_environment_control::provision_system::{
     self, EmitProvisionerRequest, ProvisionSystemRequest,
 };
 use wamn_identity_client::PatIssuerConfig;
+use wamn_registry::Triple;
 
 #[derive(Debug, Args)]
 pub struct ProvisionSystemArgs {
@@ -1048,7 +1049,7 @@ fn emit_text(path: Option<&Path>, label: &str, text: &str) {
 }
 
 /// The named org preset `provision-org` stamps (the `Tier` successor —
-/// [`wamn_control_registry::Template`]).
+/// [`wamn_control_provision::Template`]).
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TemplateArg {
     /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
@@ -1301,7 +1302,7 @@ pub struct RecoverOrgClusterArgs {
 pub fn recover_org_cluster(args: RecoverOrgClusterArgs) -> anyhow::Result<()> {
     let template = args.template.template();
     let (org, _) = template.stamp(&args.org, &args.pool);
-    let owner = wamn_control_registry::Env::new(&args.owner);
+    let owner = wamn_registry::Env::new(&args.owner);
     let source = format!("{}-{}", org.id, owner);
     let target = args
         .target
@@ -1380,7 +1381,7 @@ fn print_provisioned_org(provisioned: &ProvisionedOrg) {
                 set.object_stores.len(),
             );
         }
-    } else if let wamn_control_registry::Placement::Pooled { pool } = &provisioned.org.placement {
+    } else if let wamn_control_provision::Placement::Pooled { pool } = &provisioned.org.placement {
         println!(
             "org {id:?} (template {tpl:?}, pooled): placed on the shared pool {pool:?} \
              (owns no clusters)"

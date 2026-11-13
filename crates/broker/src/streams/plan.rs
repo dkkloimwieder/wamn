@@ -31,7 +31,8 @@ pub fn validate_inputs(
         !duplicate_window.is_zero(),
         "event duplicate window must be positive"
     );
-    let prefix = format!("evt.{}.{}.{}.", target.org, target.project, target.env);
+    let prefix =
+        wamn_registry::name::event_prefix(&target.org, &target.project, target.env.as_str());
     let mut names = std::collections::BTreeSet::new();
     for config in consumers {
         let durable = config

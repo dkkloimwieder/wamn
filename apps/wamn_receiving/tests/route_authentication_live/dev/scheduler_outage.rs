@@ -166,10 +166,10 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let provisioning = inputs.environment.nats.connect().await?;
     wamn_broker::streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
-        &wamn_control_registry::Triple::new(
+        &wamn_registry::Triple::new(
             &environment.identity.org,
-            &environment.identity.project,
             environment.identity.environment.as_str(),
+            &environment.identity.project,
         ),
         inputs.environment.stream_replicas,
         Duration::from_secs(inputs.environment.dup_window_secs),

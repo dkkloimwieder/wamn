@@ -26,12 +26,11 @@ fn application_consumer(
         subject_token(application),
         wamn_materializer::workflow::entity_durable(package, entity),
     );
-    let filter = format!(
-        "evt.{}.{}.{}.{}.>",
-        coordinates.org,
-        coordinates.project,
-        coordinates.environment,
-        subject_token(entity),
+    let filter = wamn_registry::name::event_subject(
+        &coordinates.org,
+        &coordinates.project,
+        &coordinates.environment,
+        &format!("{}.>", subject_token(entity)),
     );
     let mut config = materializer_consumer_config(&durable, &filter, Duration::from_secs(30), 5);
     // A temporarily incompatible host must not exhaust an application's

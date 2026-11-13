@@ -422,7 +422,7 @@ mod tests {
             SystemReader::Registry,
             &url(
                 &role(SystemReader::Registry, CredentialGeneration::A),
-                "wamn-db-acme--widgets--dev",
+                "wamn-db-acme--dev--widgets",
             ),
         )
         .expect_err("a project-database URL was accepted");

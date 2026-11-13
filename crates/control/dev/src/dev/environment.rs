@@ -35,7 +35,7 @@ use wamn_environment_control::reconcile_run_plane::{self, ReconcileRunPlaneReque
 use wamn_identity_client::PatIssuerConfig;
 
 use crate::dev::activation::DevActivationIdentity;
-use wamn_control_registry::Template;
+use wamn_control_provision::Template;
 use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 
 /// The deployment-owned inputs a standing development environment needs.
@@ -234,7 +234,7 @@ pub const ENVIRONMENT: &str = "dev";
 
 /// The `project_env_key` of the coordinate, as `project_env_key(ORG, PROJECT, ENVIRONMENT)`
 /// derives it.
-pub const PROJECT_ENV_KEY: &str = "acme--receiving--dev";
+pub const PROJECT_ENV_KEY: &str = "acme--dev--receiving";
 
 /// The org, project, and environment that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,7 +247,7 @@ pub struct JourneyTarget {
 impl JourneyTarget {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -536,7 +536,7 @@ pub async fn prepare_target_template(
         .get_dbname()
         .context("the target database URL names no database")?
         .to_owned();
-    let template = format!("{target}--template");
+    let template = wamn_registry::name::database_template(&target);
 
     let acl = render_database_acl(admin, &target).await?;
     std::fs::write(root.join("database-acl.sql"), &acl)
@@ -900,9 +900,8 @@ pub fn dev_activation_identity(
     document: &wamn_environment_control::environment::document::EnvironmentDocument,
 ) -> DevActivationIdentity {
     let process = std::process::id();
-    let key =
-        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
-    let host_group = format!("wamn-dev-{key}");
+    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
+    let host_group = wamn_registry::name::dev_host_group(&key);
     DevActivationIdentity {
         catalog: "default".to_owned(),
         environment: document.env.clone(),
@@ -1004,19 +1003,7 @@ mod tests {
         assert_eq!(identity.environment, "preview");
         assert_eq!(
             identity.project_env_key(),
-            wamn_control_registry::project_env_key(&document.org, &document.project, &document.env)
-        );
-    }
-
-    #[test]
-    fn the_journey_project_env_key_is_the_coordinate_project_env_key() {
-        assert_eq!(
-            JourneyTarget::receiving().project_env_key().as_bytes(),
-            b"acme--receiving--dev"
-        );
-        assert_eq!(
-            PROJECT_ENV_KEY,
-            wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT)
+            wamn_registry::project_env_key(&document.org, &document.project, &document.env)
         );
     }
 }

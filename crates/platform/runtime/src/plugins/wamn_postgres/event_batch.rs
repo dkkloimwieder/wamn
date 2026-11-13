@@ -394,7 +394,7 @@ mod tests {
             HashMap::new(),
             None,
         )));
-        let project_env_key = "acme--apps--dev";
+        let project_env_key = "acme--dev--apps";
         postgres
             .set_project_env_key("guest", project_env_key)
             .unwrap();

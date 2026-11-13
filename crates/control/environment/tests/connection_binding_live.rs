@@ -24,7 +24,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_test_infrastructure::record_history::assert_stamp;
 
-const PROJECT_ENV_KEY: &str = "connection-binding-project--fixture--dev";
+const PROJECT_ENV_KEY: &str = "connection-binding-project--dev--fixture";
 const ENVIRONMENT: &str = "dev";
 const PACKAGE: &str = "connection_binding_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
@@ -318,7 +318,7 @@ impl Authority {
             )
             .await
             .unwrap();
-        system.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
+        system.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
         let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
         let tx = system.transaction().await.unwrap();
         tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(

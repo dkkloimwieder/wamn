@@ -5,7 +5,7 @@ use wamn_kubernetes::Store as _;
 pub async fn collect(client: &tokio_postgres::Client, org: &str) -> anyhow::Result<()> {
     let rows = client
         .query(
-            "SELECT store,ref,version FROM registry.retired_connection_credential($1)",
+            wamn_registry::sql::EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT,
             &[&org],
         )
         .await?;

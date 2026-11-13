@@ -283,7 +283,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "oauth2-test",
-                ReleaseTarget::new("acme--project-a--dev", "dev"),
+                ReleaseTarget::new("acme--dev--project-a", "dev"),
             )
             .unwrap(),
         );
@@ -296,7 +296,7 @@ impl Fixture {
                 .unwrap();
             tokio::spawn(driver);
             admin.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").await.unwrap();
-            let project_env_key = format!("acme--{project}--dev");
+            let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
             admin.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&project_env_key,&manifest_digest,&bytes]).await.unwrap();
             let rows = self.credentials.admin.query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'", &[&project]).await.unwrap();
             for row in rows {
@@ -352,7 +352,7 @@ impl Fixture {
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 Arc::clone(&postgres),
-                "acme--project-a--dev",
+                "acme--dev--project-a",
                 "project-a",
                 "dev",
             )
@@ -361,13 +361,13 @@ impl Fixture {
             ))),
         );
         postgres
-            .set_project_env_key("instance", "acme--project-a--dev")
+            .set_project_env_key("instance", "acme--dev--project-a")
             .unwrap();
         let plugin = ConnectionHttp::new(
             postgres,
             Arc::new(HttpTransport::new().unwrap()),
             facts,
-            "acme--project-a--dev",
+            "acme--dev--project-a",
             "project-a",
             vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
             Some(release),
@@ -383,7 +383,7 @@ impl Fixture {
                 Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 Arc::clone(&first.postgres),
-                "acme--project-a--dev",
+                "acme--dev--project-a",
                 "project-a",
                 "dev",
             )
@@ -395,7 +395,7 @@ impl Fixture {
             Arc::clone(&first.postgres),
             Arc::new(HttpTransport::new().unwrap()),
             facts,
-            "acme--project-a--dev",
+            "acme--dev--project-a",
             "project-a",
             Arc::clone(&first.allowed_hosts),
             first.release.clone(),
@@ -442,7 +442,7 @@ impl Fixture {
 
     async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
         use wamn_engine::release_manifest::ReleaseTarget;
-        let project_env_key = format!("acme--{project}--dev");
+        let project_env_key = wamn_registry::project_env_key("acme", project, "dev");
         plugin.release = Some(Arc::new(
             LoadedRelease::load_canonical_bytes(
                 &plugin

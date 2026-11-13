@@ -47,9 +47,7 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
                VALUES ('org-a', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
              INSERT INTO registry.projects (org, id) VALUES ('org-a', 'billing'), ('org-a', 'shop'); \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) \
-               VALUES ('org-a', 'billing', 'dev', 's1', 'aaaaaaa1', 'dev'), \
-                      ('org-a', 'shop', 'dev', 's2', 'aaaaaaa2', 'dev'); \
+             WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('org-a','dev','dev'),('org-a','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('org-a','billing','dev','s1','aaaaaaa1'),('org-a','shop','dev','s2','aaaaaaa2'); \
              RESET ROLE",
         )
         .await?;

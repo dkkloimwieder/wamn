@@ -30,7 +30,7 @@ pub fn closure_component(component: &str, registered_operation: Option<&str>) ->
     let operation = registered_operation.unwrap_or("run");
     AdmittedComponent {
         target: ComponentPackageCoordinate {
-            project_env_key: "org-a--fixture--dev".to_owned(),
+            project_env_key: "org-a--dev--fixture".to_owned(),
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),
         },

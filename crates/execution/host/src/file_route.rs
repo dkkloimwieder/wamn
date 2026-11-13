@@ -225,9 +225,19 @@ impl FileConnections for RegistryFileConnections {
             )
         })?;
         let mut generations = Vec::new();
-        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
+        for row in client
+            .query(
+                wamn_registry::sql::EXECUTION_HOST_SRC_FILE_ROUTE_GENERATIONS,
+                &[&self.org, &self.project, &self.environment],
+            )
+            .await?
+        {
             generations.push(FileConnection {
-                id: row.try_get(0)?, name: row.try_get(1)?, generation: row.try_get(2)?, definition: row.try_get(3)?, read_only: false,
+                id: row.try_get(0)?,
+                name: row.try_get(1)?,
+                generation: row.try_get(2)?,
+                definition: row.try_get(3)?,
+                read_only: false,
             });
         }
         Ok(generations)

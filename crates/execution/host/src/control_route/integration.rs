@@ -60,8 +60,26 @@ impl ControlRoutes<'_> {
             detail: json!({"field":"value"}),
         })?;
         let transaction = self
-            .begin_in(writer, attachment, caller, Some(&project))
+            .begin_in_environment(
+                writer,
+                attachment,
+                caller,
+                Some(&project),
+                request["env"].as_str(),
+            )
             .await?;
+        if operation == "connection.copy"
+            && !self
+                .admits_environment(
+                    &transaction,
+                    caller,
+                    Some(&project),
+                    request["source_env"].as_str(),
+                )
+                .await?
+        {
+            return Err(super::denied(attachment));
+        }
         let mut drops = AuthDrops::default();
         let mut connection_drops = ConnectionDrops::default();
         if operation == "connection.authorize" {
@@ -135,8 +153,7 @@ impl ControlRoutes<'_> {
         };
         let environments: Vec<(String, String)> = transaction
             .query(
-                "SELECT project,env FROM registry.project_envs WHERE org=$1 AND project=$2 \
-             AND ($3::text IS NULL OR env=$3) ORDER BY env",
+                wamn_registry::sql::EXECUTION_HOST_SRC_CONTROL_ROUTE_INTEGRATION_INTEGRATION_ADMINISTRATION_IN,
                 &[&self.org, &project, &projection_env],
             )
             .await?
@@ -233,7 +250,13 @@ impl ControlRoutes<'_> {
         self.changes.publish(drops).await;
         self.changes.publish(connection_drops).await;
         let source = self
-            .begin_in(writer, attachment, caller, Some(&project))
+            .begin_in_environment(
+                writer,
+                attachment,
+                caller,
+                Some(&project),
+                request["env"].as_str(),
+            )
             .await?;
         let mut completed = Vec::new();
         let mut projected_drops = Vec::new();

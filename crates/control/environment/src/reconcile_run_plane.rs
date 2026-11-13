@@ -13,7 +13,7 @@ use wamn_control_provision::{
     APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
     project_env_database_name, validate_project_env,
 };
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 use wamn_schema_control::{
     BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
     RunPlanePlan, catalog_schema_present_sql, plan_run_plane, select_app_run_queue_authority_sql,
@@ -61,7 +61,7 @@ pub struct ReconcileRunPlaneRequest {
 impl ReconcileRunPlaneRequest {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.env)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.env)
     }
 }
 
@@ -191,7 +191,7 @@ pub async fn reconcile_run_plane_with_migrations(
     );
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", args.schema))?;
-    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     validate_project_env(&args.org, &args.project, &args.env).map_err(|source| {
         ReconcileTargetError::with_source(
             ReconcileTargetErrorType::RegistryTarget,
@@ -401,23 +401,12 @@ const PROJECT_ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject,
 /// itself, so the project needs no join beyond the principal that names the
 /// user. The env narrows the read: one project database serves one project
 /// environment, and a member of `dev` gets no row in the `prod` project.
-const PROJECT_ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
-     FROM identity.project_env_memberships AS m \
-     JOIN identity.principals AS p ON p.id = m.principal_id \
-     WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
-       AND p.type = 'user' AND p.status = 'active' \
-       AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active') \
-     ORDER BY p.email";
+const PROJECT_ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text,p.email,p.display_name \
+    FROM identity.principals p WHERE identity.has_project_access(p.id,$1,$3,$2) ORDER BY p.email";
 
-/// Every user member of ONE project environment who holds `project-admin` in
-/// its project.
 const PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.principals p \
-    WHERE p.status='active' AND (EXISTS (SELECT 1 FROM identity.project_roles r \
-    WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4) \
-    OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role='org-admin')) \
-    AND (p.type='service' OR (p.type='user' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$1 AND om.status='active') \
-    AND EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$1 AND m.project=$2 AND m.env=$3)))";
+    WHERE p.type='service' AND p.status='active' AND $3::text IS NOT NULL AND EXISTS \
+    (SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4)";
 
 async fn read_project_env_key_identity_source(
     client: &tokio_postgres::Transaction<'_>,
@@ -426,7 +415,10 @@ async fn read_project_env_key_identity_source(
     env: &str,
 ) -> anyhow::Result<ProjectEnvKeyIdentitySource> {
     let platform_domain: Option<String> = client
-        .query_one("SELECT platform_domain FROM registry.meta", &[])
+        .query_one(
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
+            &[],
+        )
         .await
         .context("read the deployment platform domain")?
         .get(0);
@@ -688,7 +680,7 @@ async fn converge_project_env_key_identity(
             .context("record the project schema baseline")?;
         if let Some(pending) = crate::provision_project_env::registry::pending_database(
             system,
-            &Triple::new(target.org, target.project, target.env),
+            &Triple::new(target.org, target.env, target.project),
         )
         .await?
         {

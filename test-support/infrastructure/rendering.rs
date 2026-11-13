@@ -117,7 +117,7 @@ pub fn host_values(base: &str, image: &str) -> anyhow::Result<String> {
 
 /// Move an application overlay from its own identity to a supplied release's
 /// identity: the org, project and environment values, and every Secret name
-/// that carries `<org>--<project>--<env>`.
+/// that carries `<org>--<env>--<project>`.
 pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result<String> {
     let mut overlay: HostValues =
         serde_yaml::from_str(overlay).context("parse host overlay values")?;
@@ -129,15 +129,10 @@ pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result
             .and_then(|entry| entry.value.clone())
             .with_context(|| format!("host overlay declares no value for {name}"))
     };
-    let from = format!(
-        "{}--{}--{}",
-        declared(&group.env, "WAMN_ORG")?,
-        declared(&group.env, "WAMN_PROJECT")?,
-        declared(&group.env, "WAMN_EVT_ENV")?,
-    );
-    let to = format!(
-        "{}--{}--{}",
-        identity.org, identity.project, identity.environment
+    let from = wamn_registry::project_env_key(
+        &declared(&group.env, "WAMN_ORG")?,
+        &declared(&group.env, "WAMN_PROJECT")?,
+        &declared(&group.env, "WAMN_EVT_ENV")?,
     );
     for (name, value) in [
         ("WAMN_ORG", &identity.org),
@@ -162,7 +157,12 @@ pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result
         );
     for name in names {
         if let Some(prefix) = name.strip_suffix(&from) {
-            *name = format!("{prefix}{to}");
+            *name = wamn_registry::name::workload_secret_name(
+                prefix,
+                &identity.org,
+                &identity.project,
+                &identity.environment,
+            );
         }
     }
     serde_yaml::to_string(&overlay).context("serialize host overlay values")
@@ -239,7 +239,7 @@ pub fn render_host_values(
         .clone_from(&input.host_tag);
     // The host's data connection is the environment's NATS user
     // (docs/plan/alignment.md R5).
-    let project_env_key = wamn_control_registry::project_env_key(
+    let project_env_key = wamn_registry::project_env_key(
         &input.event.org,
         &input.event.project,
         &input.event.environment,
@@ -262,10 +262,10 @@ pub fn render_host_values(
     // and inbox, and no `servers`, so it inherits the data connection
     // (docs/plan/alignment.md R6).
     let source = wamn_broker::events::source_stream_config(
-        &wamn_control_registry::Triple::new(
+        &wamn_registry::Triple::new(
             input.event.org.as_str(),
-            input.event.project.as_str(),
             input.event.environment.as_str(),
+            input.event.project.as_str(),
         ),
         input.stream_replicas,
         std::time::Duration::from_secs(input.dup_window_secs),
@@ -275,7 +275,7 @@ pub fn render_host_values(
          inbox-prefix: \"_INBOX_{}\", stream-allow: \"{}\", subject-allow: \"{}\", \
          subscription-capacity-bytes: \"4194304\", subscription-capacity: \"64\", \
          max-in-flight: \"64\"}}}}}}}}]",
-        wamn_control_registry::environment_nats_user(&project_env_key),
+        wamn_registry::environment_nats_user(&project_env_key),
         source.name,
         source.subjects.join(","),
     ))

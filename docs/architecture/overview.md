@@ -29,7 +29,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 
 | Owner | Responsibility |
 | --- | --- |
-| `wamn-control-registry` | Organization, project, and environment declarations |
+| `wamn-registry` | Org, environment and project coordinates, resource names, and registry SQL |
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
@@ -112,7 +112,7 @@ Frozen candidate execution retains its own admitted facts throughout the travers
 ## Environment lifecycle
 
 An environment is one Helm release of the `release` chart in `deploy/platform/release`.
-The release name is `r-<slug>-<hash>`, derived from the coordinate `org/project/env`.
+The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/project`.
 The name is also the host group of the environment.
 The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
 It adds one WorkloadDeployment for the `http` role and one for the `materializer` role.
@@ -240,6 +240,19 @@ The platform UI reads status through a control operation with a read-only Servic
 - The org, the project, `identity.project_roles` and every user principal.
 - The control-family generation roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
 
+## Registry hierarchy
+
+The hierarchy is org, environment, project, application.
+`registry.environments` owns each environment's policy, status, disposable setting, and target.
+`registry.projects` holds org-level project definitions.
+`registry.environment_projects` places a project under an environment and owns its database Secret, instance suffix, route host, and pending database reset.
+Applications are releases under those project deployments.
+Environment coordinates contain org and environment.
+Project database coordinates also contain the project.
+The catalog holds no second environment identity table.
+Postgres row security restricts each control login to the org encoded by its authenticated login.
+Request settings cannot select a different org.
+
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.
@@ -248,34 +261,25 @@ An invitation creates or reuses the principal and activates its membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
 A valid account with no effective access is not an authentication error.
 
-Authorization never infers administration from a higher role.
-Each grant writes the lower rows:
+Authorization derives administration from the current explicit grants.
+An org admin administers every environment, project and application in the org.
+An environment admin administers every project and application in that environment.
+An environment grant gives no org authority.
+A project admin administers the applications and connections of that project.
+Each grant writes only its own row in `identity.org_roles`, `identity.environment_roles`, or `identity.project_roles`.
+The platform copies no inherited roles or memberships.
 
-- `org-admin` writes the `identity.org_roles` row, `project-admin` in every project of the org, and a membership of every environment of the org.
-- `project-admin` writes the `identity.project_roles` row and a membership of every environment of the project.
-- The `admin` role row of the user is written in the database of each environment.
-Application admin comes only from committed org-admin or project-admin authority.
-Direct application admin grants and revokes refuse.
-A service derives admin from its project role without user org membership.
+Session issuance and host permission reads derive application administration from these same grants.
+A revoke removes only the explicit grant that it names.
+Other explicit grants and ordinary memberships stay.
+Inactive org membership grants no access.
+Application databases retain user identity and authored roles, but they do not store inherited user administration.
+Services retain their explicit application roles.
 
-A new project or environment receives the rows of the existing active administrators when it is created.
-System writers lock the org membership row before changing user authority.
-Projection takes that same lock and reads committed authority again.
-It commits each application write before releasing the system lock.
-The next system mutation or `env apply` repairs an interrupted projection.
-
-Revocation flows downward.
-Revoking `org-admin` removes `project-admin` in the org and the application `admin` rows.
-Revoking `project-admin` removes it in one project.
-Neither revoke removes ordinary memberships or authored roles.
-A revoke of a lower grant refuses while a higher grant covers it. The holder must revoke the higher grant first.
-
-Deactivating a user in an org removes four types of access, from the leaves upward.
-They are the application user rows, the environment memberships, the project roles, and the org roles of that org.
-It then marks the membership `inactive`.
-The global principal stays, and access in other orgs does not change.
-Reactivation makes the membership active and restores nothing else.
-The control host exposes these writes as the routes `user.invite`, `user.activate`, `user.deactivate`, `org_admin.grant` and `org_admin.revoke`.
+Deactivation removes the user's application identity and explicit grants within that org.
+It then marks the org membership inactive.
+The global principal and access in other orgs stay.
+Reactivation restores the org membership and no removed grants.
 
 A package schema change requires a new release and a reset of the application tables.
 The [owner ruling](../audit/README.md) defines this baseline policy.

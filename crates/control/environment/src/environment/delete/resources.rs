@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 use super::super::{Platform, ensure::kubectl};
 
@@ -60,9 +60,9 @@ pub(super) async fn require_ownership(
     }
     let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
-    let certificate = format!("wamn-nats-{project_env_key}");
+    let certificate = wamn_registry::name::nats_certificate(&project_env_key);
     if let Some(object) = get(platform, namespace, "certificate", &certificate).await? {
-        let user = wamn_control_registry::environment_nats_user(&project_env_key);
+        let user = wamn_registry::environment_nats_user(&project_env_key);
         anyhow::ensure!(
             object["spec"]["secretName"] == certificate
                 && object["spec"]["commonName"] == user
@@ -147,7 +147,7 @@ pub(super) async fn delete_event_certificate(
     platform: &Platform,
     project_env_key: &str,
 ) -> anyhow::Result<()> {
-    let name = format!("wamn-nats-{project_env_key}");
+    let name = wamn_registry::name::nats_certificate(project_env_key);
     for type_ in ["certificate", "secret"] {
         kubectl(
             platform,

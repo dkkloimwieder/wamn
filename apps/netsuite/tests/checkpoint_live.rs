@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const PROJECT_ENV_KEY: &str = "rest--publication--test";
+const PROJECT_ENV_KEY: &str = "rest--test--publication";
 
 pub async fn invoke(
     roots: &[PathBuf],

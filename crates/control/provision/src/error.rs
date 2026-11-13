@@ -3,19 +3,9 @@
 
 use std::fmt;
 
-use wamn_control_registry::Triple;
-
 /// A project id could not be turned into safe database / role / Secret names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionError {
-    /// One project already identifies a different environment.
-    ProjectEnvKeyEnvironmentIdentityConflict {
-        project_env_key: String,
-        /// Boxed so one conflict variant does not widen every `ProvisionError`
-        /// returned by this crate (`clippy::result_large_err`).
-        recorded: Box<Triple>,
-        presented: Box<Triple>,
-    },
     /// The project id is not a valid lowercase slug.
     InvalidProjectId {
         /// The offending id.
@@ -53,7 +43,7 @@ pub enum ProvisionError {
         /// The shared pool the org is placed on.
         pool: String,
     },
-    /// A recovery-domain owner env names no [`EnvPolicy`](wamn_control_registry::EnvPolicy)
+    /// A recovery-domain owner env names no [`EnvPolicy`](crate::EnvPolicy)
     /// in the policy set — the cluster cannot be sized. A malformed registry
     /// (validate() flags it as `unknown-env`/`unknown-shared-with-target`).
     UnknownEnvPolicy {
@@ -93,14 +83,6 @@ pub enum ProvisionError {
 impl fmt::Display for ProvisionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ProjectEnvKeyEnvironmentIdentityConflict {
-                project_env_key,
-                recorded,
-                presented,
-            } => write!(
-                f,
-                "project-environment-identity-projection-content-conflict: project_env_key={project_env_key} recorded={recorded} presented={presented}"
-            ),
             ProvisionError::InvalidProjectId { id, reason } => {
                 write!(f, "invalid project id {id:?}: {reason}")
             }
@@ -143,46 +125,3 @@ impl fmt::Display for ProvisionError {
 }
 
 impl std::error::Error for ProvisionError {}
-
-/// Refuse a second declared environment identity for an existing project.
-pub fn require_project_env_key_environment_identity(
-    project_env_key: &str,
-    recorded: &Triple,
-    presented: &Triple,
-) -> Result<(), ProvisionError> {
-    if recorded == presented {
-        Ok(())
-    } else {
-        Err(ProvisionError::ProjectEnvKeyEnvironmentIdentityConflict {
-            project_env_key: project_env_key.to_owned(),
-            recorded: Box::new(recorded.clone()),
-            presented: Box::new(presented.clone()),
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn project_env_key_identity_compares_every_declared_coordinate() {
-        let recorded = Triple::new("acme", "widgets", "dev");
-        assert!(
-            require_project_env_key_environment_identity("org-a", &recorded, &recorded).is_ok()
-        );
-        for presented in [
-            Triple::new("other", "widgets", "dev"),
-            Triple::new("acme", "shipping", "dev"),
-            Triple::new("acme", "widgets", "prod"),
-        ] {
-            let error =
-                require_project_env_key_environment_identity("org-a", &recorded, &presented)
-                    .unwrap_err();
-            assert!(matches!(
-                error,
-                ProvisionError::ProjectEnvKeyEnvironmentIdentityConflict { .. }
-            ));
-        }
-    }
-}

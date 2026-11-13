@@ -56,7 +56,53 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
          VALUES ({org},{env},'\"own\"',0,1,'1Gi','1','1Gi','postgres:18') ON CONFLICT DO NOTHING; \
-         INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) \
-         VALUES ({org},{project},{env},'s1','aaaaaaa1',{env}) ON CONFLICT DO NOTHING;"
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ({org},{env},{env}) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ({org},{project},{env},'s1','aaaaaaa1') ON CONFLICT DO NOTHING;"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_control_login_reads_and_writes_only_its_own_org() {
+        let _lock = wamn_test_postgres::lock();
+        let database = system();
+        database
+            .execute(&[
+                &seed_org_project_env_sql("acme", "orders", "dev"),
+                &seed_org_project_env_sql("other", "orders", "dev"),
+            ])
+            .unwrap();
+        let login = crate::workload_generation_role(
+            crate::WorkloadRoleFamily::Control,
+            crate::WorkloadRoleIdentity::Org {
+                org: "acme",
+                database: database.name(),
+            },
+            crate::CredentialGeneration::A,
+        )
+        .unwrap();
+        database.execute(&[&format!(
+            "CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOBYPASSRLS; \
+             GRANT wamn_control TO {login}; SET SESSION AUTHORIZATION {login}; \
+             SET ROLE wamn_control; \
+             SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',false); \
+             SELECT set_config('app.project_env_key','other--dev--orders',false); \
+             DO $isolation$ BEGIN \
+                 ASSERT EXISTS (SELECT FROM registry.projects WHERE org='acme'); \
+                 ASSERT NOT EXISTS (SELECT FROM registry.projects WHERE org<>'acme'); \
+                 INSERT INTO registry.projects(org,id) VALUES ('acme','allowed'); \
+                 BEGIN \
+                     INSERT INTO registry.projects(org,id) VALUES ('other','refused'); \
+                     RAISE EXCEPTION 'cross-org write succeeded'; \
+                 EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
+                 BEGIN \
+                     PERFORM registry.configure_external_system('other','external_system.list','{{\"project\":\"orders\"}}'::jsonb); \
+                     RAISE EXCEPTION 'cross-org function succeeded'; \
+                 EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
+             END $isolation$; \
+             RESET SESSION AUTHORIZATION; DROP ROLE {login};"
+        )]).unwrap();
+    }
 }

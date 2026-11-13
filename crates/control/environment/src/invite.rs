@@ -71,7 +71,7 @@ pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Res
         let transaction = provisioning_transaction(&mut client).await?;
         transaction
             .query(
-                "SELECT id FROM registry.orgs WHERE id = $1 FOR UPDATE",
+                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_INVITE_INVITE,
                 &[&request.org],
             )
             .await

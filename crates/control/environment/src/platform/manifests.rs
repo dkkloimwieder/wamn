@@ -174,7 +174,7 @@ pub(super) fn merge(base: &mut Value, overlay: Value) {
 
 pub(super) fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Result<()> {
     if value["kind"] == "Certificate" && value["metadata"]["name"] == "operator-dkk" {
-        let name = format!("operator-{}", document.org);
+        let name = wamn_registry::name::resource_suffix("operator", &document.org);
         value["metadata"]["name"] = name.clone().into();
         value["spec"]["commonName"] = name.clone().into();
         value["spec"]["secretName"] = name.into();

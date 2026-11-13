@@ -36,7 +36,7 @@ struct Target {
 impl Target {
     fn new(slug: &str) -> Self {
         Self {
-            db: format!("wamn-db-acme--billing--{slug}"),
+            db: wamn_registry::name::project_env_database_stem("acme", "billing", slug),
             owner: format!("wamn_db_owner_{slug}"),
             app: format!("wamn_app_{slug}"),
         }
@@ -51,7 +51,7 @@ impl Target {
     /// and the disagreement it would miss is every guest read refusing.
     fn multibyte(slug: &str) -> Self {
         let mut target = Self::new(slug);
-        target.db = format!("wamn-db-acme--billing--{slug}-\u{f6}\u{e4}");
+        target.db.push_str("-\u{f6}\u{e4}");
         target
     }
 }

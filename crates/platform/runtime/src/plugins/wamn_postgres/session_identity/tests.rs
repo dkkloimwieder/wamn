@@ -113,13 +113,17 @@ fn guest_url(project_env_key: &str, database: &str) -> String {
 #[test]
 fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "fixture",
+        "test--dev--fixture",
         "host-default",
     ))))
     .expect("compose with a credential");
     assert!(
         host.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
+            .resolve(
+                DEFAULT_PROJECT,
+                AuthorityClass::GuestSql,
+                Some("test--dev--fixture")
+            )
             .expect("the credential's own project_env_key resolves")
             .is_some()
     );
@@ -148,14 +152,18 @@ fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
 #[test]
 fn the_composed_credential_becomes_the_default_project() {
     let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        "fixture",
+        "test--dev--fixture",
         "host-default",
     ))))
     .expect("compose with a credential");
     assert!(
         composed
             .provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
+            .resolve(
+                DEFAULT_PROJECT,
+                AuthorityClass::GuestSql,
+                Some("test--dev--fixture")
+            )
             .expect("resolve default")
             .is_some(),
         "a host composed WITH a credential must resolve the default project; \
@@ -166,7 +174,11 @@ fn the_composed_credential_becomes_the_default_project() {
     let bare = WamnPostgres::from_env(None).expect("compose without a credential");
     assert!(
         bare.provider
-            .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
+            .resolve(
+                DEFAULT_PROJECT,
+                AuthorityClass::GuestSql,
+                Some("test--dev--fixture")
+            )
             .expect("resolve default")
             .is_none(),
         "composing without a credential must resolve nothing, not reach for \
@@ -220,7 +232,7 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         // rather than relying on a libpq-style implicit OS user.
         credentials: Some(ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a@localhost/pool-lifecycle-test",
-            wamn_run_state::app_identity_hash("fixture", "pool-lifecycle-test")
+            wamn_run_state::app_identity_hash("test--dev--fixture", "pool-lifecycle-test")
         ))),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -231,7 +243,11 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
     .expect("construct lazy lifecycle pools");
 
     let guest_first = postgres
-        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("fixture"))
+        .ensure_pool(
+            AuthorityClass::GuestSql,
+            DEFAULT_PROJECT,
+            Some("test--dev--fixture"),
+        )
         .expect("first guest pool");
     let platform_first = postgres
         .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
@@ -240,7 +256,11 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         .ensure_pool(AuthorityClass::ExecutorPlatform, DEFAULT_PROJECT, None)
         .expect("memoized platform pool");
     let guest_second = postgres
-        .ensure_pool(AuthorityClass::GuestSql, DEFAULT_PROJECT, Some("fixture"))
+        .ensure_pool(
+            AuthorityClass::GuestSql,
+            DEFAULT_PROJECT,
+            Some("test--dev--fixture"),
+        )
         .expect("memoized guest pool");
 
     assert!(Arc::ptr_eq(&guest_first, &guest_second));
@@ -479,7 +499,7 @@ fn validate_identity_rejects_malformed_identities() {
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     assert!(
         validate_session_identity(
-            "fixture",
+            "test--dev--fixture",
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
@@ -489,30 +509,67 @@ fn validate_identity_rejects_malformed_identities() {
         )
         .is_ok()
     );
-    assert!(validate_session_identity("fixture", None, None, None, None, None, None).is_ok());
+    assert!(
+        validate_session_identity("test--dev--fixture", None, None, None, None, None, None).is_ok()
+    );
     assert!(validate_session_identity("bad'project", None, None, None, None, None, None).is_err());
     assert!(
-        validate_session_identity("fixture", Some("has-hyphen"), None, None, None, None, None)
-            .is_err()
-    );
-    assert!(
-        validate_session_identity("fixture", None, Some("bad;runner"), None, None, None, None)
-            .is_err()
-    );
-    // `''` is the base denial policy, never an identity.
-    assert!(validate_session_identity("fixture", None, None, Some(""), None, None, None).is_err());
-    // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(
-        validate_session_identity("fixture", None, None, None, Some("not-a-uuid"), None, None)
-            .is_err()
-    );
-    assert!(
-        validate_session_identity("fixture", None, None, None, Some(&U1[..35]), None, None)
-            .is_err()
+        validate_session_identity(
+            "test--dev--fixture",
+            Some("has-hyphen"),
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .is_err()
     );
     assert!(
         validate_session_identity(
-            "fixture",
+            "test--dev--fixture",
+            None,
+            Some("bad;runner"),
+            None,
+            None,
+            None,
+            None
+        )
+        .is_err()
+    );
+    // `''` is the base denial policy, never an identity.
+    assert!(
+        validate_session_identity("test--dev--fixture", None, None, Some(""), None, None, None)
+            .is_err()
+    );
+    // A non-uuid user id would raise 22P02 inside every ownership predicate.
+    assert!(
+        validate_session_identity(
+            "test--dev--fixture",
+            None,
+            None,
+            None,
+            Some("not-a-uuid"),
+            None,
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        validate_session_identity(
+            "test--dev--fixture",
+            None,
+            None,
+            None,
+            Some(&U1[..35]),
+            None,
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        validate_session_identity(
+            "test--dev--fixture",
             None,
             None,
             None,
@@ -523,9 +580,15 @@ fn validate_identity_rejects_malformed_identities() {
         .is_err()
     );
     // `''` is the unbound operation, never an identity.
-    assert!(validate_session_identity("fixture", None, None, None, None, Some(""), None).is_err());
+    assert!(
+        validate_session_identity("test--dev--fixture", None, None, None, None, Some(""), None)
+            .is_err()
+    );
     // `''` is the unbound application, never an identity.
-    assert!(validate_session_identity("fixture", None, None, None, None, None, Some("")).is_err());
+    assert!(
+        validate_session_identity("test--dev--fixture", None, None, None, None, None, Some(""))
+            .is_err()
+    );
 }
 
 #[test]
@@ -639,7 +702,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
-        pg.set_project_env_key(c, "fixture").unwrap();
+        pg.set_project_env_key(c, "test--dev--fixture").unwrap();
         pg.set_project(c, "proj").unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
@@ -666,7 +729,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     pg.clear_component_identity("wl-unknown");
     assert_eq!(
         pg.project_env_key_for("wl-a-component-0").as_deref(),
-        Some("fixture")
+        Some("test--dev--fixture")
     );
 
     pg.clear_component_identity("wl-a");
@@ -691,7 +754,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
     // The other workload's component is untouched across the board.
     assert_eq!(
         pg.project_env_key_for("wl-b-component-0").as_deref(),
-        Some("fixture")
+        Some("test--dev--fixture")
     );
     assert_eq!(pg.project_for("wl-b-component-0"), "proj");
     assert_eq!(pg.schema_for("wl-b-component-0").as_deref(), Some("s_run"));
@@ -737,7 +800,7 @@ fn clear_component_identity_reaps_all_registries_for_the_workload() {
 // ------------------------------------------------------------------
 
 /// The project_env_key every live guest checkout in this module authenticates for.
-const LIVE_PROJECT_ENV_KEY: &str = "fixture";
+const LIVE_PROJECT_ENV_KEY: &str = "test--dev--fixture";
 
 /// The executing principal a live transactional statement binds.
 pub(in crate::plugins::wamn_postgres) const LIVE_PRINCIPAL: &str =
@@ -1053,7 +1116,7 @@ async fn live_begin_with_identity_sets_the_guest_set_without_a_project_env_key_i
         &conn,
         AuthorityClass::GuestSql,
         false,
-        "fixture",
+        "test--dev--fixture",
         Some("public"),
         Some("owner-1"),
         Some("inspector"),
@@ -1189,7 +1252,7 @@ fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u
 // the caller's identity.
 #[tokio::test]
 async fn live_compiled_per_user_policy_permits_the_injected_caller() {
-    const PROJECT_ENV_KEY: &str = "rls-identity-live";
+    const PROJECT_ENV_KEY: &str = "test--dev--rls-identity-live";
     const COMPONENT: &str = "rls-identity-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
@@ -1283,7 +1346,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 // follows is load-bearing rather than vacuous.
 #[tokio::test]
 async fn live_guest_cannot_override_the_injected_role_or_user_identity() {
-    const PROJECT_ENV_KEY: &str = "rls-override-live";
+    const PROJECT_ENV_KEY: &str = "test--dev--rls-override-live";
     const COMPONENT: &str = "rls-override-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
@@ -1428,7 +1491,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
     pg.bind_session_identity(
         COMPONENT,
         &SessionIdentity {
-            project_env_key: "org-b".to_string(),
+            project_env_key: "org--dev--b".to_string(),
             ..SessionIdentity::default()
         },
     )
@@ -1440,7 +1503,7 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "org-a",
+        "org--dev--a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1470,13 +1533,13 @@ async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound
 
     // A stale ConnectionHttp still carrying the project_env_key its store was BUILT
     // for is refused before it can read a row.
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
+    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
         .await
         .expect_err("a disagreeing project_env_key is refused");
 
     // The agreeing project_env_key gets past the guard and fails only on the absent
     // connection, so the guard is not simply refusing everything.
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-b", &lookup, &facts)
+    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--b", &lookup, &facts)
         .await
         .expect_err("an offline plugin has no connection to resolve against");
 }
@@ -1518,7 +1581,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "org-a",
+        "org--dev--a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1547,7 +1610,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     };
 
     let unbound = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
         .await
         .expect_err("an unbound identity scope resolves nothing");
     assert!(
@@ -1580,13 +1643,13 @@ async fn workload_binding_selects_only_the_materializer_authority() {
         .expect_err("no other explicit authority is admitted");
 
     assert!(
-        pg.checkout_workload("materializer", DEFAULT_PROJECT, "org-a")
+        pg.checkout_workload("materializer", DEFAULT_PROJECT, "org--dev--a")
             .await
             .is_err(),
         "the recording provider deliberately names no credential"
     );
     assert!(
-        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "org-a")
+        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "org--dev--a")
             .await
             .is_err(),
         "the recording provider deliberately names no credential"
@@ -1645,7 +1708,7 @@ async fn effect_snapshot_uses_the_callable_http_authority() {
     pg.bind_session_identity(
         COMPONENT,
         &SessionIdentity {
-            project_env_key: "org-a".to_string(),
+            project_env_key: "org--dev--a".to_string(),
             ..SessionIdentity::default()
         },
     )
@@ -1657,7 +1720,7 @@ async fn effect_snapshot_uses_the_callable_http_authority() {
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "org-a",
+        "org--dev--a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1685,7 +1748,7 @@ async fn effect_snapshot_uses_the_callable_http_authority() {
         candidate_binding: None,
     };
 
-    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
+    pg.connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org--dev--a", &lookup, &facts)
         .await
         .expect_err("a provider that names no credential resolves nothing");
 
@@ -1710,7 +1773,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .parse()
         .expect("user UUID");
 
-    pg.user_operation_permissions(DEFAULT_PROJECT, "org-a", &principal_id)
+    pg.user_operation_permissions(DEFAULT_PROJECT, "org--dev--a", &principal_id)
         .await
         .expect_err("a provider that names no credential resolves nothing");
 
@@ -1777,8 +1840,8 @@ fn two_project_env_key_rls_fixture_sql(
 #[tokio::test]
 async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows()
  {
-    const PROJECT_ENV_KEY_A: &str = "seam-live-a";
-    const PROJECT_ENV_KEY_B: &str = "seam-live-b";
+    const PROJECT_ENV_KEY_A: &str = "test--dev--seam-live-a";
+    const PROJECT_ENV_KEY_B: &str = "test--dev--seam-live-b";
 
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -2192,7 +2255,7 @@ fn cold_parse_statement() -> VerifiedStatement {
 /// two branches of the `join!`, fails this every run.
 #[tokio::test]
 async fn live_a_cold_connection_parses_inside_the_identity_transaction() {
-    const PROJECT_ENV_KEY: &str = "coldparse";
+    const PROJECT_ENV_KEY: &str = "test--dev--coldparse";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -2366,7 +2429,7 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 /// session carries no `app.user_id`.
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
-    const PROJECT_ENV_KEY: &str = "principal";
+    const PROJECT_ENV_KEY: &str = "test--dev--principal";
     const PRINCIPAL_B: &str = "00000000-0000-0000-0000-000000000020";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2498,7 +2561,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 /// row, which provisioning writes, so it binds like any other principal.
 #[tokio::test]
 async fn live_a_bind_refuses_a_principal_with_no_user_row() {
-    const PROJECT_ENV_KEY: &str = "unprovisioned";
+    const PROJECT_ENV_KEY: &str = "test--dev--unprovisioned";
     const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2568,7 +2631,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
-    const PROJECT_ENV_KEY: &str = "removed";
+    const PROJECT_ENV_KEY: &str = "test--dev--removed";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2639,7 +2702,7 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
-    const PROJECT_ENV_KEY: &str = "dropped";
+    const PROJECT_ENV_KEY: &str = "test--dev--dropped";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2787,7 +2850,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
 /// connection does not reach the next transaction, which has no operation.
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
-    const PROJECT_ENV_KEY: &str = "operation";
+    const PROJECT_ENV_KEY: &str = "test--dev--operation";
     const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2969,7 +3032,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
 /// value that guest SQL names, which the identity guard refuses.
 #[tokio::test]
 async fn live_a_transaction_carries_only_the_application_its_host_bound() {
-    const PROJECT_ENV_KEY: &str = "application";
+    const PROJECT_ENV_KEY: &str = "test--dev--application";
     const APPLICATION_A: &str = "platform_fixture";
     const APPLICATION_B: &str = "platform_fixture_overlay";
     let _lock = wamn_test_postgres::lock();
@@ -3092,7 +3155,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
 async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     use super::super::resources::{begin_statement_transaction, run_verified_query, take_conn};
 
-    const PROJECT_ENV_KEY: &str = "read-snapshot";
+    const PROJECT_ENV_KEY: &str = "test--dev--read-snapshot";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -3220,7 +3283,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
 /// applies before the query, including a cold Parse on the same connection.
 #[tokio::test]
 async fn live_autocommit_settings_are_reused_only_on_their_connection() {
-    const PROJECT_ENV_KEY: &str = "settings";
+    const PROJECT_ENV_KEY: &str = "test--dev--settings";
     let mut server =
         wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
             .expect("start PostgreSQL with statement statistics");
@@ -3335,7 +3398,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
 async fn live_stream_reads_once_and_scopes_identity() {
     use super::super::run_stream::open_stream;
 
-    const PROJECT_ENV_KEY: &str = "stream-sequence";
+    const PROJECT_ENV_KEY: &str = "test--dev--stream-sequence";
     const SQL: &str = "SELECT current_setting('app.role', true), \
         current_setting('app.runner', true), current_setting('transaction_read_only'), \
         value FROM stream_probe";
@@ -3672,7 +3735,7 @@ async fn an_unverified_declared_statement_is_refused_before_a_stream_opens() {
 async fn live_an_unverified_declared_statement_is_refused_when_it_runs() {
     use super::super::resources::run_verified_query;
 
-    const PROJECT_ENV_KEY: &str = "unverified-sql";
+    const PROJECT_ENV_KEY: &str = "test--dev--unverified-sql";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -3866,7 +3929,8 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),
         ));
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    let writer = crate::auth_cache::tests::watched(&client, Some("org-a"), Arc::clone(&pg)).await;
+    let writer =
+        crate::auth_cache::tests::watched(&client, Some("org--dev--a"), Arc::clone(&pg)).await;
     let authorization = format!("Bearer {}", issued.token());
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();
@@ -3956,7 +4020,7 @@ async fn queued_caller_retains_typed_connection_unavailable() -> anyhow::Result<
         None,
     )));
     let error = postgres
-        .queued_run_caller("default", "org-a", "principal", None)
+        .queued_run_caller("default", "org--dev--a", "principal", None)
         .await
         .expect_err("an unavailable credential refuses the caller lookup");
     assert!(matches!(

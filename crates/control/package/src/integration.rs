@@ -256,7 +256,7 @@ pub async fn publish(
     let tx = system.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
     tx.query_one(
-        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)",
+        wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH,
         &[
             &built.code,
             &publication.version,

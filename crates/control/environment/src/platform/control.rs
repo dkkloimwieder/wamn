@@ -19,7 +19,7 @@ const REGISTRY_AUTH_FILE: &str = "/etc/wamn/registry/config.json";
 /// Wait until every control host observes the environment's administration login change.
 pub(crate) async fn wait_administration(
     target: &Target,
-    triple: &wamn_control_registry::Triple,
+    triple: &wamn_registry::Triple,
     present: bool,
     budget: std::time::Duration,
 ) -> anyhow::Result<()> {
@@ -42,7 +42,10 @@ pub(crate) async fn wait_administration(
         );
         let login = present.then(|| secret_text(&secret, &key)).transpose()?;
         let path = format!("/etc/wamn/control-administration/{key}");
-        let selector = format!("wasmcloud.com/hostgroup=c-{}", triple.org);
+        let selector = wamn_registry::name::host_selector(&wamn_registry::name::resource_suffix(
+            "c",
+            &triple.org,
+        ));
         let script = if present {
             r#"test -r "$1" && cmp -s "$1" -"#
         } else {
@@ -123,7 +126,7 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
         &target.context,
         "hosts",
         "secret",
-        &format!("wamn-control-{}", document.org),
+        &wamn_registry::control_nats_user(&document.org),
     )
     .await?
     .context("bootstrap control credential is missing")?;
@@ -136,14 +139,14 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
         &target.context,
         "hosts",
         "secret",
-        &format!("wamn-control-administration-{}", document.org),
+        &wamn_registry::name::control_administration_secret_name(&document.org),
     )
     .await?;
     anyhow::ensure!(
         administration.is_some(),
         "bootstrap control administration Secret is missing"
     );
-    let operator = format!("operator-{}", document.org);
+    let operator = wamn_registry::name::resource_suffix("operator", &document.org);
     let secret: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -181,10 +184,10 @@ fn operator_secret(mut secret: Value, name: &str) -> Value {
 
 /// Render the org host values shared by the cluster and local control host.
 pub fn host_values(org: &str) -> Value {
-    let name = format!("c-{org}");
+    let name = wamn_registry::name::resource_suffix("c", org);
     let mut values = json!({"runtime-operator": {"runtime": {
         "terminationGracePeriodSeconds": 70,
-        "serviceAccount": {"create":true,"name":format!("wamn-control-{org}")},
+        "serviceAccount": {"create":true,"name":wamn_registry::control_nats_user(org)},
         // Control operation routes create their Jobs with this account's token.
         "automountServiceAccountToken": true,
         "hostGroups": [{
@@ -197,7 +200,7 @@ pub fn host_values(org: &str) -> Value {
                 {"name": "DOCKER_CONFIG", "value": "/etc/wamn/registry"},
                 {"name": "WAMN_REGISTRY_TOKEN_METADATA", "value": "true"},
                 {"name": "WAMN_CONTROL_URL", "valueFrom": {"secretKeyRef": {
-                    "name": format!("wamn-control-{org}"), "key": "url"
+                    "name": wamn_registry::control_nats_user(org), "key": "url"
                 }}},
                 {"name": "WAMN_SESSION_ISSUER", "value": "https://identity.identity.svc.cluster.local"},
                 {"name": "WAMN_SESSION_JWKS_CA", "value": "/etc/identity-ca/ca.crt"},
@@ -210,8 +213,8 @@ pub fn host_values(org: &str) -> Value {
             "volumes": [
                 {"name": "registry-pull", "configMap": {"name": "wamn-registry-helper"}},
                 {"name": "identity-ca", "configMap": {"name": "identity-ca"}},
-                {"name": "identity-operator", "secret": {"secretName": format!("operator-{org}")}},
-                {"name": "control-administration", "secret": {"secretName": format!("wamn-control-administration-{org}")}}
+                {"name": "identity-operator", "secret": {"secretName": wamn_registry::name::resource_suffix("operator",org)}},
+                {"name": "control-administration", "secret": {"secretName": wamn_registry::name::control_administration_secret_name(org)}}
             ],
             "volumeMounts": [
                 {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true},
@@ -226,8 +229,7 @@ pub fn host_values(org: &str) -> Value {
     }}});
     // The control host's data connection is its org's NATS user, which covers
     // every environment of the org (docs/plan/alignment.md R7).
-    values["global"] =
-        json!({"certificates": {"dataCertSecretName": format!("wamn-nats-control-{org}")}});
+    values["global"] = json!({"certificates": {"dataCertSecretName": wamn_registry::name::control_nats_certificate(org)}});
     super::oauth::host_group(
         &mut values["runtime-operator"]["runtime"]["hostGroups"][0],
         &json!({"provider":"local"}),
@@ -246,13 +248,14 @@ pub(super) fn service_objects(
     let mut objects = serde_yaml::Deserializer::from_str(&source)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()?;
-    let name = format!("c-{}", document.org);
+    let name = wamn_registry::name::control_resource(&document.org);
     for object in &mut objects {
-        object["metadata"]["name"] = format!("{name}-http").into();
+        object["metadata"]["name"] = wamn_registry::name::resource_suffix(&name, "http").into();
         if object["kind"] == "WorkloadDeployment" {
             let spec = &mut object["spec"]["template"]["spec"];
             spec["hostSelector"]["hostgroup"] = name.clone().into();
-            spec["kubernetes"]["service"]["name"] = format!("{name}-http").into();
+            spec["kubernetes"]["service"]["name"] =
+                wamn_registry::name::resource_suffix(&name, "http").into();
             spec["hostInterfaces"][0]["config"]["host"] =
                 document.route_hosts.control.clone().into();
             spec["components"][0]["image"] = image.as_ref().into();
@@ -364,7 +367,7 @@ pub(super) fn resource_entry(
     .into();
     let desired = chart.selection_values(document, &UpgradeTarget::Control, desired)?;
     Ok(json!({"chart":chart.directory(), "version":chart.version,
-        "name":format!("c-{}", document.org), "namespace":"hosts", "values":desired}))
+        "name":wamn_registry::name::control_resource(&document.org), "namespace":"hosts", "values":desired}))
 }
 
 /// Require the control route to refuse a request without credentials.
@@ -372,7 +375,13 @@ pub(super) fn resource_entry(
 /// # Errors
 /// Returns a forwarding, HTTP, or authorization-boundary failure.
 pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
-    let service = format!("service/c-{}-http", document.org);
+    let service = format!(
+        "service/{}",
+        wamn_registry::name::resource_suffix(
+            &wamn_registry::name::control_resource(&document.org),
+            "http"
+        )
+    );
     let forward = wamn_kubernetes::forward::port_forward(target, "hosts", &service, 80).await?;
     let response = reqwest::Client::builder()
         .no_proxy()
@@ -555,7 +564,10 @@ mod tests {
             .unwrap();
         assert_eq!(groups.len(), 1);
         let group = &groups[0];
-        assert_eq!(group["name"], format!("c-{}", document.org));
+        assert_eq!(
+            group["name"],
+            wamn_registry::name::control_resource(&document.org)
+        );
         assert!(
             group["extraArgs"]
                 .as_array()

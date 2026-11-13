@@ -90,7 +90,7 @@ impl Fixture {
             self.changes.clone(),
             Arc::new(self.credentials.reader(project).await),
             Arc::clone(&postgres),
-            &format!("acme--{project}--dev"),
+            &wamn_registry::project_env_key("acme", project, "dev"),
             project,
             "dev",
         ));
@@ -340,7 +340,7 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     use wamn_broker::connection_changes::ConnectionDrops;
     use wamn_platform_identity::connections::administration;
 
-    const PROJECT_ENV_KEY: &str = "acme--host-project--dev";
+    const PROJECT_ENV_KEY: &str = "acme--dev--host-project";
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
     );

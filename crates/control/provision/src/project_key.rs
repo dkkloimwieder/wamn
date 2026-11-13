@@ -230,7 +230,7 @@ mod tests {
     };
     use wamn_run_state::CredentialGeneration;
 
-    const DATABASE: &str = "wamn-db-acme--billing--dev";
+    const DATABASE: &str = "wamn-db-acme--dev--billing";
 
     /// The single sharpest failure mode in this construction: if the predicate's
     /// key and the minted role name disagree, EVERY guest read refuses. They
@@ -260,7 +260,7 @@ mod tests {
     fn the_runtime_reachable_digest_is_the_same_one() {
         for (project_env_key, database) in [
             ("acme", DATABASE),
-            ("t", "wamn-db-acme--billing--prod"),
+            ("t", "wamn-db-acme--prod--billing"),
             (&"t".repeat(64), DATABASE),
         ] {
             assert_eq!(
@@ -277,7 +277,7 @@ mod tests {
     fn the_same_project_env_key_derives_a_different_key_per_database() {
         assert_ne!(
             project_key("acme", DATABASE),
-            project_key("acme", "wamn-db-acme--billing--prod"),
+            project_key("acme", "wamn-db-acme--prod--billing"),
         );
     }
 

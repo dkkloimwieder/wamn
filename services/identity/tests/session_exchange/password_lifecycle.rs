@@ -281,7 +281,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         )
         .await
         .unwrap();
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -290,7 +290,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    fixture.system.client.batch_execute("UPDATE registry.environment_projects SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
     let active = body(
         request(&https, &fixture, "/password/renew", &active)
             .send()

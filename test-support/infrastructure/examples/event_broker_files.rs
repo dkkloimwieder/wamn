@@ -18,7 +18,7 @@ use async_nats::jetstream::consumer::pull;
 use serde_json::Value;
 use wamn_broker::events::{advisory_stream_config, source_stream_config};
 use wamn_catalog::manifest::PackageManifest;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
 fn main() -> anyhow::Result<()> {
@@ -30,8 +30,8 @@ fn main() -> anyhow::Result<()> {
     let work = PathBuf::from(&arguments[0]);
     let target = Triple::new(
         arguments[1].as_str(),
-        arguments[2].as_str(),
         arguments[3].as_str(),
+        arguments[2].as_str(),
     );
     let project_env_key = &arguments[4];
     let replicas: usize = arguments[5].parse().context("parse the stream replicas")?;

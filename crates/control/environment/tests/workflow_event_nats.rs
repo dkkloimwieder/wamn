@@ -41,7 +41,7 @@ mod event_batch {
             .await
             .unwrap();
         let broker = async_nats::jetstream::new(client.clone());
-        let coordinate = Triple::new("schedule-live", PROJECT, ENVIRONMENT);
+        let coordinate = Triple::new("schedule-live", ENVIRONMENT, PROJECT);
         let source =
             wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
         let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
@@ -53,7 +53,12 @@ mod event_batch {
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
         });
-        let subject = format!("evt.schedule-live.{PROJECT}.{ENVIRONMENT}.order.insert");
+        let subject = wamn_registry::name::event_subject(
+            "schedule-live",
+            PROJECT,
+            ENVIRONMENT,
+            "order.insert",
+        );
         let mut expected = std::collections::BTreeMap::new();
         // B continues while A is stopped, upgraded, then rolled back. No control
         // record selects either release: only the hosts' loaded bytes change.
@@ -237,8 +242,8 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
         .await?;
     let broker = async_nats::jetstream::new(client);
     let project = format!("p{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-    let target = Triple::new("reset", &project, "dev");
-    let other = Triple::new("reset", &project, "other");
+    let target = Triple::new("reset", "dev", &project);
+    let other = Triple::new("reset", "other", &project);
     let mut streams = Vec::new();
     for coordinate in [&target, &other] {
         wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])

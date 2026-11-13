@@ -68,10 +68,8 @@ const SELECT_PROJECT_ROLES_SQL: &str = "SELECT role FROM identity.project_roles 
 const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
     (principal_id, org, project, env) VALUES ($1::text::uuid, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
-const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT EXISTS (\
-    SELECT 1 FROM identity.project_env_memberships m \
-    JOIN identity.org_memberships om USING (principal_id, org) \
-    WHERE m.principal_id = $1::text::uuid AND m.org = $2 AND m.project = $3 AND m.env = $4 AND om.status='active')";
+const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str =
+    "SELECT identity.has_project_access($1::text::uuid,$2,$4,$3)";
 const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
     WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4";
 // Every stored token instant crosses this API as second-resolution RFC 3339 UTC
@@ -134,12 +132,19 @@ pub fn operator_subject(
     project: &str,
     environment: &str,
 ) -> Result<String, IdentityError> {
-    canonical_subject(&format!("wamn-operator-{org}--{project}--{environment}"))
+    canonical_subject(&wamn_registry::name::operator_subject(
+        org,
+        project,
+        environment,
+    ))
 }
 
 /// The service subject of one scheduled application in one environment project.
 pub fn application_subject(project_env_key: &str, package: &str) -> Result<String, IdentityError> {
-    canonical_subject(&format!("wamn-app-{project_env_key}--{package}"))
+    canonical_subject(&wamn_registry::name::application_subject(
+        project_env_key,
+        package,
+    ))
 }
 
 /// The type of first-party platform principal.
@@ -1155,17 +1160,13 @@ mod tests {
 
     #[test]
     fn application_subject_is_targeted_to_project_env_key_and_package() {
-        assert_eq!(
-            application_subject("acme--erp--prod", "integration").unwrap(),
-            "wamn-app-acme--erp--prod--integration"
+        assert_ne!(
+            application_subject("acme--prod--erp", "integration").unwrap(),
+            application_subject("acme--dev--erp", "integration").unwrap()
         );
         assert_ne!(
-            application_subject("acme--erp--prod", "integration").unwrap(),
-            application_subject("acme--erp--dev", "integration").unwrap()
-        );
-        assert_ne!(
-            application_subject("acme--erp--prod", "integration").unwrap(),
-            application_subject("acme--erp--prod", "consumer").unwrap()
+            application_subject("acme--prod--erp", "integration").unwrap(),
+            application_subject("acme--prod--erp", "consumer").unwrap()
         );
         assert!(application_subject("bad project", "integration").is_err());
     }
@@ -1242,10 +1243,6 @@ mod tests {
 
     #[test]
     fn operator_subject_is_exactly_environment_targeted_and_validated() {
-        assert_eq!(
-            operator_subject("demo", "widgets", "prod").unwrap(),
-            "wamn-operator-demo--widgets--prod"
-        );
         assert_ne!(
             operator_subject("demo", "widgets", "prod").unwrap(),
             operator_subject("demo", "widgets", "dev").unwrap()

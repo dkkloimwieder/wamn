@@ -416,10 +416,10 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         events.get("servers").is_none(),
         "the binding inherits the data connection"
     );
-    let prefix = wamn_control_registry::project_env_key("acme", "wms", "prod");
+    let prefix = wamn_registry::project_env_key("acme", "wms", "prod");
     assert_eq!(
         events["subject-allow"].as_str(),
-        Some("evt.acme.wms.prod.>")
+        Some("evt.acme.prod.wms.>")
     );
     assert!(
         events["stream-allow"]
@@ -428,7 +428,14 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     );
     assert_eq!(
         events["inbox-prefix"].as_str(),
-        Some(format!("_INBOX_wamn-env-{prefix}").as_str())
+        Some(
+            wamn_registry::name::nats_subject(&[&wamn_registry::name::nats_token(
+                "_INBOX_wamn-env-",
+                (prefix).as_ref(),
+                ""
+            )])
+            .as_str()
+        )
     );
     let row = documents
         .iter()
@@ -479,7 +486,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // Provisioning owns the environment account and its Secret grant.
     assert_eq!(
         pod["spec"]["serviceAccountName"].as_str(),
-        Some("wamn-host-acme--wms--prod")
+        Some("wamn-host-acme--prod--wms")
     );
     assert_eq!(
         pod["spec"]["automountServiceAccountToken"],

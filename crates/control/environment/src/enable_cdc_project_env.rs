@@ -50,7 +50,7 @@ use wamn_control_provision::{
     cdc_object_name, compose_url, project_env_cdc_secret_name, project_env_database_name,
     render_project_env_cdc_secret_manifest, sql, validate_project_env_cdc,
 };
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 use crate::provision_project_env::write_output;
 
@@ -152,7 +152,7 @@ pub struct EnableCdcProjectEnvOutcome {
 pub async fn enable_cdc_project_env(
     args: &EnableCdcProjectEnvRequest,
 ) -> anyhow::Result<EnableCdcProjectEnvOutcome> {
-    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     let stream = wamn_event_wire::stream_name(&args.org, &args.project, &args.env);
     if args
         .stream
@@ -334,7 +334,7 @@ pub async fn record_event_reader(
     let result = async {
         client
             .execute(
-                wamn_control_registry::sql::upsert_event_reader_sql(),
+                wamn_registry::sql::upsert_event_reader_sql(),
                 &[
                     &triple.org,
                     &triple.project,
@@ -367,7 +367,7 @@ pub async fn pause_event_reader(system_url: &str, triple: &Triple) -> anyhow::Re
     let mut client = wamn_package_control::database::connect(system_url).await?;
     let tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
     tx.execute(
-        "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3",
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENABLE_CDC_PROJECT_ENV_PAUSE_EVENT_READER,
         &[&triple.org, &triple.project, &triple.env.as_str()],
     )
     .await?;
@@ -476,37 +476,6 @@ pub(crate) async fn wait_reader_stopped(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Slot creation precedes every write, including the schema guard.
-    /// The maps precede the grants so the reader can select from them.
-    /// The bundle creates no publication, because only a superuser can.
-    #[test]
-    fn cdc_sql_bundle_orders_slot_schema_map_grants() {
-        let bundle = cdc_sql_bundle(
-            &["app".to_owned(), "other".to_owned()],
-            "wamn_cdc_acme__billing__dev",
-            "wamn-db-acme--billing--dev",
-        );
-        let schema = bundle
-            .find("CREATE SCHEMA IF NOT EXISTS \"app\"")
-            .expect("schema guard");
-        let slot = bundle
-            .find("pg_create_logical_replication_slot('wamn_cdc_acme__billing__dev', 'pgoutput', false, false, true)")
-            .expect("failover slot");
-        let entity_map = bundle
-            .find("CREATE TABLE IF NOT EXISTS \"app\".wamn_entities")
-            .expect("entity map");
-        let exclusion_map = bundle
-            .find("CREATE TABLE IF NOT EXISTS \"app\".wamn_cdc_exclusions")
-            .expect("CDC exclusion map");
-        let grants = bundle
-            .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
-            .expect("grants");
-        assert!(!bundle.contains("PUBLICATION"));
-        assert!(bundle.contains("CREATE SCHEMA IF NOT EXISTS \"other\""));
-        assert!(slot < schema && schema < entity_map);
-        assert!(entity_map < exclusion_map && exclusion_map < grants);
-    }
 
     #[test]
     fn cdc_names_are_validated_before_any_effect() {

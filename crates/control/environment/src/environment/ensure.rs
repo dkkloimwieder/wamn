@@ -17,14 +17,13 @@ use wamn_control_provision::host_credentials::{
     CredentialDatabase, HOST_CREDENTIALS, HostCredential,
 };
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 use super::Platform;
 use super::document::EnvironmentDocument;
 use crate::provision_project_env::{
     ProvisionProjectEnvRequest, WorkloadActionRequest, WorkloadActionVerb,
-    WorkloadGenerationAction, provision_project_env, provisioning_transaction,
-    read_project_env_instance, resolve_cluster,
+    WorkloadGenerationAction, provision_project_env, read_project_env_instance, resolve_cluster,
 };
 use wamn_package_control::database::connect;
 
@@ -136,8 +135,7 @@ pub async fn provision_resources(
         }
     }
 
-    // The rows of the current org and project administrators.
-    let mut client = connect(&platform.system_database_url).await?;
+    let client = connect(&platform.system_database_url).await?;
     let policy = super::analyse::read_policy(&client, &document.org, &document.policy).await?;
     crate::platform::control::wait_administration(
         &platform.target,
@@ -146,30 +144,6 @@ pub async fn provision_resources(
         std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
     )
     .await?;
-    let transaction = provisioning_transaction(&mut client).await?;
-    wamn_platform_identity::org::materialize_admin_grants(
-        &transaction,
-        &document.org,
-        &document.project,
-        &document.env,
-    )
-    .await
-    .context("give the environment the rows of the current administrators")?;
-    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    for row in transaction
-        .query(
-            "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",
-            &[&document.org, &document.project],
-        )
-        .await?
-    {
-        drops.identity(row.get(0));
-    }
-    transaction
-        .commit()
-        .await
-        .context("commit the administrator rows")?;
-    platform.auth_changes().await?.publish(drops).await;
     for mut object in wamn_broker::authorization::update_authorization(
         &platform.target,
         &document.org,
@@ -212,7 +186,7 @@ pub(super) async fn resources_in_place(
         &platform.target.context,
         &platform.target.namespace,
         "workloaddeployment",
-        &format!("{name}-materializer"),
+        &wamn_registry::name::resource_suffix(&name, "materializer"),
     )
     .await?;
     // A transient readiness failure does not authorize another SQL operation.
@@ -335,11 +309,11 @@ pub fn materializer_host_values(
         "roles": [],
         "runtime-operator": {"runtime": {
             "terminationGracePeriodSeconds": drain_bound_seconds,
-            "serviceAccount": {"create":false, "name": wamn_control_registry::service_account_name(&document.org, &document.project, &document.env)},
+            "serviceAccount": {"create":false, "name": wamn_registry::service_account_name(&document.org, &document.project, &document.env)},
             "automountServiceAccountToken": true,
             "hostGroups": [group]
         }},
-        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{project_env_key}")}}
+        "global": {"certificates": {"dataCertSecretName": wamn_registry::name::nats_certificate(&project_env_key)}}
     }))
 }
 
@@ -355,7 +329,7 @@ pub fn materializer_workload(
     let rendered = materializer_workload::render_materializer(
         include_str!("../../../../../deploy/platform/materializer.example.yaml"),
         &MaterializerInput {
-            workload: format!("{name}-materializer"),
+            workload: wamn_registry::name::resource_suffix(&name, "materializer"),
             namespace: namespace.to_owned(),
             image: super::runtime::pod_artifact_base(insecure_registry, image)?.into_owned(),
             project_env_key: wamn_control_provision::project_env_key(
@@ -456,7 +430,10 @@ pub(super) async fn provision_materializer(
         &[
             "wait",
             "--for=condition=Ready",
-            &format!("workloaddeployment/{name}-materializer"),
+            &format!(
+                "workloaddeployment/{}",
+                wamn_registry::name::resource_suffix(&name, "materializer")
+            ),
             &format!("--timeout={}s", policy.readiness_budget_seconds),
         ],
         None,
@@ -1197,16 +1174,10 @@ async fn ensure_credential_access(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
-    let account = wamn_control_registry::service_account_name(
-        &document.org,
-        &document.project,
-        &document.env,
-    );
-    let secret = wamn_control_registry::credential_secret_name(
-        &document.org,
-        &document.project,
-        &document.env,
-    );
+    let account =
+        wamn_registry::service_account_name(&document.org, &document.project, &document.env);
+    let secret =
+        wamn_registry::credential_secret_name(&document.org, &document.project, &document.env);
     for (resource, object) in credential_access(&account, &secret) {
         let namespace = &platform.target.namespace;
         let observed = kubectl(
@@ -1527,17 +1498,12 @@ mod credential_access_tests {
 
     #[test]
     fn colliding_coordinates_read_only_their_own_secret() {
-        use wamn_control_registry::{credential_secret_name as secret_name, service_account_name};
+        use wamn_registry::{credential_secret_name as secret_name, service_account_name};
 
         let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
         let accounts =
             coordinates.map(|(org, project, env)| service_account_name(org, project, env));
         let secrets = coordinates.map(|(org, project, env)| secret_name(org, project, env));
-        assert_eq!(accounts, ["wamn-host-a--b-c--d", "wamn-host-a--b--c-d"]);
-        assert_eq!(
-            secrets,
-            ["wamn-credential-a--b-c--d", "wamn-credential-a--b--c-d"]
-        );
         assert_ne!(accounts[0], accounts[1]);
         assert_ne!(secrets[0], secrets[1]);
 

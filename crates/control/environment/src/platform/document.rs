@@ -88,7 +88,10 @@ impl UpgradeTarget {
     /// The existing Helm release name and namespace that own this selection.
     pub fn owner(&self, document: &ClusterDocument) -> (Cow<'_, str>, &'static str) {
         match self {
-            Self::Control => (format!("c-{}", document.org).into(), "hosts"),
+            Self::Control => (
+                wamn_registry::name::control_resource(&document.org).into(),
+                "hosts",
+            ),
             Self::Identity => ("identity".into(), "identity"),
             Self::Host { release, .. } => (release.as_str().into(), "hosts"),
         }

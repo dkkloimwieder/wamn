@@ -1,4 +1,4 @@
-//! Shared validators for project, project, runner, and schema identifiers.
+//! Shared validators for registry coordinates.
 //! PostgreSQL identity use bound parameters. Schema names also use these
 //! validators before interpolation into DDL.
 //!
@@ -11,20 +11,26 @@
 //! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
 //! shared identifier budget.
 
-/// A project identity: 1–64 chars of `[A-Za-z0-9_-]`.
-pub fn valid_project_env_key(project_env_key: &str) -> bool {
-    !project_env_key.is_empty()
-        && project_env_key.len() <= 64
-        && project_env_key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+/// Whether a key contains exactly three valid registry coordinates.
+pub fn valid_project_env_key(key: &str) -> bool {
+    let mut coordinates = key.split("--");
+    let (Some(org), Some(env), Some(project)) =
+        (coordinates.next(), coordinates.next(), coordinates.next())
+    else {
+        return false;
+    };
+    coordinates.next().is_none()
+        && valid_project(org)
+        && project_id_reason(env).is_none()
+        && valid_project(project)
+        && org.len() + env.len() + project.len() <= 41
 }
 
 /// Max bytes in an organization, project, or environment identifier.
 ///
 /// The number comes from the name provisioning composes, not from this crate.
 /// A per-project-env database is named
-/// `wamn-db-<org>--<project>--<env>--<instance>` and must fit
+/// `wamn-db-<org>--<env>--<project>--<instance>` and must fit
 /// `wamn-control-provision::MAX_DB_NAME_LEN` of 63 bytes, which is Postgres's
 /// identifier limit and the DNS-1123 label limit together. The `wamn-db-`
 /// prefix, the three `--` separators and the 8-byte instance suffix spend 22 of
@@ -94,11 +100,6 @@ pub(crate) fn component_slug_reason(id: &str) -> Option<&'static str> {
     None
 }
 
-/// A derived resource name permits consecutive hyphens and has its own length cap.
-pub(crate) fn is_slug(id: &str) -> bool {
-    slug_reason(id).is_none()
-}
-
 fn slug_reason(id: &str) -> Option<&'static str> {
     if id.is_empty() {
         return Some("empty");
@@ -130,44 +131,14 @@ pub fn valid_project(project: &str) -> bool {
     project_id_reason(project).is_none() && !project_id_is_reserved(project)
 }
 
-/// A durable-queue lease owner. An identity-format contract: bounded
-/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
-/// injection boundary on the plugin path — the runner binds as a parameter into
-/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
-/// fails closed.
-pub fn valid_runner(runner: &str) -> bool {
-    !runner.is_empty()
-        && runner.len() <= 128
-        && runner
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
-/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
-/// being spliced into SQL — but the no-hyphen rule still matters where a schema
-/// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
-/// malformed schema still fails closed.
-pub fn valid_schema(schema: &str) -> bool {
-    !schema.is_empty()
-        && schema.len() <= 63
-        && schema
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && schema
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn project_env_key_validation() {
-        assert!(valid_project_env_key("org-a"));
-        assert!(valid_project_env_key("T_1"));
+        assert!(valid_project_env_key("org-a--dev--project"));
+        assert!(!valid_project_env_key("T_1"));
         assert!(!valid_project_env_key(""));
         assert!(!valid_project_env_key("bad'project"));
         assert!(!valid_project_env_key("x".repeat(65).as_str()));

@@ -21,7 +21,7 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const PROJECT_ENV_KEY: &str = "pg18order--inventory--dev";
+const PROJECT_ENV_KEY: &str = "pg18order--dev--inventory";
 const INSTANCE: &str = "k3m9x2p7";
 
 struct Fixture {
@@ -124,7 +124,7 @@ async fn fixture() -> Fixture {
         .expect("install registry schema");
     catalog
         .batch_execute(&format!(
-            "SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+            "SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; ALTER TABLE registry.environment_projects OWNER TO wamn_system; \
              INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('{ORG}', 'pooled', 'pool') ON CONFLICT (id) DO NOTHING; \
              INSERT INTO registry.env_policies \
@@ -135,9 +135,8 @@ async fn fixture() -> Fixture {
              ON CONFLICT (org, name) DO NOTHING; \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}') \
              ON CONFLICT (org, id) DO NOTHING; \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) \
-             VALUES ('{ORG}', '{PROJECT}', '{ENVIRONMENT}', \
-                     'wamn-db-{ORG}--{PROJECT}--{ENVIRONMENT}', '{INSTANCE}', '{ENVIRONMENT}') \
+             WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('{ORG}','{ENVIRONMENT}','{ENVIRONMENT}') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('{ORG}','{PROJECT}','{ENVIRONMENT}',\
+                     'wamn-db-{ORG}--{PROJECT}--{ENVIRONMENT}','{INSTANCE}') \
              ON CONFLICT (org, project, env) DO UPDATE SET instance_suffix = EXCLUDED.instance_suffix;"
         ))
         .await
@@ -195,7 +194,7 @@ fn request(
         project: PROJECT.into(),
         env: ENVIRONMENT.into(),
         system_database_url: Some(system_url.to_string()),
-        namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
+        namespace: wamn_registry::name::project_env_namespace(ORG, PROJECT, ENVIRONMENT, INSTANCE),
         target_admin_database_url: Some(fixture.url.clone()),
         cluster: None,
         cluster_namespace: "wamn-system".to_owned(),
@@ -353,7 +352,10 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
         .await
         .expect("record the project environment");
     let instance: String = catalog
-        .query_one("SELECT instance_suffix FROM registry.project_envs", &[])
+        .query_one(
+            "SELECT instance_suffix FROM registry.environment_projects",
+            &[],
+        )
         .await
         .unwrap()
         .get(0);
@@ -387,12 +389,22 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
             system_database_url: Some(system.url().into()),
-            namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
+            namespace: wamn_registry::name::project_env_namespace(
+                ORG,
+                PROJECT,
+                ENVIRONMENT,
+                INSTANCE,
+            ),
             target_admin_database_url: (family.identity_type()
                 != WorkloadRoleIdentityType::Control)
                 .then(|| target.url().into()),
             cluster: None,
-            cluster_namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
+            cluster_namespace: wamn_registry::name::project_env_namespace(
+                ORG,
+                PROJECT,
+                ENVIRONMENT,
+                INSTANCE,
+            ),
             db_host: endpoint.host_str().map(str::to_owned),
             db_port: endpoint.port().unwrap(),
             action: WorkloadGenerationAction {
@@ -597,7 +609,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
     assert_eq!(
         secret_json(&patch_path),
         serde_json::json!({"stringData": {
-            (format!("{PROJECT}--{ENVIRONMENT}")): secret["stringData"]["url"].clone()
+            (wamn_registry::name::control_administration_key(PROJECT, ENVIRONMENT)): secret["stringData"]["url"].clone()
         }})
     );
     let administration = connect(secret["stringData"]["url"].as_str().unwrap()).await;

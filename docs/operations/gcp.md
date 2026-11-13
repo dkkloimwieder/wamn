@@ -49,7 +49,7 @@ The owner supplies these external cloud inputs.
    Workload Identity authenticates Kubernetes workloads to Google Cloud without service-account keys.
    Grant access to each account below. Do not grant access to an entire namespace. Remove former namespace grants from existing deployments.
    The control chart renders `hosts/wamn-control-<org>`.
-   Environment provisioning creates `hosts/wamn-host-<org>--<project>--<env>` for application and shared hosts.
+   Environment provisioning creates `hosts/wamn-host-<org>--<env>--<project>` for application and shared hosts.
    Control operation Jobs run as `platform/<coordinate>-code` or `platform/<coordinate>-sql`.
    The coordinate is the environment ConfigMap name in `hosts`.
    `operations.rs` creates both operation accounts from that same coordinate.
@@ -593,10 +593,10 @@ Keep the old key active until the replacement serves a successful recovery reque
 
 ### 5.5 Delete an environment
 
-`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix. It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
+`wamn-ctl env delete <org/env/project> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix. It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
 
 ```bash
-$CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/receiving/dev
+$CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/dev/receiving
 ```
 
 ### 5.7 CDC slot lost

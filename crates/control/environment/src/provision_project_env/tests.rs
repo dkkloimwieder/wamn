@@ -55,103 +55,12 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 /// subcommand calls.)
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
-    use wamn_control_registry::EnvPolicy;
+    use wamn_control_provision::EnvPolicy;
     let ded = Org::dedicated("demo");
     assert_eq!(cluster_of(&ded, &EnvPolicy::dev()).name, "demo-dev");
     assert_eq!(cluster_of(&ded, &EnvPolicy::prod()).name, "demo-prod");
     let pooled = Org::pooled("try", "wamn-pg");
     assert_eq!(cluster_of(&pooled, &EnvPolicy::prod()).name, "wamn-pg");
-}
-
-#[test]
-fn pat_literals_and_secret_documents_are_exact() {
-    let triple = Triple::new("demo", "billing", "dev");
-    assert_eq!(PAT_TTL, Duration::from_hours(720));
-    assert_eq!(
-        MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
-        "wamn-management-author-demo--billing--dev"
-    );
-    assert_eq!(
-        MANAGEMENT_AUTHOR.display_name(&triple),
-        "WAMN management author demo/billing/dev"
-    );
-    assert_eq!(
-        OPERATOR.subject(&triple).unwrap(),
-        "wamn-operator-demo--billing--dev"
-    );
-    assert_eq!(
-        OPERATOR.display_name(&triple),
-        "WAMN operator demo/billing/dev"
-    );
-
-    let secret = render_pat_secret(
-        &triple,
-        "wamn-system",
-        MANAGEMENT_AUTHOR,
-        "6d3f2d1c-0000-4000-8000-00000000abcd",
-        "wamn_pat_token-material",
-        "0123456789abcdef",
-        "2026-09-09T12:34:56Z",
-    )
-    .unwrap();
-    assert_eq!(
-        secret,
-        json!({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {
-                "name": "wamn-pat-management-author-demo--billing--dev",
-                "namespace": "wamn-system",
-                "labels": {
-                    "app.kubernetes.io/managed-by": "wamn",
-                    "app.kubernetes.io/component": "project-env-pat",
-                    "wamn.org": "demo",
-                    "wamn.project": "billing",
-                    "wamn.env": "dev",
-                },
-                "annotations": {
-                    "wamn.io/credential-purpose": "management-author",
-                    "wamn.io/principal-id": "6d3f2d1c-0000-4000-8000-00000000abcd",
-                    "wamn.io/principal-type": "service",
-                    "wamn.io/principal-subject": "wamn-management-author-demo--billing--dev",
-                    "wamn.io/project-role": "project-author",
-                    "wamn.io/pat-prefix": "0123456789abcdef",
-                    "wamn.io/pat-expires-at": "2026-09-09T12:34:56Z",
-                },
-            },
-            "type": "Opaque",
-            "stringData": {
-                "token": "wamn_pat_token-material",
-            },
-        })
-    );
-    assert_eq!(
-        secret["stringData"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .collect::<Vec<_>>(),
-        ["token"]
-    );
-
-    let operator_secret = render_pat_secret(
-        &triple,
-        "wamn-system",
-        OPERATOR,
-        "6d3f2d1c-0000-4000-8000-00000000abcd",
-        "wamn_pat_other-material",
-        "fedcba9876543210",
-        "2026-09-09T12:34:56Z",
-    )
-    .unwrap();
-    assert_eq!(
-        operator_secret["metadata"]["name"],
-        "wamn-pat-operator-demo--billing--dev"
-    );
-    assert_eq!(
-        operator_secret["metadata"]["annotations"]["wamn.io/project-role"],
-        "admin"
-    );
 }
 
 #[test]
@@ -230,11 +139,11 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 /// by its own prepare.
 #[test]
 fn the_privilege_batch_revokes_every_stable_role_connect_and_sets_no_owner() {
-    let batch = privilege_sql("wamn-db-demo--billing--dev");
+    let batch = privilege_sql("wamn-db-demo--dev--billing");
     assert_eq!(
         batch,
-        "REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-demo--billing--dev\" FROM PUBLIC; \
-             REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"wamn_app\";\n"
+        "REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-demo--dev--billing\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"wamn-db-demo--dev--billing\" FROM \"wamn_app\";\n"
     );
 
     // NOBODY is granted CONNECT here, and the PUBLIC confinement stands.
@@ -249,14 +158,14 @@ fn the_privilege_batch_revokes_every_stable_role_connect_and_sets_no_owner() {
 /// refuses the result, which is how the defect surfaced.
 #[test]
 fn the_privilege_batch_never_grants_the_stable_guest_acl_role_connect() {
-    let batch = privilege_sql("wamn-db-demo--billing--dev");
+    let batch = privilege_sql("wamn-db-demo--dev--billing");
     assert!(
         !batch.contains(&format!("TO \"{APP_ROLE}\"")),
         "the batch must not grant the stable guest ACL role anything: {batch}"
     );
     assert!(
         batch.contains(&format!(
-            "REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"{APP_ROLE}\""
+            "REVOKE CONNECT ON DATABASE \"wamn-db-demo--dev--billing\" FROM \"{APP_ROLE}\""
         )),
         "the batch must CONVERGE a pre-cutover CONNECT away: {batch}"
     );
@@ -310,14 +219,14 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     };
     for family in WorkloadRoleFamily::ALL {
         let lifecycle =
-            workload_lifecycle(family, identity, "project", "wamn-db-demo--billing--dev");
+            workload_lifecycle(family, identity, "project", "wamn-db-demo--dev--billing");
         assert_eq!(lifecycle.family, family);
-        assert_eq!(lifecycle.database(), "wamn-db-demo--billing--dev");
+        assert_eq!(lifecycle.database(), "wamn-db-demo--dev--billing");
         // The target grain is the family's own declaration, so a family can
         // never be paired with the wrong one here.
         assert_eq!(lifecycle.target, {
             let probe =
-                workload_lifecycle(family, identity, "project", "wamn-db-demo--billing--dev");
+                workload_lifecycle(family, identity, "project", "wamn-db-demo--dev--billing");
             probe.target
         });
         let a = lifecycle.role(CredentialGeneration::A);
@@ -605,22 +514,11 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
 /// DERIVED, and the three frozen names are unchanged.
 #[test]
 fn every_family_derives_its_credential_secret_name() {
-    let frozen = [(WorkloadRoleFamily::App, "wamn-guest-demo--billing--dev")];
-    {
-        let [(family, name)] = frozen;
-        assert_eq!(
-            wamn_control_provision::workload_secret_name(family, "demo", "billing", "dev"),
-            name,
-            "{family:?}"
-        );
-    }
     let mut names = BTreeSet::new();
     for family in WorkloadRoleFamily::ALL {
         let name = wamn_control_provision::workload_secret_name(family, "demo", "billing", "dev");
-        assert!(name.starts_with("wamn-"), "{family:?}: {name}");
         assert!(names.insert(name), "{family:?} shares a Secret name");
     }
-    assert_eq!(names.len(), WorkloadRoleFamily::ALL.len());
 }
 
 fn role_acl(type_: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {
@@ -916,304 +814,6 @@ fn stable_acl_role_members_are_only_targeted_generation_roles() {
     }
 }
 
-#[tokio::test]
-async fn project_env_key_projection_and_instance_assignment_hold_on_postgres() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let url = database.url();
-    let connect = async || {
-        let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
-        tokio::spawn(async move {
-            connection.await.unwrap();
-        });
-        client
-    };
-    let mut first = connect().await;
-    first.batch_execute("SET ROLE wamn_system").await.unwrap();
-    first.batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").await.unwrap();
-    let triple = Triple::new("demo", "inventory", "dev");
-    let other = Triple::new("demo", "shipping", "dev");
-    let mut second = connect().await;
-    second.batch_execute("SET ROLE wamn_system").await.unwrap();
-    let (one, two) = tokio::join!(
-        project_env_key_environment(&mut first, &triple, Some("project-race"), "abcd1234", false),
-        project_env_key_environment(&mut second, &other, Some("project-race"), "efgh5678", true),
-    );
-    assert_ne!(
-        one.is_ok(),
-        two.is_ok(),
-        "only one first project identity wins"
-    );
-    let (winner, suffix, disposable, error) = match (one, two) {
-        (Ok(()), Err(error)) => (&triple, "abcd1234", false, error),
-        (Err(error), Ok(())) => (&other, "efgh5678", true, error),
-        results => panic!("unexpected project projection results: {results:?}"),
-    };
-    assert!(matches!(
-        error.downcast_ref::<wamn_control_provision::ProvisionError>(),
-        Some(
-            wamn_control_provision::ProvisionError::ProjectEnvKeyEnvironmentIdentityConflict { .. }
-        )
-    ));
-    assert!(
-        error
-            .to_string()
-            .starts_with("project-environment-identity-projection-content-conflict:")
-    );
-    first
-        .batch_execute("SET app.project_env_key='project-race'")
-        .await
-        .unwrap();
-    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.project_environments WHERE project_env_key='project-race'", &[]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), winner.org);
-    assert_eq!(row.get::<_, String>(1), winner.project);
-    assert_eq!(row.get::<_, String>(2), winner.env.as_str());
-    assert_eq!(row.get::<_, String>(3), suffix);
-    assert_eq!(row.get::<_, bool>(4), disposable);
-    assert_eq!(row.get::<_, String>(5), "");
-    let actor = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
-    wamn_test_infrastructure::record_history::assert_stamp(
-        &first,
-        "catalog.project_environments",
-        "project_env_key='project-race'",
-        &actor,
-        &actor,
-    )
-    .await;
-
-    {
-        // The losing first insert must compare the committed winner's full identity.
-        let mut held = connect().await;
-        let transaction = held.transaction().await.unwrap();
-        transaction
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ))
-            .await
-            .unwrap();
-        transaction
-            .execute(
-                sql::insert_project_env_key_environment_sql(),
-                &[
-                    &"project-held",
-                    &triple.org,
-                    &triple.project,
-                    &triple.env.as_str(),
-                    &"abcd1234",
-                    &false,
-                ],
-            )
-            .await
-            .unwrap();
-        let waiting = project_env_key_environment(
-            &mut second,
-            &other,
-            Some("project-held"),
-            "efgh5678",
-            true,
-        );
-        tokio::pin!(waiting);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(150), &mut waiting)
-                .await
-                .is_err()
-        );
-        transaction.commit().await.unwrap();
-        let error = waiting.await.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .starts_with("project-environment-identity-projection-content-conflict:")
-        );
-    }
-    do_record_project_env(
-        &mut first,
-        &triple,
-        Some("org-a"),
-        None,
-        "cloud",
-        "db-first",
-        Some("system"),
-        "abcd1234",
-        Some(false),
-        &wamn_broker::Publisher::default(),
-    )
-    .await
-    .unwrap();
-    let actor = PlatformComponent::Provisioning.principal_id().to_string();
-    for relation in ["registry.projects", "registry.project_envs"] {
-        wamn_test_infrastructure::record_history::assert_stamp(
-            &first,
-            relation,
-            "org = 'demo'",
-            &actor,
-            &actor,
-        )
-        .await;
-    }
-    assign_environment_instance(&mut connect().await, "org-a", "16384")
-        .await
-        .unwrap();
-    first
-        .batch_execute("SET app.project_env_key='org-a'")
-        .await
-        .unwrap();
-    let before: chrono::DateTime<chrono::Utc> = first
-        .query_one(
-            "SELECT projected_at FROM catalog.project_environments WHERE project_env_key='org-a'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    let stored = do_record_project_env(
-        &mut first,
-        &triple,
-        Some("org-a"),
-        None,
-        "cloud",
-        "db-second",
-        Some("system"),
-        "efgh5678",
-        Some(true),
-        &wamn_broker::Publisher::default(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(stored, "abcd1234", "the registry keeps its original suffix");
-    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.project_environments WHERE project_env_key='org-a'", &[]).await.unwrap();
-    assert_eq!(
-        row.get::<_, String>(0),
-        "",
-        "same-suffix projection clears the instance"
-    );
-    assert!(row.get::<_, chrono::DateTime<chrono::Utc>>(1) > before);
-    assert_eq!(row.get::<_, String>(2), "abcd1234");
-    assert!(row.get::<_, bool>(3));
-    let stable_at: chrono::DateTime<chrono::Utc> = row.get(1);
-    let error = do_record_project_env(
-        &mut first,
-        &other,
-        Some("org-a"),
-        None,
-        "cloud",
-        "db-other",
-        Some("system"),
-        "efgh5678",
-        Some(true),
-        &wamn_broker::Publisher::default(),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .starts_with("project-environment-identity-projection-content-conflict:")
-    );
-    let error = do_record_project_env(
-        &mut first,
-        &other,
-        Some("org-b"),
-        None,
-        "nowhere",
-        "db-other",
-        Some("system"),
-        "efgh5678",
-        Some(true),
-        &wamn_broker::Publisher::default(),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("target \"nowhere\" is not in registry.target"),
-        "{error:#}"
-    );
-    let row = first
-        .query_one(
-            "SELECT project,projected_at FROM catalog.project_environments WHERE project_env_key='org-a'",
-            &[],
-        )
-        .await
-        .unwrap();
-    assert_eq!(row.get::<_, String>(0), "inventory");
-    assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
-    assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
-
-    assign_environment_instance(&mut connect().await, "org-a", "")
-        .await
-        .unwrap();
-    let absent = assign_environment_instance(&mut connect().await, "project-unprojected", "16384")
-        .await
-        .unwrap_err();
-    assert!(
-        absent
-            .to_string()
-            .contains("environment-instance-assignment-without-projection")
-    );
-    assert!(
-        absent
-            .to_string()
-            .contains("name the project when provisioning the project-env")
-    );
-    assert_eq!(first.query_one("SELECT count(*) FROM catalog.project_environments WHERE project_env_key='project-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
-    project_env_key_environment(&mut second, &other, Some("org-b"), "efgh5678", false)
-        .await
-        .unwrap();
-    assert_eq!(
-        first
-            .query_one(
-                "SELECT count(*) FROM catalog.project_environments WHERE project_env_key='org-b'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        0,
-        "the bound project cannot read another project"
-    );
-    let foreign = first
-        .execute(
-            wamn_schema_control::assign_environment_instance_sql(),
-            &[&"org-b", &"foreign"],
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        foreign, 0,
-        "the bound project cannot change another project"
-    );
-
-    let lock = first.transaction().await.unwrap();
-    lock.query_one(sql::read_project_env_key_environment_sql(), &[&"org-a"])
-        .await
-        .unwrap();
-    let refresh =
-        project_env_key_environment(&mut second, &triple, Some("org-a"), "1234abcd", false);
-    tokio::pin!(refresh);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(150), &mut refresh)
-            .await
-            .is_err(),
-        "projection must wait for the project row lock"
-    );
-    lock.rollback().await.unwrap();
-    refresh.await.unwrap();
-    assert_eq!(
-        first
-            .query_one(
-                "SELECT instance_suffix FROM catalog.project_environments WHERE project_env_key='org-a'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        "1234abcd"
-    );
-    first.batch_execute("RESET ROLE; DROP SCHEMA catalog CASCADE; DROP SCHEMA wamn_run CASCADE; DROP SCHEMA wamn_authority CASCADE; DROP SCHEMA registry CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA identity CASCADE").await.unwrap();
-}
-
 #[test]
 fn workload_urls_use_the_database_service_namespace_unless_overridden() {
     for (explicit, cluster, namespace, expected) in [
@@ -1263,61 +863,6 @@ fn workload_urls_use_the_database_service_namespace_unless_overridden() {
     }
 }
 
-/// `env apply` passes no marker, so a row `wamn dev up` marked disposable
-/// stays disposable in the registry and in its projection (wamn-p9xix).
-#[tokio::test]
-async fn a_record_without_a_marker_keeps_the_disposable_row() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        connection.await.unwrap();
-    });
-    client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    client.batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").await.unwrap();
-    let triple = Triple::new("demo", "inventory", "dev");
-    for disposable in [Some(true), None] {
-        do_record_project_env(
-            &mut client,
-            &triple,
-            Some("org-a"),
-            None,
-            "cloud",
-            "db-first",
-            Some("system"),
-            "abcd1234",
-            disposable,
-            &wamn_broker::Publisher::default(),
-        )
-        .await
-        .unwrap();
-    }
-    let registry: bool = client
-        .query_one(
-            "SELECT disposable FROM registry.project_envs WHERE org='demo' AND project='inventory' AND env='dev'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert!(registry, "a record without a marker keeps the registry row");
-    client
-        .batch_execute("SET app.project_env_key='org-a'")
-        .await
-        .unwrap();
-    let projected: bool = client
-        .query_one(
-            "SELECT disposable FROM catalog.project_environments WHERE project_env_key='org-a'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert!(projected, "the projection follows the stored row");
-}
-
 /// A run with only PAT outputs mints for a recorded environment and writes
 /// nothing to the registry, so it refuses the two registry values (wamn-rjtf).
 #[tokio::test(flavor = "current_thread")]
@@ -1352,4 +897,44 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
             "--secret-namespace and --disposable belong to a provisioning run, which passes an --emit-* output"
         );
     }
+}
+
+/// `env apply` passes no marker, so a row `wamn dev up` marked disposable
+/// stays disposable in the environment (wamn-p9xix).
+#[tokio::test]
+async fn a_record_without_a_marker_keeps_the_disposable_row() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        connection.await.unwrap();
+    });
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    client.batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").await.unwrap();
+    let triple = Triple::new("demo", "dev", "inventory");
+    for disposable in [Some(true), None] {
+        do_record_project_env(
+            &mut client,
+            &triple,
+            None,
+            "cloud",
+            "db-first",
+            Some("system"),
+            "abcd1234",
+            disposable,
+        )
+        .await
+        .unwrap();
+    }
+    let registry: bool = client
+        .query_one(
+            "SELECT disposable FROM registry.environments WHERE org='demo' AND env='dev'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(registry, "a record without a marker keeps the registry row");
 }

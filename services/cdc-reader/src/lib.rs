@@ -92,11 +92,11 @@ use tokio_postgres::NoTls;
 use postgres_protocol::escape::escape_identifier;
 use wamn_broker::events::{advisory_stream_config, source_stream_config, stream_config_matches};
 use wamn_control_provision::{SystemReader, parse_system_reader_url};
-use wamn_control_registry::Triple;
-use wamn_control_registry::sql::{select_capture_gap_sql, select_event_reader_sql};
 #[cfg(test)]
 use wamn_event_wire::stream_subjects;
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_name, subject};
+use wamn_registry::Triple;
+use wamn_registry::sql::{select_capture_gap_sql, select_event_reader_sql};
 
 #[derive(Debug, Args)]
 pub struct EventReaderArgs {
@@ -1098,7 +1098,7 @@ pub async fn run_with_shutdown(
     )
     .await?;
     let js = jetstream::new(client);
-    let target = Triple::new(&args.org, &args.project, args.env.as_str());
+    let target = Triple::new(&args.org, args.env.as_str(), &args.project);
     let source_config = source_stream_config(
         &target,
         args.stream_replicas,
@@ -1401,7 +1401,7 @@ async fn drain(
                     let client = connect_system(args).await?;
                     let held: bool = client
                         .query_one(
-                            wamn_control_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL,
+                            wamn_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL,
                             &[&args.org, &args.project, &args.env],
                         )
                         .await?
@@ -2670,14 +2670,14 @@ mod tests {
     fn stream_config_drift_flags_replicas_dup_window_and_storage() {
         use jetstream::stream::{Config, StorageType};
         let matching = source_stream_config(
-            &Triple::new("fixture", "widgets", "dev"),
+            &Triple::new("fixture", "dev", "widgets"),
             3,
             Duration::from_secs(120),
         );
         assert!(stream_config_matches(&matching, &matching.clone()));
         for changed in [
             Config {
-                subjects: vec!["evt.fixture.*.dev.>".into()],
+                subjects: vec!["evt.fixture.dev.*.>".into()],
                 ..matching.clone()
             },
             Config {
@@ -2700,11 +2700,11 @@ mod tests {
     #[test]
     fn delivery_advisory_stream_drift_pins_the_subject_cap() {
         use jetstream::stream::Config;
-        let matching = advisory_stream_config(&Triple::new("fixture", "widgets", "dev"), 3);
+        let matching = advisory_stream_config(&Triple::new("fixture", "dev", "widgets"), 3);
         assert!(stream_config_matches(&matching, &matching.clone()));
         for target in [
-            Triple::new("fixture", "gadgets", "dev"),
-            Triple::new("fixture", "widgets", "prod"),
+            Triple::new("fixture", "dev", "gadgets"),
+            Triple::new("fixture", "prod", "widgets"),
         ] {
             assert!(!stream_config_matches(
                 &matching,

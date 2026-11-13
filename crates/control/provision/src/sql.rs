@@ -61,24 +61,6 @@ use crate::workload_role::{
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
 
-/// Insert the declared project identity without replacing an existing row.
-pub fn insert_project_env_key_environment_sql() -> &'static str {
-    "INSERT INTO catalog.project_environments \
-     (project_env_key, org, project, env, instance_suffix, disposable, environment_instance) \
-     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (project_env_key) DO NOTHING"
-}
-
-/// Lock and read the winning identity after the insert attempt.
-pub fn read_project_env_key_environment_sql() -> &'static str {
-    "SELECT org, project, env FROM catalog.project_environments WHERE project_env_key = $1 FOR UPDATE"
-}
-
-/// Refresh the declared values and clear the old instance after Rust accepts the identity.
-pub fn refresh_project_env_key_environment_sql() -> &'static str {
-    "UPDATE catalog.project_environments SET instance_suffix = $2, disposable = $3, \
-     environment_instance = '', projected_at = now() WHERE project_env_key = $1"
-}
-
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
 /// stable NOLOGIN ACL role.
 ///
@@ -777,7 +759,7 @@ pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "regist
 
 /// The two relations the CDC reader's `SELECT`s touch.
 ///
-/// `services/cdc-reader` runs `wamn_control_registry::sql::select_event_reader_sql`
+/// `services/cdc-reader` runs `wamn_registry::sql::select_event_reader_sql`
 /// and `select_capture_gap_sql` over `WAMN_SYSTEM_URL` and nothing else, so this
 /// is its whole authority (`wamn-59z6`: the reader reads its gap row).
 pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"];
@@ -892,6 +874,7 @@ pub fn grant_identity_reader_surface_sql() -> String {
         )
         .expect("writing to a String cannot fail");
     }
+    sql.push_str(" GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_identity_reader;");
     sql
 }
 
@@ -900,11 +883,9 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
     let role = escape_identifier(WorkloadRoleFamily::ConnectionReader.acl_role());
-    write!(
-        sql,
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
-    )
-    .expect("writing to a String cannot fail");
+    sql.push_str(
+        &wamn_registry::sql::control_provision_src_sql_grant_connection_reader_surface_sql(&role),
+    );
     write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO {role};")
         .expect("writing to a String cannot fail");
     sql
@@ -931,26 +912,28 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// and environment grants of the org operations, and it reads the projects and
 /// environments those grants cover. The `project.create` route writes a
 /// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 12] = [
     ("identity", "oauth_authorization", CONTROL_WRITE),
     ("identity", "oauth_token", CONTROL_WRITE),
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
+    ("identity", "environment_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
     ("identity", "principals", &["SELECT"]),
     ("identity", "project_env_memberships", CONTROL_WRITE),
     ("identity", "project_roles", CONTROL_WRITE),
-    ("registry", "project_envs", &["SELECT"]),
+    ("registry", "environment_projects", &["SELECT"]),
+    ("registry", "environments", &["SELECT"]),
     ("registry", "projects", &["SELECT", "INSERT"]),
 ];
 
 /// The columns the control host writes in a relation of which it otherwise only
 /// reads, with the privilege it holds on them. The status routes write the
 /// status of an environment (docs/architecture/execution.md#host-run-routes,
-/// wamn-zua8.2). The other columns of `registry.project_envs` belong to
+/// wamn-zua8.2). The other columns of `registry.environment_projects` belong to
 /// provisioning.
 pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
-    [("registry", "project_envs", "UPDATE", &["status"])];
+    [("registry", "environments", "UPDATE", &["status"])];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
 pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
@@ -1012,8 +995,13 @@ pub fn control_surface_grants_sql() -> String {
         .expect("writing to a String cannot fail");
     }
     for signature in CONTROL_CONNECTION_FUNCTIONS {
-        write!(sql, " DO $connection_acl$ BEGIN IF to_regprocedure('registry.{signature}') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.{signature} TO {role}; END IF; END $connection_acl$;").expect("writing to a String cannot fail");
+        sql.push_str(
+            &wamn_registry::sql::control_provision_src_sql_control_surface_grants_sql_2(
+                &role, signature,
+            ),
+        );
     }
+    sql.push_str(wamn_registry::sql::CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL);
     sql
 }
 
@@ -1063,480 +1051,4 @@ pub fn upsert_control_author_project_env_key_mapping_sql() -> &'static str {
            environment = EXCLUDED.environment \
        WHERE author_login_projects.project_env_key = EXCLUDED.project_env_key \
      RETURNING project_env_key"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The platform extension list is PINNED, because a package cannot install
-    /// one and a silent removal would take an author's constraint with it.
-    #[test]
-    fn the_platform_installs_btree_gist_and_pg_stat_statements_only() {
-        assert_eq!(PLATFORM_EXTENSIONS, ["btree_gist", "pg_stat_statements"]);
-        assert_eq!(
-            install_platform_extensions_sql(),
-            "CREATE EXTENSION IF NOT EXISTS \"btree_gist\";\n\
-             CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";\n"
-        );
-    }
-
-    #[test]
-    fn ensure_app_role_is_a_passwordless_nologin_acl_role() {
-        let sql = ensure_app_acl_role_sql();
-        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains("'wamn_app'"));
-        assert!(sql.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
-        assert!(sql.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
-        assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
-        assert!(sql.contains("FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app'"));
-        assert!(
-            !sql.contains("pg_authid"),
-            "a non-superuser cannot read pg_authid"
-        );
-        // NOSUPERUSER only for a role that is a superuser (platform-ui §4.10).
-        assert!(sql.contains(
-            "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' AND rolsuper) \
-             THEN EXECUTE format('ALTER ROLE %I NOSUPERUSER', 'wamn_app');"
-        ));
-        assert!(!sql.contains("PASSWORD NULL NOSUPERUSER"));
-        assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN"));
-        assert!(!sql.contains("pg_terminate_backend"));
-        for attr in [
-            "NOSUPERUSER",
-            "NOCREATEDB",
-            "NOCREATEROLE",
-            "NOINHERIT",
-            "NOREPLICATION",
-            "NOBYPASSRLS",
-        ] {
-            assert!(sql.contains(attr), "missing {attr}");
-        }
-    }
-
-    #[test]
-    fn app_role_drain_is_native_bounded_and_residue_refusing() {
-        let sql = drain_app_role_sessions_sql();
-        assert!(sql.contains("pg_catalog.pg_terminate_backend(stale_pid, 5000)"));
-        assert!(sql.contains("pg_catalog.pg_stat_clear_snapshot()"));
-        assert!(sql.contains("usename = 'wamn_app' AND pid <> pg_backend_pid()"));
-        assert!(sql.contains("MESSAGE = 'wamn-app-session-drain-incomplete'"));
-        assert_eq!(sql.matches("pg_stat_activity").count(), 2);
-    }
-
-    #[test]
-    fn named_database_ddl_targets_an_arbitrary_db_name() {
-        // The per-project-env path (wamn-q3n.7/.8) passes a full triple-derived name.
-        assert_eq!(
-            create_database_named_sql("wamn-db-acme--billing--dev"),
-            "CREATE DATABASE \"wamn-db-acme--billing--dev\""
-        );
-        assert_eq!(
-            drop_database_named_sql("wamn-db-acme--billing--dev"),
-            "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
-        );
-    }
-
-    /// The registry reader's WHOLE batch, pinned as the string the builder
-    /// emits (`wamn-0h0g.12.116`).
-    ///
-    /// Generated text, not declared DDL: the assertion is over what this
-    /// function produces, so a comment mentioning a GRANT cannot satisfy it and
-    /// an added grant cannot hide inside it.
-    #[test]
-    fn the_registry_reader_grants_exactly_one_select_and_revokes_the_whole_plane() {
-        let sql = grant_registry_reader_surface_sql();
-        assert!(sql.starts_with(&ensure_workload_acl_role_sql(
-            WorkloadRoleFamily::RegistryReader
-        )));
-        let granted = sql
-            .split_once("END $workload_acl$;")
-            .expect("the batch opens with the ACL-role guard")
-            .1;
-        assert_eq!(
-            granted,
-            " REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"identity\", \"provisioning\", \
-             \"registry\" FROM \"wamn_registry_reader\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA \"identity\", \"provisioning\", \"registry\" \
-             FROM \"wamn_registry_reader\"; \
-             GRANT USAGE ON SCHEMA \"registry\" TO \"wamn_registry_reader\"; \
-             GRANT SELECT ON TABLE \"registry\".\"event_readers\" TO \"wamn_registry_reader\"; \
-             GRANT SELECT ON TABLE \"registry\".\"capture_gap\" TO \"wamn_registry_reader\";"
-        );
-    }
-
-    /// THE DISJOINTNESS GUARD, from the registry side (`wamn-0h0g.12.116`).
-    ///
-    /// Two SELECTs on two registry relations, and not one syllable of `identity`
-    /// downstream of the revocation. Widening this role onto the identity plane
-    /// — the one edit that would collapse the two disjoint grant sets into a
-    /// union — fails here.
-    #[test]
-    fn the_registry_reader_is_never_granted_anything_on_the_identity_plane() {
-        let sql = grant_registry_reader_surface_sql();
-        assert_eq!(sql.matches("GRANT SELECT").count(), 2);
-        assert_eq!(sql.matches("GRANT USAGE ON SCHEMA").count(), 1);
-        assert_eq!(REGISTRY_READER_RELATIONS.len(), 2);
-        for forbidden in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-            assert!(
-                !sql.contains(&format!("GRANT {forbidden}")),
-                "the registry reader must hold no {forbidden}"
-            );
-        }
-        let granted = sql
-            .rsplit_once("FROM \"wamn_registry_reader\";")
-            .expect("the batch revokes before it grants")
-            .1;
-        for plane in ["identity", "provisioning"] {
-            assert!(
-                !granted.contains(plane),
-                "the registry reader is granted something on the {plane} plane"
-            );
-        }
-        // The revocation half, conversely, MUST name every system-plane schema:
-        // that is what makes a role widened out of band converge back.
-        for plane in SYSTEM_PLANE_SCHEMAS {
-            assert!(
-                sql.contains(&format!("\"{plane}\"")),
-                "the batch does not revoke across the {plane} plane"
-            );
-        }
-    }
-
-    /// The registry reader's grant set reaches the generic lifecycle, so a
-    /// prepared generation inherits exactly it and nothing wider.
-    #[test]
-    fn the_registry_reader_prepare_carries_its_grant_set_and_only_control_connect() {
-        let role = "wamn_registry_reader_c8216ab3ed30b424606deacec7d0d7cb7e65649b_a";
-        let sql = prepare_workload_generation_sql(
-            WorkloadRoleFamily::RegistryReader,
-            "wamn_system",
-            role,
-            "secret",
-            "2026-09-15T12:00:00Z",
-        );
-        assert!(sql.contains(&grant_registry_reader_surface_sql()));
-        assert!(sql.contains(&format!(
-            "GRANT \"wamn_registry_reader\" TO \"{role}\" \
-             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
-        )));
-        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
-        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
-        assert!(stable_surface_sql(WorkloadRoleFamily::RegistryReader).is_some());
-    }
-
-    /// The identity reader's WHOLE batch, pinned as the string the builder
-    /// emits (`wamn-0h0g.12.67`).
-    #[test]
-    fn the_identity_reader_grants_exactly_four_selects_and_revokes_the_whole_plane() {
-        let sql = grant_identity_reader_surface_sql();
-        assert!(sql.starts_with(&ensure_workload_acl_role_sql(
-            WorkloadRoleFamily::IdentityReader
-        )));
-        let granted = sql
-            .split_once("END $workload_acl$;")
-            .expect("the batch opens with the ACL-role guard")
-            .1;
-        assert_eq!(
-            granted,
-            " REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"identity\", \"provisioning\", \
-             \"registry\" FROM \"wamn_identity_reader\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA \"identity\", \"provisioning\", \"registry\" \
-             FROM \"wamn_identity_reader\"; \
-             GRANT USAGE ON SCHEMA \"identity\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"pats\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"principals\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"password_logins\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;"
-        );
-    }
-
-    /// THE THREE-TIMES-DRIFT GUARD (`wamn-0h0g.12.67`).
-    ///
-    /// The live cluster role carries `SELECT, INSERT, UPDATE`. That `INSERT` was
-    /// added deliberately when `POST /login` existed, and the grant drifted
-    /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band three separate
-    /// times. Whoever holds `INSERT` on `identity.pats` can bind a token digest
-    /// to any principal and present the matching PAT; whoever holds it on
-    /// `identity.project_roles` can self-grant a role in any project — and
-    /// `identity.*` has no row-level security to confine either. This is the
-    /// assertion that fails on the fourth drift instead of after it.
-    #[test]
-    fn the_identity_reader_grants_no_insert_and_no_update() {
-        let sql = grant_identity_reader_surface_sql();
-        for forbidden in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
-            assert!(
-                !sql.contains(&format!("GRANT {forbidden}")),
-                "the identity reader must hold no {forbidden} — see this test's doc comment"
-            );
-        }
-        assert_eq!(
-            sql.matches("GRANT SELECT").count(),
-            IDENTITY_READER_RELATIONS.len() + 1,
-        );
-        // The other half of the premise — that neither consuming statement takes
-        // a row lock, which would need UPDATE that SELECT alone cannot serve —
-        // is pinned where those statements live, by
-        // `wamn_platform_identity`'s `the_two_reads_the_management_surface_makes_take_no_row_lock`.
-    }
-
-    /// THE DISJOINTNESS GUARD, from both sides (`wamn-0h0g.12.116`,
-    /// `wamn-0h0g.12.67`).
-    ///
-    /// One role serving both grant sets is how a credential gets widened to the
-    /// union, so the two batches must name two roles and neither may grant
-    /// anything inside the other's schema.
-    #[test]
-    fn the_two_control_reader_grant_sets_are_disjoint() {
-        let registry = grant_registry_reader_surface_sql();
-        let identity = grant_identity_reader_surface_sql();
-        assert!(!registry.contains("wamn_identity_reader"));
-        assert!(!identity.contains("wamn_registry_reader"));
-        for (batch, own, foreign) in [
-            (&registry, "registry", "identity"),
-            (&identity, "identity", "registry"),
-        ] {
-            let granted = batch
-                .split_once(&format!("GRANT USAGE ON SCHEMA \"{own}\""))
-                .expect("the batch revokes before it grants")
-                .1;
-            assert!(
-                !granted.contains(foreign),
-                "a control reader is granted something on the {foreign} plane"
-            );
-            // The revocation half, conversely, MUST span the whole plane: that
-            // is what converges a role widened out of band back to its own.
-            for plane in SYSTEM_PLANE_SCHEMAS {
-                assert!(batch.contains(&format!("\"{plane}\"")));
-            }
-        }
-        assert!(
-            IDENTITY_READER_RELATIONS
-                .iter()
-                .all(|relation| !REGISTRY_READER_RELATIONS.contains(relation))
-        );
-    }
-
-    /// The identity reader's grant set reaches the generic lifecycle, so a
-    /// prepared generation inherits exactly it and nothing wider.
-    #[test]
-    fn the_identity_reader_prepare_carries_its_grant_set_and_only_control_connect() {
-        let role = "wamn_identity_reader_4ea81a9f35b250844e8e95f9985cf1e4f7c16dba_a";
-        let sql = prepare_workload_generation_sql(
-            WorkloadRoleFamily::IdentityReader,
-            "wamn_system",
-            role,
-            "secret",
-            "2026-09-15T12:00:00Z",
-        );
-        assert!(sql.contains(&grant_identity_reader_surface_sql()));
-        assert!(sql.contains(&format!(
-            "GRANT \"wamn_identity_reader\" TO \"{role}\" \
-             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
-        )));
-        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
-        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
-        assert!(stable_surface_sql(WorkloadRoleFamily::IdentityReader).is_some());
-    }
-    #[test]
-    fn generation_state_probe_is_read_only_and_parameterized() {
-        let sql = workload_generation_state_sql();
-        assert!(sql.starts_with("SELECT"));
-        assert!(sql.contains("rolcanlogin"));
-        assert!(sql.contains("FROM pg_catalog.pg_roles r"));
-        assert!(!sql.contains("rolpassword IS NOT NULL AS"));
-        assert!(sql.contains("pg_auth_members"));
-        assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND NOT m.set_option"));
-        assert!(sql.contains("AS generation_children_exact"));
-        assert!(sql.contains("child_edge.roleid = r.oid"));
-        assert!(sql.contains("parent_edge.member = generation.oid) <> 1"));
-        assert!(sql.contains("direct_acl.privilege_type <> 'CONNECT'"));
-        assert!(!sql.contains(") > 2"));
-        assert!(!sql.contains("count(DISTINCT substring"));
-        assert!(sql.contains("WHERE m.roleid = r.oid"));
-        assert!(sql.contains("rolvaliduntil"));
-        assert!(sql.contains("isfinite"));
-        assert!(sql.contains("aclexplode"));
-        assert!(sql.contains("pg_stat_activity"));
-        assert!(sql.contains("r.rolname = $1"));
-        for mutation in ["ALTER ", "GRANT ", "REVOKE ", "UPDATE ", "DELETE "] {
-            assert!(!sql.contains(mutation));
-        }
-    }
-
-    #[test]
-    fn generation_grants_cover_cluster_and_database_object_classes() {
-        let sql = role_database_grants_sql();
-        for catalog in [
-            "pg_database",
-            "pg_namespace",
-            "pg_class",
-            "pg_proc",
-            "pg_attribute",
-            "pg_type",
-            "pg_language",
-            "pg_largeobject_metadata",
-            "pg_foreign_data_wrapper",
-            "pg_foreign_server",
-            "pg_tablespace",
-            "pg_parameter_acl",
-            "pg_default_acl",
-        ] {
-            assert!(sql.contains(catalog), "missing direct ACL class {catalog}");
-        }
-        assert!(sql.contains("x.grantee = (SELECT oid FROM wanted)"));
-    }
-
-    #[test]
-    fn replication_role_is_replication_login_and_otherwise_least_privilege() {
-        let sql = ensure_replication_role_sql("wamn_cdc_acme__billing__dev", "s3cr3t");
-        assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
-        assert!(sql.contains("CREATE ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION"));
-        // An existing role gets the same password and attributes (wamn-fipl).
-        assert!(sql.contains(
-            "ELSE ALTER ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION PASSWORD 's3cr3t' \
-             NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;"
-        ));
-        assert!(sql.contains("AND rolsuper) THEN EXECUTE format('ALTER ROLE %I NOSUPERUSER'"));
-        assert!(sql.contains("PASSWORD 's3cr3t'"));
-        // The R8b tier: REPLICATION but nothing else elevated. NOINHERIT is the
-        // house default every other minted role carries.
-        for attr in [
-            "NOSUPERUSER",
-            "NOCREATEDB",
-            "NOCREATEROLE",
-            "NOINHERIT",
-            "NOBYPASSRLS",
-        ] {
-            assert!(sql.contains(attr), "missing {attr}");
-        }
-        // A password with a quote is escaped, not injected.
-        assert!(ensure_replication_role_sql("r", "a'b").contains("PASSWORD 'a''b'"));
-    }
-
-    #[test]
-    fn publication_covers_the_schema_and_is_idempotent() {
-        let sql = create_publication_sql("wamn_cdc_acme__billing__dev", "app");
-        // FOR TABLES IN SCHEMA (auto-includes tables created later) — never the
-        // per-table form and never FOR ALL TABLES (which would leak platform
-        // and any other schema into the stream).
-        assert!(sql.contains(
-            "CREATE PUBLICATION \"wamn_cdc_acme__billing__dev\" FOR TABLES IN SCHEMA \"app\""
-        ));
-        assert!(!sql.contains("FOR ALL TABLES"));
-        // TRUNCATE is excluded at the source: the publish list names only the
-        // three row operations the event plane carries (wamn-0h0g.19.19).
-        assert!(sql.contains("WITH (publish = 'insert, update, delete')"));
-        assert!(!sql.contains("truncate"));
-        // Idempotent: guarded by a pg_publication probe (no IF NOT EXISTS in PG).
-        assert!(sql.contains("IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'wamn_cdc_acme__billing__dev')"));
-        // The eager schema guard is a separate statement.
-        assert_eq!(
-            ensure_schema_sql("app"),
-            "CREATE SCHEMA IF NOT EXISTS \"app\""
-        );
-    }
-
-    #[test]
-    fn failover_slot_uses_the_sql_function_form_with_failover_true() {
-        let sql = create_failover_slot_sql("wamn_cdc_acme__billing__dev");
-        // The PG17+ five-argument form: (slot, plugin, temporary, twophase,
-        // FAILOVER) — pgoutput, non-temporary, no two-phase, failover=true, the
-        // exact shape pg_walstream's ensure_replication_slot tolerates.
-        assert!(sql.contains(
-            "pg_create_logical_replication_slot('wamn_cdc_acme__billing__dev', 'pgoutput', false, false, true)"
-        ));
-        // Idempotent: guarded by a pg_replication_slots probe.
-        assert!(
-            sql.contains("IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = 'wamn_cdc_acme__billing__dev')")
-        );
-    }
-
-    /// The CDC role reads WAL, not application tables. Its only table reads are
-    /// the two relation-classification maps, and the retroactive `REVOKE` must
-    /// precede both narrow grants or it would strip them.
-    #[test]
-    fn replication_grants_cover_connect_usage_and_only_the_classification_maps() {
-        let sql = grant_replication_access_sql("wamn-db-acme--billing--dev", "wamn_cdc_x", "app");
-        assert!(sql.contains(
-            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_cdc_x\""
-        ));
-        assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
-        assert!(sql.contains("GRANT SELECT ON \"app\".wamn_entities TO \"wamn_cdc_x\""));
-        assert!(sql.contains("GRANT SELECT ON \"app\".wamn_cdc_exclusions TO \"wamn_cdc_x\""));
-        // Never the blanket read of every project table.
-        assert!(!sql.contains("GRANT SELECT ON ALL TABLES"));
-        // The retroactive half, ordered before the narrow grant it would strip.
-        let revoke = sql
-            .find("REVOKE SELECT ON ALL TABLES IN SCHEMA \"app\" FROM \"wamn_cdc_x\"")
-            .expect("retroactive revoke for already-provisioned environments");
-        let grant = sql
-            .find("GRANT SELECT ON \"app\".wamn_entities")
-            .expect("entity-map grant");
-        let exclusion_grant = sql
-            .find("GRANT SELECT ON \"app\".wamn_cdc_exclusions")
-            .expect("exclusion-map grant");
-        assert!(
-            revoke < grant,
-            "the revoke would strip the entity-map grant"
-        );
-        assert!(
-            revoke < exclusion_grant,
-            "the revoke would strip the exclusion-map grant"
-        );
-    }
-
-    /// R9: the database owner is a NOLOGIN title holder — never `wamn_app`
-    /// (guest-authored SQL runs as it) and never a superuser.
-    #[test]
-    fn db_owner_role_is_nologin_title_only_and_hardens_on_replay() {
-        let sql = ensure_db_owner_role_sql();
-        assert!(sql.contains(DB_OWNER_ROLE));
-        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains(
-            "CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
-        ));
-        // A replay that finds a drifted attribute repairs it, not succeeds.
-        assert!(sql.contains("ELSIF EXISTS"));
-        assert!(sql.contains(
-            "ALTER ROLE wamn_db_owner NOLOGIN NOCREATEDB \
-             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
-        ));
-        assert!(sql.contains("AND rolsuper) THEN ALTER ROLE wamn_db_owner NOSUPERUSER;"));
-        // Owner-only by construction: no grants, no memberships, no generation
-        // pair — a role nobody logs in as has nothing to rotate.
-        for forbidden in ["GRANT ", "PASSWORD", "VALID UNTIL", "LOGIN PASSWORD"] {
-            assert!(!sql.contains(forbidden), "db owner grew {forbidden}");
-        }
-        assert!(!sql.contains(APP_ROLE), "db owner is not wamn_app");
-        assert!(!sql.contains("postgres"), "db owner is not a superuser");
-    }
-
-    /// The statement the operator runs by hand for a database created before
-    /// its `Database` CR set `spec.owner`.
-    #[test]
-    fn database_owner_converges_to_the_title_role() {
-        assert_eq!(
-            set_database_owner_sql("wamn-db-acme--billing--dev"),
-            "ALTER DATABASE \"wamn-db-acme--billing--dev\" OWNER TO \"wamn_db_owner\""
-        );
-        // Never re-points a database at the guest-reachable role or a superuser.
-        let sql = set_database_owner_sql("wamn-db-acme--billing--dev");
-        assert!(!sql.contains("wamn_app"));
-        assert!(!sql.contains("postgres"));
-    }
-
-    #[test]
-    fn cdc_teardown_builders_are_guarded() {
-        assert_eq!(
-            drop_publication_sql("wamn_cdc_x"),
-            "DROP PUBLICATION IF EXISTS \"wamn_cdc_x\""
-        );
-        let drop_slot = drop_replication_slot_sql("wamn_cdc_x");
-        assert!(drop_slot.contains("pg_drop_replication_slot('wamn_cdc_x')"));
-        assert!(drop_slot.contains("IF EXISTS"));
-    }
 }

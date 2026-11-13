@@ -212,7 +212,7 @@ impl NamedProject {
         // carried an inlined copy of the old loose rule, so a named import
         // admitted ids the registry and provisioning both refuse.
         anyhow::ensure!(
-            wamn_control_registry::identifiers::valid_project(project),
+            wamn_registry::identifiers::valid_project(project),
             "invalid project {project:?} for named wamn:postgres import {name:?}"
         );
         Ok(Self(Arc::from(project)))
@@ -650,3 +650,5 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 pub(crate) use session_identity::SessionGrantRefusal;
+
+pub use session_identity::valid_runner;

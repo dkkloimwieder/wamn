@@ -62,11 +62,14 @@ async fn seed_system_env_policy(su: &Client) {
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
            hibernation text NOT NULL, \
            PRIMARY KEY (org, name)); \
-         CREATE TABLE registry.project_envs ( \
+         CREATE TABLE registry.environments ( \
+           org text NOT NULL, env text NOT NULL, policy_name text NOT NULL, \
+           PRIMARY KEY (org, env)); \
+         CREATE TABLE registry.environment_projects ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, pending_database jsonb, policy_name text NOT NULL, \
-           PRIMARY KEY (org, project, env)); \
+           instance_suffix text NOT NULL, pending_database jsonb, \
+           PRIMARY KEY (org, env, project)); \
          RESET ROLE",
     )
     .await
@@ -81,9 +84,11 @@ async fn seed_system_env_policy(su: &Client) {
     .await
     .expect("seed system env policy");
     su.execute(
-        "INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix,policy_name) \
-         VALUES ($1,$2,$3,'wamn-db-acme--billing--dev',$4,$3)",
+        "WITH parent_environment AS ( \
+           INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) \
+         ) INSERT INTO registry.environment_projects \
+           (org,env,project,secret_name,instance_suffix) \
+         VALUES ($1,$3,$2,'wamn-db-acme--dev--billing',$4)",
         &[&CLI_ORG, &CLI_PROJECT, &CLI_ENV, &CLI_INSTANCE],
     )
     .await
@@ -104,9 +109,9 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
      SET ROLE wamn_system; \
      CREATE TABLE registry.meta ( \
        id boolean PRIMARY KEY DEFAULT true CHECK (id), \
-       schema_version text NOT NULL, platform_domain text); \
-     INSERT INTO registry.meta (schema_version, platform_domain) \
-       VALUES ('0.1', 'example.invalid'); \
+       platform_domain text); \
+     INSERT INTO registry.meta (platform_domain) \
+       VALUES ('example.invalid'); \
      CREATE TABLE identity.principals ( \
        id uuid PRIMARY KEY, type text NOT NULL, subject text NOT NULL, \
        email text, display_name text NOT NULL, \
@@ -123,7 +128,7 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        PRIMARY KEY (principal_id, org, project, env)); \
      INSERT INTO identity.principals (id, type, subject, email, display_name) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'service', \
-        'wamn-management-author-acme--billing--dev', NULL, \
+        'wamn-management-author-acme--dev--billing', NULL, \
         'WAMN management author acme/billing/dev'), \
        ('22222222-2222-4222-8222-222222222222', 'user', \
         'person@example.invalid', 'person@example.invalid', 'A user'), \
@@ -219,7 +224,7 @@ async fn project_env_key_identity_leg(su: &Client) {
             (
                 FIXTURE_SERVICE_ID.to_string(),
                 "service".to_string(),
-                "wamn-management-author-acme--billing--dev@example.invalid".to_string(),
+                "wamn-management-author-acme--dev--billing@example.invalid".to_string(),
                 provisioning.to_string(),
             ),
             (
@@ -735,7 +740,7 @@ async fn environment_identity_leg(
     project_env_key_identity_leg(su).await;
 
     su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--billing--dev'"
+        "DELETE FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--dev--billing'"
     ))
     .await
     .expect("remove the local policy before testing projection repair");
@@ -755,7 +760,7 @@ async fn environment_identity_leg(
         .query_one(
             &format!(
                 "SELECT count(*) FROM {SCHEMA}.environment_policies \
-                 WHERE project_env_key='acme--billing--dev'"
+                 WHERE project_env_key='acme--dev--billing'"
             ),
             &[],
         )
@@ -910,15 +915,15 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // and read 0 where it demanded 1. The login name is DERIVED by the
     // production builder, never spelled, so the digest under test is the digest
     // `provision-project-env` would mint.
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev").await;
+    seed_run_admission_facts(su, "acme--dev--billing", "cat", "dev").await;
     seed_run_admission_facts(su, "t2", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
-             VALUES ('acme--billing--dev','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
+             VALUES ('acme--dev--billing','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
                     ('t2','r2','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
+         INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--dev--billing', 'r1');"
     ))
     .await
     .expect("seed both projects' run-plane rows");
@@ -932,15 +937,15 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         "both projects' rows exist before the guest reads"
     );
 
-    let (guest_generation, guest) = mint_guest_generation(su, base_url, "acme--billing--dev").await;
+    let (guest_generation, guest) = mint_guest_generation(su, base_url, "acme--dev--billing").await;
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
                (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) \
-             VALUES ('acme--billing--dev','r3','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev')"
+             VALUES ('acme--dev--billing','r3','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev')"
         ),
         format!(
-            "INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--billing--dev','r3')"
+            "INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--dev--billing','r3')"
         ),
     ] {
         let denied = guest
@@ -965,7 +970,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         visible.iter().map(|row| (row.get(0), row.get(1))).collect();
     assert_eq!(
         visible,
-        vec![("acme--billing--dev".to_string(), "r1".to_string())],
+        vec![("acme--dev--billing".to_string(), "r1".to_string())],
         "the guest generation sees exactly its own project's row"
     );
     // `runs` is the only run-plane relation the guest role can still read;
@@ -1024,7 +1029,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
            (project_env_key, expected_environment) \
-         VALUES ('acme--billing--dev', 'dev')"
+         VALUES ('acme--dev--billing', 'dev')"
     ))
     .await
     .expect("seed projected environment policy");

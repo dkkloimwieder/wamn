@@ -10,7 +10,8 @@
 
 use anyhow::Context as _;
 use tokio_postgres::Row;
-use wamn_control_registry::{Env, EnvPolicy, RecoveryDomain};
+use wamn_control_provision::{EnvPolicy, RecoveryDomain};
+use wamn_registry::Env;
 
 /// Map one `select_env_policies_sql` / `select_env_policy_sql` row into an
 /// [`EnvPolicy`]. Column order: `name, recovery_domain::text, promotion_rank,
@@ -44,7 +45,7 @@ pub async fn read_env_policy(
 ) -> anyhow::Result<Option<EnvPolicy>> {
     let rows = client
         .query(
-            wamn_control_registry::sql::select_env_policy_sql().as_str(),
+            wamn_registry::sql::select_env_policy_sql().as_str(),
             &[&org, &name],
         )
         .await
