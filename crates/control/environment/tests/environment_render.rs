@@ -1,5 +1,7 @@
 //! Product environment rendering without a cluster or a running host.
 
+#[path = "support/render_check.rs"]
+pub mod render_check;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -15,7 +17,7 @@ use release_documents::{
     NAMESPACE, ORG, PROJECT, environment_releases as fixture_releases, fixture_document,
     fixture_host_group,
 };
-use wamn_gate_harness::render_check::{
+use render_check::{
     assert_complete, credential_secrets, environment as render_values, operator_prerequisites,
     prerequisite, template,
 };
@@ -489,7 +491,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     if let Some(name) = &object_store_secret_name {
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
     }
-    let rendered = wamn_gate_harness::render_check::host_values(
+    let rendered = render_check::host_values(
         &HostValuesInput {
             namespace: NAMESPACE.into(),
             host_tag: "prekind".into(),
@@ -506,7 +508,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         },
         project,
     )?;
-    let roles = wamn_gate_harness::render_check::fixture_roles(&manifest, "acme", project, "dev");
+    let roles = render_check::fixture_roles(&manifest, "acme", project, "dev");
     let values = wamn_release_control::release_chart::values(&ValuesInput {
         org: "acme".into(),
         project: project.into(),
@@ -530,7 +532,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         roles,
         drain_bound_seconds: 70,
         actor: "prekind".into(),
-        host_group: wamn_gate_harness::render_check::host_group(&rendered.overlay)?,
+        host_group: render_check::host_group(&rendered.overlay)?,
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));

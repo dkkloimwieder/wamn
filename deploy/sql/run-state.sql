@@ -7,8 +7,7 @@
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
 -- fixtures carry their own `runs` copy (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
--- target of the crate's live-apply gate. Assumes pre-existing `wamn_app` and
--- `wamn_scenario_author` ACL roles;
+-- live-apply target. Assumes the pre-existing `wamn_app` ACL role;
 -- `wamn_platform` and `wamn_run_retention` are the two roles this file creates
 -- itself, because it NAMES them -- the floor arms below target the first
 -- (`wamn-0h0g.22.17`) and the `runs` grants target the second
@@ -77,7 +76,6 @@ END $run_retention$;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
     FROM PUBLIC, wamn_run_retention;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
-GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
 
 -- ---------------------------------------------------------------------------
@@ -249,7 +247,7 @@ CREATE POLICY environment_policies_platform ON wamn_run.environment_policies
 CREATE INDEX environment_policies_tkey
     ON wamn_run.environment_policies ((wamn_authority.tenant_key(env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
-    FROM PUBLIC, wamn_app, wamn_scenario_author;
+    FROM PUBLIC, wamn_app;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -307,11 +305,6 @@ CREATE TABLE wamn_run.runs (
     -- Immutable execution identity selected from the trusted active-wiring
     -- pointer by the admission transaction. Legacy rows remain NULL until the
     -- post-drain cutover; admission never backfills them.
-    --
-    -- `wiring_hash` is the WHOLE candidate identity (wamn-0h0g.8.5.6): the gate
-    -- report that certified the definition is keyed by that same hash, so the
-    -- `gate_report_id` that used to sit beside it here carried no fact this
-    -- column does not already carry.
     wiring_id       text,
     wiring_version  int,
     wiring_hash     text,

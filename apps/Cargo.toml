@@ -31,9 +31,7 @@ members = [
     "platform/data/access",
     "platform/data/postgres-statements",
     "platform/data/record-history",
-    "platform/fixtures/busyloop",
     "platform/fixtures/connection-http-standard",
-    "platform/fixtures/sockprobe",
     "platform/fixtures/sqlx-command",
     "platform/fixtures/std-virtualization-probe",
 ]

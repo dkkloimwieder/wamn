@@ -15,7 +15,6 @@ Pass the URL with `--admin-database-url` or `WAMN_PG_ADMIN_URL`.
 `author` requires these flags:
 
 - `--coordinate <org>/<project>/<env>`
-- `--control-database-url`
 - `--application`
 - `--document`
 - `--execution-type role|invoker`
@@ -135,12 +134,12 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
 
    ```bash
    wamn-ctl workflow author --environment <env> --coordinate <org>/<project>/<env> \
-     --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --application netsuite \
+     --application netsuite \
      --document apps/netsuite/publication/wirings/netsuite_pull.json \
      --execution-type role --execution-role netsuite-pull --schedule '* * * * *' --principal-id "$ADMIN_ID"
    ```
 
-   The author needs a green gate report under the document's hash, as for any workflow.
+   Authorship validates the graph against the serving release.
 4. Enable it:
 
    ```bash

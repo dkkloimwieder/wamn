@@ -170,16 +170,7 @@ fn reset(admin_url: &str, database: &str) {
     // The roles the two artifacts GRANT to or CREATE. A `GRANT … TO` a missing
     // role fails the whole apply, so the ones the files do not create themselves
     // are re-minted below.
-    roles.extend(
-        [
-            "wamn_app",
-            "wamn_scenario_author",
-            "wamn_control_author",
-            "wamn_run_retention",
-            "wamn_platform",
-        ]
-        .map(str::to_owned),
-    );
+    roles.extend(["wamn_app", "wamn_run_retention", "wamn_platform"].map(str::to_owned));
     let mut script = String::from(
         "DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
@@ -200,10 +191,8 @@ fn reset(admin_url: &str, database: &str) {
     }
     script.push_str(
         "CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;\n\
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-         CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           NOINHERIT NOREPLICATION NOBYPASSRLS;\n",
+         \n\
+         \n",
     );
     run_admin(admin_url, "reset the family-surface fixture", &script);
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
@@ -985,7 +974,7 @@ fn control_routes_cannot_write_release_connections_or_bindings() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     run_admin(database.url(),"release connection grants",&format!(
-        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF; IF to_regrole('wamn_scenario_author') IS NULL THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
+        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF;  END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
             FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP
               FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP

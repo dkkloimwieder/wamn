@@ -1522,10 +1522,6 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             "identity.lock_password_principal(uuid)",
             &["wamn_identity_issuer"],
         ),
-        (
-            "wamn_authority.session_author_env_key()",
-            &["wamn_control_author"],
-        ),
         ("platform.bump_counter(uuid, text, text)", &["wamn_app"]),
         ("platform.assign_counter(uuid, text, text)", &["wamn_app"]),
         (
@@ -1603,11 +1599,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
         assert_eq!(function.get::<_, String>(2), "wamn_system", "{name} owner");
         let configuration: Vec<String> = function.get(1);
-        let expected_path = if name == "wamn_authority.session_author_env_key()" {
-            "search_path=pg_catalog, wamn_authority"
-        } else {
-            "search_path=pg_catalog"
-        };
+        let expected_path = "search_path=pg_catalog";
         assert_eq!(configuration, [expected_path], "{name}");
         for grantee in function.get::<_, Vec<String>>(3) {
             assert!(

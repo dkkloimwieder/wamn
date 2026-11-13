@@ -73,7 +73,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
-         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_http_admitter'))",
+         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))",
         &[],
     ).await?.get(0);
     anyhow::ensure!(
@@ -97,7 +97,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+          \
          CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

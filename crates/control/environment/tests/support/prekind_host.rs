@@ -1,5 +1,8 @@
 //! Run the environment kind HTTP release through its render on a native host.
 
+#[expect(dead_code, reason = "chart tests share these render helpers")]
+#[path = "render_check.rs"]
+pub mod render_check;
 use std::net::TcpListener;
 use std::process::Stdio;
 
@@ -34,7 +37,7 @@ async fn credential_secrets(
     scope: &Triple,
 ) -> anyhow::Result<Vec<Value>> {
     let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
-    let mut secrets = wamn_gate_harness::render_check::credential_secrets(scope, NAMESPACE);
+    let mut secrets = render_check::credential_secrets(scope, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
             CredentialDatabase::Project => (project, project_url),
@@ -374,11 +377,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .batch_execute(&sql::set_database_owner_sql(database.name()))
         .await?;
     project
-        .batch_execute(&format!(
-            "{} {}",
-            sql::ensure_app_acl_role_sql(),
-            wamn_schema_control::ensure_scenario_author_role_sql(),
-        ))
+        .batch_execute(&sql::ensure_app_acl_role_sql())
         .await?;
     wamn_dev_control::dev::environment::install_journey_platform_floor(&project, PLATFORM_DOMAIN)
         .await?;
@@ -713,29 +712,21 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .context("allowed hosts")?["value"] = json!(origin);
     let group_path = directory.join("http-event-host-group.yaml");
     std::fs::write(&group_path, serde_yaml::to_string(&group)?)?;
-    let rendered = wamn_gate_harness::render_check::environment(
-        &document,
-        &published.manifest,
-        &group_path,
-        70,
-    )?;
-    let documents = wamn_gate_harness::render_check::template(&rendered, NAMESPACE)?;
+    let rendered = render_check::environment(&document, &published.manifest, &group_path, 70)?;
+    let documents = render_check::template(&rendered, NAMESPACE)?;
     let mut secrets =
         credential_secrets(&project, &mut system, database.url(), control.url(), &scope).await?;
-    secrets.extend(wamn_gate_harness::render_check::operator_prerequisites(
-        NAMESPACE,
-    ));
-    secrets.push(wamn_gate_harness::render_check::prerequisite(
+    secrets.extend(render_check::operator_prerequisites(NAMESPACE));
+    secrets.push(render_check::prerequisite(
         "apply-registry",
         &["config.json", "ca.crt"],
         NAMESPACE,
     ));
-    let mut oauth =
-        wamn_gate_harness::render_check::prerequisite("wamn-oauth", &["key"], NAMESPACE);
+    let mut oauth = render_check::prerequisite("wamn-oauth", &["key"], NAMESPACE);
     oauth["stringData"]["key"] = "o".repeat(32).into();
     secrets.push(oauth);
     // cert-manager issues the environment's NATS certificate (R5).
-    secrets.push(wamn_gate_harness::render_check::prerequisite(
+    secrets.push(render_check::prerequisite(
         &format!(
             "wamn-nats-{}",
             wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str())
@@ -743,7 +734,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         &["ca.crt", "tls.crt", "tls.key"],
         NAMESPACE,
     ));
-    wamn_gate_harness::render_check::assert_complete(&documents, &secrets)?;
+    render_check::assert_complete(&documents, &secrets)?;
     let workloads = documents
         .iter()
         .filter(|document| document["kind"] == "WorkloadDeployment")

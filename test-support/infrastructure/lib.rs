@@ -3,7 +3,6 @@
 //! MVP outcome: test coverage.
 
 pub mod ctl_process;
-pub mod declarations;
 pub mod event_broker;
 pub mod fixture_digest;
 pub mod locked_database;

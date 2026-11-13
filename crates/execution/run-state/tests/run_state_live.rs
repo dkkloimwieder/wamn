@@ -90,8 +90,6 @@ fn run_state_live() {
     // `wamn_app` carrier to NOLOGIN/NOINHERIT/passwordless, so a drifted cluster
     // role cannot make the leg pass through ambient authority.
     //
-    // THE DRIFT CONTRACT. The `wamn_scenario_author` block below mirrors
-    // `ensure_scenario_author_role_sql` in crates/schema/control/src/run_plane.rs, and the
     // `wamn_executor_platform` block mirrors `ensure_workload_acl_role_sql` in
     // crates/control/provision/src/sql.rs. Both carry the production attributes exactly:
     // NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS.
@@ -160,10 +158,7 @@ fn run_state_live() {
                  EXECUTE format('DROP OWNED BY %I', '{app_login}'); \
                  EXECUTE format('DROP ROLE %I', '{app_login}'); \
                END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               END IF; \
+                \
                IF NOT EXISTS \
                  (SELECT FROM pg_roles WHERE rolname = 'wamn_executor_platform') THEN \
                  CREATE ROLE wamn_executor_platform NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -201,13 +196,13 @@ fn run_state_live() {
         &url,
         "DO $$ DECLARE mirrored text; BEGIN \
            SELECT string_agg(rolname, ',' ORDER BY rolname) INTO mirrored FROM pg_roles \
-            WHERE rolname IN ('wamn_executor_platform','wamn_scenario_author') \
+            WHERE rolname IN ('wamn_executor_platform') \
               AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin \
               AND NOT rolinherit AND NOT rolcreatedb AND NOT rolcreaterole \
               AND NOT rolreplication; \
-           ASSERT mirrored = 'wamn_executor_platform,wamn_scenario_author', \
+           ASSERT mirrored = 'wamn_executor_platform', \
                   'the mirrored roles must carry exactly the attributes \
-                   ensure_scenario_author_role_sql and ensure_workload_acl_role_sql mint \
+                   ensure_workload_acl_role_sql mints \
                    (NOLOGIN NOSUPERUSER \
                    NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS); \
                    conforming roles were: ' || coalesce(mirrored, '<none>'); \

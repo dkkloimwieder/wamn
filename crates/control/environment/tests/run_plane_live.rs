@@ -14,7 +14,7 @@ mod target_identity;
 
 use wamn_platform_identity::auth_changes::AuthChanges;
 
-use catalog::{capture_mode_security_leg, two_plane_residency_leg};
+use catalog::capture_mode_security_leg;
 use run_history::persisted_literal_leg;
 
 use tokio_postgres::{Client, NoTls};
@@ -36,7 +36,6 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql")
 const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// The CONTROL plane's canonical record. Read here only to lift the co-resident
 /// relation's declaration text, never installed as a whole.
-const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
@@ -464,15 +463,8 @@ async fn reset(su: &Client) {
          DROP SCHEMA IF EXISTS catalog CASCADE; \
          DROP SCHEMA IF EXISTS platform CASCADE; \
          DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSE \
-             ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
+            \
          END $$; \
-         REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
            EXECUTE format( \
              'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
@@ -541,7 +533,6 @@ async fn run_plane_reconcile_live() {
     let su = connect(&url).await;
     from_zero_leg(&su, &url).await;
     current_noop_leg(&su).await;
-    two_plane_residency_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     partition::global_fifo_queue_leg(&su).await;
     capture_mode_security_leg(&su, &url).await;
@@ -851,10 +842,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .batch_execute(
             "CREATE TABLE public.wamn_app_role_sentinel (id int PRIMARY KEY); \
              ALTER TABLE public.wamn_app_role_sentinel OWNER TO wamn_app; \
-             CREATE TABLE public.wamn_scenario_author_role_sentinel \
-               (id int PRIMARY KEY); \
-             ALTER TABLE public.wamn_scenario_author_role_sentinel \
-               OWNER TO wamn_scenario_author;",
+",
         )
         .await
         .expect("create cross-database runtime-role ownership sentinel");
@@ -862,17 +850,12 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
 
     let role_oids_before = su
         .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
-                    (SELECT oid::bigint FROM pg_roles \
-                      WHERE rolname = 'wamn_scenario_author')",
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
             &[],
         )
         .await
         .expect("snapshot shared runtime roles");
-    let role_oids_before = (
-        role_oids_before.get::<_, i64>(0),
-        role_oids_before.get::<_, i64>(1),
-    );
+    let role_oids_before = (role_oids_before.get::<_, i64>(0),);
 
     // --dry-run is STRICTLY read-only: it changes neither shared roles nor tables.
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
@@ -881,18 +864,13 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     assert!(!dry.is_noop());
     let role_oids_after = su
         .query_one(
-            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app'), \
-                    (SELECT oid::bigint FROM pg_roles \
-                      WHERE rolname = 'wamn_scenario_author')",
+            "SELECT (SELECT oid::bigint FROM pg_roles WHERE rolname = 'wamn_app')",
             &[],
         )
         .await
         .expect("re-read shared runtime roles");
     assert_eq!(
-        (
-            role_oids_after.get::<_, i64>(0),
-            role_oids_after.get::<_, i64>(1),
-        ),
+        (role_oids_after.get::<_, i64>(0),),
         role_oids_before,
         "dry-run preserves the shared cluster roles"
     );
@@ -952,12 +930,6 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // wamn-0h0g.9.11.3 (805701ec); `deploy/sql/control-portable-store.sql` owns
     // them and `control_portable_store` pins them. This verb applies the
     // catalog record only, so from-zero must NOT produce them.
-    for table in ["authoring_command_audit"] {
-        assert!(
-            !table_exists(su, "catalog", table).await,
-            "the portable store's relation catalog.{table} is not this verb's to provision"
-        );
-    }
 
     // Functional smoke as the runtime principal: the sections' grants + RLS
     // hold. wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
@@ -1046,23 +1018,15 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .query_one(
             "SELECT pg_get_userbyid((SELECT relowner FROM pg_class \
                                       WHERE oid = \
-                                        'public.wamn_app_role_sentinel'::regclass)), \
-                    pg_get_userbyid((SELECT relowner FROM pg_class \
-                                      WHERE oid = \
-                                        'public.wamn_scenario_author_role_sentinel'::regclass))",
+                                        'public.wamn_app_role_sentinel'::regclass))",
             &[],
         )
         .await
         .expect("read cross-database runtime-role ownership sentinels");
     let app_owner: String = sentinel_owners.get(0);
-    let author_owner: String = sentinel_owners.get(1);
     assert_eq!(
         app_owner, "wamn_app",
         "from-zero reconciliation preserves sibling-database runtime ownership"
-    );
-    assert_eq!(
-        author_owner, "wamn_scenario_author",
-        "from-zero reconciliation preserves sibling-database author ownership"
     );
     drop(sentinel);
     drop_database(su, sentinel_database).await;

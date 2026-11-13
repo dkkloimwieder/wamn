@@ -2,13 +2,32 @@
 
 use std::path::Path;
 
-pub use wamn_environment_control::platform::resources::runtime_namespaces;
-
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use wamn_release_control::release_chart::{self, ImageSet};
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::scratch::ScratchRoot;
+
+pub const NAMESPACE: &str = "wamn-system";
+/// The host group keys and variables that the release chart derives.
+const DERIVED_KEYS: [&str; 6] = [
+    "name",
+    "namespace",
+    "service",
+    "extraArgs",
+    "image",
+    "plugins",
+];
+const DERIVED_VARIABLES: [&str; 8] = [
+    "WAMN_ORG",
+    "WAMN_PROJECT",
+    "WAMN_DRAIN_BOUND_SECONDS",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
+    "WASMCLOUD_HOST_ENVIRONMENT",
+];
 
 /// Render a case's host values through apply, with the case's platform inputs.
 pub fn host_values(
@@ -141,7 +160,28 @@ pub fn host_values(
 
 /// Extract the platform inputs before the release chart derives its fields again.
 pub fn host_group(overlay: &str) -> anyhow::Result<serde_yaml::Mapping> {
-    let mut group = crate::case_release::host_group(overlay)?;
+    let values: serde_yaml::Value =
+        serde_yaml::from_str(overlay).context("parse the host overlay")?;
+    let groups = values["runtime"]["hostGroups"]
+        .as_sequence()
+        .context("the host overlay has host groups")?;
+    ensure!(groups.len() == 1, "the host overlay has one host group");
+    let mut group = groups[0]
+        .as_mapping()
+        .context("the host group is a mapping")?
+        .clone();
+    for key in DERIVED_KEYS {
+        group.remove(key);
+    }
+    group
+        .get_mut("env")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+        .context("the host group has env")?
+        .retain(|entry| {
+            entry["name"]
+                .as_str()
+                .is_none_or(|name| !DERIVED_VARIABLES.contains(&name))
+        });
     if let Some(ports) = group
         .get_mut("ports")
         .and_then(serde_yaml::Value::as_sequence_mut)
@@ -164,7 +204,7 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
         "1".repeat(64)
     );
     let chart = release_chart::stamp(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/platform/release"),
+        &wamn_fixture_package::repository_root().join("deploy/platform/release"),
         &ImageSet {
             host: image.clone(),
             http: image.clone(),
@@ -201,7 +241,7 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
     for document in documents {
         let namespace = document["metadata"]["namespace"]
             .as_str()
-            .unwrap_or(crate::case_release::NAMESPACE);
+            .unwrap_or(NAMESPACE);
         secret_references(document, namespace, &all)?;
         if document["kind"] == "Deployment" {
             let pod = &document["spec"]["template"]["spec"];

@@ -399,7 +399,6 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
             },
         )]),
         edges: Vec::new(),
-        cases: Vec::new(),
     }
 }
 
@@ -548,11 +547,7 @@ async fn seed_with_client(
         .context("read the run-state DDL")?;
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .context("read the run-queue DDL")?;
-    let role_bootstrap = format!(
-        "{} {}",
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
-        wamn_schema_control::ensure_scenario_author_role_sql(),
-    );
+    let role_bootstrap = wamn_control_provision::sql::ensure_app_acl_role_sql();
     client
         .batch_execute(&format!(
             "{role_bootstrap}\n\

@@ -503,7 +503,6 @@ mod tests {
                 to: "target".to_string(),
                 to_port: Some("record".to_string()),
             }],
-            Vec::new(),
         )
         .expect("fixture wiring is structurally valid")
     }

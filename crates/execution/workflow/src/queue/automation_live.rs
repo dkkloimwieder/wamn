@@ -264,7 +264,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let document = WiringDocument::parse(&json!({
         "format-version":"0.1", "wiring-id":"echo", "version":1,"entry":"echo",
         "nodes":{"echo":{"component":component,"interface-version":"0.1.0","operation":node.operation,"params":node.params}},
-        "edges":[],"cases":[]
+        "edges":[]
     }))?;
     let graph_hash = document.wiring_hash();
     let manifest: ServingManifest = serde_json::from_value(json!({

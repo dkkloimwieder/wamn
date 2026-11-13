@@ -410,7 +410,6 @@ pub(super) struct AuthoringPrivilegeSpec {
     pub(super) schema: AuthoringTableSchema,
     pub(super) table: &'static str,
     pub(super) app: &'static [&'static str],
-    pub(super) author: &'static [&'static str],
 }
 
 pub(super) const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
@@ -418,37 +417,31 @@ pub(super) const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         schema: AuthoringTableSchema::Catalog,
         table: "packages",
         app: &["SELECT"],
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "package_migrations",
         app: &[],
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "releases",
         app: &["SELECT"],
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_requirement",
         app: &["SELECT"],
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "release_connection",
         app: &["SELECT"],
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_binding",
         app: &["SELECT"],
-        author: &[],
     },
     // `runs` has a dedicated column-grant reconciler because capture_mode is
     // admission-owned while the remaining run columns retain app writes.
@@ -458,13 +451,11 @@ pub(super) const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         app: &["SELECT"],
         // wamn-0h0g.22.43 removes the last two dormant project-plane reads.
         // Keeping this empty is the converge half of the static DDL revoke.
-        author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
         table: "runs",
         app: &["SELECT", "DELETE"],
-        author: &[],
     },
 ];
 

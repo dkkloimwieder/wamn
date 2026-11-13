@@ -50,9 +50,6 @@ pub mod queue;
 pub mod redaction;
 /// The queued-run lifecycle as a storage trait.
 pub mod run_store;
-/// Contract-owned helpers for checking repository stand-in schemas.
-#[cfg(feature = "test-util")]
-pub mod schema_drift;
 /// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;

@@ -4,10 +4,6 @@
 
 pub mod invocation;
 pub mod repo_policy;
-pub mod socket_test;
-
-#[cfg(test)]
-mod benchmark;
 
 #[cfg(test)]
 mod ip_name_lookup;
@@ -17,6 +13,3 @@ mod manifest_dependencies;
 
 #[cfg(test)]
 mod runtime_policy;
-
-#[cfg(test)]
-mod schema_drift;

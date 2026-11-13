@@ -1,7 +1,6 @@
 //! Prepare, rotate, retire, and abort workload generations on one project database.
 //! A separate case starts with the stale CONNECT grant that prepare must refuse.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
@@ -9,12 +8,10 @@ use url::Url;
 
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, management_admitter_secret_name,
-    parse_management_admission_url, project_env_database_name, project_env_guest_secret_name,
-    render_management_admitter_secret_manifest, sql, workload_generation_role,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    WorkloadRoleScopeKind, project_env_database_name, project_env_guest_secret_name, sql,
+    workload_generation_role,
 };
-use wamn_control_registry::Triple;
 use wamn_environment_control::provision_project_env::{
     self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, privilege_sql,
     role_posture_sql,
@@ -96,11 +93,7 @@ async fn fixture() -> Fixture {
         ))
         .await
         .unwrap();
-    for family in [
-        WorkloadRoleFamily::App,
-        WorkloadRoleFamily::ManagementAdmitter,
-        WorkloadRoleFamily::Administration,
-    ] {
+    for family in [WorkloadRoleFamily::App, WorkloadRoleFamily::Administration] {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
             let role = generation_role(family, &database, generation);
             catalog
@@ -202,11 +195,7 @@ fn request(
         project: PROJECT.into(),
         env: ENVIRONMENT.into(),
         system_database_url: Some(system_url.to_string()),
-        namespace: if family == WorkloadRoleFamily::ManagementAdmitter {
-            "wamn-system".into()
-        } else {
-            format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}")
-        },
+        namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         target_admin_database_url: Some(fixture.url.clone()),
         cluster: None,
         cluster_namespace: "wamn-system".to_owned(),
@@ -246,17 +235,7 @@ fn secret_url(
     generation: CredentialGeneration,
 ) -> String {
     let secret = secret_json(&secret_path(fixture, family, generation));
-    let url = secret["stringData"]["url"].as_str().unwrap().to_owned();
-    if family == WorkloadRoleFamily::ManagementAdmitter {
-        assert_eq!(
-            secret["metadata"]["name"],
-            management_admitter_secret_name(ORG, PROJECT, ENVIRONMENT)
-        );
-        assert_eq!(secret["stringData"].as_object().unwrap().len(), 1);
-        let connection = parse_management_admission_url(&url, ORG, PROJECT, ENVIRONMENT).unwrap();
-        assert_eq!(connection.database(), fixture.database);
-    }
-    url
+    secret["stringData"]["url"].as_str().unwrap().to_owned()
 }
 
 fn state_sql() -> String {
@@ -347,69 +326,13 @@ async fn await_zero_sessions(admin: &Client, role: &str) {
     panic!("{role} still has a live session");
 }
 
-async fn direct_acl_set(admin: &Client, role: &str) -> BTreeSet<String> {
-    admin
-        .query(sql::role_database_grants_sql(), &[&role])
-        .await
-        .expect("read direct grants")
-        .into_iter()
-        .map(|row| {
-            format!(
-                "{}:{}:{}:{}",
-                row.get::<_, String>("object_type"),
-                row.get::<_, String>("schema_name"),
-                row.get::<_, String>("object_name"),
-                row.get::<_, String>("privilege_type")
-            )
-        })
-        .collect()
-}
-
-async fn family_state(admin: &Client, roles: &[&str]) -> Vec<(String, Vec<String>, Vec<String>)> {
-    let mut snapshot = Vec::new();
-    for role in roles {
-        let row = admin
-            .query_opt(&state_sql(), &[role])
-            .await
-            .expect("read family role state");
-        let members = match &row {
-            None => vec!["<absent>".to_string()],
-            Some(row) => {
-                let mut members = row.get::<_, Vec<String>>("memberships");
-                members.extend(row.get::<_, Vec<String>>("member_roles"));
-                members.extend(row.get::<_, Vec<String>>("connect_databases"));
-                members.push(format!("login={}", row.get::<_, bool>("rolcanlogin")));
-                members
-            }
-        };
-        let acl: Vec<String> = direct_acl_set(admin, role).await.into_iter().collect();
-        snapshot.push(((*role).to_string(), members, acl));
-    }
-    snapshot
-}
-
-fn expected_stable_acl() -> BTreeSet<String> {
-    let mut expected = BTreeSet::from([
-        "schema:catalog:catalog:USAGE".to_string(),
-        // The catalog wiring index still needs this exact function grant.
-        "routine:wamn_authority:tenant_key:EXECUTE".to_string(),
-    ]);
-    for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        expected.insert(format!("relation:catalog:{relation}:SELECT"));
-    }
-    expected
-}
-
 #[tokio::test]
 async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
     let server = wamn_test_postgres::start(&[]).unwrap();
     let system = server.database("postgres").unwrap();
     let catalog = connect(system.url()).await;
     catalog.batch_execute(&role_posture_sql()).await.unwrap();
-    catalog
-        .batch_execute(&sql::ensure_control_author_acl_role_sql())
-        .await
-        .unwrap();
+
     catalog
         .batch_execute(&format!(
             "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE postgres OWNER TO wamn_system; \
@@ -464,11 +387,11 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
             system_database_url: Some(system.url().into()),
-            namespace: "wamn-system".into(),
+            namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
             target_admin_database_url: (family.scope_kind() != WorkloadRoleScopeKind::Control)
                 .then(|| target.url().into()),
             cluster: None,
-            cluster_namespace: "wamn-system".into(),
+            cluster_namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
             db_host: endpoint.host_str().map(str::to_owned),
             db_port: endpoint.port().unwrap(),
             action: WorkloadGenerationAction {
@@ -508,23 +431,12 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
     assert!(!stable.get::<_, bool>("rolinherit"));
     assert!(!stable.get::<_, bool>("password_set"));
     assert!(stable.get::<_, Vec<String>>("connect_databases").is_empty());
-    for family in [
-        WorkloadRoleFamily::App,
-        WorkloadRoleFamily::ManagementAdmitter,
-    ] {
+    {
+        let family = WorkloadRoleFamily::App;
         let role_a = generation_role(family, &fixture.database, CredentialGeneration::A);
         let role_b = generation_role(family, &fixture.database, CredentialGeneration::B);
-        let acl = if family == WorkloadRoleFamily::App {
-            APP_ROLE
-        } else {
-            MANAGEMENT_ADMITTER_ROLE
-        };
-        let parents: &[&str] = if family == WorkloadRoleFamily::App {
-            &[]
-        } else {
-            &[PLATFORM_GROUP_ROLE]
-        };
-        let pair = [role_a.as_str(), role_b.as_str(), acl];
+        let acl = APP_ROLE;
+        let parents: &[&str] = &[];
         assert_ne!(role_a, role_b);
         assert!(!role_a.contains(ENV_KEY));
         provision_project_env::run_workload_action(&request(
@@ -545,9 +457,9 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
         )
         .await;
         assert_role(target, acl, [false; 4], parents, &[&role_a], &[]).await;
-        let mut url_a = secret_url(&fixture, family, CredentialGeneration::A);
+        let url_a = secret_url(&fixture, family, CredentialGeneration::A);
 
-        if family == WorkloadRoleFamily::App {
+        {
             // Guest and provisioning-order assertions share this first prepare.
             let actor = wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
@@ -588,43 +500,6 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 "SELECT wamn_authority.tenant_key($1::text) = wamn_authority.current_tenant_key()", &[&ENV_KEY],
             ).await.unwrap().get(0);
             assert!(matches_row);
-        } else {
-            assert!(
-                target
-                    .query(sql::public_connect_databases_sql(), &[])
-                    .await
-                    .unwrap()
-                    .is_empty()
-            );
-            assert_eq!(
-                direct_acl_set(target, &role_a).await,
-                BTreeSet::from([format!("database:{0}:{0}:CONNECT", fixture.database)])
-            );
-            assert_eq!(direct_acl_set(target, acl).await, expected_stable_acl());
-            drop(login(&url_a, &role_a).await);
-            await_zero_sessions(target, &role_a).await;
-            let before = family_state(target, &pair).await;
-            provision_project_env::run_workload_action(&request(
-                &fixture,
-                family,
-                WorkloadActionVerb::Prepare,
-                CredentialGeneration::A,
-            ))
-            .await
-            .unwrap();
-            assert_eq!(
-                family_state(target, &pair).await,
-                before,
-                "prepare replay changed the family"
-            );
-            let replayed = secret_url(&fixture, family, CredentialGeneration::A);
-            assert_ne!(
-                replayed, url_a,
-                "prepare replay must mint a fresh credential"
-            );
-            drop(login(&replayed, &role_a).await);
-            await_zero_sessions(target, &role_a).await;
-            url_a = replayed;
         }
 
         provision_project_env::run_workload_action(&request(
@@ -658,18 +533,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 .get::<_, Vec<String>>("member_roles"),
             [role_a.as_str(), role_b.as_str()]
         );
-        if family == WorkloadRoleFamily::ManagementAdmitter {
-            let before = family_state(target, &pair).await;
-            provision_project_env::run_workload_action(&request(
-                &fixture,
-                family,
-                WorkloadActionVerb::Retire,
-                CredentialGeneration::A,
-            ))
-            .await
-            .expect_err("retire without a serving replacement refuses");
-            assert_eq!(family_state(target, &pair).await, before);
-        }
+
         let serving = login(&url_b, &role_b).await;
         provision_project_env::run_workload_action(&request(
             &fixture,
@@ -688,52 +552,9 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
         );
         drop(serving);
         await_zero_sessions(target, &role_b).await;
-
-        if family == WorkloadRoleFamily::ManagementAdmitter {
-            assert!(direct_acl_set(target, &role_a).await.is_empty());
-            assert!(
-                tokio_postgres::connect(&url_a, NoTls).await.is_err(),
-                "retired URL authenticates"
-            );
-            let settled = family_state(target, &pair).await;
-            provision_project_env::run_workload_action(&request(
-                &fixture,
-                family,
-                WorkloadActionVerb::Retire,
-                CredentialGeneration::A,
-            ))
-            .await
-            .expect_err("retire replay refuses");
-            assert_eq!(family_state(target, &pair).await, settled);
-            provision_project_env::run_workload_action(&request(
-                &fixture,
-                family,
-                WorkloadActionVerb::Abort,
-                CredentialGeneration::B,
-            ))
-            .await
-            .unwrap();
-            assert_role(target, &role_b, [false, true, false, true], &[], &[], &[]).await;
-            assert_role(target, acl, [false; 4], parents, &[], &[]).await;
-            assert!(
-                tokio_postgres::connect(&url_b, NoTls).await.is_err(),
-                "aborted URL authenticates"
-            );
-            assert_eq!(direct_acl_set(target, acl).await, expected_stable_acl());
-            assert_eq!(
-                secret_json(&secret_path(&fixture, family, CredentialGeneration::B)),
-                render_management_admitter_secret_manifest(
-                    &Triple::new(ORG, PROJECT, ENVIRONMENT),
-                    "wamn-system",
-                    &url_b
-                ),
-            );
-        } else {
+        {
             // The next family and administration use the same populated project database.
-            target.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
-                WHERE rolname = 'wamn_scenario_author') THEN \
-                CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                NOBYPASSRLS; END IF; END $$; \
+            target.batch_execute(" \
                 CREATE SCHEMA wamn_run; CREATE SCHEMA unrelated; \
                 CREATE TABLE wamn_run.environment_policies (id bigint); \
                 CREATE TABLE wamn_run.runs (id bigint); CREATE TABLE wamn_run.run_queue (id bigint); \

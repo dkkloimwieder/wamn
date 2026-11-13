@@ -68,7 +68,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('platform', 'catalog', 'identity', 'wamn_run')) \
-         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_http_admitter'))",
+         OR EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_app', 'wamn_http_admitter'))",
         &[],
     ).await?.get(0);
     anyhow::ensure!(
@@ -79,7 +79,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
         .batch_execute(
             "CREATE EXTENSION pg_stat_statements; \
          CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+          \
          CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

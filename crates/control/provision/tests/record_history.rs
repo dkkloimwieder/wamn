@@ -10,7 +10,7 @@ fn fresh_control_history_stamps_production_writes() {
     let database = wamn_test_postgres::database();
     database.execute(&[
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;",
-        &wamn_control_provision::sql::ensure_control_author_acl_role_sql(),
+
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO wamn_system',current_database()); END $$; SET ROLE wamn_system;",
         CONTROL_BOOTSTRAP_SQL[0], CONTROL_BOOTSTRAP_SQL[1], "RESET ROLE",
@@ -20,8 +20,6 @@ fn fresh_control_history_stamps_production_writes() {
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
         INSERT INTO catalog.tenant_environments (env_key,org,project,env,instance_suffix,disposable,environment_instance) VALUES ('history','org','project','dev','abcdefgh',false,'');
-        INSERT INTO catalog.authoring_command_audit (env_key,command_id,command_type,principal_id,principal_type,principal_subject,effective_role,org,project,environment,target_ref,request_hash,outcome_bytes) VALUES ('history','command','gate','actor','user','actor','project-author','org','project','dev','target','sha256:'||repeat('a',64),'outcome');
-        INSERT INTO wamn_run.gate_reports (env_key,wiring_hash,passed,summary) VALUES ('history','sha256:'||repeat('a',64),true,'{}');
         INSERT INTO wamn_authority.author_login_tenants (login_identity,env_key,org_id,project_id,environment) VALUES ('login','history','org','project','dev');
     ",
         "COMMIT",
@@ -29,8 +27,6 @@ fn fresh_control_history_stamps_production_writes() {
     let actor = PlatformComponent::Provisioning.principal_id();
     for relation in [
         "catalog.tenant_environments",
-        "catalog.authoring_command_audit",
-        "wamn_run.gate_reports",
         "wamn_authority.author_login_tenants",
     ] {
         database.execute(&[&format!("DO $$ BEGIN ASSERT (SELECT count(*)=1 AND bool_and(created_by='{actor}'::uuid AND updated_by='{actor}'::uuid AND created_at=updated_at AND isfinite(created_at)) FROM {relation}), '{relation}: stamps'; END $$;")]).unwrap();
@@ -55,7 +51,6 @@ fn fresh_run_history_stamps_rows() {
     database
         .execute(&[
             &wamn_control_provision::sql::ensure_app_acl_role_sql(),
-            wamn_schema_control::ensure_scenario_author_role_sql(),
             wamn_catalog::CATALOG_SCHEMA_SQL,
             include_str!("../../../../deploy/sql/run-state.sql"),
             include_str!("../../../../deploy/sql/run-queue.sql"),

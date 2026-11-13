@@ -1296,7 +1296,7 @@ Unknown replay information grants no retry.
 An operation without an HTTP route remains visible as unexposed.
 Event handlers do not become operator actions.
 
-The shared request builder canonicalizes typed UUID, timestamp, and numeric input through `wamn-client`.
+The generated web client prepares typed UUID, timestamp, and numeric input.
 The invocation layer canonicalizes bytes and does not reinterpret field types.
 The current client submits one outer envelope item, while nested repeated fields remain supported.
 Cursors remain opaque and reset when filters or sorting change.

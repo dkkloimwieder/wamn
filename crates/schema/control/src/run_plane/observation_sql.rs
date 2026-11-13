@@ -1,12 +1,5 @@
 //! Read PostgreSQL catalog facts for run-plane reconciliation.
 
-/// Security attributes of the host-only scenario-author role (zero or one row).
-pub fn select_scenario_author_role_sql() -> &'static str {
-    "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, \
-            rolreplication, rolbypassrls \
-       FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author'"
-}
-
 // --- Dispatcher read-principal observation (wamn-0h0g.12.123) ----------------
 //
 // `$2` carries the ROLE NAME instead of the inline literal every neighbouring
@@ -24,20 +17,12 @@ pub fn select_scenario_author_role_sql() -> &'static str {
 // the repair on every pass without converging. That is wamn-0h0g.12.40
 // exactly, and it was only ever caught by a live gate.
 
-/// Whether guest-visible `wamn_app` inherits the host-only author role.
-pub fn select_app_scenario_author_membership_sql() -> &'static str {
-    "SELECT COALESCE(pg_catalog.pg_has_role( \
-        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app'), \
-        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author'), \
-        'MEMBER'), false)"
-}
-
 /// Direct grants on the managed authoring/release boundary. `$1` is the project
 /// run-plane schema; PUBLIC is included so stale ambient writes are visible.
 pub fn select_authoring_table_privileges_sql() -> &'static str {
     "SELECT table_schema, table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
-      WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
+      WHERE grantee IN ('PUBLIC', 'wamn_app') \
         AND ((table_schema = 'catalog' AND table_name IN \
               ('packages', 'package_migrations', 'releases', \
                'connection_requirement', 'release_connection', \
@@ -60,7 +45,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
+      WHERE actor.rolname IN ('wamn_app') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'releases', \
                'connection_requirement', 'release_connection', \
@@ -84,7 +69,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
+      WHERE actor.rolname IN ('wamn_app') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'releases', \
                'connection_requirement', 'release_connection', \
@@ -126,7 +111,7 @@ pub fn select_run_capture_privileges_sql() -> String {
            SELECT pg_catalog.to_regclass(pg_catalog.format('%I.runs', $1::text)) AS oid \
          ), boundary_roles AS ( \
            SELECT oid FROM pg_catalog.pg_roles \
-            WHERE rolname IN ('wamn_app','wamn_scenario_author') \
+            WHERE rolname IN ('wamn_app') \
          ), capture AS ( \
            SELECT attribute.attnum \
              FROM target \
@@ -214,21 +199,6 @@ pub fn select_app_run_queue_authority_sql() -> &'static str {
         WHERE attribute.attnum > 0 AND NOT attribute.attisdropped \
           AND (acl.grantee = 0 OR acl.grantee = (SELECT oid FROM app)) \
      )"
-}
-
-/// Effective schema USAGE for the host-only author role on catalog and `$1`.
-/// OID overloads make an absent role/schema a false row rather than an error,
-/// preserving strictly read-only from-zero dry runs.
-pub fn select_scenario_author_schema_usage_sql() -> &'static str {
-    "SELECT target.schema_name, \
-            COALESCE(pg_catalog.has_schema_privilege( \
-                author.oid, namespace.oid, 'USAGE'), false) \
-       FROM (VALUES ('catalog'::text), ($1::text)) AS target(schema_name) \
-       LEFT JOIN pg_catalog.pg_namespace AS namespace \
-         ON namespace.nspname = target.schema_name \
-       LEFT JOIN pg_catalog.pg_roles AS author \
-         ON author.rolname = 'wamn_scenario_author' \
-      ORDER BY target.schema_name"
 }
 
 /// Every ordinary table + column in `$1`: `(relname, attname, not-null,
