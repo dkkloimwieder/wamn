@@ -629,6 +629,6 @@ The wash-runtime fork is removed at `45e2227f2`.
 The earlier run logs do not verify these later changes.
 
 Final GKE verification (wamn-8h4h6.4): not run. On 2026-11-12 the owner closed the epic without it.
-The kind stage passed at `b94833fd3`: registry-image-kind, control_operations_kind, platform_apply_kind, and platform_upgrade_kind.
+The kind stage passed at `b94833fd3`: the registry image checks, control_operations_kind, platform_apply_kind, and platform_upgrade_kind.
 
 Completion point: epic/dep7 merged to main on 2026-11-12.

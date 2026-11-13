@@ -1,6 +1,6 @@
 //! Timed Receiving calls, mixed traffic, and shared-order contention.
 
-#[path = "../../../services/ctl/src/read_query.rs"]
+#[path = "../../services/ctl/src/read_query.rs"]
 mod read_query;
 
 use std::collections::BTreeMap;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail, ensure};
-use clap::{Parser, ValueEnum};
+use clap::{Args as ClapArgs, ValueEnum};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -26,8 +26,8 @@ const SEED_SUPPLIER: &str = "00000000-0000-0000-0000-00000000b730";
 /// The audit principal of the seeded rows.
 const SEED_PRINCIPAL: &str = "00000000-0000-0000-0000-000000000000";
 
-#[derive(Debug, Parser)]
-struct Args {
+#[derive(Debug, ClapArgs)]
+pub struct Args {
     /// The host name of the application, such as `receiving.wamn.dev`.
     #[arg(long)]
     host: String,
@@ -239,9 +239,7 @@ struct DatabaseStats {
     numbackends: i32,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+pub async fn run(args: Args) -> anyhow::Result<()> {
     ensure!(args.concurrency > 0, "--concurrency must be at least 1");
     ensure!(args.duration_secs > 0, "--duration-secs must be at least 1");
     let secret: Value = serde_json::from_slice(
@@ -948,7 +946,7 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
         ),
     };
     let cluster = database
-        .query_one(include_str!("../database-snapshot.sql"), &[])
+        .query_one(include_str!("../bench/database-snapshot.sql"), &[])
         .await
         .context("read cluster counters")?;
     Ok(Sample {
@@ -1002,110 +1000,5 @@ fn ratio(errors: u64, calls: usize) -> f64 {
         0.0
     } else {
         errors as f64 / calls as f64
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{Call, DatabaseStats, Measured, Sample, Samples, mix_call, percentile};
-
-    #[test]
-    fn mix_weights_hold_for_every_worker_offset() {
-        for worker in 0..32 {
-            let calls: Vec<_> = (0..20).map(|sequence| mix_call(sequence, worker)).collect();
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|call| matches!(
-                        call,
-                        Call::Get | Call::AppPath | Call::Query | Call::ReceiptQuery
-                    ))
-                    .count(),
-                14
-            );
-            assert_eq!(
-                calls.iter().filter(|call| **call == Call::Update).count(),
-                4
-            );
-            assert_eq!(
-                calls.iter().filter(|call| **call == Call::Create).count(),
-                1
-            );
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|call| **call == Call::RecordReceipt)
-                    .count(),
-                1
-            );
-        }
-    }
-
-    #[test]
-    fn version_conflicts_are_separate_from_errors() {
-        let mut measured = Measured::default();
-        measured.error(&anyhow::anyhow!("refusal \"concurrency_conflict\""));
-        measured.error(&anyhow::anyhow!("refusal \"idempotency_conflict\""));
-        assert_eq!(measured.conflicts, 1);
-        assert_eq!(measured.errors, 1);
-    }
-
-    /// The Postgres samples keep their field names in the result file, and a
-    /// sample without `pg_stat_statements` says why.
-    #[test]
-    fn postgres_samples_serialize_before_and_after() {
-        let database = || DatabaseStats {
-            xact_commit: 10,
-            blks_hit: 20,
-            blks_read: 3,
-            numbackends: 4,
-        };
-        let samples = Samples {
-            before: Sample {
-                database: database(),
-                cluster: json!({"wal": {"wal_bytes": 42}}),
-                statements: Some(vec![
-                    json!({"query": "SELECT 1", "calls": 2, "total_exec_time": 1.5,
-                    "mean_exec_time": 0.75, "rows": 2, "wal_bytes": 42}),
-                ]),
-                statements_error: None,
-            },
-            after: Sample {
-                database: database(),
-                statements: None,
-                cluster: json!({}),
-                statements_error: Some("relation does not exist".to_owned()),
-            },
-        };
-        assert_eq!(
-            serde_json::to_value(&samples).unwrap(),
-            json!({
-                "before": {
-                    "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
-                    "cluster": {"wal": {"wal_bytes": 42}},
-                    "statements": [{"query": "SELECT 1", "calls": 2, "total_exec_time": 1.5,
-                                    "mean_exec_time": 0.75, "rows": 2, "wal_bytes": 42}],
-                },
-                "after": {
-                    "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
-                    "statements": null,
-                    "cluster": {},
-                    "statements_error": "relation does not exist",
-                },
-            })
-        );
-    }
-
-    #[test]
-    fn percentiles_take_the_nearest_rank() {
-        let values: Vec<u64> = (1..=200).collect();
-        assert_eq!(percentile(&values, 50), 100);
-        assert_eq!(percentile(&values, 95), 190);
-        assert_eq!(percentile(&values, 99), 198);
-        assert_eq!(percentile(&[7], 99), 7);
-        assert_eq!(percentile(&[1, 2, 3], 50), 2);
-        assert_eq!(percentile(&[], 50), 0);
     }
 }

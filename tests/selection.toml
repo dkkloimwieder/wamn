@@ -12,7 +12,6 @@ targets = [
   { workspace="root", package="wamn-ctl", target="test:reset_lock_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:platform_update", tier="live-postgres" },
   { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
-  { workspace="root", package="wamn-bench", target="bin:wamn-bench", tier="contract" },
   { workspace="root", package="wamn-catalog", target="lib:wamn_catalog", tier="contract" },
   { workspace="root", package="wamn-catalog", target="test:record_history", tier="live-postgres" },
   { workspace="root", package="wamn-catalog", target="test:serving_manifest_digest", tier="contract" },
@@ -26,16 +25,11 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:capability_registry", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:chart_seam_governance", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:component_export_index", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:cranelift_dev", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:package_build", tier="live-postgres" },
-  { workspace="root", package="wamn-conformance-tests", target="test:packages_alone", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:repo_lint", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:test_changes", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:wasmcloud_release_tests", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:wasmtime_source_identity", tier="contract" },
   { workspace="root", package="wamn-package-control", target="lib:wamn_package_control", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="lib:wamn_release_control", tier="live-postgres" },
@@ -641,7 +635,7 @@ inputs = []
 execution = "commands"
 mode = "always"
 always = false
-commands = [["repo-lint", "tools/repo-lint", "run"]]
+commands = [["repo-lint", "cargo", "xtask", "repo-lint", "run"]]
 resource_lock = ""
 
 [[suites]]
@@ -656,7 +650,7 @@ prerequisites = []
 inputs = ["(^|/)Cargo\\.(toml|lock)$"]
 execution = "commands"
 mode = "local"
-commands = [["packages alone", "tools/compile-packages-alone"]]
+commands = [["packages alone", "cargo", "xtask", "compile-packages-alone"]]
 resource_lock = ""
 
 [[suites]]
@@ -771,23 +765,6 @@ commands = [
   ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"],
 ]
 resource_lock = ""
-
-[[suites]]
-id = "docker-guests"
-label = "guests (Dockerfile component-builder)"
-tier = "contract"
-workspace = "apps"
-package = ""
-target = []
-tests = []
-features = []
-prerequisites = []
-inputs = ["^Dockerfile$"]
-execution = "docker-guests"
-mode = "local"
-dockerfile = "Dockerfile"
-stage = "component-builder"
-resource_lock = "docker"
 
 [[suites]]
 id = "platform-kind"

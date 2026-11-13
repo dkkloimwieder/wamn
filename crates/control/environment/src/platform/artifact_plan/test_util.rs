@@ -30,7 +30,7 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
         },
         &chart.0,
     )?;
-    crate::platform_build::prepare_payload(repository, &chart.0)?;
+    crate::platform::artifact_plan::prepare_payload(repository, &chart.0)?;
     let path = chart.0.join("values.yaml");
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
     values["platform"]["ctl"] =

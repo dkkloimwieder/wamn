@@ -2,21 +2,21 @@
 
 This page holds the current baselines of the Receiving benchmark: the tier 2 run on `wamn-dev` with the collector in place, the PostgreSQL minimum, and the local run.
 The procedure for the tier 2 run is in [Google Cloud operations](gcp.md#58-benchmark).
-`tools/bench/tier.sh` writes one result per platform version to `tests/bench/platform-<version>.json`.
+`cargo xtask bench-tier` writes each result in its printed temporary directory.
 Latency is in milliseconds.
 
 ## Local run
 
-Run `tools/bench/local.sh` from this checkout on an eight-core Linux machine.
-It builds release binaries and guests because debug builds do not represent host timing.
+Run `cargo xtask bench-local` from this checkout on an eight-core Linux machine.
+It builds release binaries and guests because debug builds do not represent host timing. It keeps the caller's Cargo target directory.
 It builds the host in a separate Cargo call with the Dockerfile's packages and binaries.
 
-It requires Docker, Helm, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
+It requires Docker, Helm, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
 The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in `deploy/platform/otel-collector.yaml`, and `nginx:1.27-alpine` must already exist locally.
-The script does not pull images.
+The command does not pull images.
 
-The script starts its own PostgreSQL, one NATS with TLS, and collector containers on free loopback ports.
+The command starts its own PostgreSQL, one NATS with TLS, and collector containers on free loopback ports.
 It runs `wamn build` for Receiving before it renders the broker permissions.
 
 At run time, it reads the NATS configuration and memory limit from `deploy/infra/nats-jetstream.yaml`.
@@ -28,23 +28,23 @@ It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operato
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
 Activation supplies the shared host settings described in [development loop](development-loop.md), including the three allocator residency values from the release chart.
 That page also describes the unit test that compares local activation with the rendered deployed host.
-The wrapper only records the process ID and pins the host CPU cores.
+The generated wrapper only records the process ID and pins the host CPU cores.
 The default run sends requests through an nginx container using the configuration rendered from `deploy/platform/edge`.
 The local listener uses plain HTTP on a free loopback port. The chart owns `/api/` removal and Host handling.
 It also owns the single worker and HTTP/1.1 upstream connections without keepalive.
 The container uses host networking to reach the loopback host and mounts the local identity CA.
 There is no load balancer in this local run.
-For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --duration-secs 60`.
+For a direct comparison, run `cargo xtask bench-local --no-edge --concurrency 16 --duration-secs 60`.
 `--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
-The script loads the 1000-order seed and runs get, update, query, record_receipt, and the mix for 60 seconds each at concurrency 16.
-The default run writes `tests/bench/local-<version>.json` in the same format as the platform results.
+The command loads the 1000-order seed and runs get, update, query, record_receipt, and the mix for 60 seconds each at concurrency 16.
+The default run writes `result.json` in its printed temporary directory, in the same format as the platform results.
 Other run modes keep their summaries in the private run directory.
 The raw results and logs stay in a private directory under `TMPDIR`.
-If `TMPDIR` is unset, the script uses `/var/tmp`.
-On exit, the script stops its development processes and removes only its own containers and volumes.
+If `TMPDIR` is unset, the command uses the system temporary directory.
+On exit, the command stops its development processes and removes only its own containers and volumes.
 Each baseline includes throughput, p50, p95, p99, completed calls, errors, and PostgreSQL statement counts per request.
-A `local.sh` result also includes `host_cpu_ms_per_request`. This value is the user and system CPU time of the host process in the timed interval, divided by the completed calls.
+A `cargo xtask bench-local` result also includes `host_cpu_ms_per_request`. This value is the user and system CPU time of the host process in the timed interval, divided by the completed calls.
 The raw results retain guest digests, edge selection, maximum latency, and version conflicts.
 Throughput counts all completed attempts, including errors and conflicts.
 
@@ -117,14 +117,14 @@ It also records `pgbench -r` command timings and transaction mean and maximum la
 Pipeline command timings overlap. Do not add them as independent statement costs.
 Use server statement times and sampled commit durations to explain the replay gap. Compare means, not sums of percentiles.
 
-Run `tools/bench/local.sh --pg-minimum` to measure PostgreSQL without a host, edge, broker, or collector.
+Run `cargo xtask bench-local --pg-minimum` to measure PostgreSQL without a host, edge, broker, or collector.
 It uses the same PostgreSQL image, base parameters, instrumentation, and CPU assignments as the full local run.
 The existing package applier installs Receiving, including its history triggers and generated grants.
 The run loads the 1000-order seed and initializes pgbench at scale 10.
 
 The minimum requires PostgreSQL 18 `pgbench` and uses its prepared protocol.
 It runs select-only, simple-update, get replay, and update replay at concurrency 16 for 60 seconds each.
-The replay scripts live in `tools/bench/pg-minimum/`.
+The replay scripts live in `xtask/bench/pg-minimum/`.
 Their comments describe the captured SQL and parameter choices.
 The update replay retains the host transaction, including the write log and logical message.
 
@@ -141,14 +141,14 @@ Compare select-only and simple-update with the [GCP minimum](#postgres-minimum) 
 Compare the replays with full local get and update to distinguish database work from request-path work.
 These timings use different clients, so subtracting their percentiles does not measure host overhead.
 
-Run `tools/bench/local.sh --app-path` to measure the real host and guest path with a fixed, warm database lookup.
+Run `cargo xtask bench-local --app-path` to measure the real host and guest path with a fixed, warm database lookup.
 This mode loads the size-1 Receiving fixture and seeds one receipt before timing.
 It warms the existing `receipt/get` route and repeatedly reads that receipt.
 It preserves route matching, authentication from memory, component invocation, guest execution, and response handling.
 It calls the host directly, with the deployed collector active, for 60 seconds at concurrency 16.
 The database still participates, and the result reports the time in its related spans as `postgres_mean_ms`.
 
-The application result is `local-app-<version>.json` in the private run directory.
+The application result is `result.json` in the private run directory.
 It includes throughput, p50, p99, maximum latency, guest digests, and host span parts from the collector's local trace file.
 The deployed host keeps sampled parents and samples 10 percent of new traces. The collector does not sample traces.
 The result reads that percentage from the measured host and records `sampled_trace_count` for requests inside the measured interval.
@@ -167,19 +167,19 @@ If the Postgres minimum changes while the application span parts stay stable, in
 If application span parts change while the minimum stays stable, investigate those host or guest parts.
 If only the full run changes, inspect its application SQL, payload, and edge behavior.
 
-Run `tools/bench/local.sh --mix --profile` and `tools/bench/local.sh --call update --profile` for function profiles.
+Run `cargo xtask bench-local --mix --profile` and `cargo xtask bench-local --call update --profile` for function profiles.
 The profiling host uses the Dockerfile's packages and features, release optimization, line-table debug information, and frame pointers.
-Its Cargo target directory is `/var/tmp/wamn-h2r2l/host-target`, separate from the normal release build.
-The script records the binary hash, source revision, working diff, and build duration.
-Profiling guests keep function names through `RUSTFLAGS=-C strip=none` and use a separate `host-target/guests` directory.
-Their release optimization and features stay unchanged. Their recorded digests differ because their symbol sections remain.
+It uses the caller's Cargo target directory.
+The command records the binary hash, source revision, working diff, and build duration.
+The component builder supplies the same checked guest artifacts as package builds.
+The command records their digests.
 
 The profiling build sets `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`.
 Wamn's engine uses this existing Cargo setting to select Wasmtime's `PerfMap` profiler.
 The pinned wash-runtime has no profiling environment switch, so Wamn supplies its existing Wasmtime configuration hook.
 Ordinary builds keep the default profiler. The change does not modify upstream source.
 The required `/tmp/perf-<pid>.map` is a temporary link to `guest.map` in the private run directory.
-The script removes its own link at shutdown.
+The command removes its own link at shutdown.
 Later raw-data decoding needs that link again. The saved text reports already contain the guest symbols.
 
 Wasmtime truncates guest names at 96 characters.
@@ -187,7 +187,7 @@ The name resolver matches each function index and exact truncated name against t
 Ambiguous and unmatched names remain unchanged. The resolver records those counts and retains the raw stacks.
 
 Recording starts after seed and calibration work, at the benchmark's start marker.
-The script samples user CPU at 99 Hz with `perf record --call-graph fp`.
+The command samples user CPU at 99 Hz with `perf record --call-graph fp`.
 If more than 10% of stacks are short or contain an unknown frame, it repeats the call with `--call-graph dwarf,16384`.
 The repeat has its own timing result. Receipt commands seed new orders for each run.
 
@@ -202,7 +202,7 @@ It measures CPU cost, not allocation counts or bytes, and needs no root probes o
 
 The machine needs `perf`, `wasm-tools`, and `rustfilt` on `PATH`.
 It needs `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
-The script refuses profiling when `/proc/sys/kernel/perf_event_paranoid` exceeds 1.
+The command refuses profiling when `/proc/sys/kernel/perf_event_paranoid` exceeds 1.
 All profile files stay in the private run directory under `/var/tmp/wamn-h2r2l/`.
 
 ## Platform baseline
@@ -217,7 +217,7 @@ Receiving ran on `wamn-dev` with every host exporting spans to the collector. Th
 
 ## Local baseline
 
-The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.102.json). It ran on main 9c15c5bf0 (platform 0.1.102) with `local.sh --call get --call update --no-edge`, at concurrency 16 for 60 seconds per call, with 0 errors.
+The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.102.json). It ran on main 9c15c5bf0 (platform 0.1.102) with `cargo xtask bench-local --call get --call update --no-edge`, at concurrency 16 for 60 seconds per call, with 0 errors.
 
 | Call | Throughput | p50 | p95 | p99 | Statements per request | Host CPU ms per request |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -226,8 +226,8 @@ The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.10
 
 ## Postgres minimum
 
-`tools/bench/pg-minimum/gcp.sh` runs the replays of `local.sh --pg-minimum` against `wamn-pg-1` on GCP tier 2.
-PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `tools/bench/pg-minimum/gcp-client.yaml` on pool `bench`.
+`cargo xtask bench-pg-minimum` runs the replays of `cargo xtask bench-local --pg-minimum` against `wamn-pg-1` on GCP tier 2.
+PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `xtask/bench/pg-minimum/gcp-client.yaml` on pool `bench`.
 The runner installs Receiving into its own database `wamn_pg_minimum`. The environment databases keep the Cluster statistics settings.
 The newest result is [`gcp-pg-0.1.36-c8a5v.2.json`](../history/evidence/bench/gcp-pg-0.1.36-c8a5v.2.json). Each call ran at concurrency 16 for 60 seconds with 0 errors.
 The row "update, triggers off" is the update replay with both record-history triggers disabled. It ran after the update replay on the same data.

@@ -301,8 +301,13 @@ async fn main() -> anyhow::Result<()> {
             "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
         }}}))?,
     )?;
-    require_success(Command::new(repository.join("tools/dev-collector")).arg(&compose.environment))
-        .await?;
+    require_success(
+        Command::new("cargo")
+            .current_dir(repository)
+            .args(["xtask", "dev-collector"])
+            .arg(&compose.environment),
+    )
+    .await?;
     ensure!(
         require_success(compose.command().args(["ps", "--all", "--quiet"]))
             .await?

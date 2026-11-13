@@ -281,7 +281,7 @@ impl Drop for EffectOutcomeGuard {
 /// the older `wamn.postgres.query.duration_ms` does. Nothing consumed these
 /// surfaces before, so unlike the postgres one they carry no frozen contract.
 ///
-/// They live HERE rather than beside their plugins because `tools/repo-lint`
+/// They live HERE rather than beside their plugins because `cargo xtask repo-lint`
 /// refuses ANY `static` / `LazyLock` / `OnceLock` in `connection_http.rs` — a
 /// deliberately coarse rule that keeps a credentialed HTTP client from ever
 /// being cached process-wide. Keeping them together honours it without

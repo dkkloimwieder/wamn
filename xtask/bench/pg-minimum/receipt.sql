@@ -1,6 +1,6 @@
 -- The record_receipt replay (perf-arch.md M7). The statement sequence was
 -- captured from pg_stat_statements: local f025f5876, c16, 60 s, 2026-10-18.
--- gcp.sh puts apps/wamn_receiving/command/record_receipt/record_receipt.sql
+-- cargo xtask bench-pg-minimum puts apps/wamn_receiving/command/record_receipt/record_receipt.sql
 -- in place of the marker line, with its four parameters bound as below.
 -- Finish precedes emit, as operation_transaction.rs queues the commit batch.
 -- The slot SELECT runs before BEGIN and is part of pgbench latency.

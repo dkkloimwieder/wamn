@@ -1,4 +1,4 @@
-//! Repository policy lints that `tools/repo-lint` runs through the `repo-policy`
+//! Repository policy lints that `cargo xtask repo-lint` runs through the `repo-policy`
 //! binary.
 //!
 //! These lints enforce file-location conventions and version identities from

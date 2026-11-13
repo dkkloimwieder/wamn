@@ -65,7 +65,9 @@ pub async fn publish_from_env(
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };
     let artifact_base = variable("WAMN_PACKAGE_ARTIFACT_BASE")?;
-    let insecure_registry = wamn_environment_control::platform_build::loopback(&artifact_base);
+    let insecure_registry = url::Url::parse(&format!("http://{artifact_base}"))?
+        .host_str()
+        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
     let registry = PackageRegistry {
         artifact_base,
         credentials: None,

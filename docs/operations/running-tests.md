@@ -7,7 +7,7 @@ Run commands from the repository root unless a command changes directories.
 Before a test run, prepare the checkout once from its repository root:
 
 ```bash
-eval "$(tools/lane-start "$PWD")"
+eval "$(cargo xtask lane-start "$PWD")"
 ```
 
 The script initializes submodules and selects the Cargo cache directory.
@@ -15,7 +15,7 @@ It runs no builds, web installation, or database.
 It exports `CARGO_TARGET_DIR` and `WAMN_CHECKOUT_KEY`.
 Cargo output lies in `$CARGO_TARGET_DIR`, so the commands below use that path and not `target/` or `apps/target`.
 `wamn build` still writes package output to `apps/target/wamn`.
-After the package build, `tools/test-changes` runs `wamn web build` for each selected application with `web/package.json`.
+After the package build, `cargo xtask test-changes` runs `wamn web build` for each selected application with `web/package.json`.
 The standalone web artifacts supply browser files for the developer session tests.
 Selected tests supply their own preparation from `tests/selection.toml`.
 
@@ -26,14 +26,14 @@ For mechanical edits, compare source, paths, and syntax.
 Do not repeat builds or tests without a new behavior change or concrete failure.
 Cleanup boundaries do not require broad test runs.
 
-`tools/test-changes` selects suites and builds their inputs before tests run.
+`cargo xtask test-changes` selects suites and builds their inputs before tests run.
 The change set is the working tree against `git merge-base HEAD main`, or against the commit that `--base REF` names.
 It includes committed, staged, unstaged, deleted, and untracked files.
 
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `tools/compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
+- Any `Cargo.toml` or `Cargo.lock` also runs `cargo xtask compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
 - Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies. Changes to `wit/wamn-router-delivery-0.4/`, `wit/wamn-application-dispatch/`, and materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.
@@ -54,13 +54,9 @@ An explicit `--tier` filters executable targets within each selected package.
 Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
 Use `--tier T[,T]` to select one or more tiers.
 The tool builds the guests that selected suites need.
-`tools/repo-lint` also compiles guest targets that disable Cargo tests.
+`cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
-If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
-These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
-The stage makes sure of the router pin, as the guest build of `wamn build` does.
-Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
-`tools/test-changes --tier kind` runs no guest build.
+The platform producer builds both role components through the package component builder.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
@@ -75,10 +71,10 @@ Web changes select repository web lint, runtime tests, and platform UI lint, tes
 Full-workspace lint is an explicit integration operation:
 
 ```bash
-tools/test-changes --suite quality
+cargo xtask test-changes --suite quality
 ```
 
-The quality suite runs `tools/repo-lint run` without application preparation.
+The quality suite runs `cargo xtask repo-lint run` without application preparation.
 Prepare generated application inputs through their owning build commands before full-workspace Clippy.
 
 The tool builds native binaries, application packages, and guests only when selected targets or suites need them.
@@ -109,8 +105,8 @@ This selects only those suites and their preparation steps.
 The migration validator and database executor need no application, web, device, or platform preparation:
 
 ```bash
-tools/test-changes --suite migration-policy
-tools/test-changes --suite package-executor
+cargo xtask test-changes --suite migration-policy
+cargo xtask test-changes --suite package-executor
 ```
 
 These suites run `migration_policy` and `apply_package_live`, respectively.
@@ -118,12 +114,12 @@ A source diff still selects dependent packages and their integration inputs.
 Run the Receiving and WMS proof from the repository root:
 
 ```bash
-tools/test-changes --suite receiving-business,wms-local
+cargo xtask test-changes --suite receiving-business,wms-local
 ```
 
 Append `dry-run` to print the preparation commands and test filters without execution.
 The runner executes suites that declare `ignored = true` with `--ignored`.
-Every suite test command passes through `tools/require-test-result`.
+Every suite test command passes through `cargo xtask require-test-result`.
 Only selector discovery uses `--list`, which executes no tests.
 
 For direct Cargo commands or artifact comparisons, set these overrides explicitly.
@@ -161,42 +157,24 @@ The `operator_inputs` table in the selection file documents credentials, externa
 The runner does not create those operator inputs.
 
 Other cross-package file readers still need explicit path rules.
-`tools/test-changes dry-run` prints the selected commands.
-`tools/test-changes run` reports each step and returns a nonzero status if any command fails.
+`cargo xtask test-changes dry-run` prints the selected commands.
+`cargo xtask test-changes run` reports each step and returns a nonzero status if any command fails.
 Each required command must report at least one executed passing case and exit successfully.
 Missing packages, targets, and exact test names fail before any test runs.
-The same rule applies to contract-diff, owned delivery, and the upstream release tests.
-`tools/require-test-result` streams child output immediately, keeps a private temporary copy for result tests, and removes the copy after completion.
+The same rule applies to the component contract and upstream release commands.
+`cargo xtask require-test-result` streams child output and checks the libtest summary after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
-`tools/test-changes` is the broad test before integration, and it runs once per merge.
+`cargo xtask test-changes` is the broad test before integration, and it runs once per merge.
 Every merge runs the install render tests in the prekind suite.
-`tools/test-revision` runs it on a committed revision.
 Implementation work runs only fmt, Clippy and the tests of the packages that it changed before handoff.
 Merges are fast-forward after reviewer acceptance.
-
-`tools/test-revision REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-test-revision/worktree`.
-Its default base is the merge base of `REF` and `origin/main`.
-If `origin/main` is absent, it uses local `main`.
-If that worktree already exists, the tool refuses and names its path.
-It initializes submodules and reuses `$HOME/.cache/wamn-target/revision` between runs.
-The fixed worktree path keeps compiled source paths valid between runs.
-It stores logs in a temporary directory under `/var/tmp`.
-If the selected suites need web packages, it runs `pnpm install --offline` there.
-Before the test stage, it runs `cargo run --offline -p wamn-submodule-pins -- main` with initialized submodules.
-It then runs `tools/test-changes run --base BASE` in that worktree.
-It prints a PASS or FAIL table with UTC start and end times for each step.
-After success, it removes the worktree and keeps the logs and Cargo target directory.
-It prints the path of the retained logs.
-After failure, it prints the retained worktree path and keeps its logs and build files.
-It uses committed files from `REF`, so commit tool changes before testing them through this runner.
-Run `tools/test-revision-test` for offline self-tests with fake external commands.
 
 The client compatibility test reads the current generated widget update schema at run time.
 Its preparation step builds the platform fixture and supplies the schema path.
 
-`tools/test-changes --tier kind` selects the kind targets of affected packages.
+`cargo xtask test-changes --tier kind` selects the kind targets of affected packages.
 It runs ignored cases one at a time.
 When an exact kind suite selects the aggregate journey, that suite owns the target and the root command omits it.
 A name filter that selects focused cases instead omits the aggregate suite.
@@ -242,13 +220,13 @@ cargo test --manifest-path apps/Cargo.toml --locked --offline \
 ```
 
 The application READMEs identify additional tests and binary owners.
-Use `tools/repo-lint dry-run` to see its exact commands without executing them.
-`tools/repo-lint run` runs formatting and Clippy across all three workspaces.
+Use `cargo xtask repo-lint dry-run` to see its exact commands without executing them.
+`cargo xtask repo-lint run` runs formatting and Clippy across all three workspaces.
 It then runs dependency boundaries and `repo-policy` for file-location conventions and version identities.
 It reports each command and returns a nonzero status if any command fails.
 The full schema files own fresh platform installations.
 
-Before integration, `tools/test-revision` runs the submodule guard with Git history and initialized submodules.
+Before integration, `cargo xtask test-changes` runs the submodule guard with Git history and initialized submodules.
 Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.
 
 ## What a test asserts
@@ -258,7 +236,7 @@ The expected value of the test must not come from the code under test.
 
 - No test compares source text, DDL text, or a generated file to a string.
 - A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
-- A source or repository policy test is a lint in `tools/repo-lint`, not a test.
+- A source or repository policy test is a lint in `cargo xtask repo-lint`, not a test.
 - A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
 - A new live test must not repeat an existing one. Extend the existing test when a rule has no other test.
 
@@ -404,7 +382,7 @@ A target with no tests takes unit.
 Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
 `platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
 It never runs for a single fix.
-Both runners use the shared process boundary in `tools/require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
+Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
 It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
@@ -419,13 +397,14 @@ An ignore reason lists only prerequisites in the fixed form `requires: bin:<prog
 The test requires every listed program and nonempty environment variable before setup, and missing prerequisites fail the test.
 The tier lives only in `tests/selection.toml`.
 
-To run kind targets in selected packages, use `tools/test-changes --tier kind`.
+To run kind targets in selected packages, use `cargo xtask test-changes --tier kind`.
 They run one at a time.
 To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
 
 Run the generated exclusion test of the platform fixture through its PostgreSQL fixture:
 
 ```bash
+cargo build --locked --offline -p xtask
 cargo run --locked --offline -p wamn-test-infrastructure --example exclusion_diagnostics
 ```
 
@@ -440,6 +419,7 @@ The application schemas and generated files in the checkout do not change.
 Run the generated exclusion test of Receiving through its own PostgreSQL fixture:
 
 ```bash
+cargo build --locked --offline -p xtask
 cargo run --locked --offline -p wamn-receiving-tests --example exclusion_diagnostics
 ```
 
@@ -497,7 +477,7 @@ The sweep runs no [ignored test](#ignored-tests), because each one needs inputs 
 The ignored tests run in [the live stage](#the-live-stage).
 `--nocapture` shows the output of each test.
 
-Run selected kind tests separately with `tools/test-changes --tier kind run`.
+Run selected kind tests separately with `cargo xtask test-changes --tier kind run`.
 Tell other sessions before the run because concurrent clusters overload the machine.
 Receiving and WMS retain their native business cases in the live-nats tier.
 
@@ -513,12 +493,12 @@ Do not compare with the log of an earlier closeout, because the commits of other
 If the user requests the separate contract command, run it after the sweep, including when the sweep fails:
 
 ```bash
-tools/contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
+cargo xtask contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
 ```
 
 It runs the guest `http-route` adversarial tests.
 The guest test belongs to another workspace, so the root sweep cannot reach it.
-`tools/contract-diff dry-run` only prints the commands.
+`cargo xtask contract-diff dry-run` only prints the commands.
 
 Report failures, ignored cases, explicit skips, filtered cases, and executed passes separately.
 Report each failure's package, target, full test name, and actual cause.
@@ -671,23 +651,6 @@ Invalid SQL refuses preparation before replacement.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
 This correctness case does not report performance measurements.
 
-### Bounded HTTP reuse
-
-Use the exact debug integration test binary and debug `http_request.wasm` from the intended build.
-Keep source unchanged between that build and both runs.
-The runner requires the local `registry:2` image.
-Each test starts its own PostgreSQL server from the local PostgreSQL 18 binaries.
-Replace `<hash>` below with the exact suffix from the integration test build.
-
-```bash
-export WAMN_HTTP_REUSE_TEST_BINARY="$CARGO_TARGET_DIR/debug/deps/wamn_integration_tests-<hash>"
-export WAMN_HTTP_REUSE_COMPONENT_WASM="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_request.wasm"
-bash tools/http-reuse-run trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority
-```
-
-Each command creates a fresh registry container, runs its exact test, and removes only owned containers and volumes.
-These cases test connection reuse and authority isolation without measuring throughput.
-
 ### Platform and environment apply on kind
 
 These tests drive product commands and observe the deployed cluster.
@@ -835,7 +798,7 @@ A CLI-only change rebuilds the native binaries and the affected test executable.
 It reuses the installed platform and its prepared chart and images.
 An in-cluster deployment change requires a new ctl image.
 Host, identity, and role-component changes require their affected images.
-Produce those artifacts with `build-platform`, then install another disposable platform through the product command.
+Produce those artifacts with `cargo xtask build-platform`, then install another disposable platform through the product command.
 Never overwrite the prepared chart of an existing platform.
 A fixture change rebuilds the affected application artifacts through the test's product publication path.
 
@@ -859,7 +822,7 @@ In a scratch source tree, add one SQL file under each of `deploy/sql/migrations/
 Each file must create one probe table and insert one row.
 Keep the initialization SQL and existing migration files unchanged.
 Rebuild and publish only the `ctl` image from that tree.
-Use `build-platform` to stamp chart B with that image and every other image from chart A.
+Use `cargo xtask build-platform` to stamp chart B with that image and every other image from chart A.
 Set `WAMN_RELEASE_CHART` to chart B.
 
 DEP5-06 adds `platform_schema_kind` with its body in `support/platform_schema.rs`.
@@ -1373,7 +1336,7 @@ Remove only that worktree and its owned target after no process uses them.
 
 ## Benchmarks
 
-`tools/bench` owns benchmark programs and scripts.
+`cargo xtask bench` runs benchmarks. The `bench-*` commands collect and summarize measurements. SQL replay inputs live in `xtask/bench/`.
 
 ## Host and package runtime
 

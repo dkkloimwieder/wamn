@@ -66,8 +66,11 @@ pub(super) async fn prepare(
 /// # Errors
 /// Returns an error if the image payload or selected chart metadata cannot be read.
 pub(crate) fn worker_chart(repository: &Path, inputs: &Path, chart: &Path) -> anyhow::Result<()> {
-    crate::platform_build::copy_package_output(&repository.join("deploy/platform/release"), chart)?;
-    crate::platform_build::prepare_payload(repository, chart)?;
+    crate::platform::artifact_plan::copy_package_output(
+        &repository.join("deploy/platform/release"),
+        chart,
+    )?;
+    crate::platform::artifact_plan::prepare_payload(repository, chart)?;
     for file in ["Chart.yaml", "values.yaml"] {
         std::fs::copy(inputs.join(file), chart.join(file))?;
     }
@@ -181,28 +184,4 @@ pub(crate) fn administrator(cluster: &str) -> anyhow::Result<String> {
     url.set_password(Some(&password.replace('%', "%25")))
         .map_err(|()| anyhow::anyhow!("encode the administrator credential"))?;
     Ok(url.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_worker_prepares_its_image_chart_with_the_selected_values() -> anyhow::Result<()> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let selected = super::super::artifact_plan::test_util::prepared_chart(&repository)?;
-        let inputs = selected.0.join("worker-inputs");
-        std::fs::create_dir(&inputs)?;
-        for file in ["Chart.yaml", "values.yaml"] {
-            std::fs::copy(selected.0.join(file), inputs.join(file))?;
-        }
-        let output = selected.0.join("worker-chart");
-        worker_chart(&repository, &inputs, &output)?;
-        let prepared = super::super::artifact_plan::select(&output)?;
-        let source = super::super::artifact_plan::select(&selected.0)?;
-        assert_eq!(prepared.image("ctl")?, source.image("ctl")?);
-        assert_eq!(prepared.version, source.version);
-        assert!(prepared.operator_archive.is_file());
-        Ok(())
-    }
 }

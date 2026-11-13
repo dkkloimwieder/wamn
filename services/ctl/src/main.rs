@@ -12,8 +12,8 @@ mod project_verbs;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    component_verbs, delivery_verbs, env_verbs, identity_verbs, package_verbs, provisioning_verbs,
-    release_verbs, role_verbs, workflow_verbs,
+    component_verbs, env_verbs, identity_verbs, package_verbs, provisioning_verbs, release_verbs,
+    role_verbs, workflow_verbs,
 };
 
 #[derive(Parser)]
@@ -41,9 +41,6 @@ enum Command {
     /// Execute one server-authorized application operation in a worker Job.
     #[command(hide = true)]
     Operation(OperationArgs),
-    /// Build and push the platform images and stamp them into the release
-    /// chart's defaults.
-    BuildPlatform(delivery_verbs::BuildPlatformArgs),
     /// Install the control store into an empty system database and record its platform domain
     ProvisionSystem(provisioning_verbs::ProvisionSystemArgs),
     /// Inspect or apply the system SQL embedded in this image.
@@ -166,7 +163,6 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&result)?);
             Ok(())
         }
-        Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
         Command::SystemSchema(command) => {
             platform_verbs::run_system_schema(command, std::io::stdout().lock()).await
