@@ -753,6 +753,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-page"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "http-request"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "http-route"
 version = "0.1.0"
 dependencies = [
@@ -968,6 +984,14 @@ dependencies = [
  "jsonata-core",
  "serde_json",
  "wamn-catalog",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "label-render"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
  "wit-bindgen 0.62.0",
 ]
 
@@ -1810,6 +1834,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transform"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1949,6 +1981,13 @@ dependencies = [
  "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "wamn-modbus"
+version = "0.1.0"
+dependencies = [
  "wit-bindgen 0.62.0",
 ]
 

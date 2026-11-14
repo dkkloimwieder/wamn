@@ -81,7 +81,7 @@ The tool builds native binaries, application packages, and guests only when sele
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
 The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
-It builds the three HTTP workflow guests under `$CARGO_TARGET_DIR/no-std`.
+It builds the three HTTP workflow guests from `apps/Cargo.toml` under `$CARGO_TARGET_DIR`.
 It copies those debug guests to the root target path that the native host test reads.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.

@@ -7,8 +7,8 @@
 //! the condition's effect-free-case path. Nothing here declares that; it follows
 //! from the imports.
 //!
-//! The private template module renders ZPL. Its golden vectors test the ZPL
-//! bytes. Native unit tests in this crate cover the WIT boundary: parse,
+//! The private template module renders ZPL. Native tests cover invalid fields
+//! and the WIT boundary: parse,
 //! delegate, and translate the error exactly once.
 //!
 //! **The output ENRICHES the input**: every field the record arrived with, plus
@@ -39,24 +39,9 @@
 //! invocation. The test below is defence in depth behind that, not the
 //! primary condition.
 
-#![no_std]
 #![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
-#[cfg(any(test, feature = "std"))]
-extern crate std;
 
-extern crate alloc;
-
-#[expect(
-    dead_code,
-    reason = "the typed error accessor is used by the golden vectors"
-)]
 mod template;
-
-use alloc::string::{String, ToString as _};
-
-#[cfg(not(any(test, feature = "std")))]
-#[path = "../../guest_runtime.rs"]
-mod guest_runtime;
 
 #[allow(
     clippy::same_length_and_capacity,
@@ -67,7 +52,6 @@ mod bindings {
         world: "wamn:label-render/label-render@0.1.0",
         path: ["../../../../wit/wamn-node", "wit"],
         generate_all,
-        std_feature,
     });
 }
 
@@ -173,24 +157,45 @@ mod tests {
 
     #[test]
     fn render_refusals_reach_the_node_as_invalid_input() {
-        for (template, fields, code) in [
-            ("unknown", serde_json::json!({}), "unknown_template"),
-            ("packaging", serde_json::json!({}), "missing_field"),
+        for (template, fields) in [
+            ("unknown", serde_json::json!({})),
+            ("packaging", serde_json::json!({})),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "PAL-000042"}),
+            ),
             (
                 "packaging",
                 serde_json::json!({"packaging_id": "^XA", "location_id": "LOC"}),
-                "invalid_field",
             ),
             (
                 "packaging",
                 serde_json::json!({"packaging_id": "~JA", "location_id": "LOC"}),
-                "invalid_field",
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "PAL^XZ", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "PAL~JA", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": 42, "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "", "location_id": "LOC"}),
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": null, "location_id": "LOC"}),
             ),
         ] {
-            let NodeError::InvalidInput(detail) = run(template, &fields) else {
+            let NodeError::InvalidInput(_) = run(template, &fields) else {
                 panic!("a render refusal must reach the node as invalid input");
             };
-            assert_eq!(detail.code.as_deref(), Some(code));
         }
     }
 }

@@ -81,7 +81,6 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for file in [
         "rust-toolchain.toml",
-        "apps/platform/no-std/guest_runtime.rs",
         "apps/platform/no-std/modbus/Cargo.toml",
         "apps/platform/no-std/modbus/src/lib.rs",
         "apps/platform/no-std/modbus/wit/world.wit",
@@ -94,22 +93,21 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         std::fs::copy(repository.join(file), target)?;
     }
     // Keep the fixture independent while inheriting the real workspace identities.
-    let workspace = std::fs::read_to_string(repository.join("apps/platform/no-std/Cargo.toml"))?;
-    let workspace = workspace
-        .lines()
-        .map(|line| {
-            if line.starts_with("members = ") {
-                "members = [\"modbus\"]"
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(root.join("apps/platform/no-std/Cargo.toml"), workspace)?;
+    let workspace = std::fs::read_to_string(repository.join("apps/Cargo.toml"))?;
+    let start = workspace
+        .find("members = [")
+        .context("guest workspace members")?;
+    let end = start
+        + workspace[start..]
+            .find(']')
+            .context("guest workspace members end")?
+        + 1;
+    let mut workspace = workspace;
+    workspace.replace_range(start..end, "members = [\"platform/no-std/modbus\"]");
+    std::fs::write(root.join("apps/Cargo.toml"), workspace)?;
     std::fs::copy(
-        repository.join("apps/platform/no-std/Cargo.lock"),
-        root.join("apps/platform/no-std/Cargo.lock"),
+        repository.join("apps/Cargo.lock"),
+        root.join("apps/Cargo.lock"),
     )?;
     Ok(())
 }

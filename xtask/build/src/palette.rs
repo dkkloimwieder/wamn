@@ -23,21 +23,19 @@ pub struct PaletteComponent {
 
 fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration)>> {
     let mut sources = Vec::new();
-    for workspace in ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"] {
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .manifest_path(repository.join(workspace))
-            .no_deps()
-            .exec()?;
-        for package in metadata.packages {
-            let manifest = package.manifest_path.into_std_path_buf();
-            let Some(directory) = manifest.parent() else {
-                continue;
-            };
-            let path = directory.join("declaration.json.in");
-            if path.is_file() {
-                let declaration = serde_json::from_slice(&fs::read(path)?)?;
-                sources.push((manifest, package.name.to_string(), declaration));
-            }
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(repository.join("apps/Cargo.toml"))
+        .no_deps()
+        .exec()?;
+    for package in metadata.packages {
+        let manifest = package.manifest_path.into_std_path_buf();
+        let Some(directory) = manifest.parent() else {
+            continue;
+        };
+        let path = directory.join("declaration.json.in");
+        if path.is_file() {
+            let declaration = serde_json::from_slice(&fs::read(path)?)?;
+            sources.push((manifest, package.name.to_string(), declaration));
         }
     }
     Ok(sources)
