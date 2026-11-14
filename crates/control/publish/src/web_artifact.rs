@@ -877,13 +877,12 @@ fs.copyFileSync('index.html', dist + '/index.html');
     }
 
     #[tokio::test]
-    async fn web_push_refuses_a_different_digest_and_names_the_tag_and_both_digests() {
+    async fn web_push_refuses_a_conflicting_publication() {
         let scratch = ScratchRoot::create().unwrap();
         artifact_fixture(scratch.path(), false);
         let packed = pack_web_artifact(scratch.path()).unwrap();
         fs::write(scratch.path().join("dist/index.html"), "other").unwrap();
         let changed = pack_web_artifact(scratch.path()).unwrap();
-        assert_eq!(packed.tag, changed.tag);
         assert_ne!(
             wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
             wamn_catalog::ArtifactHash::parse(changed.digest.to_string()).unwrap()

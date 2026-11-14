@@ -83,7 +83,7 @@ pub fn record_composed_entry(
     let mut manifest = published.manifest.clone();
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
         reference: reference.to_owned(),
-        route_digest: entry.route_digest.clone(),
+        route_digest: entry.digest.clone(),
         application: entry.application.clone(),
         members,
     });

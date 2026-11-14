@@ -286,7 +286,6 @@ pub async fn publish_release(
 pub struct ComposedApplication {
     bytes: Box<[u8]>,
     digest: String,
-    route_digest: String,
     application: wamn_catalog::ServingEntryMember,
     application_digests: BTreeSet<String>,
 }
@@ -299,47 +298,30 @@ impl ComposedApplication {
     pub fn digest(&self) -> &str {
         &self.digest
     }
-
-    pub fn application(&self) -> &wamn_catalog::ServingEntryMember {
-        &self.application
-    }
 }
 
-/// Build an HTTP application from an admitted member and pinned platform route bytes.
-///
-/// The member can already contain its admitted bases. The pin must identify
-/// the supplied route layer exactly.
+/// Build an HTTP entry from an admitted application and the pinned platform route bytes.
 pub fn compose_application(
-    application: &crate::component_admission::ComponentAdmission,
-    route_bytes: &[u8],
-    route_digest: &str,
-) -> anyhow::Result<ComposedApplication> {
-    compose_verified_application(
-        application.facts(),
-        application.bytes(),
-        route_bytes,
-        route_digest,
-    )
-}
-
-fn compose_verified_application(
     application: &AdmittedComponent,
     application_bytes: &[u8],
     route_bytes: &[u8],
-    route_digest: &str,
 ) -> anyhow::Result<ComposedApplication> {
+    let digest = format!(
+        "sha256:{}",
+        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+            .split_whitespace()
+            .next()
+            .expect("route pin exists")
+    );
     ensure!(
-        wamn_digest::bytes_sha256(route_bytes) == route_digest,
-        "route layer bytes differ from pinned digest {route_digest}"
+        wamn_digest::bytes_sha256(route_bytes) == digest,
+        "route layer bytes differ from pinned digest {digest}"
     );
     wamn_component_composer::validate_application_member(application_bytes)?;
-    let bytes = route_bytes.to_vec();
-    let digest = wamn_digest::bytes_sha256(&bytes);
     let application_digests = application_digests(application, application_bytes)?;
     Ok(ComposedApplication {
-        bytes: bytes.into_boxed_slice(),
+        bytes: route_bytes.into(),
         digest,
-        route_digest: route_digest.to_owned(),
         application: wamn_catalog::ServingEntryMember {
             package_id: application.target.package_id.as_str().to_owned(),
             component: application.component.as_str().to_owned(),
@@ -347,75 +329,6 @@ fn compose_verified_application(
         },
         application_digests,
     })
-}
-
-/// Compose the routed application before its artifact reference is recorded.
-pub fn compose_release_entry(
-    published: &PublishedRelease,
-    admissions: &[crate::component_admission::ComponentAdmission],
-    route_bytes: &[u8],
-    applications: &wamn_catalog::EnvironmentApplications,
-    application: Option<&str>,
-) -> anyhow::Result<ComposedApplication> {
-    compose_covering_entry(
-        published,
-        &admissions
-            .iter()
-            .map(|admission| (admission.facts(), admission.bytes()))
-            .collect::<Vec<_>>(),
-        route_bytes,
-        applications,
-        application,
-    )
-}
-
-/// Compose the unique member of the declared application that covers its routes.
-pub fn compose_covering_entry(
-    published: &PublishedRelease,
-    candidates: &[(&AdmittedComponent, &[u8])],
-    route_bytes: &[u8],
-    applications: &wamn_catalog::EnvironmentApplications,
-    application: Option<&str>,
-) -> anyhow::Result<ComposedApplication> {
-    let (member, bytes) = covering_application(published, candidates, applications, application)?;
-    compose_pinned_application(member, bytes, route_bytes)
-}
-
-/// Keep the composed bytes while the selected member and route digests match.
-pub fn refresh_composed_entry(
-    entry: &mut Option<ComposedApplication>,
-    published: &PublishedRelease,
-    candidates: &[(&AdmittedComponent, &[u8])],
-    route_bytes: &[u8],
-    applications: &wamn_catalog::EnvironmentApplications,
-) -> anyhow::Result<bool> {
-    let (member, bytes) = covering_application(published, candidates, applications, None)?;
-    let route_digest = wamn_digest::bytes_sha256(route_bytes);
-    if entry.as_ref().is_some_and(|entry| {
-        entry.application.package_id == member.target.package_id
-            && entry.application.component == member.component
-            && entry.application.digest == member.component_digest
-            && entry.route_digest == route_digest
-    }) {
-        return Ok(false);
-    }
-    *entry = Some(compose_pinned_application(member, bytes, route_bytes)?);
-    Ok(true)
-}
-
-pub fn compose_pinned_application(
-    member: &AdmittedComponent,
-    bytes: &[u8],
-    route_bytes: &[u8],
-) -> anyhow::Result<ComposedApplication> {
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .expect("route pin exists")
-    );
-    compose_verified_application(member, bytes, route_bytes, &pin)
 }
 
 fn select_application<'a>(
@@ -441,7 +354,7 @@ fn select_application<'a>(
 }
 
 /// Select the declared application's unique member covering its routes.
-fn covering_application<'a>(
+pub fn application_member<'a>(
     published: &PublishedRelease,
     candidates: &[(&'a AdmittedComponent, &'a [u8])],
     applications: &wamn_catalog::EnvironmentApplications,
@@ -1383,72 +1296,10 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_members_keep_the_composed_entry_bytes() {
+    fn composition_refuses_a_route_outside_the_platform_pin() {
+        let application = closure_component("entry", None);
         let bytes = wat::parse_str("(component)").unwrap();
-        let mut member = closure_component("entry", None);
-        member.component_digest = wamn_digest::bytes_sha256(&bytes);
-        let published = |member: &AdmittedComponent| {
-            let manifest = ServingManifest::new(
-                ServingRelease {
-                    packages: [PackageCoordinate::new("base", "1.0.0").unwrap()].into(),
-                },
-                [ServingComponent::project(member, Vec::new()).unwrap()].into(),
-                BTreeSet::new(),
-                BTreeMap::new(),
-            )
-            .unwrap();
-            PublishedRelease {
-                digest: manifest.digest(),
-                canonical_bytes: manifest.canonical_bytes(),
-                manifest,
-            }
-        };
-        let applications = [(
-            "application".to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: BTreeMap::new(),
-                packages: ["base".to_owned()].into(),
-            },
-        )]
-        .into();
-        // These route bytes cannot compose. A matching entry must reuse its bytes.
-        let route_bytes = b"route";
-        let before = b"already composed";
-        let mut entry = Some(ComposedApplication {
-            bytes: before.to_vec().into_boxed_slice(),
-            digest: wamn_digest::bytes_sha256(before),
-            route_digest: wamn_digest::bytes_sha256(route_bytes),
-            application: wamn_catalog::ServingEntryMember {
-                package_id: "base".to_owned(),
-                component: "entry".to_owned(),
-                digest: member.component_digest.clone(),
-            },
-            application_digests: [member.component_digest.clone()].into(),
-        });
-        assert!(
-            !refresh_composed_entry(
-                &mut entry,
-                &published(&member),
-                &[(&member, &bytes)],
-                route_bytes,
-                &applications,
-            )
-            .unwrap()
-        );
-
-        let changed = wat::parse_str("(component (component))").unwrap();
-        member.component_digest = wamn_digest::bytes_sha256(&changed);
-        assert!(
-            refresh_composed_entry(
-                &mut entry,
-                &published(&member),
-                &[(&member, &changed)],
-                route_bytes,
-                &applications,
-            )
-            .is_err(),
-            "a changed member must attempt composition"
-        );
+        assert!(compose_application(&application, &bytes, &bytes).is_err());
     }
 
     #[test]
@@ -1516,10 +1367,10 @@ mod tests {
         };
         // No selector is needed for a single application. The larger outer
         // component is outside its declared packages and cannot become its member.
-        let _ = covering_application(&published, &candidates(), &applications, None).unwrap();
+        let _ = application_member(&published, &candidates(), &applications, None).unwrap();
 
         let error =
-            covering_application(&published, &candidates()[..1], &applications, None).unwrap_err();
+            application_member(&published, &candidates()[..1], &applications, None).unwrap_err();
         assert_eq!(
             error
                 .downcast_ref::<PublishManifestError>()
@@ -1536,13 +1387,13 @@ mod tests {
                 packages: ["base".into()].into(),
             },
         );
-        assert!(covering_application(&published, &candidates(), &two, None).is_err());
+        assert!(application_member(&published, &candidates(), &two, None).is_err());
         let mut both = two.clone();
         both.get_mut("rest")
             .unwrap()
             .packages
             .insert("overlay".into());
-        let error = covering_application(&published, &candidates(), &both, None).unwrap_err();
+        let error = application_member(&published, &candidates(), &both, None).unwrap_err();
         assert_eq!(
             error
                 .downcast_ref::<PublishManifestError>()
@@ -1557,7 +1408,7 @@ mod tests {
             .unwrap()
             .packages
             .insert("outer".into());
-        let error = covering_application(&published, &candidates(), &ambiguous, None).unwrap_err();
+        let error = application_member(&published, &candidates(), &ambiguous, None).unwrap_err();
         let error = error.downcast_ref::<PublishManifestError>().unwrap();
         assert_eq!(
             error.error_type(),

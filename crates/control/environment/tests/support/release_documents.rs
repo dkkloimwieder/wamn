@@ -195,14 +195,7 @@ pub fn fixture_http_entry(
     );
     let route = std::fs::read(&route_path)
         .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .context("the HTTP route guest has a digest pin")?
-    );
-    let entry = compose_application(&admission, &route, &pin)?;
+    let entry = compose_application(admission.facts(), admission.bytes(), &route)?;
     Ok((admission, entry))
 }
 
