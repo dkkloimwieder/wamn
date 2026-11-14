@@ -182,10 +182,16 @@ impl ControlRoutes<'_> {
         let operation =
             Operation::parse(attachment.route.operation).context("unknown operation Job route")?;
         validate(operation, &request)?;
-        let environment: Value = sqlx::query_scalar("SELECT configuration FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-            .bind(self.org).bind(&request.project).bind(&request.env).fetch_one(self.control).await?;
+        let triple =
+            wamn_registry::Triple::new(self.org, request.env.as_str(), request.project.as_str());
+        let environment = {
+            let mut connection = self.control.acquire().await?;
+            wamn_registry::configuration::read(&mut connection, &triple)
+                .await?
+                .context("environment has no applied configuration")?
+        };
         if let Some(application) = &request.application
-            && environment["applications"].get(application).is_none()
+            && !environment.applications.contains_key(application)
         {
             return Err(invalid("application"));
         }

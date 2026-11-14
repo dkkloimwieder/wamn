@@ -552,7 +552,8 @@ The environment document declares its applications: each name with the packages 
 `environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
 The release chart projects each application selection into a ConfigMap.
 The host reads these release projections for each project in its environment.
-Helm keeps each application's selection in its own deployment history.
+The registry keeps each application's desired release and client selection in typed rows.
+Helm keeps deployment attempts and rollback history for each application.
 The host uses the declared application membership for each loaded release. A restored run retains its application and manifest digest.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
 An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.

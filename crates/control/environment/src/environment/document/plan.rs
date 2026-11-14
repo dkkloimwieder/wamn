@@ -29,7 +29,7 @@ pub use wamn_registry::configuration::{Client, Integration, Schema, SchemaMode};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSelection {
-    /// Transient execution input, resolved from Helm or the deploy request.
+    /// Desired release, read from the registry or supplied by the deploy request.
     #[serde(skip)]
     pub current: DeclaredRelease,
     pub hostname: String,

@@ -701,7 +701,7 @@ cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_ap
 
 DEP6's bounded case uses one fresh platform, trusted product commands for its first environment,
 and authenticated control routes for the subsequent deploy, rollback, and schema mutation.
-It reads actual Job pods, the applied configuration in `registry.environment_projects.configuration`, and application release ConfigMaps.
+It reads actual Job pods, the typed applied configuration through `wamn-registry`, and application release ConfigMaps.
 It deletes its publishing checkout before route execution.
 It reads the worker's image, immutable chart inputs, and storage mounts to exclude paths from the submitting machine.
 Kind has no web bucket, so hosted platform UI serving is verified on GCP in DEP7.

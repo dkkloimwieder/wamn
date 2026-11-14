@@ -44,8 +44,9 @@ pub async fn configure(
             emit_operator_pat_secret: None,
         })
         .await?;
-        let unconfigured:bool=sqlx::query_scalar("SELECT configuration IS NULL FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-            .bind(&triple.org).bind(&triple.project).bind(triple.env.as_str()).fetch_one(&mut *lock.client().await).await?;
+        let unconfigured = wamn_registry::configuration::read(&mut *lock.client().await, &triple)
+            .await?
+            .is_none();
         let connection = wamn_platform_install::environment::provision(
             &platform.target,
             &platform.chart,
@@ -62,8 +63,16 @@ pub async fn configure(
         )))
         .execute(&mut client)
         .await?;
-        let image=crate::platform::artifact_plan::select(&platform.chart)?.image("control")?.to_owned();
-        wamn_platform_install::environment::initialize(&platform.target,&image,&connection,unconfigured).await?;
+        let image = crate::platform::artifact_plan::select(&platform.chart)?
+            .image("control")?
+            .to_owned();
+        wamn_platform_install::environment::initialize(
+            &platform.target,
+            &image,
+            &connection,
+            unconfigured,
+        )
+        .await?;
         if unconfigured {
             crate::platform_migrations::restore_project(
                 &owner,
@@ -74,10 +83,17 @@ pub async fn configure(
             .await?;
         }
         let name = wamn_control_provision::environment_names::environment_resource_name(
-            &triple.org, &triple.project, &triple.env)?;
-        wamn_platform_install::environment::apply(&platform.target,
-            &platform.chart.join("platform/environment"), &name,
-            serde_json::json!({"bootstrap":null})).await?;
+            &triple.org,
+            &triple.project,
+            &triple.env,
+        )?;
+        wamn_platform_install::environment::apply(
+            &platform.target,
+            &platform.chart.join("platform/environment"),
+            &name,
+            serde_json::json!({"bootstrap":null}),
+        )
+        .await?;
         let key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
         wamn_platform_identity::environment::fill(
             system_owner,

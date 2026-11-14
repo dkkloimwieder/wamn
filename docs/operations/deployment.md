@@ -205,10 +205,12 @@ Control selects the installed database, chart, registry and broker configuration
 The CLI has no direct database fallback. Source publication still uses a disposable build database.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
-The applied environment configuration lives in `registry.environment_projects.configuration`.
-`wamn-registry` defines its type. Unconfigured deployments hold NULL.
-The configuration contains hostnames, policy, schema mode, clients, connections and integrations.
-It contains no release digest or package membership. Old document shapes are refused.
+`wamn-registry` reads and writes applied configuration in typed project rows and their child tables.
+A NULL project revocation bound marks an unconfigured deployment.
+Application rows hold hostnames, revocation bounds, client pins and desired release digests.
+Other rows hold connection aliases and integration versions. The shared environment owns its target and policy.
+Postgres constrains these values. Package membership comes from the selected release manifest.
+Environment documents contain no release digest or package membership. Old document shapes are refused.
 Set `revocation_seconds` for the project and each application.
 These nonnegative values bound credential revocation delay when an invalidation is lost.
 Zero disables auth caching. Restart hosts after changing a bound.

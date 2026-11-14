@@ -143,8 +143,12 @@ The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.
 It names the coordinate, application hostnames, the policy, schema mode, clients, connections and integrations.
-The applied configuration lives in `registry.environment_projects.configuration`. `wamn-registry` defines its type.
-Helm history owns release selections. Package membership comes from each release manifest.
+`wamn-registry` reads and writes typed configuration rows under `registry.environment_projects`.
+The project row holds its revocation bound and optional schema mode.
+Child rows hold applications, desired releases, hostnames, client pins, connection aliases and integration versions.
+The shared environment row owns the target and policy. No configuration JSON remains.
+Postgres enforces bounds, valid schema modes and digests, paired client fields, and child ownership.
+Helm records deployment attempts and rollback history. Package membership comes from each release manifest.
 
 Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
@@ -188,13 +192,13 @@ The registry owns the applied environment configuration. Helm owns release histo
 1. Analyse: Read each authority once. Compare the document with them. Return the plan or the refusals.
 2. Ensure: Create the missing substrate: the environment row, the `Database` resource, the project database, the run plane, the credential Secrets, and the admin grants.
 3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
-4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
+4. Write: Record the desired release and client in the registry. Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
 6. Drain: Read loaded releases and the unfinished runs that pin them. Report stranded runs without changing their state.
 7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
 
 A separate retention operation removes unused release facts and generated permissions under the environment lock.
-Loaded releases, current Helm selections and unfinished runs keep their release facts.
+Loaded releases, desired registry selections, observed Helm selections and unfinished runs keep their release facts.
 Status reports each application's loaded releases and run pins. It also reports unfinished runs whose release is not loaded.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
