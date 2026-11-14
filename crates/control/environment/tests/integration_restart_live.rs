@@ -363,6 +363,7 @@ fn loaded_release(
                     descriptor.operations = BTreeMap::from([(
                         "wamn:node/handler@0.1.0".into(),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

@@ -9,7 +9,7 @@ manifest.Package {
         "files-read" = {interface = "wasmcloud:blobstore/blobstore@0.1.0", mode = "read"}
         "files-no-cdn" = {interface = "wasmcloud:blobstore/blobstore@0.1.0", mode = "write"}
     }
-    components = {fixture = {connections = []}}
+    components = {fixture = {}}
     routes = {
         auth_modes = ["session"]
         operations = {"fixture.run" = {id = "fixture-run-http", path = "/fixture/run"}}

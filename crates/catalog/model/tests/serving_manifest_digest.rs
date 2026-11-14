@@ -42,6 +42,7 @@ fn components() -> BTreeSet<ServingComponent> {
                 descriptor.operations = BTreeMap::from([(
                     "map".into(),
                     AdmittedComponentOperation {
+                        connections: Vec::new(),
                         host_transaction: false,
                         input_ports: Vec::new(),
                         output_ports: Vec::new(),
@@ -63,6 +64,7 @@ fn components() -> BTreeSet<ServingComponent> {
                 descriptor.operations = BTreeMap::from([(
                     "platform-fixture-overlay:widget/get@3.0.0".into(),
                     AdmittedComponentOperation {
+                        connections: Vec::new(),
                         host_transaction: false,
                         input_ports: Vec::new(),
                         output_ports: Vec::new(),
@@ -243,6 +245,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// publisher can publish.
 fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
     let operation = AdmittedComponentOperation {
+        connections: Vec::new(),
         host_transaction: false,
         input_ports: Vec::new(),
         output_ports: Vec::new(),
@@ -269,6 +272,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                     descriptor.operations = BTreeMap::from([(
                         export.into(),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

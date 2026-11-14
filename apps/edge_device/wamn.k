@@ -29,7 +29,7 @@ manifest.Package {
         }
     }
     connections = {}
-    components = {device = {connections = []}}
+    components = {device = {}}
     routes = {
         operations = {
             "sample.read" = {id = "sample-read-http", path = "/sample/read"}

@@ -174,7 +174,7 @@ pub fn reader_deployment(triple: &Triple, namespace: &str, image: &str) -> serde
         "spec":{"replicas":1,"strategy":{"type":"Recreate"},"selector":{"matchLabels":labels},
             "template":{"metadata":{"labels":labels},"spec":{
                 "automountServiceAccountToken":true,
-                "serviceAccountName":wamn_registry::service_account_name(&triple.org,&triple.project,&triple.env),
+                "serviceAccountName":name,
                 "containers":[{"name":"reader","image":image,"command":["/usr/local/bin/wamn-cdc-reader"],
                     "args":["--config","/etc/wamn/cdc/reader.json"],
                     "volumeMounts":[{"name":"cdc","mountPath":"/etc/wamn/cdc","readOnly":true},

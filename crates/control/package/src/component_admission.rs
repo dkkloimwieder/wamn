@@ -713,6 +713,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "source-fixture:item/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: Some("source-fixture:item/get@1.0.0".to_owned()),
                     host_transaction: false,
@@ -748,6 +749,7 @@ mod tests {
                     (
                         export,
                         AdmittedComponentOperation {
+                            connections: operation.connections,
                             committed_result_schema: operation
                                 .committed_result_schema
                                 .map(|schema| wamn_catalog::ComponentSchema { schema }),
@@ -958,8 +960,7 @@ mod tests {
             operation["component"] = serde_json::json!(primary);
         }
         document["connections"] = serde_json::json!({"secondary-only":{"interface":"wamn:connection/http@0.1.0","mode":"write"}});
-        document["components"]["secondary"] =
-            serde_json::json!({"connections": ["postgres", "secondary-only"]});
+        document["components"]["secondary"] = serde_json::json!({});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
         let manifest: wamn_compiler::manifest::PackageManifest =
@@ -976,6 +977,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     host_transaction: false,
@@ -1087,6 +1089,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: registered.map(str::to_owned),
                     host_transaction: false,
@@ -1289,6 +1292,7 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
+                            connections: Vec::new(),
                             committed_result_schema: None,
                             registered_operation: None,
                             input_ports: Vec::new(),
@@ -1296,7 +1300,6 @@ mod tests {
                             parameters: Vec::new(),
                         },
                     )]),
-                    connections: Vec::new(),
                 },
                 admitted_platform_packages: std::collections::BTreeSet::new(),
                 base_digests: std::collections::BTreeSet::new(),

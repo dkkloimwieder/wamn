@@ -31,6 +31,8 @@ These files own each schema.
 The platform version lives in `deploy/platform/release/Chart.yaml`.
 Keep `version` and `appVersion` equal.
 `cargo xtask build-platform` reads this version to tag images and role components.
+The published defaults keep the host image at `platform.host.image`.
+The prepared environment chart receives that image and owns the host runtime defaults.
 BuildKit decides which layers need to run again.
 
 ## Compile cache
@@ -332,7 +334,7 @@ A web source or output edit leaves the packed package digest unchanged.
 
 The `generated/` paths of layers 2 and 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type, mode}]}`, which is `AdmittedComponent` without its target plus the connection list derived from its operations. Each operation carries its own `connections`. Named Wasm imports use their alias. Host connections also carry their requirement type and mode. The reader supplies the target. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Only dev package manifests carry `org.opencontainers.image.created`, set at first publication. Repeat publication reuses that time and the same manifest. Release coordinates and release manifests carry no timestamp. The manifest is canonical JSON.
 
 The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. Unpacked dev artifacts keep their original publication timestamp in `artifact-created-at`. Repacking reads that value and reproduces the published digest. Release coordinates need no timestamp. An unpacked artifact packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 

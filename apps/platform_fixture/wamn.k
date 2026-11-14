@@ -272,7 +272,7 @@ manifest.Package {
         }
     }
     connections = {}
-    components = {fixture = {connections = ["postgres"]}}
+    components = {fixture = {}}
     routes = {
         operations = {
             "widget.archive" = {id = "widget-archive-http", path = "/widget/archive"}

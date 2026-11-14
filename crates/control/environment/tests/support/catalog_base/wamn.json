@@ -16,5 +16,5 @@
     }
   },
   "connections": {},
-  "components": { "catalog_base": { "connections": ["postgres"] } }
+  "components": { "catalog_base": {} }
 }

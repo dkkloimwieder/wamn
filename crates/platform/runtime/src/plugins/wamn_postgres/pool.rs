@@ -273,7 +273,7 @@ pub trait CredentialProvider: Send + Sync {
 /// project now FAILS instead of silently borrowing another project's
 /// credential. Silent fallback is the behaviour the parent acceptance forbids:
 /// it made an unprovisioned project indistinguishable from a provisioned one.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StaticCredentialProvider {
     projects: HashMap<String, ProjectConfig>,
 }
@@ -287,6 +287,11 @@ impl StaticCredentialProvider {
             projects.entry(DEFAULT_PROJECT.to_string()).or_insert(cfg);
         }
         Self { projects }
+    }
+
+    /// Register a project's explicit credentials without changing other projects.
+    pub fn insert(&mut self, project: String, config: ProjectConfig) {
+        self.projects.insert(project, config);
     }
 
     /// Default-only provider (single database = the default project).

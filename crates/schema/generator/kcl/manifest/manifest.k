@@ -137,6 +137,7 @@ schema CustomOperation[name: str]:
     permission?: str = name
     component?: str
     connection?: str = "postgres"
+    connections?: [str]
     input: Input
     result?: Result
     errors: [str]
@@ -327,7 +328,6 @@ schema InternalRelation:
     cdc: "excluded"
 
 schema Component:
-    connections: [str]
     exports?: {str:any}
     parameters?: {str:[any]}
 

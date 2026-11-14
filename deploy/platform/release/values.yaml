@@ -1,82 +1,8 @@
-# Defaults of the `release` chart (docs/architecture/naming.md#environment-names).
-#
-# The platform part is here: the host-only subchart settings, the platform
-# image set. Each has one source, these defaults
-# (R15). The committed values are empty, so the chart does not render until the
-# platform build stamps them (`wamn-ctl build-platform`, through
-# `wamn_control::release_chart::stamp`). No values file passed at install time
-# carries an image digest.
-
-global:
-  certificates:
-    # The operator release owns the CA and the certificate Secrets in this
-    # namespace. The host still mounts them, because `global.tls.enabled` stays
-    # at its default true.
-    generate: false
-  # The one NATS of the platform (docs/plan/alignment.md R2).
-  nats:
-    schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
-    dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
-
-runtime-operator:
-  # The cluster-singular halves of the subchart. The operator release owns them.
-  operator:
-    enabled: false
-  nats:
-    enabled: false
-  gateway:
-    enabled: false
-  runtime:
-    # The host image of the platform image set: `tag` is `<tag>@sha256:<hex>`,
-    # because the subchart renders only `repository:tag`.
-    image:
-      registry: ""
-      repository: ""
-      tag: ""
-      pull_policy: IfNotPresent
-    # The drain bound of the environment policy, which
-    # `wamn_control::release_chart::values` writes (R20). Null removes the
-    # subchart's default, so the chart does not render without it.
-    terminationGracePeriodSeconds: null
-    drainDelaySeconds: 5
-    natsConnectTimeoutSeconds: 60
-    probes:
-      endpoint:
-        enabled: true
-        port: 8081
-        startupFailureThreshold: 60
-    # Residency in bytes. A release probe chose 64 KiB of linear memory: keeping more makes each drop clear it.
-    # These values leave allocator capacity unchanged. Dev and bench read this list.
-    env:
-      - name: WAMN_PG_GUEST_POOL_MAX
-        value: "16"
-      - name: WAMN_PG_PLATFORM_POOL_MAX
-        value: "8"
-      - name: WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT
-        value: "65536"
-      - name: WASMTIME_POOLING_TABLE_KEEP_RESIDENT
-        value: "4096"
-      # Two resident pages during eager instantiation. Native stack zeroing stays off,
-      # so Wasmtime currently retains stacks independently of this value.
-      - name: WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT
-        value: "8192"
-    resources:
-      defaultHeapMemory: 256MiB
-      coreInstances: 512
-      maxConcurrentStarts: 4
-      guestMemoryMode: count
-      requests:
-        memory: "64Mi"
-      limits:
-        memory: "768Mi"
-    # The install values supply the one host group, named after the release.
-    hostGroups: []
-    # Provisioning creates one account per environment. Install values name it.
-    serviceAccount:
-      create: false
-      name: ""
+# Defaults for application workloads and the published platform image set.
 
 platform:
+  host:
+    image: ""
   # The role component images of the platform image set: `<repository>@sha256:<hex>`.
   roles:
     http:
@@ -97,8 +23,7 @@ release:
 # `org/project/env`.
 environment: ""
 routeHost: ""
-# Exactly one application name to `{packages: [...]}`. The host receives only
-# this membership in `--applications`. Platform and shared hosts leave it empty.
+# Exactly one application name to its package membership.
 applications: {}
 # Host to client package id; env apply resolves the package from its declaration.
 webClients: {}
@@ -112,3 +37,6 @@ org: ""
 roles: []
 # `{actor}`: who applied. Helm keeps it with the revision.
 audit: {}
+
+# Shared environment host selected by application workloads.
+hostGroup: ""

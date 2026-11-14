@@ -19,7 +19,7 @@ fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
 manifest.Package {{
     package = {{id = "{id}", version = "{version}"}}
     required_platform_policy_contract = {{id = "source_fixture", state = "satisfied"}}
-    components = {{fixture = {{connections = ["postgres"]}}}}
+    components = {{fixture = {{}}}}
     connections = {{}}
     models = {{item = manifest.Model("item", "{id}") {{
         table = "item"

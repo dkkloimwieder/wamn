@@ -32,5 +32,5 @@
     }
   },
   "connections": {},
-  "components": { "records": { "connections": ["postgres"] } }
+  "components": { "records": {} }
 }

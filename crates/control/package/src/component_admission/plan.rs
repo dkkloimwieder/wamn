@@ -230,6 +230,27 @@ pub(super) fn validate_component_operation_assignment(
     }
     for operation in &expected_component_operations {
         let declared = &component.operations[operation];
+        let connections = manifest
+            .operation_connections(&expected[operation].local_operation)
+            .map_err(|source| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorType::StatementOperationMismatch,
+                    source.to_string(),
+                )
+            })?;
+        if declared.connections.len() != connections.len()
+            || declared
+                .connections
+                .iter()
+                .any(|connection| !connections.contains(connection))
+        {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorType::StatementOperationMismatch,
+                format!(
+                    "component export {operation:?} connections differ from its manifest operation"
+                ),
+            ));
+        }
         let expected_registration = expected[operation].public.then_some(operation.as_str());
         if declared.registered_operation.as_deref() != expected_registration {
             return Err(ComponentProjectionError::new(

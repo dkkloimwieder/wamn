@@ -779,8 +779,10 @@ CREATE TABLE registry.environment_projects (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
-    -- NULL until explicit environment configuration is applied.
-    configuration jsonb CHECK (configuration IS NULL OR jsonb_typeof(configuration) = 'object'),
+    -- A NULL revocation bound means configuration is not yet applied.
+    revocation_seconds numeric(20,0)
+        CHECK (revocation_seconds BETWEEN 0 AND 18446744073709551615),
+    schema_mode text CHECK (schema_mode IN ('reset', 'migrate')),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -789,12 +791,57 @@ CREATE TABLE registry.environment_projects (
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.environments(org, env) ON DELETE CASCADE,
     CONSTRAINT project_envs_instance_suffix_check
-        CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
+        CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
+    CHECK (revocation_seconds IS NOT NULL OR schema_mode IS NULL)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.environment_projects
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- Applied settings and desired release selections belong to the project deployment.
+-- Helm revisions record deployment attempts and supply rollback history.
+CREATE TABLE registry.environment_applications (
+    org text NOT NULL,
+    env text NOT NULL,
+    project text NOT NULL,
+    application text NOT NULL CHECK (application <> ''),
+    hostname text NOT NULL CHECK (
+        char_length(hostname) BETWEEN 1 AND 253
+        AND hostname ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
+    revocation_seconds numeric(20,0) NOT NULL
+        CHECK (revocation_seconds BETWEEN 0 AND 18446744073709551615),
+    client_package text CHECK (client_package <> ''),
+    client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
+    release_digest text CHECK (release_digest ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (org, env, project, application),
+    FOREIGN KEY (org, env, project)
+        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE,
+    CHECK ((client_package IS NULL) = (client_web IS NULL))
+);
+
+CREATE TABLE registry.environment_application_connections (
+    org text NOT NULL,
+    env text NOT NULL,
+    project text NOT NULL,
+    application text NOT NULL,
+    alias text NOT NULL CHECK (alias <> ''),
+    connection_name text NOT NULL CHECK (connection_name ~ '^[a-z][a-z0-9_-]{0,62}(@[1-9][0-9]*)?$'),
+    PRIMARY KEY (org, env, project, application, alias),
+    FOREIGN KEY (org, env, project, application)
+        REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE
+);
+
+CREATE TABLE registry.environment_integrations (
+    org text NOT NULL,
+    env text NOT NULL,
+    project text NOT NULL,
+    name text NOT NULL CHECK (name <> ''),
+    version integer NOT NULL CHECK (version > 0),
+    PRIMARY KEY (org, env, project, name),
+    FOREIGN KEY (org, env, project)
+        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE
+);
 
 -- User project access is an explicit grant to one project-environment
 -- (wamn-ctc8.19). Keep the platform-issued principal UUID: platform."user"
@@ -1575,7 +1622,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_authorization" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_token" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_authorization" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_token" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1833,6 +1880,8 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'registry.orgs', 'registry.env_policies', 'registry.projects',
         'registry.environments', 'registry.environment_projects',
+        'registry.environment_applications', 'registry.environment_application_connections',
+        'registry.environment_integrations',
         'registry.external_system', 'registry.integration', 'registry.connection',
         'identity.org_memberships', 'identity.org_roles', 'identity.environment_roles',
         'identity.project_roles', 'identity.project_env_memberships',

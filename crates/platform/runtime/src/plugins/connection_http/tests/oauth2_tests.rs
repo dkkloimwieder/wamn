@@ -305,6 +305,18 @@ impl Fixture {
                 mode: wamn_catalog::ConnectionMode::Write,
             })
             .collect();
+        component
+            .descriptor
+            .operations
+            .get_mut(&invocation.operation)
+            .unwrap()
+            .connections = component
+            .descriptor
+            .connections
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect();
         manifest.components.insert(component);
         manifest.routes.insert(ServingRoute {
             package_id: invocation.origin.package_id.clone(),

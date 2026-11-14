@@ -548,6 +548,7 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
             operations: BTreeMap::from([(
                 ROOT.into(),
                 ComponentOperationDeclaration {
+                    connections: Vec::new(),
                     registered_operation: Some(ROOT.into()),
                     committed_result_schema: None,
                     input_ports: Vec::new(),
@@ -555,7 +556,6 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
                     parameters: Vec::new(),
                 },
             )]),
-            connections: Vec::new(),
         },
         admitted_platform_packages: BTreeSet::from(["wamn:postgres".to_owned()]),
         base_digests: BTreeSet::from([child_digest.to_owned()]),

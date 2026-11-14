@@ -33,6 +33,7 @@ function mount(path: string, missing = false) {
                   digest: null,
                   workloads: [],
                   live: [],
+                  residency: [],
                   rollout: { replicas: 0, updated_replicas: 0, ready_replicas: 0, available_replicas: 0 },
                 }
               : undefined;

@@ -432,6 +432,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_string(),
                 AdmittedComponentOperation {
+                    connections: Vec::new(),
                     committed_result_schema: None,
                     registered_operation: None,
                     host_transaction: false,

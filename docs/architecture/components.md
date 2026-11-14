@@ -58,6 +58,7 @@ Admission refuses resource handles in this operation boundary because those hand
 An overlay package pins each base by digest in `base_dependencies`.
 The overlay build composes each pinned base whose operations the overlay imports into the overlay component, and admission refuses a composed base that the package does not pin under that digest.
 A composed component also exports the interfaces of its members. The host routes only to declared operations.
+Each export declares its external connections. The component connection list is derived from its operations. An undeclared connection does not resolve for the call.
 Each export carries its own statements, and the host begins a transaction for an export whose admitted operation declares one ([data access](data-access.md#inputs-queries-and-transactions)).
 Each member that imports `wamn:postgres/statements` gets its own outer import, named by its position: `sql-0`, `sql-1`.
 Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.

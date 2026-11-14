@@ -182,10 +182,16 @@ impl ControlRoutes<'_> {
         let operation =
             Operation::parse(attachment.route.operation).context("unknown operation Job route")?;
         validate(operation, &request)?;
-        let environment: Value = sqlx::query_scalar("SELECT configuration FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-            .bind(self.org).bind(&request.project).bind(&request.env).fetch_one(self.control).await?;
+        let triple =
+            wamn_registry::Triple::new(self.org, request.env.as_str(), request.project.as_str());
+        let environment = {
+            let mut connection = self.control.acquire().await?;
+            wamn_registry::configuration::read(&mut connection, &triple)
+                .await?
+                .context("environment has no applied configuration")?
+        };
         if let Some(application) = &request.application
-            && environment["applications"].get(application).is_none()
+            && !environment.applications.contains_key(application)
         {
             return Err(invalid("application"));
         }
@@ -345,14 +351,18 @@ fn manifest(
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});
     job["spec"]["suspend"] = false.into();
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
-    job["spec"]["template"]["spec"]["serviceAccountName"] = format!(
-        "{coordinate}-{}",
-        if operation.privileged() {
-            "sql"
-        } else {
-            "code"
-        }
-    )
+    // Reset changes the shared host chart under the existing lifecycle authority.
+    job["spec"]["template"]["spec"]["serviceAccountName"] = match operation {
+        Operation::Reset => format!("wamn-operation-{org}"),
+        _ => format!(
+            "{coordinate}-{}",
+            if operation.privileged() {
+                "sql"
+            } else {
+                "code"
+            }
+        ),
+    }
     .into();
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     job["spec"]["template"]["spec"]["volumes"] = volumes.into();
@@ -388,5 +398,34 @@ mod tests {
         }
         request.release = None;
         assert!(validate(Operation::Reset, &request).is_ok());
+        let coordinate = wamn_control_provision::environment_names::environment_resource_name(
+            "acme",
+            &request.project,
+            &request.env,
+        )
+        .unwrap();
+        for (operation, account) in [
+            (Operation::Reset, "wamn-operation-acme".to_owned()),
+            (Operation::Apply, format!("{coordinate}-sql")),
+            (Operation::Diff, format!("{coordinate}-code")),
+        ] {
+            let job = manifest(
+                operation,
+                &request,
+                "acme",
+                "actor",
+                &coordinate,
+                "project-database",
+                "image",
+                "job",
+                "inputs",
+                "apply",
+                false,
+            );
+            assert_eq!(
+                job["spec"]["template"]["spec"]["serviceAccountName"],
+                account
+            );
+        }
     }
 }

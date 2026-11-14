@@ -128,10 +128,11 @@ Frozen candidate execution retains its own admitted facts throughout the travers
 
 ## Environment lifecycle
 
-An environment is one Helm release of the `release` chart in `deploy/platform/release`.
-The release name is `r-<slug>-<hash>`, derived from the coordinate `org/env/project`.
-The name is also the host group of the environment.
-The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
+Each application has its own Helm release of `deploy/platform/release`.
+The release name is `r-<slug>-<hash>`, derived from `org/env/project/application`.
+The environment chart owns one host for each org and environment, shared by all projects.
+Its project projection names the allowed projects. Each project mounts its own connection configuration and event certificate.
+Application releases contain no host Deployment or runtime-operator dependency.
 It adds one WorkloadDeployment for the `http` role.
 The `http` role starts the separate route component with `poolSize` 0. A Service of the same name routes to it.
 
@@ -142,8 +143,12 @@ The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.
 It names the coordinate, application hostnames, the policy, schema mode, clients, connections and integrations.
-The applied configuration lives in `registry.environment_projects.configuration`. `wamn-registry` defines its type.
-Helm history owns release selections. Package membership comes from each release manifest.
+`wamn-registry` reads and writes typed configuration rows under `registry.environment_projects`.
+The project row holds its revocation bound and optional schema mode.
+Child rows hold applications, desired releases, hostnames, client pins, connection aliases and integration versions.
+The shared environment row owns the target and policy. No configuration JSON remains.
+Postgres enforces bounds, valid schema modes and digests, paired client fields, and child ownership.
+Helm records deployment attempts and rollback history. Package membership comes from each release manifest.
 
 Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
@@ -187,15 +192,15 @@ The registry owns the applied environment configuration. Helm owns release histo
 1. Analyse: Read each authority once. Compare the document with them. Return the plan or the refusals.
 2. Ensure: Create the missing substrate: the environment row, the `Database` resource, the project database, the run plane, the credential Secrets, and the admin grants.
 3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
-4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
+4. Write: Record the desired release and client in the registry. Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and no automatic rollback. A failed revision and its pods remain available for inspection.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
-6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
+6. Drain: Read loaded releases and the unfinished runs that pin them. Report stranded runs without changing their state.
 7. Retain: Keep older release facts and permissions. Rollout performs no release cleanup.
 
 A separate retention operation removes unused release facts and generated permissions under the environment lock.
 It also removes dev package tags older than seven days unless a published release pins their package coordinate.
-Live hosts, current Helm selections and unfinished runs keep their release facts.
-Status reports unfinished runs with no live host across the environment.
+Loaded releases, desired registry selections, observed Helm selections and unfinished runs keep their release facts.
+Status reports each application's loaded releases and run pins. It also reports unfinished runs whose release is not loaded.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
 For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
@@ -239,7 +244,7 @@ In order, it does these steps:
 The `Database` resource keeps `databaseReclaimPolicy: retain`, so the database stays on the cluster.
 With `--data`, the verb drops the database and the instance roles. It reads the coordinate again from a terminal first.
 
-The platform UI reads status through a control operation with a read-only ServiceAccount over Pods, Deployments and WorkloadDeployments in the release namespace `hosts`: the digest from the host Deployment's pod-template annotations, the rollout from its status, the workload conditions, the live set. Who selected and who approved are not there: they are in the Helm revision (§11.3), read with `helm history`, not by the UI. Current state only; no history of tests; no Secrets; no verb runs from a browser. The project screen that reads the saga today reads this instead.
+The platform UI reads status through a control operation in the org namespace. Kubernetes supplies the shared host rollout and application workload conditions. The pod proxy supplies each application's resident releases and unfinished-run pins. Application history stays in Helm. An unreadable host leaves residency unknown.
 
 - Every step is safe to run twice. A missing object is a finished step, not a refusal.
 

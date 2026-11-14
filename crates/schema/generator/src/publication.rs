@@ -29,7 +29,6 @@ pub struct CompiledComponentDeclaration {
     pub component: String,
     pub interface_version: String,
     pub operations: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
-    pub connections: Vec<wamn_catalog::ComponentConnection>,
 }
 
 /// Read final component declarations without deployment identity.

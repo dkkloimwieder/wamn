@@ -110,21 +110,6 @@ async fn delete_locked(
 
     resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
-    let observed = wamn_kubernetes::environment_state::observe_environment(
-        &platform.target.namespace,
-        &triple.to_string(),
-        |path| async move {
-            let body = kubectl(
-                platform,
-                &platform.target.namespace,
-                &["get", "--raw", &path],
-                None,
-            )
-            .await?;
-            serde_json::from_str::<serde_json::Value>(&body).map_err(anyhow::Error::from)
-        },
-    )
-    .await?;
     let cr_present = !kubectl(
         platform,
         &platform.database_namespace,
@@ -142,7 +127,7 @@ async fn delete_locked(
     .is_empty();
     if cr_present && !data {
         let url = project_url(platform, triple).await?;
-        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
+        let live = super::drain::loaded(&super::drain::observe(platform, triple).await?);
         let stranded = super::drain::stranded(&url, &project_env_key, env, None, &live).await?;
         anyhow::ensure!(
             stranded.is_empty(),
@@ -155,17 +140,7 @@ async fn delete_locked(
         release_chart::uninstall(&platform.target, name).await?;
         lines.push(format!("uninstalled {name}"));
     }
-    // Pods can outlive their Helm record after an interrupted uninstall.
-    let mut groups: std::collections::BTreeSet<_> = applications.values().cloned().collect();
-    groups.extend(wamn_kubernetes::environment_state::application_states(&observed).into_keys());
-    for name in groups {
-        let live = super::drain::wait(platform, &name, None).await?;
-        if !live.is_empty() {
-            bail!(
-                "application host group {name} is still live: {live:?}; shared resources were retained"
-            );
-        }
-    }
+    super::ensure::suspend_project(platform, triple).await?;
     let live = std::collections::BTreeMap::new();
 
     // Runtime state can change during the drain, outside lifecycle exclusion.
@@ -191,19 +166,6 @@ async fn delete_locked(
     lines.push(format!(
         "deleted the CDC reader of {triple} (or it was gone)"
     ));
-
-    // Shared event resources stop only after every application host drains.
-    let shared = super::ensure::environment_host_name(org, project, env)?;
-    if super::analyse::release_present(platform, &shared).await? {
-        release_chart::uninstall(&platform.target, &shared).await?;
-        lines.push(format!("uninstalled {shared}"));
-    }
-    anyhow::ensure!(
-        super::drain::wait(platform, &shared, None)
-            .await?
-            .is_empty(),
-        "shared environment hosts are still live"
-    );
 
     // The provisioning PATs, then the credential Secrets the verb owns.
     let namespace = platform.target.namespace.as_str();
@@ -400,24 +362,16 @@ async fn delete_locked(
     }
 
     // Keep the registry inputs until the credential store and its account are gone.
-    let account = wamn_registry::service_account_name(org, project, env);
     let secret = wamn_registry::credential_secret_name(org, project, env);
-    for (resource, object) in [
-        ("secret", &secret),
-        ("rolebinding", &account),
-        ("role", &account),
-        ("serviceaccount", &account),
-    ] {
-        let deleted = kubectl(
-            platform,
-            namespace,
-            &["delete", resource, object, "--ignore-not-found"],
-            None,
-        )
-        .await?;
-        if !deleted.is_empty() {
-            lines.push(deleted);
-        }
+    let deleted = kubectl(
+        platform,
+        namespace,
+        &["delete", "secret", &secret, "--ignore-not-found"],
+        None,
+    )
+    .await?;
+    if !deleted.is_empty() {
+        lines.push(deleted);
     }
     // Resolve the publisher before the final commit, while retry inputs remain.
     let changes = platform.auth_changes().await?;

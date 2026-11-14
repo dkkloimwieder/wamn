@@ -2,7 +2,7 @@
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! An application is one Helm release of `deploy/platform/release`: the pinned
-//! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.
+//! workload and route resources. The environment chart owns the host.
 //! This module derives the release name, renders the install values, stamps the
 //! platform image set into the chart's defaults,
 //! reads them back, and runs the Helm install and uninstall.
@@ -12,7 +12,7 @@
 //! is named by its manifest digest alone (R1).
 
 pub(super) mod plan;
-use plan::{recovery, split_host_image};
+use plan::recovery;
 pub use plan::{release_name, roles, values, workload_name};
 
 use std::path::{Path, PathBuf};
@@ -22,7 +22,6 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use wamn_catalog::{AttachmentType, ServingManifest};
-use wamn_engine::release_manifest::release_label;
 
 /// The platform version: `version` in the `Chart.yaml` of the release chart
 /// directory `chart`. The chart is its one owner, so a binary does not change
@@ -61,9 +60,13 @@ pub fn read_platform_version(path: &Path) -> anyhow::Result<String> {
 pub use plan::ImageSet;
 
 /// Copy `chart` to `out` with the image set written into its defaults.
-/// The chart must hold its built subchart archive.
+/// Host runtime defaults belong to the environment chart.
 pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf> {
-    let (repository, tag) = split_host_image(&set.host)?;
+    let host: oci_client::Reference = set.host.parse().context("parse the host image")?;
+    wamn_package_artifact::ensure_digest(
+        host.digest().context("the host image requires a digest")?,
+    )?;
+    ensure!(host.tag().is_some(), "the host image requires a tag");
     let pinned = [("http", &set.http)];
     for (name, image) in pinned {
         ensure!(
@@ -77,11 +80,8 @@ pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf
         &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
     )
     .context("parse the chart's default values")?;
-    let image = &mut values["runtime-operator"]["runtime"]["image"];
-    image["registry"] = "".into();
-    image["repository"] = repository.into();
-    image["tag"] = tag.into();
     let platform = &mut values["platform"];
+    platform["host"]["image"] = set.host.clone().into();
     platform["roles"]["http"]["image"] = set.http.clone().into();
     std::fs::write(&path, serde_yaml::to_string(&values)?)
         .with_context(|| format!("write {}", path.display()))?;
@@ -107,15 +107,7 @@ fn stamped(value: &Value, name: &str) -> anyhow::Result<String> {
 /// Read the image set from the default values of `chart`.
 pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
     let values = default_values(chart).await?;
-    let image = &values["runtime-operator"]["runtime"]["image"];
-    let registry = image["registry"].as_str().unwrap_or_default();
-    let repository = stamped(&image["repository"], "host repository")?;
-    let tag = stamped(&image["tag"], "host tag")?;
-    let host = if registry.is_empty() {
-        format!("{repository}:{tag}")
-    } else {
-        format!("{registry}/{repository}:{tag}")
-    };
+    let host = stamped(&values["platform"]["host"]["image"], "host image")?;
     let roles = &values["platform"]["roles"];
     Ok(ImageSet {
         host,
@@ -131,13 +123,11 @@ pub use plan::TELEMETRY_VARIABLES;
 
 pub use plan::ValuesInput;
 
-pub use plan::SOCKET_EGRESS;
-
 /// Where Helm writes: an explicit kubeconfig, context and namespace.
 pub use wamn_kubernetes::Target;
 
 /// Install or upgrade one application's release at the version of `chart` and
-/// wait for its host Deployment. `description` is kept with the revision.
+/// wait for its resources. `description` is kept with the revision.
 pub async fn upgrade(
     target: &Target,
     chart: &Path,
@@ -287,15 +277,6 @@ mod tests {
     const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     fn input() -> ValuesInput {
-        let mut group = Mapping::new();
-        group.insert("replicas".into(), 3.into());
-        group.insert(
-            "env".into(),
-            serde_yaml::from_str(
-                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}]",
-            )
-            .expect("yaml"),
-        );
         ValuesInput {
             org: "acme".into(),
             project: "wms".into(),
@@ -316,24 +297,17 @@ mod tests {
                 name: RoleName::Http,
                 config: Mapping::new(),
             }],
-            drain_bound_seconds: 300,
             actor: "ops".into(),
-            host_group: group,
+            component_base: "registry.example/components".into(),
         }
-    }
-
-    #[test]
-    fn the_chart_version_and_app_version_are_one() {
-        let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/release");
-        let version = chart_version(&chart).expect("Chart.yaml has a version");
-        let text = std::fs::read_to_string(chart.join("Chart.yaml")).expect("read Chart.yaml");
-        let chart: Value = serde_yaml::from_str(&text).expect("Chart.yaml parses");
-        assert_eq!(chart["appVersion"].as_str(), Some(version.as_str()));
     }
 
     #[test]
     fn values_require_one_application() {
         let mut input = input();
+        input.manifest_digest = "not-a-digest".into();
+        assert!(values(&input).is_err());
+        input.manifest_digest = DIGEST.into();
         let (name, application) = input.applications.pop_first().unwrap();
         assert!(values(&input).is_err());
         input.applications.insert(name, application.clone());
@@ -344,46 +318,7 @@ mod tests {
     #[test]
     fn values_refuse_an_entry_without_a_component_base() {
         let mut input = input();
-        input.host_group.remove("env");
+        input.component_base.clear();
         assert!(values(&input).is_err());
-    }
-
-    #[test]
-    fn values_refuse_a_host_group_that_sets_derived_keys() {
-        for key in ["name", "namespace", "service", "extraArgs", "image"] {
-            let mut input = input();
-            input.host_group.insert(key.into(), "x".into());
-            assert!(values(&input).is_err(), "{key} is refused");
-        }
-        let mut input = input();
-        input.manifest_digest = "e3b0".into();
-        assert!(values(&input).is_err());
-        let defaults = plan::runtime_default_variables().expect("runtime defaults");
-        assert!(!defaults.is_empty(), "the chart sets runtime defaults");
-        for variable in ["WAMN_ORG", "WASMCLOUD_HOST_ENVIRONMENT"]
-            .into_iter()
-            .chain(defaults.iter().map(String::as_str))
-        {
-            let mut input = super::tests::input();
-            input.host_group.insert(
-                "env".into(),
-                serde_yaml::from_str(&format!("[{{name: {variable}, value: other}}]"))
-                    .expect("yaml"),
-            );
-            assert!(values(&input).is_err(), "{variable} is refused");
-        }
-    }
-
-    #[test]
-    fn host_image_splits_into_the_subcharts_fields() {
-        assert_eq!(
-            split_host_image("localhost:5000/wamn-host:dev@sha256:ab").expect("split"),
-            (
-                "localhost:5000/wamn-host".to_owned(),
-                "dev@sha256:ab".to_owned()
-            )
-        );
-        assert!(split_host_image("localhost:5000/wamn-host@sha256:ab").is_err());
-        assert!(split_host_image("wamn-host:dev").is_err());
     }
 }

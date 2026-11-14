@@ -181,6 +181,7 @@ mod tests {
             transactional: true,
         };
         let mut operation = AdmittedComponentOperation {
+            connections: Vec::new(),
             registered_operation: None,
             committed_result_schema: None,
             host_transaction: false,

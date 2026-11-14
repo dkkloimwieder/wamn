@@ -6,7 +6,6 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Instant;
-use wamn_control_provision::WorkloadRoleFamily;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_registry::Triple;
 #[path = "support/release_documents.rs"]
@@ -71,7 +70,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     use std::collections::BTreeMap;
     use wamn_environment::environment::{document::DeclaredRelease, write};
 
-    let work = ScratchRoot::create()?;
     let mut releases = BTreeMap::new();
     let mut applications = serde_json::Map::new();
     for application in ["orders", "receiving"] {
@@ -105,11 +103,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         "org":ORG,"project":PROJECT,"env":"dev","target":"cloud","policy":"dev","revocation_seconds":60,
         "applications":applications
     }))?)?;
-    let group = work.path().join("host.yaml");
-    std::fs::write(
-        &group,
-        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
-    )?;
     let render = |document: &EnvironmentDocument,
                   application: &str,
                   release: &wamn_catalog::ServingManifest|
@@ -121,10 +114,8 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             release,
             release.digest().as_str(),
             "registry.invalid/wamn/releases",
-            70,
+            "registry.invalid/wamn/components",
             "render",
-            Some(&group),
-            None,
         )?;
         assert_eq!(
             values["applications"]
@@ -195,6 +186,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             );
         }
         let row: Value = serde_json::from_str(row["data"]["release.json"].as_str().unwrap())?;
+        assert_eq!(row["digest"].as_str(), Some(release.digest().as_str()));
         let expected = selection
             .client
             .as_ref()
@@ -209,7 +201,11 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             .into_iter()
             .collect::<BTreeMap<_, _>>();
         assert_eq!(row["clients"], serde_json::to_value(expected)?);
-        Ok(carrier)
+        Ok((
+            row["digest"].clone(),
+            route["host"].clone(),
+            route["release"].clone(),
+        ))
     };
     let before = releases
         .iter()
@@ -222,139 +218,16 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         DeclaredRelease::Digest(release.digest().to_string());
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
+        let (before_digest, before_host, before_release) = &before[application];
+        let (after_digest, after_host, after_release) = after;
+        assert_eq!(after_host, *before_host);
+        assert_eq!(after_release, *before_release);
         if *application == "orders" {
-            assert_ne!(before[application], after);
-            let before_route = before[application]
-                .iter()
-                .find(|object| object["data"]["route.json"].is_string())
-                .unwrap();
-            let after_route = after
-                .iter()
-                .find(|object| object["data"]["route.json"].is_string())
-                .unwrap();
-            assert_eq!(before_route["data"], after_route["data"]);
+            assert_ne!(after_digest, *before_digest);
         } else {
-            assert_eq!(before[application], after);
+            assert_eq!(after_digest, *before_digest);
         }
     }
-    Ok(())
-}
-
-#[test]
-fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
-    use wamn_environment::environment::{ensure, sql::reset, write};
-    let mut release = manifest(&fixture_releases()?[2])?;
-    let component = release.components.iter().next().unwrap();
-    let member = wamn_catalog::ServingEntryMember {
-        package_id: component.package_id.clone(),
-        component: component.descriptor.component.clone(),
-        digest: component.descriptor.component_digest.clone(),
-    };
-    release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-        reference: format!("entries@{}", member.digest),
-        route_digest: member.digest.clone(),
-        application: member.clone(),
-        members: [member].into(),
-    });
-    let document = fixture_document("dev", "orders.example", release.digest().as_str());
-    let application = document.applications.keys().next().unwrap();
-    let scratch = ScratchRoot::create()?;
-    let group = scratch.path().join("host.yaml");
-    std::fs::write(
-        &group,
-        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
-    )?;
-    let reapply = || -> anyhow::Result<_> {
-        let (values, _) = write::release_values(
-            &document,
-            application,
-            &release,
-            release.digest().as_str(),
-            "registry.invalid/releases",
-            70,
-            "reset-render",
-            Some(&group),
-            None,
-        )?;
-        Ok(values)
-    };
-    let mut stopped = serde_json::to_value(reapply()?)?;
-    reset::stop_values(&mut stopped)?;
-    let stopped = template(&serde_yaml::to_value(&stopped)?, NAMESPACE)?;
-    assert!(
-        stopped
-            .iter()
-            .all(|object| object["kind"] != "WorkloadDeployment")
-    );
-    let hosts = stopped
-        .iter()
-        .filter(|object| object["kind"] == "Deployment")
-        .collect::<Vec<_>>();
-    assert!(!hosts.is_empty());
-    assert!(hosts.iter().all(|host| host["spec"]["replicas"] == 0));
-    let resumed = template(&reapply()?, NAMESPACE)?;
-    let workloads = resumed
-        .iter()
-        .filter(|object| object["kind"] == "WorkloadDeployment")
-        .collect::<Vec<_>>();
-    assert!(!workloads.is_empty());
-    assert!(
-        workloads
-            .iter()
-            .all(|workload| workload["spec"]["replicas"] == 1)
-    );
-    assert!(
-        resumed
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"]
-                .as_u64()
-                .is_some_and(|replicas| replicas > 0))
-    );
-
-    // Stopping the shared host sets zero replicas. Provisioning restores them.
-    let mut shared = ensure::environment_host_values(
-        &document,
-        70,
-        1,
-        120,
-        Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
-        false,
-        None,
-    )?;
-    reset::stop_values(&mut shared)?;
-    let shared = template(&serde_yaml::to_value(&shared)?, NAMESPACE)?;
-    assert!(
-        shared
-            .iter()
-            .all(|object| object["kind"] != "WorkloadDeployment")
-    );
-    assert!(
-        shared
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"] == 0)
-    );
-    let shared = template(
-        &serde_yaml::to_value(ensure::environment_host_values(
-            &document,
-            70,
-            1,
-            120,
-            Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
-            false,
-            None,
-        )?)?,
-        NAMESPACE,
-    )?;
-    assert!(
-        shared
-            .iter()
-            .filter(|object| object["kind"] == "Deployment")
-            .all(|host| host["spec"]["replicas"]
-                .as_u64()
-                .is_some_and(|replicas| replicas > 0))
-    );
     Ok(())
 }
 
@@ -448,29 +321,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
 
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_release_control::release_chart::ValuesInput;
-    use wamn_test_infrastructure::rendering::{EventIdentity, HostRoleSecret, HostValuesInput};
     let target = Triple::new("acme", "dev", project);
     let secrets = credential_secrets(&target, NAMESPACE);
-    let guest = wamn_control_provision::workload_secret_name(
-        WorkloadRoleFamily::App,
-        "acme",
-        project,
-        "dev",
-    );
-    let roles = wamn_control_provision::host_credentials::HOST_CREDENTIALS
-        .iter()
-        .map(|credential| credential.family)
-        .filter(|family| !matches!(family, WorkloadRoleFamily::App))
-        .map(|family| HostRoleSecret {
-            family,
-            name: wamn_control_provision::workload_secret_name(family, "acme", project, "dev"),
-        })
-        .collect();
-    let event = EventIdentity {
-        org: "acme".into(),
-        project: project.into(),
-        environment: "dev".into(),
-    };
     let manifest = manifest(&fixture_releases()?[2])?;
     let object_store_secret_name = (project == "wms").then(|| {
         wamn_registry::name::workload_secret_name(
@@ -484,23 +336,6 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     if let Some(name) = &object_store_secret_name {
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
     }
-    let rendered = render_fixture::host_values(
-        &HostValuesInput {
-            namespace: NAMESPACE.into(),
-            host_tag: "prekind".into(),
-            replicas: 3,
-            component_artifact_base: "registry.invalid/wamn/components".into(),
-            release_artifact_base: "registry.invalid/wamn/releases".into(),
-            manifest_digest: manifest.digest().as_str().into(),
-            stream_replicas: 1,
-            dup_window_secs: 120,
-            event,
-            guest_secret_name: guest,
-            role_secrets: roles,
-            object_store_secret_name,
-        },
-        project,
-    )?;
     let roles = render_fixture::fixture_roles(&manifest, "acme", project, "dev");
     let values = wamn_release_control::release_chart::values(&ValuesInput {
         org: "acme".into(),
@@ -523,9 +358,8 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         )]
         .into(),
         roles,
-        drain_bound_seconds: 70,
         actor: "prekind".into(),
-        host_group: render_fixture::host_group(&rendered.overlay)?,
+        component_base: "registry.invalid/wamn/components".into(),
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));

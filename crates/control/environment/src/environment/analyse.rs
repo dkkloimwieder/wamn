@@ -124,8 +124,8 @@ pub struct Authorities {
     pub project: Option<ProjectState>,
     pub release: Option<ReleaseFacts>,
     pub revision: Option<Revision>,
-    /// Release digest to the count of host pods that are not terminated.
-    pub live: BTreeMap<String, usize>,
+    /// Loaded application and digest pairs observed from the environment hosts.
+    pub live: BTreeMap<(String, String), usize>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -270,7 +270,7 @@ pub async fn analyse(
         .await?;
     }
     let revision = read_revision(platform, &release_name).await?;
-    let live = read_live_set(platform, &release_name).await?;
+    let live = super::drain::loaded(&super::drain::observe(platform, &document.triple()).await?);
     let packages = match &release {
         Some(release) => read_release_packages(platform, &release.manifest).await?,
         None => Vec::new(),
@@ -809,15 +809,6 @@ pub(crate) async fn release_present(
     Ok(false)
 }
 
-/// The live set: release digest to the count of host pods of the host group
-/// that are not terminated. A terminating pod still counts: it is draining.
-pub(crate) async fn read_live_set(
-    platform: &Platform,
-    release_name: &str,
-) -> anyhow::Result<BTreeMap<String, usize>> {
-    Ok(live_set(&read_pods(platform, release_name).await?))
-}
-
 /// The host pods of the environment's host group, as `kubectl get pods -o json`.
 pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {
     let selector = wamn_registry::name::host_selector(release_name);
@@ -831,8 +822,6 @@ pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow
     .await?;
     serde_json::from_str(&output).context("decode the pod list")
 }
-
-pub(crate) use wamn_kubernetes::environment_state::live_set;
 
 /// Refuse cloud exclusive bindings unless the supplied host group names one replica.
 ///
@@ -859,7 +848,7 @@ pub async fn replica_refusals(
     if !cloud {
         return Ok(Vec::new());
     }
-    let group = super::write::host_group(path, &document.org, &document.project, &document.env)?;
+    let group = super::write::host_group(path)?;
     let replicas = group.get("replicas").and_then(serde_yaml::Value::as_u64);
     Ok(bindings
         .iter()
@@ -938,20 +927,6 @@ mod tests {
         );
         assert!(rollback_target(&[revision(1, "failed", 1, None)])?.is_none());
         Ok(())
-    }
-
-    #[test]
-    fn the_live_set_counts_pods_that_are_not_terminated() {
-        let pods = json!({"items": [
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}, "deletionTimestamp": "t"}, "status": {"phase": "Running"}},
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Pending"}},
-            {"metadata": {"annotations": {"wamn.release-digest": "sha256:c"}}, "status": {"phase": "Succeeded"}}
-        ]});
-        assert_eq!(
-            live_set(&pods),
-            BTreeMap::from([("sha256:a".to_owned(), 2), ("sha256:b".to_owned(), 1)])
-        );
     }
 
     fn applications(entries: &[(&str, &[&str])]) -> wamn_catalog::EnvironmentApplications {

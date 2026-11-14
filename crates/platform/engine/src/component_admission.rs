@@ -760,6 +760,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     OPERATION.to_string(),
                     ComponentOperationDeclaration {
+                        connections: Vec::new(),
                         committed_result_schema: None,
                         registered_operation: None,
                         input_ports: vec![ComponentPortDeclaration {
@@ -777,7 +778,6 @@ mod tests {
                         }],
                     },
                 )]),
-                connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
             base_digests: BTreeSet::new(),
@@ -1269,11 +1269,20 @@ mod tests {
             "wamn:postgres".to_string(),
             "wamn:connection".to_string(),
         ]);
-        request.declaration.connections = vec![wamn_catalog::ComponentConnection {
-            store_alias: "erp".to_string().into(),
-            requirement_type: wamn_catalog::ComponentConnectionType::Http,
-            mode: wamn_catalog::ConnectionMode::Write,
-        }];
+        request
+            .declaration
+            .operations
+            .values_mut()
+            .next()
+            .unwrap()
+            .connections = vec![
+            wamn_catalog::ComponentConnection {
+                store_alias: "erp".to_string().into(),
+                requirement_type: wamn_catalog::ComponentConnectionType::Http,
+                mode: wamn_catalog::ConnectionMode::Write,
+            }
+            .into(),
+        ];
 
         let facts = validate_component_admission(&engine, &bytes, request)
             .expect("an effectful component with a declared connection admits");

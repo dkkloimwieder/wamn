@@ -1,15 +1,7 @@
-use super::{
-    EnvironmentDocument, HOST_CREDENTIALS, Mapping, RoleName, Value, ValuesInput, ensure,
-    release_chart,
-};
+use super::{EnvironmentDocument, Mapping, RoleName, Value, ValuesInput, release_chart};
 use anyhow::Context as _;
 
-pub(in crate::environment) fn host_group(
-    mut group: Mapping,
-    org: &str,
-    project: &str,
-    env: &str,
-) -> anyhow::Result<Mapping> {
+pub(in crate::environment) fn host_group(mut group: Mapping) -> anyhow::Result<Mapping> {
     // The upstream chart replaces a group's resources wholesale.
     // Fill omitted defaults before it receives a placement-specific override.
     if let Some(resources) = group.get_mut("resources") {
@@ -17,7 +9,7 @@ pub(in crate::environment) fn host_group(
             .as_mapping_mut()
             .context("host resources are not a mapping")?;
         let mut defaults: Value = serde_yaml::from_str(include_str!(
-            "../../../../../../deploy/platform/release/values.yaml"
+            "../../../../../../deploy/platform/environment/values.yaml"
         ))?;
         let Value::Mapping(defaults) =
             std::mem::take(&mut defaults["runtime-operator"]["runtime"]["resources"])
@@ -28,43 +20,12 @@ pub(in crate::environment) fn host_group(
             resources.entry(name).or_insert(value);
         }
     }
-    let variables = group
+    group
         .entry("env".into())
         .or_insert_with(|| Value::Sequence(Vec::new()))
         .as_sequence_mut()
         .context("the platform host group's `env` is not a list")?;
-    for credential in HOST_CREDENTIALS {
-        let Some(variable) = credential.host_variable else {
-            continue;
-        };
-        ensure!(
-            !variables
-                .iter()
-                .any(|entry| entry["name"].as_str() == Some(variable)),
-            "the platform host group sets {variable}, which apply derives from the coordinate"
-        );
-        variables.push(serde_yaml::from_str(&format!(
-            "{{name: {variable}, value: /etc/wamn/postgres/{}.json}}",
-            if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
-                "app".to_owned()
-            } else {
-                credential.family.component_stem()
-            }
-        ))?);
-    }
-    let mut group = serde_json::to_value(group)?;
-    if let Some(volumes) = group["volumes"].as_array_mut() {
-        volumes.retain(|volume| volume["name"] != "postgres-configuration");
-    }
-    if !group["volumes"].is_array() {
-        group["volumes"] = serde_json::json!([]);
-    }
-    group["volumes"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "configMap":{"name":wamn_control_provision::project_env_secret_name(org, project, env)}}));
-    if !group["volumeMounts"].is_array() {
-        group["volumeMounts"] = serde_json::json!([]);
-    }
-    group["volumeMounts"].as_array_mut().unwrap().push(serde_json::json!({"name":"postgres-configuration", "mountPath":"/etc/wamn/postgres", "readOnly":true}));
-    Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
+    Ok(group)
 }
 
 /// Derive registry arguments from the platform host's environment variables.
@@ -87,19 +48,14 @@ pub(in crate::environment) fn registry_arguments(host_group: &Mapping) -> Vec<St
 }
 
 /// Build release values from the document, artifact, policy, and host overlay.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Release values combine document, artifact, policy, and chart inputs"
-)]
 pub(super) fn release_values(
     document: &EnvironmentDocument,
     application: &str,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &str,
     artifact_base: &str,
-    drain_bound_seconds: u32,
+    component_base: &str,
     actor: &str,
-    host_group: Mapping,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
     let names = roles.iter().map(|role| role.name).collect();
@@ -119,41 +75,18 @@ pub(super) fn release_values(
             connections: std::collections::BTreeMap::new(),
         },
     )]);
-    let local_components = host_group
-        .get("env")
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .find(|entry| entry["name"] == "WAMN_COMPONENT_ARTIFACT_BASE")
-        .and_then(|entry| entry["value"].as_str())
-        .filter(|base| base.starts_with(&format!("{}/", crate::platform::resources::POD_REGISTRY)));
-    let local_registry = local_components.is_some();
-    let pod_artifact_base =
-        super::super::runtime::pod_artifact_base(local_registry, artifact_base)?;
-    let registry_arguments = registry_arguments(&host_group);
     let mut rendered = release_chart::values(&ValuesInput {
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
         manifest_digest: manifest_digest.to_owned(),
-        artifact_base: pod_artifact_base.into_owned(),
+        artifact_base: artifact_base.to_owned(),
         route_host: selection.hostname.clone(),
         applications,
         roles,
-        drain_bound_seconds,
         actor: actor.to_owned(),
-        host_group,
+        component_base: component_base.to_owned(),
     })?;
-    rendered["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
-        .as_sequence_mut()
-        .context("application host arguments")?
-        .extend(registry_arguments.into_iter().map(Value::String));
-    if local_registry {
-        rendered["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
-            .as_sequence_mut()
-            .context("application host arguments")?
-            .push("--allow-insecure-registries".into());
-    }
     rendered["webClients"] = serde_yaml::to_value(
         selection
             .client

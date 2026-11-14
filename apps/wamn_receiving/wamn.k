@@ -456,7 +456,7 @@ manifest.Package {
         }
     }
     connections = {}
-    components = {receiving = {connections = ["postgres"]}}
+    components = {receiving = {}}
     routes = {
         operations = {
             "receiving.record_receipt" = {id = "receiving-record-receipt-http", path = "/receiving/record_receipt"}

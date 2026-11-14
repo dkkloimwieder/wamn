@@ -135,8 +135,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         "operations":{(OPERATION):{"registered-operation":OPERATION,
             "input-ports":[{"name":"input","schema":{}}],
             "output-ports":[{"name":"main","schema":{}}],
-            "parameters":[{"name":"deadline-ms","schema":{"type":"integer"},"required":false}]}},
-        "connections":[]
+            "parameters":[{"name":"deadline-ms","schema":{"type":"integer"},"required":false}]}}
     }))?;
     let admitted = validate_component_admission(
         &engine,

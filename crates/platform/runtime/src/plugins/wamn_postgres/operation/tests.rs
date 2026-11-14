@@ -61,7 +61,8 @@ ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0
 BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".into(),
-            descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation { host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
+            descriptor: { let mut descriptor = ComponentDescriptor::named("entry", "0.1", digest('a')); descriptor.operations = BTreeMap::from([(READ_OPERATION.into(), AdmittedComponentOperation {
+connections: Vec::new(), host_transaction: false, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: None,
                 committed_result_schema: None,
                 statements: BTreeMap::from([("read.sql".into(), ComponentSqlStatement {
@@ -70,7 +71,8 @@ BTreeSet::from([ServingComponent {
                     relations: Vec::new(),
                     transactional: false, ..statement.clone()
                 })]),
-            }), (OPERATION.into(), AdmittedComponentOperation { host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
+            }), (OPERATION.into(), AdmittedComponentOperation {
+connections: Vec::new(), host_transaction: true, input_ports: Vec::new(), output_ports: Vec::new(), parameters: Vec::new(),
                 registered_operation: Some(OPERATION.into()),
                 committed_result_schema: None,
                 statements: BTreeMap::from([("update.sql".into(), statement)]),

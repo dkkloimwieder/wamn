@@ -256,7 +256,7 @@ pub struct WamnPostgres {
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
     auth: Arc<crate::auth_cache::AuthCache>,
-    hierarchy_reader: std::sync::RwLock<Option<sqlx::PgPool>>,
+    hierarchy_reader: std::sync::RwLock<HashMap<String, sqlx::PgPool>>,
 }
 
 /// The release a pod carries — the manifest digest derived from the verified
@@ -747,11 +747,11 @@ impl WamnPostgres {
     }
 
     /// Bind the host's existing identity reader for inherited authorization.
-    pub fn set_hierarchy_reader(&self, reader: sqlx::PgPool) {
-        *self
-            .hierarchy_reader
+    pub fn set_hierarchy_reader(&self, key: &str, reader: sqlx::PgPool) {
+        self.hierarchy_reader
             .write()
-            .expect("hierarchy reader lock poisoned") = Some(reader);
+            .expect("hierarchy reader lock poisoned")
+            .insert(key.to_owned(), reader);
     }
 
     async fn inherited_grants(
@@ -781,7 +781,7 @@ impl WamnPostgres {
             .hierarchy_reader
             .read()
             .expect("hierarchy reader lock poisoned")
-            .as_ref()
+            .get(key)
             .cloned();
         let Some(reader) = reader else {
             return Ok(false);
@@ -1349,19 +1349,10 @@ impl WamnPostgres {
         {
             return Ok(None);
         }
-        let declaration = component
-            .descriptor
-            .connections
-            .iter()
-            .find(|connection| match &connection.store_alias {
-                wamn_catalog::ComponentConnectionAlias::Name(name) => name == lookup.store_alias,
-                wamn_catalog::ComponentConnectionAlias::Configuration { .. } => {
-                    invocation.entry.wiring().and_then(|position| {
-                        connection.store_alias.resolve(&position.configuration)
-                    }) == Some(lookup.store_alias)
-                }
-            })
-            .context("component declares no such connection alias")?;
+        let declaration = invocation
+            .connection(manifest, lookup.store_alias)
+            .and_then(wamn_catalog::OperationConnection::host)
+            .context("operation declares no such connection alias")?;
         anyhow::ensure!(
             facts.project_env_key() == project_env_key,
             "HTTP effect authorization project_env_key {project_env_key:?} disagrees with the connection facts"

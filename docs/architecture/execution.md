@@ -137,7 +137,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, resident releases, and unfinished-run pins for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the relations it reads, writes, deletes and locks, derived from the release's SQL over the environment's relation columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. A view read reports the view columns and each base table with the columns that the view depends on through `pg_depend`. Writes nothing. |
@@ -160,9 +160,12 @@ The first two counts share one query through the existing environment administra
 Each count read has a two-second timeout, and both reads run concurrently.
 A failed or timed-out read logs a warning and returns null for its counts, without failing the runtime status answer.
 
-The control host selects one status source. Kubernetes reads the release namespace.
-With `--local-control`, the local source reads the development loop's endpoint record and queries its selected host through NATS.
-Both sources return the same digest, rollout, workloads, and live set.
+The control service reads the shared host Deployment and application WorkloadDeployments from the org namespace.
+It reads `/_wamn/residency` on each live host through the Kubernetes pod proxy.
+The host reports each project's loaded application releases and unfinished runs, including releases that failed to load.
+An unavailable project remains unknown and does not hide another project's report.
+The `residency` result lists the application, manifest digest, loaded state, and run IDs.
+The host carries no single release digest. Application Helm histories remain independent.
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
@@ -400,11 +403,11 @@ Pool capacity does not limit request admission or total memory.
 A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
 A process memory guard at 90 percent of the limit refuses guest growth and new workloads in every mode.
 The guard samples resident memory once per second, so it is not a hard allocation cap.
-The host runs guest memory in count mode and raw-socket egress in enforce mode ([native alignment](native-alignment.md#retained-wamn-implementations)).
-Guest memory count mode records growth past the budget and allows it. Socket enforce mode blocks traffic refused by policy.
+The host enforces the guest memory budget and raw-socket egress policy ([native alignment](native-alignment.md#retained-wamn-implementations)).
+The pinned wash runtime refuses growth beyond the shared guest budget.
 The host flags `--guest-memory-mode` and `--socket-egress` each accept count or enforce.
-Each linear memory keeps its 256 MiB ceiling.
-A combined per-instance store limit awaits the owner’s enforcement decision. The native runtime keeps the store hook private.
+Both default to enforce. Each linear memory has a 256 MiB ceiling.
+The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
 The release chart sets how many bytes each allocator slot keeps resident after use.
@@ -547,7 +550,10 @@ An absent setting uses UTC. A setting with an invalid type or zone refuses that 
 
 The environment document declares its applications: each name with the packages of the release that belong to it.
 `environment::apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
-The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn workflow author` read it.
+The release chart projects each application selection into a ConfigMap.
+The host reads these release projections for each project in its environment.
+The registry keeps each application's desired release and client selection in typed rows.
+Helm keeps deployment attempts and rollback history for each application.
 The host uses the declared application membership for each loaded release. A restored run retains its application and manifest digest.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
 An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the declared application names, and the executor resolves the run's nodes within that application's packages.
@@ -746,7 +752,7 @@ One read of `platform."user"`, `platform.user_role` and `platform.permission` an
 Invocation binds and workflow callers use the guest login. Route authentication uses the callable-HTTP login.
 Both use the same grants reader and memory value.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
-Each host watches the keys of its project and keeps each value it sees, so a fact one host reads serves every host of the project.
+The environment host watches each project through that project's event client and keeps its connection facts separate. A fact read for one project never supplies another project's authority.
 The control host serves every project, so it watches every key.
 Each environment document declares the project's `revocation_seconds` and each application's `revocation_seconds`.
 Both values are required nonnegative integers. Zero disables caching.
@@ -856,8 +862,9 @@ Connection memory supplies current binding and credential state.
 The host does not rebuild release or workflow authority from SQL on an effect call.
 
 An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
-The host shares one dedicated system database session across its cloud leases.
-The session uses `WAMN_CONNECTION_STORE_URL` and opens on the first exclusive cloud call.
+Each project has a dedicated system database session for its cloud leases.
+The host reads connection configuration from that project's mounted directory under `/etc/wamn/environment`.
+The session opens on the first exclusive cloud call.
 Its key is `hashtextextended('resource:' || target_id || ':' || resource_key, 0)`.
 Local targets use an in-process map with the same resource string.
 
@@ -1492,3 +1499,22 @@ A cursor of another model, or one that does not decode, refuses with `invalid_in
 The device listens only on a loopback address. A non-loopback address refuses before startup.
 The device has no request counter that sheds calls. Its instance pool retains warm instances only.
 Calls beyond the warm pool can use one-shot stores.
+
+### Environment placement
+
+One native runtime serves every project of its org and environment.
+The environment chart projects the allowed project names through `--projects`.
+Each project has its own database connection configuration, connection reader, and event client certificate.
+The host refuses a workload outside that project set before it loads components.
+Project preparation retries independently. A failed project or release does not stop another project's queues.
+
+Each application owns its execution objects even when applications use the same manifest digest.
+Only verified manifest bytes share a cache. Every load first authorizes the digest against its own project catalog.
+Current releases and releases pinned by unfinished runs stay loaded together.
+Release preparation and queue execution remain independent.
+Authorization reads remain live, so one project cannot set another project's cache lifetime.
+
+Reset and deletion remove only the selected project from the host projection.
+They wait for pods that mount that project's configuration to stop before replacing or removing its database.
+Other projects remain in the shared host projection. The last project removes the host release.
+Lifecycle exclusion uses org and environment. Application locks still include their project and application.

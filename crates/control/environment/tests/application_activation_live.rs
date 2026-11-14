@@ -141,6 +141,12 @@ fn component(
             mode: wamn_catalog::ConnectionMode::Write,
         })
         .collect();
+    descriptor.operations.get_mut("run").unwrap().connections = descriptor
+        .connections
+        .iter()
+        .cloned()
+        .map(Into::into)
+        .collect();
     let admitted = descriptor
         .clone()
         .into_admitted(wamn_catalog::ComponentPackageCoordinate::new(
@@ -188,7 +194,7 @@ fn package(
     std::fs::create_dir_all(root.join("migrations"))?;
     std::fs::create_dir_all(root.join("generated/platform-policy"))?;
     let mut value = json!({"package":{"id":name,"version":version},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},"models":{},"components":{},"connections":{}});
-    value["components"] = json!({name:{"connections":["postgres"]}});
+    value["components"] = json!({name:{}});
     value["models"] = json!({"data":{"schema":name,"table":"data","owner":name,"server_owned_fields":[],"audit_log":{"columns":[],"retention":"none"},"operations":{"get":{"permission":"data.get","result":"one"},"update":{"permission":"data.update","result":"one"}}}});
     std::fs::write(
         root.join("migrations/0001_data.sql"),
@@ -908,7 +914,11 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             PROJECT_ENV_KEY,
             "dev",
             Some(&["a".to_owned()]),
-            &BTreeMap::from([(new_a.digest().to_string(), 1)]),
+            &BTreeMap::from([
+                (("a".into(), new_a.digest().to_string()), 1),
+                // Another application loading the old digest cannot serve a's pinned run.
+                (("b".into(), old_a.digest().to_string()), 1),
+            ]),
         )
         .await?;
         assert_eq!(

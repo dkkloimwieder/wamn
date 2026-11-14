@@ -775,7 +775,7 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// and environment grants of the org operations, and it reads the projects and
 /// environments those grants cover. The `project.create` route writes a
 /// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 12] = [
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 16] = [
     ("identity", "oauth_authorization", CONTROL_WRITE),
     ("identity", "oauth_token", CONTROL_WRITE),
     ("identity", "org_memberships", CONTROL_WRITE),
@@ -786,6 +786,14 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 12] = [
     ("identity", "project_env_memberships", CONTROL_WRITE),
     ("identity", "project_roles", CONTROL_WRITE),
     ("registry", "environment_projects", &["SELECT"]),
+    ("registry", "environment_applications", &["SELECT"]),
+    (
+        "registry",
+        "environment_application_connections",
+        &["SELECT"],
+    ),
+    ("registry", "environment_integrations", &["SELECT"]),
+    ("registry", "target", &["SELECT"]),
     ("registry", "environments", &["SELECT"]),
     ("registry", "projects", &["SELECT", "INSERT"]),
 ];

@@ -127,6 +127,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "map".to_owned(),
                     ComponentOperationDeclaration {
+                        connections: Vec::new(),
                         committed_result_schema: None,
                         registered_operation: None,
                         input_ports: vec![ComponentPortDeclaration {
@@ -137,7 +138,6 @@ mod tests {
                         parameters: Vec::new(),
                     },
                 )]),
-                connections: Vec::new(),
             },
             format!("sha256:{}", "a".repeat(64)),
             ["wasi:io/streams@0.2.3".to_owned()],

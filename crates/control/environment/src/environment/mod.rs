@@ -302,15 +302,20 @@ pub async fn dry_run(
     let private = ensure::PrivateDirectory::create()?;
     let mut resolved = platform.clone();
     runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
-    let clients: Vec<_> = document
-        .applications
-        .values_mut()
-        .map(|application| application.client.take())
-        .collect();
-    document.resolve_releases(&resolved).await?;
-    for (application, client) in document.applications.values_mut().zip(clients) {
-        application.client = client;
+    let mut system = wamn_postgres::connect(&resolved.system_database_url).await?;
+    if let Some(configuration) =
+        wamn_registry::configuration::read(&mut system, &document.triple()).await?
+    {
+        for (name, application) in configuration.applications {
+            if let Some(selection) = document.applications.get_mut(&name) {
+                selection.current = application.release.map_or(
+                    document::DeclaredRelease::None,
+                    document::DeclaredRelease::Digest,
+                );
+            }
+        }
     }
+    document.resolve_releases(&resolved).await?;
     analyse::analyse(&resolved, &document, application).await
 }
 
@@ -332,6 +337,13 @@ pub async fn apply(
         &platform.system_database_url,
         &document.triple(),
         async |lock| {
+            wamn_registry::configuration::require_placement(
+                &mut *lock.client().await,
+                &document.org,
+                &document.env,
+                &document.policy,
+            )
+            .await?;
             if ensure::resources_in_place(&platform, &document).await? {
                 let cluster = sql::reset::recorded_cluster(&platform, &document).await?;
                 let triple = document.triple();
@@ -418,7 +430,7 @@ pub async fn stop(
     .await
 }
 
-/// Apply one application under its lock. Helm alone records the release selection.
+/// Apply one application under its lock and record its desired selection in the registry.
 async fn apply_selection(
     platform: &Platform,
     triple: &wamn_registry::Triple,
@@ -477,19 +489,7 @@ async fn apply_selection(
                         .expect("application was declared")
                         .current = document::DeclaredRelease::None;
                 }
-                document::ReleaseChange::Configure => {
-                    if let Some(revision) = analyse::read_revision(&platform, &release_name).await?
-                    {
-                        let digest = revision
-                            .manifest_digest()
-                            .context("Helm revision has no release digest")?;
-                        document
-                            .applications
-                            .get_mut(application)
-                            .expect("application was declared")
-                            .current = document::DeclaredRelease::Digest(digest.to_owned());
-                    }
-                }
+                document::ReleaseChange::Configure => {}
             }
             crate::provision_project_env::registry::require_connected(
                 &mut *lock.client().await,
@@ -520,6 +520,27 @@ async fn apply_selection(
             expand::expand(&platform, &document, &analysis, publisher)
                 .await
                 .context("prepare application control records")?;
+            let selection = &document.applications[application];
+            let release = match &selection.current {
+                document::DeclaredRelease::None => None,
+                document::DeclaredRelease::Digest(digest) => Some(digest.as_str()),
+            };
+            let mut connection = lock.client().await;
+            let mut transaction =
+                crate::provision_project_env::provisioning_transaction(&mut connection).await?;
+            anyhow::ensure!(
+                wamn_registry::configuration::write_selection(
+                    &mut transaction,
+                    triple,
+                    application,
+                    release,
+                    selection.client.as_ref()
+                )
+                .await?,
+                "application configuration disappeared"
+            );
+            transaction.commit().await?;
+            drop(connection);
             if let Some(prepared) = prepared {
                 let written = write::write(
                     &platform,
@@ -532,23 +553,6 @@ async fn apply_selection(
                 readiness::wait(&platform, &written)
                     .await
                     .context("wait for application readiness")?;
-                if matches!(change, document::ReleaseChange::Rollback(_)) {
-                    let mut connection = lock.client().await;
-                    let mut transaction =
-                        crate::provision_project_env::provisioning_transaction(&mut connection)
-                            .await?;
-                    anyhow::ensure!(
-                        wamn_registry::configuration::write_client(
-                            &mut transaction,
-                            triple,
-                            application,
-                            document.applications[application].client.as_ref()
-                        )
-                        .await?,
-                        "application configuration disappeared"
-                    );
-                    transaction.commit().await?;
-                }
                 analysis
                     .plan
                     .push(format!("wrote a revision of {release_name}"));
@@ -559,9 +563,13 @@ async fn apply_selection(
                 release_chart::uninstall(&platform.target, &release_name).await?;
                 analysis.plan.push(format!("uninstalled {release_name}"));
             }
-            drain::drain(&platform, &document, &analysis)
+            let residency = drain::drain(&platform, &document, &analysis)
                 .await
-                .context("observe application drain")?;
+                .context("observe application residency")?;
+            analysis.plan.push(format!(
+                "release residency: {}",
+                serde_json::to_string(&residency)?
+            ));
             Ok(analysis)
         })
         .await;

@@ -18,19 +18,17 @@ use super::{Platform, document::EnvironmentDocument, lock::LifecycleLock};
 pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<String>> {
     LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
         let document = EnvironmentDocument::read_serving(platform, triple).await?;
-        let observed = wamn_kubernetes::environment_state::observe_environment(
-            &platform.target.namespace, &triple.to_string(), |path| async move {
-                let body = super::ensure::kubectl(platform, &platform.target.namespace,
-                    &["get", "--raw", &path], None).await?;
-                serde_json::from_str(&body).context("read environment hosts for retention")
-            },
-        ).await?;
-        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
-        ensure!(!live.contains_key("unlabelled"), "cannot retain releases with unknown live hosts");
-        let mut retained: BTreeSet<String> = live.into_keys().collect();
-        for selection in document.applications.values() {
+        let residency = super::drain::observe(platform,triple).await?;
+        let live = super::drain::loaded(&residency);
+        let mut retained: BTreeSet<String> = live.into_keys().map(|(_, digest)| digest).collect();
+        for (application, selection) in &document.applications {
             if let super::document::DeclaredRelease::Digest(digest) = &selection.current {
                 retained.insert(digest.clone());
+            }
+            // A failed write can leave Helm serving the previous desired release.
+            let name = super::analyse::application_release_name(&document, application)?;
+            if let Some(revision) = super::analyse::read_revision(platform, &name).await? {
+                retained.insert(revision.manifest_digest().context("Helm revision has no release digest")?.to_owned());
             }
         }
         let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
@@ -66,7 +64,7 @@ pub async fn prune(platform: &Platform, triple: &Triple) -> anyhow::Result<Vec<S
 }
 
 /// Remove unserved releases after excluding unfinished-run pins in the same transaction.
-/// The caller holds environment exclusion and supplies current host and Helm selections.
+/// The caller holds environment exclusion and supplies loaded releases, desired selections and observed Helm selections.
 ///
 /// # Errors
 /// Returns database errors. Unknown host identity refuses cleanup.

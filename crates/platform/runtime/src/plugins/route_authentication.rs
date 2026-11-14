@@ -132,19 +132,22 @@ impl PlatformRouteAuthenticator {
             std::collections::HashMap<String, SessionVerifier<IssuerKeys>>,
         )>,
     ) -> Self {
+        let projects: std::collections::HashMap<_, _> = facts
+            .into_iter()
+            .map(|facts| (facts.project_env_key().to_owned(), facts))
+            .collect();
         let (identity_reader, verifiers) = match identity {
             Some((reader, verifiers)) => {
-                postgres.set_hierarchy_reader(reader.clone());
+                for key in projects.keys().chain(verifiers.keys()) {
+                    postgres.set_hierarchy_reader(key, reader.clone());
+                }
                 (Some(reader), verifiers)
             }
             None => (None, std::collections::HashMap::new()),
         };
         Self {
             postgres,
-            projects: facts
-                .into_iter()
-                .map(|facts| (facts.project_env_key().to_owned(), facts))
-                .collect(),
+            projects,
             identity_reader,
             verifiers,
         }
@@ -158,6 +161,9 @@ impl PlatformRouteAuthenticator {
         identity_reader: Option<sqlx::PgPool>,
         verifier: Option<SessionVerifier<IssuerKeys>>,
     ) -> Self {
+        if let Some(reader) = &identity_reader {
+            postgres.set_hierarchy_reader(project_env_key, reader.clone());
+        }
         Self::new(
             postgres,
             [],
@@ -636,6 +642,7 @@ pub(crate) mod tests {
                     descriptor.operations = BTreeMap::from([(
                         "request".into(),
                         AdmittedComponentOperation {
+                            connections: Vec::new(),
                             host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),

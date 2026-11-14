@@ -167,6 +167,20 @@ impl AuthorizedInvocation {
         if let Some(context) = &context {
             validate_context(&identity, context)?;
         }
+        let external =
+            context
+                .as_ref()
+                .zip(invocation.as_ref())
+                .is_some_and(|(context, invocation)| {
+                    invocation
+                        .declaration(context.release.manifest())
+                        .is_some_and(|operation| !operation.connections.is_empty())
+                });
+        let statements = if external {
+            crate::plugins::wamn_postgres::statements::StatementScope::default()
+        } else {
+            crate::plugins::wamn_postgres::statements::StatementScope::active(statements, members)
+        };
         let lifetime = postgres.scopes.enter(
             scope,
             Authority {
@@ -174,9 +188,7 @@ impl AuthorizedInvocation {
                 context,
                 causation,
                 invocation,
-                statements: crate::plugins::wamn_postgres::statements::StatementScope::active(
-                    statements, members,
-                ),
+                statements,
                 ..Authority::default()
             },
             InvocationTrace::capture(),

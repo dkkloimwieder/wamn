@@ -993,7 +993,7 @@ mod tests {
             "package": {"id": "sort_fixture", "version": "0.1.0"},
             "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
             "connections": {},
-            "components": {"fixture": {"connections": ["postgres"]}},
+            "components": {"fixture": {}},
             "models": {"order_row": {
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
                 "server_owned_fields": [],

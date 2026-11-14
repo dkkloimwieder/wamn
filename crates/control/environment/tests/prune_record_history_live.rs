@@ -30,7 +30,7 @@ async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
         "package": {"id": "watermark_fixture", "version": "1.0.0"},
         "required_platform_policy_contract": {"id": "widget_data_access", "state": "unsatisfied"},
         "connections": {},
-        "components": {"inventory": {"connections": ["postgres"]}},
+        "components": {"inventory": {}},
         "models": {"widget": {
             "schema": "inventory", "table": "widget", "owner": "watermark_fixture",
             "server_owned_fields": ["id", "row_version", "created_at"],

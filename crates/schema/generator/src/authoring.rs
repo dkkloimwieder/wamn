@@ -145,7 +145,7 @@ manifest.Package {
             errors = ["invalid_input", "permission_denied", "internal_error"]
         }
     }
-    components = {files = {connections = []}}
+    components = {files = {}}
 }
 "#;
         fs::write(root.join(AUTHORED_MANIFEST), source).unwrap();
