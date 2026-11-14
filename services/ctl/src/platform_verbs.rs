@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_control_provision::schema_migrations::MigrationDatabase;
+use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::pools::Direction;
 use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
@@ -135,8 +135,8 @@ pub enum SystemSchemaCommand {
 
 #[derive(Debug, Args)]
 pub struct SystemSchemaArgs {
-    /// The system database administrator URL supplied by the Job Secret.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
+    /// The restricted system migration connection supplied by the Job.
+    #[arg(long, hide_env_values = true)]
     pub system_url: String,
     /// The immutable ctl image selected by the prepared chart.
     #[arg(long)]
@@ -166,17 +166,12 @@ pub async fn run_system_schema(
         .context("connect to the system SQL database")?;
 
     let result = async {
-        sqlx::raw_sql("SET ROLE wamn_system")
-            .execute(&mut client)
-            .await
-            .map(drop)?;
         let sources = platform_migrations::embedded_sources(MigrationDatabase::System);
         platform_migrations::run(
             &mut client,
             platform_migrations::MigrationTarget::System,
             &sources,
             apply,
-            resolution,
             &mut output,
         )
         .await?;

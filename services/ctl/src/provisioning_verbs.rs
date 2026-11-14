@@ -33,6 +33,9 @@ pub struct ProvisionSystemArgs {
     /// whose owner role `wamn_system` already exists.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_url: String,
+    /// The restricted platform migration connection for explicit PostgreSQL access.
+    #[arg(long, hide_env_values = true)]
+    pub migration_database_url: Option<String>,
 
     /// Email domain of the platform principal rows, written to
     /// `registry.meta.platform_domain`.
@@ -43,6 +46,7 @@ pub struct ProvisionSystemArgs {
 /// Install the control store into an empty system database.
 pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
     let request = ProvisionSystemRequest {
+        migration_database_url: args.migration_database_url,
         system_database_url: args.system_url,
         platform_domain: args
             .platform_domain

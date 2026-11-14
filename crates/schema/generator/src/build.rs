@@ -129,6 +129,27 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     }
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
+    // Generated migrations are durable source inputs, not a rebuildable current recipe.
+    // Never overwrite an earlier version, including during a repeated build.
+    for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
+        let path = request.package_root.join(relative);
+        fs::create_dir_all(path.parent().context("history migration parent")?)?;
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => std::io::Write::write_all(&mut file, bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                ensure!(
+                    fs::read(&path)? == *bytes,
+                    "generated migration changed: {}",
+                    path.display()
+                );
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     let outputs = write_outputs(&package_output, &canonical, &files)?;
     let build_record = BuildRecord {
         schema: BUILD_RECORD_SCHEMA.to_owned(),
@@ -159,6 +180,7 @@ fn snapshot_source(root: &Path) -> Result<(tempfile::TempDir, Vec<PathBuf>)> {
             let path = relative.join(entry.file_name());
             let type_ = entry.file_type()?;
             let authored_tree = path.starts_with("migrations")
+                || path.starts_with("history")
                 || path.starts_with("command")
                 || path.starts_with("query");
             if type_.is_dir() {
@@ -276,24 +298,9 @@ async fn pass_one_and_two(
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
-    let physical = physical_schema(database_url, package_root, &manifest).await?;
-    if !physical.columns.is_empty() {
-        let history = wamn_schema_control::physical_schema::render(
-            &(&manifest).into(),
-            &[],
-            &physical.columns,
-        )?;
-        let history = history
-            .into_iter()
-            .map(|statement| statement.sql)
-            .collect::<Vec<_>>()
-            .join(";\n");
-        files.insert(PathBuf::from("record-history.sql"), history.into_bytes());
-    }
-    files.insert(
-        PathBuf::from("physical-schema.json"),
-        canonical_json_bytes(&serde_json::to_value(physical)?),
-    );
+    let columns = history_columns(database_url, &manifest).await?;
+    let history = crate::history::render(package_root, &(&manifest).into(), &columns).await?;
+    files.extend(crate::history::migrations(package_root, &history).await?);
     files.insert(
         PathBuf::from("wamn.k"),
         fs::read(package_root.join(crate::AUTHORED_MANIFEST))?,
@@ -313,33 +320,40 @@ async fn pass_one_and_two(
             }
         }
     }
+    // Validate the newly generated SQL through the same sequence before publishing it.
+    for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
+        let path = package_root.join(relative);
+        fs::create_dir_all(path.parent().context("history directory")?)?;
+        if !path.exists() {
+            fs::write(path, bytes)?;
+        }
+    }
+    let mut migrator = wamn_schema_control::migrations::migrator(package_root).await?;
+    migrator.dangerous_set_table_name(format!("_sqlx_verification_{}", bases.len()));
+    let mut connection = wamn_postgres::connect(database_url).await?;
+    bind_verification_actor(&mut connection).await?;
+    migrator
+        .run(&mut connection)
+        .await
+        .context("validate generated history migrations")?;
     Ok((canonical, files))
 }
 
-async fn physical_schema(
+async fn bind_verification_actor(connection: &mut sqlx::PgConnection) -> Result<()> {
+    let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
+    sqlx::query("SELECT set_config('app.user_id',$1,false), set_config('app.operation',$2,false)")
+        .bind(component.principal_id().to_string())
+        .bind(component.principal_name())
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+async fn history_columns(
     database_url: &str,
-    package_root: &Path,
     manifest: &PackageManifest,
-) -> Result<wamn_schema_control::physical_schema::PhysicalSchema> {
-    use wamn_schema_control::physical_schema::{
-        PhysicalSchema, RelationColumn, SELECT_RELATION_COLUMNS_SQL, render,
-    };
-    let mut migrations = Vec::new();
-    let directory = package_root.join("migrations");
-    if directory.exists() {
-        for entry in fs::read_dir(directory)? {
-            let path = entry?.path();
-            if path.extension().is_some_and(|extension| extension == "sql") {
-                migrations.push(wamn_schema_control::MigrationSource {
-                    relative_path: path
-                        .strip_prefix(package_root)?
-                        .to_string_lossy()
-                        .into_owned(),
-                    bytes: fs::read(path)?,
-                });
-            }
-        }
-    }
+) -> Result<BTreeMap<String, Vec<crate::history::RelationColumn>>> {
+    use crate::history::{RelationColumn, SELECT_RELATION_COLUMNS_SQL};
     let client = wamn_postgres::pool(database_url, 4).await?;
     let result = async {
         let mut columns = BTreeMap::new();
@@ -347,12 +361,11 @@ async fn physical_schema(
             if model.owner != manifest.package.id {
                 continue;
             }
-            let rows =
-                sqlx::query(AssertSqlSafe((SELECT_RELATION_COLUMNS_SQL).to_owned()).into_sql_str())
-                    .bind(&model.schema)
-                    .bind(&model.table)
-                    .fetch_all(&client)
-                    .await?;
+            let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
+                .bind(&model.schema)
+                .bind(&model.table)
+                .fetch_all(&client)
+                .await?;
             columns.insert(
                 id.clone(),
                 rows.iter()
@@ -364,11 +377,7 @@ async fn physical_schema(
                     .collect(),
             );
         }
-        let statements = render(&manifest.into(), &migrations, &columns)?;
-        Ok(PhysicalSchema {
-            columns,
-            statements,
-        })
+        Ok(columns)
     }
     .await;
     client.close().await;
@@ -670,11 +679,11 @@ async fn migrate(
     let mut directories = Vec::new();
     for base in bases {
         schemas.extend(base.models.values().map(|model| model.schema.clone()));
-        directories.push(package_output(output_root, &base.package.id).join("migrations"));
+        directories.push(package_output(output_root, &base.package.id));
     }
     schemas.sort();
     schemas.dedup();
-    directories.push(package_root.join("migrations"));
+    directories.push(package_root.to_owned());
 
     let client = wamn_postgres::pool(database_url, 4)
         .await
@@ -703,24 +712,14 @@ async fn migrate(
         // Public platform identity keys support application foreign keys.
         // These verification relations contain no system database or registry data.
         sqlx::raw_sql(AssertSqlSafe(("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").to_owned()).into_sql_str()).execute(&client).await.context("create platform references for package verification")?;
-        for directory in directories {
-            if !directory.exists() {
-                continue;
-            }
-            let mut files = fs::read_dir(&directory)
-                .with_context(|| format!("read migrations {}", directory.display()))?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .with_context(|| format!("read migrations {}", directory.display()))?;
-            files.retain(|path| path.extension().is_some_and(|extension| extension == "sql"));
-            files.sort();
-            for file in files {
-                let sql = fs::read_to_string(&file)
-                    .with_context(|| format!("read migration {}", file.display()))?;
-                sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
-                    .await
-                    .with_context(|| format!("apply migration {}", file.display()))?;
-            }
+        // Platform helpers precede generated SQL in every verification database.
+        create_history_tables(&client, manifest).await?;
+        for (index, directory) in directories.into_iter().enumerate() {
+            let mut migrator = wamn_schema_control::migrations::migrator(&directory).await?;
+            migrator.dangerous_set_table_name(format!("_sqlx_verification_{index}"));
+            let mut connection = wamn_postgres::connect(database_url).await?;
+            bind_verification_actor(&mut connection).await?;
+            migrator.run(&mut connection).await.context("migrate the verification database")?;
         }
         create_history_tables(&client, manifest).await
     }
@@ -736,9 +735,6 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
         .values()
         .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
         .collect::<Vec<_>>();
-    if logged.is_empty() {
-        return Ok(());
-    }
     sqlx::raw_sql(
         AssertSqlSafe(
             ("DO $application_role$ BEGIN \
@@ -781,11 +777,18 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
         .await
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL",
+        )
+        .bind(&model.schema)
+        .bind(&model.table)
+        .fetch_one(client)
+        .await?;
+        if !exists {
+            continue;
+        }
         sqlx::raw_sql(
-            AssertSqlSafe(wamn_schema_control::physical_schema::history_table_sql(
-                &model.into(),
-            ))
-            .into_sql_str(),
+            AssertSqlSafe(crate::history::history_table_sql(&model.into())).into_sql_str(),
         )
         .execute(client)
         .await

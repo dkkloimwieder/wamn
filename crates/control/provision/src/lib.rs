@@ -15,6 +15,8 @@ mod error;
 pub mod host_credentials;
 pub mod identity_role;
 pub mod materializer_workload;
+pub mod migration;
+pub mod migrations;
 mod name;
 pub mod operation_grants;
 pub mod org;
@@ -26,7 +28,6 @@ pub mod readers;
 #[cfg(feature = "ops")]
 pub mod recovery;
 pub mod schema_baseline;
-pub mod schema_migrations;
 pub mod session_target;
 pub mod sql;
 /// Test databases with the system control store minimum.
@@ -108,3 +109,7 @@ pub use placement::{
     cluster_of,
 };
 pub use template::Template;
+
+/// Project event trigger installed by the authenticated administrator during initialization.
+pub const MIGRATION_PRIVILEGES_SQL: &str =
+    include_str!("../../../../deploy/sql/migration-privileges.sql");

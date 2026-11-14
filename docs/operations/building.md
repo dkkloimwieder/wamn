@@ -224,8 +224,12 @@ The build classifies writes and row locks from PostgreSQL plans.
 A call to an authored routine also counts as a write and retains the command transaction.
 It generates no application grant contribution and plans without installing derived grants.
 Deployable routine support remains incomplete.
-The build also emits history DDL at `record-history.sql` separately from authored migrations until the migration runner owns it.
-The existing `physical-schema.json` remains until that runner replaces its readers.
+The compiler writes history changes as SQLx migrations under `history/` in the package source and build output.
+Keep these files in source control. Each file remains unchanged after release.
+Authored `migrations/` and generated `history/` share one version sequence.
+Choose each new authored version above every existing version in both directories.
+A history declaration change appends a generated migration, even when authored SQL stays unchanged.
+The build executes the combined sequence in its verification database before it returns output.
 
 A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
 A stated type that differs from the type SQLx gives is refused.
@@ -310,9 +314,9 @@ A package artifact has the tag `<package_id>-<version>`. Its image manifest has 
 | Layer | Media type | Title | Content |
 |---|---|---|---|
 | 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
-| 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
+| 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` and `history/` |
 | 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `generated/publication/`: final attachments and component declarations |
-| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/required-schema-contract.json`, `generated/physical-schema.json`, `generated/sql/`, `generated/routes/` |
+| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/routes/` |
 | 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per package-owned component, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
 
 The package artifact contains three tar layers and no browser files.

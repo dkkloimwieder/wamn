@@ -83,6 +83,12 @@ pub async fn initialize(
         if applies {
             wamn_package_control::apply_package::apply_package(
                 wamn_package_control::apply_package::ApplyPackageRequest {
+                    migration_database_url: wamn_control_provision::migration::configuration(
+                        &project_url,
+                        &document.org,
+                        &document.project,
+                        &document.env,
+                    )?,
                     component_source: platform.component_source()?,
                     changes: platform.auth_changes().await?,
                     package: opened.package_root(),

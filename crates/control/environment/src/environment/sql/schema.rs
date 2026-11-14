@@ -755,7 +755,7 @@ pub async fn apply(
         .any(|manifest| !state.packages.contains_key(&manifest.package.id))
     {
         let mut admin = wamn_postgres::connect(admin_url).await?;
-        super::super::ensure::ensure_package_roles(&mut admin, &manifests).await?;
+        super::super::ensure::ensure_migration_role(&mut admin).await?;
         let selected = analyse::select_application(document, Some(application))?;
         let release = analyse::pull_release_manifest(
             platform,
@@ -797,6 +797,12 @@ pub async fn apply(
         }
         apply_package::apply_package_schema(
             apply_package::ApplyPackageRequest {
+                migration_database_url: wamn_control_provision::migration::configuration(
+                    &url,
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                )?,
                 component_source: platform.component_source()?,
                 package: candidate.root,
                 changes: publisher.clone(),

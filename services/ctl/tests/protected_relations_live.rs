@@ -187,6 +187,14 @@ async fn install_project_database(client: &mut Client, url: &str) {
     );
 
     apply_package::apply_package(ApplyPackageRequest {
+        migration_database_url: wamn_control_provision::test_database::package_migration_input(
+            &url,
+            &"protected-relation-audit",
+            &"fixture",
+            &"dev",
+        )
+        .await
+        .unwrap(),
         component_source: apply_package::component_source_from_env(None)
             .expect("component repository configuration"),
         changes: wamn_broker::Publisher::default(),

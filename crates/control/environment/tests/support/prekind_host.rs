@@ -658,7 +658,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     )?;
     sqlx::query("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)").bind(&project_env_key).bind(&digest).bind(&published.canonical_bytes).execute(&mut project).await.map(|result| result.rows_affected())?;
     for package in &published.manifest.release.packages {
-        sqlx::query("INSERT INTO catalog.packages(physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)").bind(&project_env_key).bind(&package.package_id()).bind(&package.package_version()).bind(&format!("sha256:{}","a".repeat(64))).execute(&mut project).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,$3,$4)").bind(&project_env_key).bind(&package.package_id()).bind(&package.package_version()).bind(&format!("sha256:{}","a".repeat(64))).execute(&mut project).await.map(|result| result.rows_affected())?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document

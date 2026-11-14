@@ -101,6 +101,14 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     .map(drop)
     .expect("create the wamn_system role");
     provision_system(&ProvisionSystemRequest {
+        migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &url,
+                wamn_control_provision::migrations::MigrationDatabase::System,
+            )
+            .await
+            .unwrap(),
+        ),
         system_database_url: url.clone(),
         platform_domain: "wamn.example.test".to_owned(),
     })

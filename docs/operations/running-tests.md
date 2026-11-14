@@ -102,14 +102,14 @@ It never downloads or compiles NATS.
 
 Use `--suite ID[,ID]` to run named suites on any tree, including an unchanged tree.
 This selects only those suites and their preparation steps.
-The migration validator and database executor need no application, web, device, or platform preparation:
+The database executor suite needs no application, browser, device, or platform preparation:
 
 ```bash
-cargo xtask test-changes --suite migration-policy
 cargo xtask test-changes --suite package-executor
 ```
 
-These suites run `migration_policy` and `apply_package_live`, respectively.
+This suite runs `wamn-package-control`'s `migrations_live` target.
+It covers SQLx commit and checksum behavior, history write failures, and the restricted migration login.
 A source diff still selects dependent packages and their integration inputs.
 Run the Receiving and WMS proof from the repository root:
 
@@ -645,7 +645,7 @@ For direct fixture commands, set the artifact overrides from the table above.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
 It requires retained data after code and query edits.
-In reset mode, a changed physical SQL fingerprint recreates the whole recorded disposable target.
+Reset mode reapplies the schema on every explicit schema apply.
 In migrate mode, the watcher reports pending SQL. Explicit schema apply owns migration effects and records.
 Invalid SQL refuses preparation before replacement.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
@@ -686,11 +686,11 @@ The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:33
 The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
 Tests do not write control tables or supply a project deletion workaround.
 
-PostgreSQL owns retries and matching adoption in `wamn-package-control`:
-`explicit_sql_advances_across_versions_without_selecting_code` and `adoption_preserves_execution_records_and_never_executes_asserted_files`.
-The first test also asserts that retry preserves migration records, including checksums and outcomes.
-The planner test `reset_identity_uses_the_complete_schema_set_without_code_coordinates` covers matching inputs across both mode transitions.
-These tests replace the SQL Job retry and mode matrix.
+`wamn-package-control/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
+It also calls package apply to refuse rebinding an existing relation to another package or entity.
+The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
+`wamn-compiler/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
+These live targets require PostgreSQL. Compile them without starting a server with `cargo test -p <package> --test <target> --no-run`.
 Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
 Reset still asserts old-event disposal and environment isolation.
 `wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.

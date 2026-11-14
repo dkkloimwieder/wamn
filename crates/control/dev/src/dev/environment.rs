@@ -759,6 +759,7 @@ pub async fn reconcile_journey_run_plane(
     project_url: &str,
 ) -> anyhow::Result<()> {
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: None,
         system_database_url: system_url.to_owned(),
         admin_database_url: project_url.to_owned(),
         org: coordinate.org.clone(),

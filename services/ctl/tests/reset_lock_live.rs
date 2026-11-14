@@ -26,6 +26,14 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     .map(drop)?;
     wamn_environment_control::provision_system::provision_system(
         &wamn_environment_control::provision_system::ProvisionSystemRequest {
+            migration_database_url: Some(
+                wamn_control_provision::test_database::platform_migration_input(
+                    &system.url(),
+                    wamn_control_provision::migrations::MigrationDatabase::System,
+                )
+                .await
+                .unwrap(),
+            ),
             system_database_url: system.url().into(),
             platform_domain: "example.invalid".into(),
         },

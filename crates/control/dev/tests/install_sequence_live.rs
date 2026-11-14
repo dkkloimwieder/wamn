@@ -111,6 +111,14 @@ async fn bootstrap(admin: &mut Client, url: &str) -> anyhow::Result<String> {
 async fn step_4_7_provision(system_url: &str, _work: &Path) -> anyhow::Result<String> {
     // The Job authenticates as postgres. provision-system installs as wamn_system.
     provision_system(&ProvisionSystemRequest {
+        migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &system_url,
+                wamn_control_provision::migrations::MigrationDatabase::System,
+            )
+            .await
+            .unwrap(),
+        ),
         system_database_url: system_url.into(),
         platform_domain: DOMAIN.into(),
     })
@@ -216,6 +224,14 @@ fn package_fixture(work: &Path) -> anyhow::Result<PackageRoot> {
 
 async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyhow::Result<()> {
     apply_package(ApplyPackageRequest {
+        migration_database_url: wamn_control_provision::test_database::package_migration_input(
+            &project_url,
+            &ORG,
+            &PROJECT,
+            &ENV,
+        )
+        .await
+        .unwrap(),
         package: package.clone(),
         database_url: project_url.into(),
         component_source: None,

@@ -39,7 +39,7 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:application_activation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:environment_delete_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
-  { workspace="root", package="wamn-environment-control", target="test:apply_package_live", tier="live-postgres" },
+  { workspace="root", package="wamn-package-control", target="test:migrations_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:connection_binding_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:control_generation_live", tier="live-postgres" },
@@ -63,7 +63,6 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:provision_org_admin_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:provision_system_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:prune_record_history_live", tier="live-postgres" },
-  { workspace="root", package="wamn-release-control", target="test:publish_release_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_chart_render", tier="contract" },
   { workspace="root", package="wamn-release-control", target="test:release_permissions_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:replica_identity_live", tier="live-postgres" },
@@ -197,7 +196,6 @@ targets = [
   { workspace="root", package="wamn-schema-introspection", target="lib:wamn_schema_introspection", tier="contract" },
   { workspace="root", package="wamn-schema-introspection", target="test:file_reference_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:ir", tier="contract" },
-  { workspace="root", package="wamn-schema-introspection", target="test:migration_policy", tier="contract" },
   { workspace="root", package="wamn-schema-introspection", target="test:postgres_live", tier="live-postgres" },
   { workspace="root", package="wamn-schema-introspection", target="test:provenance_live", tier="live-postgres" },
   { workspace="root", package="wamn-identity-protocol", target="test:file_keys", tier="contract" },
@@ -841,26 +839,11 @@ ignored = true
 resource_lock = ""
 
 [[suites]]
-id = "migration-policy"
-tier = "contract"
-workspace = "root"
-package = "wamn-schema-introspection"
-target = ["test:migration_policy"]
-tests = []
-features = []
-prerequisites = []
-inputs = []
-execution = "libtest"
-mode = "local"
-always = false
-resource_lock = ""
-
-[[suites]]
 id = "package-executor"
 tier = "live-postgres"
 workspace = "root"
-package = "wamn-environment-control"
-target = ["test:apply_package_live"]
+package = "wamn-package-control"
+target = ["test:migrations_live"]
 tests = []
 features = []
 prerequisites = []

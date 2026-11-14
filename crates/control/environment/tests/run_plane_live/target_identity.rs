@@ -145,6 +145,7 @@ fn target_guard_args(
     dry_run: bool,
 ) -> ReconcileRunPlaneRequest {
     ReconcileRunPlaneRequest {
+        platform_migration_database_url: None,
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),

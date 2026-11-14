@@ -170,6 +170,14 @@ fn write_package(root: &Path) {
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(
         ApplyPackageRequest {
+            migration_database_url: wamn_control_provision::test_database::package_migration_input(
+                &url,
+                &"record-retention-t",
+                &"fixture",
+                &"dev",
+            )
+            .await
+            .unwrap(),
             component_source: apply_package::component_source_from_env(None)?,
             changes: wamn_broker::Publisher::default(),
             package: wamn_package_control::apply_package::PackageRoot {

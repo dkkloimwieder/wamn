@@ -92,6 +92,14 @@ async fn platform_configuration_leg(su: &mut Client, system_url: &str) {
     reset(&mut target).await;
     seed_system_env_policy(su).await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &target_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.clone(),
@@ -226,6 +234,14 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     reset(&mut target).await;
     seed_system_env_policy(&mut su).await;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &target_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         changes: Publisher::default(),
         system_database_url: url.to_string(),
         admin_database_url: target_url.clone(),

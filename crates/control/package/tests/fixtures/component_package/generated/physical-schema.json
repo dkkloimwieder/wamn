@@ -1,1 +1,0 @@
-{"columns":{"item":[{"name":"id","primary_key":true,"timestamptz":false}]},"statements":[{"owner":{"package":"source_fixture"},"sql":"CREATE SCHEMA IF NOT EXISTS inventory"},{"owner":{"package":"source_fixture"},"sql":"\nCREATE TABLE inventory.item (id UUID PRIMARY KEY)"}]}

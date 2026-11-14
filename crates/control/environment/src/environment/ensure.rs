@@ -477,7 +477,7 @@ pub async fn ensure_project_database(
         admin,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -486,10 +486,10 @@ pub async fn ensure_project_database(
 pub(crate) async fn ensure_project_database_with_migrations(
     platform: &Platform,
     document: &EnvironmentDocument,
-    packages: &[wamn_compiler::manifest::PackageManifest],
+    _packages: &[wamn_compiler::manifest::PackageManifest],
     admin: &mut sqlx::PgConnection,
     admin_url: &str,
-    sources: &[wamn_schema_control::MigrationSource],
+    sources: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
     let database = wamn_postgres::identity(&project_url)?.1;
@@ -514,8 +514,9 @@ pub(crate) async fn ensure_project_database_with_migrations(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
         postgres_protocol::escape::escape_identifier(&database),
     ))).execute(&mut *admin).await.map(drop)?;
-    ensure_package_roles(admin, packages).await?;
+    ensure_migration_role(admin).await?;
     let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
+        platform_migration_database_url: None,
         system_database_url: platform.system_database_url.clone(),
         admin_database_url: project_admin.clone(),
         org: document.org.clone(),
@@ -550,28 +551,15 @@ pub async fn restore_project_database_access(
     .context("restore workload database access")
 }
 
-/// Prepare only the selected packages' roles through the administrator.
-pub(super) async fn ensure_package_roles(
-    admin: &mut sqlx::PgConnection,
-    packages: &[wamn_compiler::manifest::PackageManifest],
-) -> anyhow::Result<()> {
-    for package in packages {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_control_provision::sql::ensure_package_owner_role_sql(&package.package.id),
-        ))
-        .execute(&mut *admin)
-        .await
-        .map(drop)?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-            postgres_protocol::escape::escape_identifier(
-                &wamn_control_provision::package_owner_role(&package.package.id)
-            )
-        )))
-        .execute(&mut *admin)
-        .await
-        .map(drop)?;
-    }
+/// Prepare the single migration privilege role through the administrator.
+pub(super) async fn ensure_migration_role(admin: &mut sqlx::PgConnection) -> anyhow::Result<()> {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_control_provision::sql::ensure_workload_acl_role_sql(
+            wamn_control_provision::WorkloadRoleFamily::Migration,
+        ),
+    ))
+    .execute(admin)
+    .await?;
     Ok(())
 }
 

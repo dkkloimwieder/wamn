@@ -276,6 +276,14 @@ pub(crate) async fn provision(
         )
         .await?;
         wait_role(connection, &username).await?;
+        if family == WorkloadRoleFamily::Migration {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
+                postgres_protocol::escape::escape_identifier(&username)
+            )))
+            .execute(&mut *connection)
+            .await?;
+        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
             family, database, &username,
         )))
@@ -475,4 +483,41 @@ pub async fn provision_control_role(
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":name,"namespace":namespace},"data":{"control.json":config.to_json()?}});
     kubectl::apply(&kubeconfig, "", namespace, &object).await?;
     Ok(())
+}
+
+/// Reconcile the platform scope's own CNPG login and return its public connection configuration.
+pub(crate) async fn provision_platform_migration(
+    input: &str,
+    scope: wamn_control_provision::migrations::MigrationDatabase,
+) -> anyhow::Result<String> {
+    let source = wamn_postgres::configuration(input)?;
+    let config: ConnectionConfig = serde_json::from_str(&source)
+        .context("explicit platform initialization requires a separate migration connection")?;
+    let cluster = config
+        .server_ca
+        .name
+        .strip_suffix("-ca")
+        .context("CNPG CA Secret must identify its cluster")?;
+    let role = scope.managed_role(&config.database);
+    let kubeconfig = std::env::var_os("KUBECONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    reconcile(
+        &kubeconfig,
+        "",
+        &config.credentials.namespace,
+        cluster,
+        &role,
+    )
+    .await?;
+    let mut admin = wamn_postgres::connect(input).await?;
+    wait_role(&mut admin, &role.name).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "GRANT CONNECT ON DATABASE {} TO {}",
+        postgres_protocol::escape::escape_identifier(&config.database),
+        postgres_protocol::escape::escape_identifier(&role.name)
+    )))
+    .execute(&mut admin)
+    .await?;
+    scope.configuration(input)
 }

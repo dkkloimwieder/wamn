@@ -375,10 +375,6 @@ pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMM
 /// crates/control/dev/src/dev/target_database.rs::recorded_disposable registry statement.
 pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3";
 
-/// crates/control/provision/src/schema_migrations.rs::history_sql registry statement.
-pub const CONTROL_PROVISION_SRC_SCHEMA_MIGRATIONS_HISTORY_SQL: &str =
-    "GRANT SELECT ON registry.schema_migration TO wamn_apply;";
-
 /// crates/control/provision/src/sql.rs::control_surface_grants_sql registry statement.
 pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.control_org(), identity.is_project_admin(uuid,text,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
 

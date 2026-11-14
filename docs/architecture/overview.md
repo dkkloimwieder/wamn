@@ -33,7 +33,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL and credential roles |
 | `wamn-broker` | NATS connections, streams, shared memory buckets, and authorization |
 | `wamn-kubernetes` | Kubernetes HTTP client, Secrets, Job execution, and command runners |
-| `wamn-schema-control` | Package migration decisions and run storage declarations |
+| `wamn-schema-control` | Run storage declarations during the schema lifecycle transition |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-package-control` | Package admission, artifacts, and application |
@@ -70,13 +70,16 @@ The development commands in `services/ctl/src/dev/` own argument parsing, output
 Clients request cooperative shutdown through the session control handle.
 The engine finishes active work and cleans up its owned processes.
 
-`apply-package` is the sole application migration applier.
-Rust decides package registration and wiring activation from stored facts within the caller's transaction.
-PostgreSQL enforces uniqueness, row isolation, immutable records, release sealing, and required locks.
-Package registration retains its lineage lock, exact retry behavior, and first timestamp.
-A fresh install creates the platform schema, including the control database, from the full schema files.
-Installation records a digest of the full schema SQL. Apply refuses a changed or missing digest and requires a database reset.
-Migrations are deferred until development is stable and return then with a smaller design.
+`apply-package` applies package SQL through SQLx `Migrator`.
+Authored and generated history migrations share each package's version sequence.
+The migration connection authenticates directly as the restricted migration login.
+A separate connection writes trusted catalog facts.
+Session locks and actor bindings last across the commits of individual migrations.
+Each package and environment has its own SQLx history table.
+System and project platform scopes use separate SQLx histories under their platform owners.
+Project initialization installs the history helpers and a privilege event trigger.
+The trigger refuses `GRANT`, `REVOKE`, and `ALTER DEFAULT PRIVILEGES` from the authenticated migration login.
+SQLx checksums refuse changes to applied migrations.
 
 The provisioning owner locks and compares environment identity before refreshing its `project_env_key` projection.
 That refresh clears the instance assignment even when the suffix stays unchanged.

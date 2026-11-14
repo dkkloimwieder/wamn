@@ -797,7 +797,7 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
     .await
     .map(drop)
     .unwrap();
-    sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--dev--one', 'fixture', '1.0.0', $1, $1)").bind(&fingerprint).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) VALUES ('acme--dev--one', 'fixture', '1.0.0', $1)").bind(&fingerprint).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
     sqlx::raw_sql("COMMIT")
         .execute(&mut client)
         .await

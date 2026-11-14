@@ -13,7 +13,6 @@ mod cdc;
 mod credentials;
 mod database;
 mod database_grants;
-mod package_owner;
 
 #[doc(inline)]
 use std::fmt::Write as _;
@@ -42,8 +41,6 @@ pub use cdc::{
     ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, ensure_schema_sql,
     grant_replication_access_sql, upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
-
-pub use package_owner::{ensure_package_owner_role_sql, package_owner_grants_sql};
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{

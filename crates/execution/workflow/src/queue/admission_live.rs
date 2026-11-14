@@ -134,7 +134,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
       INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
       INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('{PROJECT_ENV_KEY}','test');
-      INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');"))).execute(&mut admin).await.map(drop)?;
+      INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');"))).execute(&mut admin).await.map(drop)?;
     let engine = Arc::new(build_engine(&[])?);
     let bytes = match mode {
         Mode::Shutdown => shutdown::component_bytes(),

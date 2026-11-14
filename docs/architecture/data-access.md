@@ -9,16 +9,12 @@ The generator's core transformation performs no filesystem, database, clock, or 
 The build describes its complete SQL corpus with SQLx before it emits consumers.
 `wamn-scalar` owns the PostgreSQL type names used by the compiler, introspection and runtime.
 
-## Schema and definition ownership
+## Schema ownership
 
-The effective schema comes from the selected base migrations followed by the selected overlay migrations.
-Each package keeps its own ordered migration stream.
-A root version names no predecessor. Each later version names the current leaf as its exact predecessor.
-The predecessor's paths and checksums form a byte-identical prefix of the candidate stream.
-Forks, skipped predecessors, reordering, and changed inherited bytes refuse.
-Before first release membership, a candidate package can correct its migration stream.
-First membership seals the package coordinate and its cumulative stream in one transaction.
-Later changes require a new package version, and retained records are not pruned.
+Each package keeps one SQLx migration sequence for authored SQL and generated history SQL.
+SQLx records each successful version and checksum.
+Apply refuses changed checksums and missing applied versions.
+A released migration never changes. A later change adds a migration.
 Application migration declarations select qualified schemas.
 Guest SQL names relations without schema qualification and uses the host-selected `search_path`.
 Guest input cannot choose a database, schema, or database role.
@@ -31,34 +27,30 @@ The host binds the pinned schema before it opens the application's transactions,
 Two applications in one release each resolve unqualified SQL only in their own schema.
 For a release without the field, the host uses its process-wide `WAMN_SCHEMA` fallback.
 
-The migration policy admits the supported additive table, field, and named-constraint forms.
-It also admits plain indexes on tables created earlier in the package's migrations, under the table's owner.
-An added column is nullable with a modeled type and no default, or it carries one of the two demanded non-null defaults.
-The catalog reader supports ordinary tables, supported columns and defaults, identity properties, constraints, and supported indexes.
-It normalizes identity sequences and indexes that belong to constraints instead of counting them as independent definitions.
-It excludes PostgreSQL object identifiers and storage details from semantic identity.
-Its exact supported forms live in [introspection](../../crates/schema/introspection/src/postgres.rs) and [migration policy](../../crates/schema/introspection/src/migration_policy.rs).
+Package migrations run through SQLx under one restricted login for the project database.
+PostgreSQL ownership and privileges govern their effects.
+Project initialization installs an event trigger that refuses privilege changes by that login.
+It covers `GRANT`, `REVOKE`, and `ALTER DEFAULT PRIVILEGES`, including commands inside routines.
+The connection logs in directly as the migration role, so `RESET ROLE` keeps the same restricted identity.
+Trusted catalog writes and grants use a separate connection.
 
-A package schema change requires a new release and a reset of the application tables.
-The [owner ruling](../audit/README.md) defines this baseline policy.
-
-Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 The catalog reader reads tables and views. It no longer scans schemas to refuse routines, triggers, rules, policies, ACLs, unused types or standalone sequences.
 Selected column types and generated properties must still fit the generated action.
-Nontransactional operations and mutations outside the selected schemas refuse.
+A migration can opt out of a transaction with `-- no-transaction`.
+Its SQL must support retries after partial execution.
+PostgreSQL privileges restrict the schemas that the migration login can change.
 The platform alone installs its declared extension list, `btree_gist` and `pg_stat_statements`, before application migration SQL.
 
-The platform installs the record history triggers and the history tables, and the catalog reader skips them by name, as [record history](#record-history) describes.
+Generated history migrations install record history triggers and tables.
+The catalog reader skips them by name, as [record history](#record-history) describes.
 
-Provisioning creates one `NOLOGIN` role per package ID before package migrations run.
-`package_owner_role` in `crates/control/provision/src/name.rs` derives `wamn_package_owner_<40 SHA-256 hex digits>` from that ID.
-The role owns the package schemas, tables, sequences, and generated history functions.
-An overlay keeps its own role and uses the base relation owner for admitted changes to that relation.
-The database owner, `wamn_db_owner`, retains platform objects.
+Provisioning gives each project database one restricted package migration login.
+That login owns application schemas, relations, and generated history functions.
+The `NOLOGIN` database owner, `wamn_db_owner`, retains platform objects.
+A separate managed platform migration login inherits its privileges.
 
-Each managed relation, field, and constraint records its owning package.
-An overlay can add a field only where the base permits that extension.
-The added field remains overlay-owned even inside a base relation.
+Each entity map records its relation OID, package, and entity.
+Package apply refuses rebinding an existing relation OID to another package or entity.
 Schema ownership does not grant runtime mutation authority.
 An overlay reads exposed base fields and mutates its own fields through declared operations.
 Base row creation, deletion, and business-field mutation require an explicit base operation or grant.
@@ -681,20 +673,14 @@ Generated statements read it too: a create fills each actor field, an update fil
 No authorization or row policy reads it.
 `wamn_history.log_row_change` reads `app.operation` to record attribution.
 
-After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
-The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes the generated function `wamn_history.<schema>__<relation>_stamp()`.
-apply-package generates that function from the selected columns and the other columns of the relation, which it reads from the catalog after the migrations.
-The function assigns each selected column, and it tests a change with `NEW.<column>::text IS DISTINCT FROM OLD.<column>::text` for each other column.
-It reads no catalog and builds no JSONB. It follows the rules of `wamn_history.stamp_row`, which the platform relations keep.
-apply-package replaces a generated function only when its stored source differs, and it refuses a name of 64 bytes or more with `record-history-function-name-too-long`.
-A column change that does not run through apply-package leaves the function on the old column list until the next apply.
-apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
-It then reads each trigger of the owned relations as the text that `pg_get_triggerdef` renders.
-It refuses with `record-history-trigger-mismatch` when that text differs from the text that the declarations derive.
-A trigger that no declaration derives also refuses.
-Development package reconciliation runs the same step.
-The catalog reader skips the `wamn_record_history_stamp` and `wamn_record_history_log` triggers by name.
-Every other trigger refuses.
+The compiler emits each selected stamp function and trigger in an immutable migration under `history/`.
+The trigger runs before each inserted or updated row and calls `wamn_history.<schema>__<relation>_stamp()`.
+The compiler reads columns from its verification database and writes the function once for that migration version.
+A later column or stamp declaration change appends another migration.
+That migration replaces the selected functions and removes triggers that the declaration no longer needs.
+SQLx executes authored and generated migrations in one version sequence under the restricted migration login.
+Apply does not read or compare installed trigger text and does not repair drift on replay.
+The catalog reader reads the relations selected by the compiler.
 
 ### History tables and the log trigger
 
@@ -759,11 +745,11 @@ Such a change moves the stamps and writes an entry. A true no-op moves no stamp 
 
 The log function calls `row_image` with the authority of the writer.
 `record-history.sql` therefore grants `USAGE` on `wamn_history` and `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner`.
-Package provisioning grants the same history privileges and schema `CREATE` to each package owner, which owns its generated functions.
+Package provisioning grants the same history privileges and schema `CREATE` to the restricted migration login, which owns its generated functions.
 [`deploy/sql/record-history-app-grants.sql`](../../deploy/sql/record-history-app-grants.sql) grants the same three privileges to `wamn_app`.
 `CATALOG_SCHEMA_SQL` composes it after `record-history.sql`.
-Every other project or package applier applies it after `record-history.sql`.
-The file names `wamn_app`, so an applier without that role fails.
+Project initialization installs these shared helpers and grants before package migrations run.
+Package apply uses the installed helpers.
 The system database never applies it, so the system database has no `wamn_app` grant.
 
 Generation refuses these declarations:
@@ -774,20 +760,18 @@ Generation refuses these declarations:
 
 No generated `update` or `delete` exists over a history table, so no application operation can alter an entry.
 
-After the migrations apply, apply-package creates each logged relation’s history table as its package owner.
-apply-package never drops a history table.
+The generated history migration creates each logged relation’s history table under the restricted migration login.
+Generated history changes retain existing history tables and entries.
 It records the CDC exclusion of each history table in `wamn_cdc_exclusions`, as it records an internal relation.
 The exclusion row names the package that owns the relation, and its relation id is the history table name.
-A migration that creates a table whose name ends with `_history` refuses with `history-table-name-reserved`.
 
-apply-package installs one `wamn_record_history_log` trigger on each owned logged relation.
+The generated migration installs one `wamn_record_history_log` trigger on each owned logged relation.
 The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes the generated function `wamn_history.<schema>__<relation>_log()` with one argument, the retention.
 The function names the primary key columns, every column of the relation, and the history table as static SQL, so a write reads no catalog and plans no dynamic statement.
 It ignores the argument, which the retention run reads. A platform relation runs `wamn_history.log_row_change` with the same argument.
 A retention of `"none"` removes the trigger, and the history table and its entries stay.
-apply-package compares the text of each installed log trigger with the declared text, and it replaces a trigger whose retention argument differs.
-It then refuses a result that still differs.
-Development package reconciliation runs the same steps.
+A retention change produces a new generated migration that replaces the log trigger.
+Development and deployment execute the same immutable migration files.
 
 The catalog reader skips every relation whose name ends with `_history`.
 It reads none of its columns, constraints, indexes, sequences, triggers, rules, or policies.
@@ -797,14 +781,16 @@ The generator recognizes the history table of each logged model by its name, and
 It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
 Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
-The compiler emits the history DDL in `record-history.sql`.
-The existing physical schema readers still apply history until the migration runner replaces them.
+The compiler writes history DDL as immutable files under `history/`.
+Authored `migrations/` and generated `history/` share SQLx versions and checksums.
+Platform initialization installs the shared helpers from `deploy/sql/record-history.sql`.
+Apply executes the emitted files through SQLx and records each successful version.
 The changes statement reads entries at or after the cursor transaction.
 One snapshot supplies xmin, xmax, and the visibility test.
 It includes entries below xmin and visible entries below xmax.
 Rows below xmin page first, and visible rows at or above xmin fill the remaining page space.
 A page that carries any such row completes the pass and leaves its next cursor at xmin without an id.
-`create_history_table` also creates an index on `transaction_id`, and apply-package runs it for a present table too, so an older table gains the index.
+`create_history_table` creates an index on `transaction_id` when the generated migration runs.
 The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.
 The generation database creates the history tables before statement description, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.
@@ -826,7 +812,7 @@ The verb reads the retention of each relation from the `wamn_record_history_log`
 It skips an `unlimited` relation.
 Each relation runs in its own transaction, which binds `wamn:audit-retention` as the actor and the operation.
 The transaction takes the audit retention advisory lock before it reads `pg_trigger`.
-apply-package takes the same lock before it reconciles the log triggers, so a retention change waits for a running delete.
+Package apply holds the same lock while SQLx runs generated history changes, so a retention change waits for a running delete.
 The cutoff is `transaction_timestamp()` less n days, in UTC.
 The verb deletes an entry older than the cutoff only when no earlier entry of the same row is at or after the cutoff.
 It therefore removes a prefix of the history of a row, never an interior entry, and it writes no marker in the history table.
@@ -925,7 +911,7 @@ The audit retention role holds no grant on these history tables, because their r
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
 The log copies full rows, including `api_key.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.
-An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
+Project initialization installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
 `platform.write_log` is the one exception: it has no stamps and no trigger.
 It is the idempotency record, and the rows that the work writes carry the actor ([app-schema.sql](../../deploy/sql/app-schema.sql#L412)).
 
@@ -935,14 +921,15 @@ Their stamps apply to administrative writes and future writers that bind an acto
 
 ### Catalog stamps
 
-The project catalog stamps `packages`, `package_migrations`, `package_definition_owners`, and `releases`.
+The project catalog stamps `packages` and `releases`.
+Each separate SQLx migration history also carries the actor stamps.
 It also stamps `wiring_tombstones`.
 Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
 These tables keep stamps only, with no history table.
 `release_connection` and `connection_binding` carry stamps and record history for changes within a release.
 `connection_requirement` stores each package's declared names, interfaces, and modes without stamps.
 The system database owns immutable `connection_generation` rows with parameters and credential references.
-Package application binds `wamn:apply-package`, including migrations, definition ownership, accepted qualifications, and stage progress.
+Package application binds `wamn:apply-package` for migrations and catalog writes.
 Environment staging, connection administration, local development bindings, and minimum recording bind `wamn:provisioning`, as the platform configuration projection does.
 The `platform.connection` projection and `workflows` keep their existing metadata and carry no record history trigger.
 Fresh databases create neither `wirings` nor `event_registrations`.
@@ -1041,7 +1028,8 @@ The system identity tables record the actor only. A control route binds `app.ope
 The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
 The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
-`record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
+Initialization creates the `NOLOGIN` owner roles before installing these helpers.
+A separate managed migration login inherits the selected owner role and runs the platform migration sequence.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
 `identity.principals.type` is `user`, `service`, or `platform`.
@@ -1185,7 +1173,7 @@ An admitted read-only call emits no causation message, so it does not invalidate
 The read uses the callable-HTTP connection and needs no application-table grant.
 The list reads this position before it runs the query, as [execution](execution.md) describes.
 A failed position read leaves the response without an ETag.
-Fresh databases install none of these objects, and apply-package installs only the record history triggers.
+Fresh databases install none of these objects. The compiler emits record history triggers as immutable migrations.
 
 ## Canonical values and SQL names
 

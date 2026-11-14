@@ -1,143 +1,37 @@
 use std::fmt;
 
-use wamn_schema_introspection::migration_policy::DefinitionType;
-
-/// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
-/// An overlay attempted to mutate a definition owned by another package.
-pub const BASE_DEFINITION_MUTATION_REFUSAL: &str = "base-definition-mutation-refused";
-/// A shared relation did not publish additive client-field authority.
-pub const RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL: &str = "relation-not-client-extensible";
-/// A migration addition lacks its exact manifest ownership declaration.
-pub const DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL: &str =
-    "definition-owner-declaration-missing";
-/// A live definition lacks or disagrees with its durable owner fact.
-pub const DEFINITION_OWNER_CONFLICT_REFUSAL: &str = "definition-owner-conflict";
-/// PostgreSQL did not expose the definition a migration reported creating.
-pub const DEFINITION_NOT_FOUND_REFUSAL: &str = "definition-not-found";
-/// A release apply takes only a verified package artifact, never a working tree.
 pub const PACKAGE_ARTIFACT_REQUIRED_REFUSAL: &str = "package-artifact-required";
 
-/// Remedy-distinct apply-package refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyPackageErrorType {
-    BaseDefinitionMutation,
-    RelationNotClientExtensible,
-    DefinitionOwnerDeclarationMissing,
-    DefinitionOwnerConflict,
-    DefinitionNotFound,
     ArtifactRequired,
 }
 
-impl ApplyPackageErrorType {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BaseDefinitionMutation => BASE_DEFINITION_MUTATION_REFUSAL,
-            Self::RelationNotClientExtensible => RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
-            Self::DefinitionOwnerDeclarationMissing => DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
-            Self::DefinitionOwnerConflict => DEFINITION_OWNER_CONFLICT_REFUSAL,
-            Self::DefinitionNotFound => DEFINITION_NOT_FOUND_REFUSAL,
-            Self::ArtifactRequired => PACKAGE_ARTIFACT_REQUIRED_REFUSAL,
-        }
-    }
-}
-
-/// Contextual failure at the package application boundary.
 #[derive(Debug)]
 pub struct ApplyPackageError {
-    pub(super) type_: ApplyPackageErrorType,
-    pub(super) coordinate: String,
-    pub(super) path: Option<String>,
-    pub(super) schema: Option<String>,
-    pub(super) relation: Option<String>,
-    pub(super) definition_type: Option<DefinitionType>,
-    pub(super) definition: Option<String>,
-    pub(super) owner_package: Option<String>,
-    pub(super) detail: String,
-    pub(super) source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    coordinate: String,
 }
-
 impl ApplyPackageError {
-    /// The refusal of a release apply of a working tree: only `wamn dev`
-    /// applies a tree that no verified artifact names.
     pub(super) fn artifact_required(coordinate: &str) -> Self {
         Self {
-            type_: ApplyPackageErrorType::ArtifactRequired,
-            coordinate: coordinate.to_owned(),
-            path: None,
-            schema: None,
-            relation: None,
-            definition_type: None,
-            definition: None,
-            owner_package: None,
-            detail: "apply the verified package artifact that push-package recorded".into(),
-            source: None,
+            coordinate: coordinate.into(),
         }
     }
-
     pub const fn error_type(&self) -> ApplyPackageErrorType {
-        self.type_
+        ApplyPackageErrorType::ArtifactRequired
     }
-
     pub fn coordinate(&self) -> &str {
         &self.coordinate
     }
-
-    pub fn path(&self) -> Option<&str> {
-        self.path.as_deref()
-    }
-
-    pub fn schema(&self) -> Option<&str> {
-        self.schema.as_deref()
-    }
-
-    pub fn relation(&self) -> Option<&str> {
-        self.relation.as_deref()
-    }
-
-    pub fn definition(&self) -> Option<&str> {
-        self.definition.as_deref()
-    }
-
-    pub fn owner_package(&self) -> Option<&str> {
-        self.owner_package.as_deref()
-    }
 }
-
 impl fmt::Display for ApplyPackageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{APPLY_PACKAGE_REFUSAL} ({}): coordinate={}",
-            self.type_.as_str(),
+            "{APPLY_PACKAGE_REFUSAL} ({PACKAGE_ARTIFACT_REQUIRED_REFUSAL}): coordinate={}",
             self.coordinate
-        )?;
-        if let Some(path) = &self.path {
-            write!(formatter, "; file={path}")?;
-        }
-        if let Some(schema) = &self.schema {
-            write!(formatter, "; schema={schema}")?;
-        }
-        if let Some(relation) = &self.relation {
-            write!(formatter, "; relation={relation}")?;
-        }
-        if let Some(type_) = self.definition_type {
-            write!(formatter, "; definition-type={}", type_.as_str())?;
-        }
-        if let Some(definition) = &self.definition {
-            write!(formatter, "; definition={definition}")?;
-        }
-        if let Some(owner) = &self.owner_package {
-            write!(formatter, "; owner-package={owner}")?;
-        }
-        write!(formatter, "; {}", self.detail)
+        )
     }
 }
-
-impl std::error::Error for ApplyPackageError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source
-            .as_deref()
-            .map(|source| source as &(dyn std::error::Error + 'static))
-    }
-}
+impl std::error::Error for ApplyPackageError {}

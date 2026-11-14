@@ -9,6 +9,9 @@ async fn main() -> anyhow::Result<()> {
     let url = std::env::args().nth(1).context("database URL")?;
     let package =
         std::path::PathBuf::from(std::env::args().nth(2).context("Receiving package root")?);
+    let migration_input = std::env::args()
+        .nth(3)
+        .context("restricted migration database URL")?;
     let mut client = wamn_postgres::connect(&url).await?;
 
     // A shared server, such as the GCP minimum, already has both roles.
@@ -61,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     .map(drop)?;
     apply_local_package(
         ApplyPackageRequest {
+            migration_database_url: migration_input,
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
             changes: wamn_broker::Publisher::default(),

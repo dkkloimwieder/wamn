@@ -273,6 +273,14 @@ async fn stale_user_leg(
 ) {
     let reconcile = async || {
         reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+            platform_migration_database_url: Some(
+                wamn_control_provision::test_database::platform_migration_input(
+                    &target_url,
+                    wamn_control_provision::migrations::MigrationDatabase::Project,
+                )
+                .await
+                .unwrap(),
+            ),
             changes: Publisher::default(),
             system_database_url: system_url.to_string(),
             admin_database_url: target_url.to_string(),
@@ -502,9 +510,7 @@ async fn seed_run_admission_facts(
     .await
     .map(|result| result.rows_affected())
     .expect("seed the project-local environment policy");
-    sqlx::query("INSERT INTO catalog.packages \
-           (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
-         VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)").bind(&project_env_key).bind(&package_id).bind(&EMPTY_EXECUTION_BUNDLE_HASH).execute(&mut *su).await.map(|result| result.rows_affected())
+    sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&project_env_key).bind(&package_id).bind(&EMPTY_EXECUTION_BUNDLE_HASH).execute(&mut *su).await.map(|result| result.rows_affected())
     .expect("seed run-pin package");
 }
 
@@ -810,6 +816,14 @@ async fn environment_identity_leg(
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &target_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
@@ -835,6 +849,14 @@ async fn environment_identity_leg(
     .map(drop)
     .expect("remove the local policy before testing projection repair");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &target_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
@@ -862,6 +884,14 @@ async fn environment_identity_leg(
         "dry-run projected the missing local policy"
     );
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &target_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         changes: Publisher::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),

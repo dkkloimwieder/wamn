@@ -397,6 +397,12 @@ impl ProductionDevStageRunner {
         for package in package_inputs {
             let outcome = Box::pin(apply_package::apply_local_package(
                 ApplyPackageRequest {
+                    migration_database_url: wamn_control_provision::migration::configuration(
+                        &self.config.target_database_url(),
+                        &self.config.activation_identity().org,
+                        &self.config.activation_identity().project,
+                        &self.config.activation_identity().environment,
+                    )?,
                     changes: wamn_broker::Publisher::new(
                         self.config.nats().connect().await.map_err(|source| {
                             ProductionDevStageError::owner("connect auth changes", source)

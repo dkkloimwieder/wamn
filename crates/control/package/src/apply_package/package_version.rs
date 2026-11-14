@@ -1,38 +1,26 @@
 use sqlx::Row as _;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 
-use wamn_schema_control::{
-    AppliedPackage, MigrationOutcome, MigrationSource, PackageDirectory, RecordedMigration,
-};
+use wamn_schema_control::{AppliedPackage, MigrationSource, PackageDirectory};
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
-/// Record completed SQL in the same transaction as its effects.
-///
-/// The first fingerprint remains the baseline. A matching fingerprint is a
-/// record match, not evidence that the live database is unchanged. The source
-/// artifact reconstructs this schema even when its application stops running.
+
 pub(super) async fn record_package_schema(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&str>,
-    physical_schema_fingerprint: &str,
 ) -> anyhow::Result<bool> {
-    let package_id = coordinate.package_id();
-    Ok(sqlx::query("INSERT INTO catalog.packages \
-         (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) \
-         VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (project_env_key, package_id) DO UPDATE \
-         SET package_version = EXCLUDED.package_version, \
-             artifact_digest = EXCLUDED.artifact_digest, \
-             physical_schema_fingerprint = EXCLUDED.physical_schema_fingerprint \
-         WHERE catalog.packages.physical_schema_fingerprint IS DISTINCT FROM \
-               EXCLUDED.physical_schema_fingerprint").bind(project_env_key).bind(package_id).bind(coordinate.package_version()).bind(artifact_digest).bind(physical_schema_fingerprint).execute(&mut **tx).await.map(|result| result.rows_affected())
-        .context("record completed package schema")?
-        != 0)
+    Ok(sqlx::query("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest) \
+        VALUES ($1,$2,$3,$4) ON CONFLICT (project_env_key,package_id) DO UPDATE \
+        SET package_version=EXCLUDED.package_version, artifact_digest=EXCLUDED.artifact_digest \
+        WHERE ROW(catalog.packages.package_version, catalog.packages.artifact_digest) \
+        IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)")
+        .bind(project_env_key).bind(coordinate.package_id()).bind(coordinate.package_version()).bind(artifact_digest)
+        .execute(&mut **tx).await?.rows_affected() != 0)
 }
 
 pub async fn load_applied_package(
@@ -49,7 +37,6 @@ pub async fn load_applied_package(
     .await
 }
 
-/// Observe installed SQL in a read-only transaction without locking a package row.
 pub async fn read_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &str,
@@ -65,92 +52,41 @@ pub async fn read_applied_package(
 }
 
 async fn read_package(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::PgConnection,
     project_env_key: &str,
     package_id: &str,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
-    let Some(package) = sqlx::query(sqlx::AssertSqlSafe((query).to_string()))
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.to_owned()))
         .bind(project_env_key)
         .bind(package_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .context("read installed package schema")?
+        .fetch_optional(tx)
+        .await?
     else {
         return Ok(None);
     };
-    let migrations = read_package_migrations(tx, project_env_key, package_id).await?;
     Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<&str, _>(1))
-            .expect("stored package coordinates passed database constraints"),
-        artifact_digest: package.get(0),
-        baseline_fingerprint: package.get(3),
-        physical_schema_fingerprint: package.get(2),
-        migrations,
+        coordinate: wamn_catalog::PackageCoordinate::new(package_id, row.get::<&str, _>(1))?,
+        artifact_digest: row.get(0),
     }))
 }
 
-/// Read committed files even when the first package installation is unfinished.
+/// Read SQLx's immutable applied versions and checksums for one package.
 pub async fn read_package_migrations(
-    tx: &mut sqlx::PgConnection,
+    connection: &mut sqlx::PgConnection,
     project_env_key: &str,
     package_id: &str,
-) -> anyhow::Result<Vec<RecordedMigration>> {
-    Ok(sqlx::query(sqlx::AssertSqlSafe(
-        (wamn_schema_control::sql::select_package_migrations_sql()).to_string(),
-    ))
-    .bind(project_env_key)
-    .bind(package_id)
-    .fetch_all(&mut *tx)
-    .await
-    .context("read immutable package migration prefix")?
-    .into_iter()
-    .map(|row| RecordedMigration {
-        ordinal: u32::try_from(row.get::<i32, _>(0))
-            .expect("package migration ordinals are positive integers"),
-        relative_path: row.get(1),
-        sha256: row.get(2),
-        outcome: match row.get::<&str, _>(3) {
-            "applied" => MigrationOutcome::Applied,
-            "adopted" => MigrationOutcome::Adopted,
-            "started" => MigrationOutcome::Started,
-            value => unreachable!("database constrains migration outcome: {value}"),
-        },
-    })
-    .collect())
-}
-
-/// Derive installed SQL identity from this database's project baseline and current package records.
-pub async fn installed_environment_fingerprint(
-    tx: &mut sqlx::PgConnection,
-    project_env_key: &str,
-) -> anyhow::Result<Option<String>> {
-    if sqlx::query("SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.project_env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.project_env_key=m.project_env_key AND p.package_id=m.package_id)))").bind(project_env_key).fetch_one(&mut *tx).await.context("read unfinished package SQL")?.get::<bool, _>(0) {
-        return Ok(None);
+) -> anyhow::Result<Vec<sqlx::migrate::AppliedMigration>> {
+    use sqlx::migrate::Migrate as _;
+    let table = wamn_control_provision::migration::history_table(project_env_key, package_id);
+    let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(&table)
+        .fetch_one(&mut *connection)
+        .await?;
+    if !exists {
+        return Ok(Vec::new());
     }
-    let project: String =
-        sqlx::query("SELECT sha256 FROM platform.schema_baseline WHERE singleton")
-            .fetch_one(&mut *tx)
-            .await
-            .context("read the installed project baseline")?
-            .get(0);
-    let rows = sqlx::query("SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE project_env_key = $1").bind(project_env_key).fetch_all(&mut *tx).await.context("read installed package fingerprints")?;
-    let packages = rows
-        .iter()
-        .map(|row| (row.get::<&str, _>(0), row.get::<&str, _>(1)))
-        .collect();
-    Ok(Some(environment_fingerprint(&project, &packages)))
-}
-
-/// Derive an environment recipe identity from its project and package SQL records.
-pub fn environment_fingerprint(
-    project: &str,
-    packages: &std::collections::BTreeMap<&str, &str>,
-) -> String {
-    wamn_digest::canonical_json_sha256(&serde_json::json!({
-        "project": project,
-        "packages": packages,
-    }))
+    Ok(connection.list_applied_migrations(&table).await?)
 }
 
 /// A package tree and the digest of the verified package artifact it was
@@ -180,13 +116,15 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let manifest_path = wamn_compiler::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
-    let compiled = wamn_compiler::output_root(root);
-    let root = if wamn_compiler::is_authored(root) && !root.join("generated").is_dir() {
-        compiled.as_path()
+    read_migrations(&migration_root(root), manifest_bytes, artifact_digest)
+}
+
+pub(super) fn migration_root(root: &Path) -> PathBuf {
+    if wamn_compiler::is_authored(root) && !root.join("generated").is_dir() {
+        wamn_compiler::output_root(root)
     } else {
-        root
-    };
-    read_migrations(root, manifest_bytes, artifact_digest)
+        root.to_owned()
+    }
 }
 
 fn read_migrations(
@@ -194,40 +132,27 @@ fn read_migrations(
     manifest_bytes: Vec<u8>,
     artifact_digest: Option<String>,
 ) -> anyhow::Result<PackageDirectory> {
-    let migrations_path = root.join("migrations");
     let mut migrations = Vec::new();
-    // A package that owns no table has no migrations directory.
-    if !migrations_path.exists()
-        && wamn_compiler::manifest::PackageManifest::from_slice(&manifest_bytes)
-            .is_ok_and(|manifest| manifest.owns_no_table())
-    {
-        return Ok(PackageDirectory {
-            manifest_bytes,
-            migrations,
-            artifact_digest,
-        });
-    }
-    let entries = std::fs::read_dir(&migrations_path)
-        .with_context(|| format!("read {}", migrations_path.display()))?;
-    for entry in entries {
-        let entry = entry.context("read package migration directory entry")?;
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("inspect {}", entry.path().display()))?;
-        ensure!(
-            file_type.is_file(),
-            "package migration entry is not a file: {}",
-            entry.path().display()
-        );
-        let file_name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("package migration file name is not UTF-8"))?;
-        migrations.push(MigrationSource {
-            relative_path: format!("migrations/{file_name}"),
-            bytes: std::fs::read(entry.path())
-                .with_context(|| format!("read {}", entry.path().display()))?,
-        });
+    for relative in ["migrations", "history"] {
+        let migrations_path = root.join(relative);
+        if !migrations_path.exists() {
+            continue;
+        }
+        let entries = std::fs::read_dir(&migrations_path)
+            .with_context(|| format!("read {}", migrations_path.display()))?;
+        for entry in entries {
+            let entry = entry.context("read package migration directory entry")?;
+            // SQLx ignores directories and unrelated files during native resolution.
+            if !entry.path().is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            migrations.push(MigrationSource {
+                relative_path: format!("{relative}/{file_name}"),
+                bytes: std::fs::read(entry.path())
+                    .with_context(|| format!("read {}", entry.path().display()))?,
+            });
+        }
     }
     migrations.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(PackageDirectory {
@@ -239,5 +164,3 @@ fn read_migrations(
 
 #[cfg(test)]
 mod directory_tests;
-#[cfg(test)]
-mod registration_tests;

@@ -120,6 +120,14 @@ esac
     let mut project_url = url::Url::parse(database.url())?;
     project_url.set_path(&project_name);
     reconcile_run_plane(ReconcileRunPlaneRequest {
+        platform_migration_database_url: Some(
+            wamn_control_provision::test_database::platform_migration_input(
+                &project_url,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
+            )
+            .await
+            .unwrap(),
+        ),
         system_database_url: database.url().into(),
         admin_database_url: project_url.to_string(),
         org: triple.org.clone(),

@@ -27,7 +27,8 @@ fn write_package(root: &Path, order: [usize; 3]) {
         include_bytes!("../../../tests/fixtures/apply_package/base/generated/wamn.json"),
     )
     .unwrap();
-    std::fs::write(output.join("record-history.sql"), "SELECT 1;").unwrap();
+    std::fs::create_dir_all(output.join("history")).unwrap();
+    std::fs::write(output.join("history/0004_record_history.sql"), "SELECT 4;").unwrap();
     for index in order {
         let (name, sql) = FILES[index];
         std::fs::write(output.join("migrations").join(name), sql).unwrap();
@@ -41,18 +42,20 @@ fn package_root(label: &str) -> PathBuf {
     ))
 }
 
-/// The reader plans authored migrations in order and keeps generated history separate.
-#[test]
-fn compiled_inputs_plan_only_authored_migrations_in_creation_independent_order() {
+/// The reader combines authored and generated migrations in SQLx version order.
+#[tokio::test]
+async fn compiled_inputs_share_one_sequence_for_authored_and_generated_migrations() {
     for (label, order) in [("forward", [0, 1, 2]), ("reverse", [2, 1, 0])] {
         let root = package_root(label);
         write_package(&root, order);
-        let directory = read_package_directory(&root).unwrap();
-        let plan = wamn_schema_control::plan_package_migrations(&directory, None, &[]).unwrap();
-        assert_eq!(plan.pending.len(), FILES.len());
-        for (pending, (name, _)) in plan.pending.iter().zip(FILES) {
+        read_package_directory(&root).unwrap();
+        let plan = wamn_schema_control::migrations::migrator(&super::migration_root(&root))
+            .await
+            .unwrap();
+        assert_eq!(plan.iter().count(), FILES.len() + 1);
+        for (pending, (name, _)) in plan.iter().zip(FILES) {
             let ordinal: u32 = name.split_once('_').unwrap().0.parse().unwrap();
-            assert_eq!(pending.ordinal, ordinal);
+            assert_eq!(pending.version, i64::from(ordinal));
         }
         std::fs::remove_dir_all(wamn_compiler::output_root(&root)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

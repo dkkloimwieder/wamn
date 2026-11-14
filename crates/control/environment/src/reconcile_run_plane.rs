@@ -37,6 +37,8 @@ pub struct ReconcileRunPlaneRequest {
     /// database. Observation and apply require SUPERUSER or BYPASSRLS so
     /// forced-RLS rows cannot be skipped.
     pub admin_database_url: String,
+    /// The project platform migration login's own credential for explicit PostgreSQL access.
+    pub platform_migration_database_url: Option<String>,
 
     /// Registry organization owning the environment policy.
     pub org: String,
@@ -172,7 +174,7 @@ pub async fn reconcile_run_plane(
     reconcile_run_plane_with_migrations(
         args,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -181,7 +183,7 @@ pub async fn reconcile_run_plane(
 /// Reconcile with explicit image files, using the same executor as project schema apply.
 pub async fn reconcile_run_plane_with_migrations(
     args: ReconcileRunPlaneRequest,
-    sources: &[wamn_schema_control::MigrationSource],
+    sources: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<ReconcileRunPlaneOutcome> {
     anyhow::ensure!(
         ![&args.org, &args.project, &args.env]
@@ -268,7 +270,7 @@ pub async fn reconcile_run_plane_with_migrations(
         {
             wamn_package_control::schema_baseline::observe(
                 &mut client,
-                wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
                 sources,
             )
             .await?;
@@ -331,8 +333,19 @@ pub async fn reconcile_run_plane_with_migrations(
         if !args.dry_run
             && (project_env_key_identity.app_schema_installed || reset_sources.is_some())
         {
+            let migration_input = match args.platform_migration_database_url.as_deref() {
+                Some(input) => input.to_owned(),
+                None => {
+                    crate::provision_project_env::workload::provision_platform_migration(
+                        &args.admin_database_url,
+                        wamn_control_provision::migrations::MigrationDatabase::Project,
+                    )
+                    .await?
+                }
+            };
             crate::platform_migrations::initialize_project(
                 &mut client,
+                &migration_input,
                 reset_sources.as_deref().unwrap_or(sources),
             )
             .await?;

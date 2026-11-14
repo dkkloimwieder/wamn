@@ -349,6 +349,12 @@ pub async fn schema_operation(
 
         apply_package::apply_local_package_schema(
             ApplyPackageRequest {
+                migration_database_url: wamn_control_provision::migration::configuration(
+                    &config.target_database_url(),
+                    &identity.org,
+                    &identity.project,
+                    &identity.environment,
+                )?,
                 component_source: apply_package::component_source_from_env(None)?,
                 package: PackageRoot {
                     path: roots[index].take().context("package applied twice")?,
@@ -770,7 +776,7 @@ impl TargetLease {
         validate_template(&mut self.client, &template, &fingerprint).await?;
         let substrate = async {
             use wamn_environment_control::platform_migrations::{self, ProjectReset};
-            use wamn_control_provision::schema_migrations::MigrationDatabase;
+            use wamn_control_provision::migrations::MigrationDatabase;
             let mut template_url = PostgresConfig::from_str(config.target_database_url())?;
             template_url = template_url.database(template.as_str());
             let mut template_client = wamn_postgres::connect(template_url.clone()).await?;
@@ -1182,6 +1188,12 @@ mod tests {
         fixture_digest::write_build_record(&root);
         apply_package::apply_local_package_schema(
             ApplyPackageRequest {
+                migration_database_url: wamn_control_provision::migration::configuration(
+                    &target.url(),
+                    &"acme",
+                    &"fixture",
+                    &"fixture-dev",
+                )?,
                 component_source: None,
                 changes: wamn_broker::Publisher::default(),
                 package: PackageRoot {

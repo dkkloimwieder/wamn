@@ -224,8 +224,7 @@ pub async fn fixture() -> Fixture {
              INSERT INTO platform.environment (status) VALUES ('active');
              INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) \
                VALUES ('{PROJECT_ENV_KEY}', '{ENVIRONMENT}');
-             INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest) \
-               VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
+             INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( '{PROJECT_ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))).execute(&mut admin).await.map(drop)
         .expect("seed the users, roles, permissions and the environment");
 

@@ -206,8 +206,8 @@ pub async fn project_schema_deployed(
 #[derive(Debug)]
 pub struct ProjectSchemaRequest<'a> {
     pub expected: &'a ExpectedDatabase,
-    pub admin_url: &'a str,
-    pub sources: &'a [wamn_schema_control::MigrationSource],
+    pub migration_database_url: &'a str,
+    pub sources: &'a [sqlx::migrate::Migration],
     pub apply: bool,
     pub resolution: Option<&'a wamn_package_control::migrations::MigrationResolution>,
 }
@@ -221,7 +221,7 @@ pub async fn project_schema(
 ) -> anyhow::Result<()> {
     let ProjectSchemaRequest {
         expected,
-        admin_url,
+        migration_database_url,
         sources,
         apply,
         resolution,
@@ -232,23 +232,18 @@ pub async fn project_schema(
     let url = ensure::project_url(platform, &document.triple()).await?;
     let database = wamn_postgres::identity(&url)?.1;
     let mut client = wamn_postgres::connect(
-        wamn_postgres::connect_options(admin_url)
+        wamn_postgres::connect_options(migration_database_url)
             .await?
             .database(&database),
     )
     .await?;
 
     let result = async {
-        sqlx::raw_sql("SET ROLE wamn_db_owner")
-            .execute(&mut client)
-            .await
-            .map(drop)?;
         crate::platform_migrations::run(
             &mut client,
             crate::platform_migrations::MigrationTarget::Project(&lock),
             sources,
             apply,
-            resolution,
             output,
         )
         .await
@@ -428,7 +423,19 @@ pub async fn run_deployed(
         format!("{cluster}-superuser"),
     )
     .to_json()?;
-    job::environment(&mut job, &[("WAMN_SYSTEM_ADMIN_URL", &administrator)]);
+    if matches!(operation, Operation::ProjectSchema { .. }) {
+        let project_input = ensure::project_url(platform, &document.triple()).await?;
+        let database = wamn_postgres::identity(&project_input)?.1;
+        let migration_base = wamn_postgres::database_configuration(&administrator, &database)?;
+        let migration = wamn_control_provision::migrations::MigrationDatabase::Project
+            .configuration(&migration_base)?;
+        job::container(&mut job)["args"]
+            .as_array_mut()
+            .unwrap()
+            .extend(["--migration-database-url".into(), migration.into()]);
+    } else {
+        job::environment(&mut job, &[("WAMN_SYSTEM_ADMIN_URL", &administrator)]);
+    }
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     let apply: Value = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,

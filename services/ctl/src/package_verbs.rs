@@ -33,6 +33,10 @@ pub struct ApplyPackageArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub database_url: String,
 
+    /// The restricted migration login's connection, required with an explicit catalog URL.
+    #[arg(long, hide_env_values = true)]
+    pub migration_database_url: Option<String>,
+
     #[arg(long)]
     pub org: String,
     /// Project whose environment owns the package and migration records.
@@ -156,7 +160,24 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
         .with_registry_auth_file(&registry.registry_auth_file)?
         .with_ca_paths(&registry.oci_ca_paths)?,
     );
+    let migration_database_url = match args.migration_database_url {
+        Some(input) => input,
+        None => {
+            let input = wamn_postgres::configuration(&args.database_url)?;
+            anyhow::ensure!(
+                input.trim_start().starts_with('{'),
+                "an explicit catalog connection requires --migration-database-url"
+            );
+            wamn_control_provision::migration::configuration(
+                &input,
+                &args.org,
+                &args.project,
+                &args.environment,
+            )?
+        }
+    };
     let request = ApplyPackageRequest {
+        migration_database_url,
         component_source,
         changes: wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?)
             .await?,

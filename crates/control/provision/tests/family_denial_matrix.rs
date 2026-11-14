@@ -606,9 +606,7 @@ fn reset(admin: &str) {
 const SEED: &str = "\
 DO $seed$ DECLARE t text; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
-  INSERT INTO catalog.packages
-    (physical_schema_fingerprint, project_env_key, package_id, package_version, artifact_digest)
-    VALUES ('sha256:' || repeat('c', 64), t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
+  INSERT INTO catalog.packages ( project_env_key, package_id, package_version, artifact_digest) VALUES ( t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
     (project_env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');

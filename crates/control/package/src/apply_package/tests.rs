@@ -80,11 +80,17 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
         "CREATE ROLE authdrops_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD 'authdrops'; GRANT wamn_db_owner TO authdrops_apply;",
         "GRANT USAGE, CREATE ON SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL TABLES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply;",
     ]).unwrap();
-    database.execute(&[
-        &wamn_control_provision::sql::ensure_package_owner_role_sql("wamn_inventory"),
-        &wamn_control_provision::sql::package_owner_grants_sql("wamn_inventory"),
-        &format!("GRANT {} TO authdrops_apply; GRANT USAGE, CREATE ON SCHEMA wamn_history TO authdrops_apply WITH GRANT OPTION; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history TO authdrops_apply WITH GRANT OPTION;", wamn_control_provision::package_owner_role("wamn_inventory")),
-    ]).unwrap();
+    database
+        .execute(&[wamn_control_provision::MIGRATION_PRIVILEGES_SQL])
+        .unwrap();
+    let database_name = wamn_postgres::identity(database.url()).unwrap().1;
+    let login =
+        wamn_control_provision::migration::login("apply-drops--dev--fixture", &database_name)
+            .unwrap();
+    database.execute(&[&format!("CREATE ROLE {login} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'migration-test'; GRANT {login} TO authdrops_apply WITH INHERIT TRUE, SET TRUE")]).unwrap();
+    let mut migration_url = url::Url::parse(database.url()).unwrap();
+    migration_url.set_username(&login).unwrap();
+    migration_url.set_password(Some("migration-test")).unwrap();
     let mut owner_url = url::Url::parse(database.url()).unwrap();
     owner_url.set_username("authdrops_apply").unwrap();
     owner_url.set_password(Some("authdrops")).unwrap();
@@ -113,6 +119,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
     crate::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
+        migration_database_url: migration_url.into(),
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),

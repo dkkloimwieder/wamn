@@ -115,14 +115,6 @@ pub fn read(package_output: &Path) -> Result<BuildRecord> {
     Ok(build_record)
 }
 
-pub fn physical_schema_fingerprint(package_output: &Path) -> Result<String> {
-    let path = package_output.join("physical-schema.json");
-    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let physical: wamn_schema_control::physical_schema::PhysicalSchema =
-        serde_json::from_slice(&bytes).context("parse the physical schema description")?;
-    Ok(physical.fingerprint())
-}
-
 /// Whether a path belongs to the source tree, excluding generated output and dependencies.
 ///
 /// The path can name a new or deleted file or directory.

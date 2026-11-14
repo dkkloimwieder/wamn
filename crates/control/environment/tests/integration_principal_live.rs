@@ -73,7 +73,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         .map(|result| result.rows_affected())?;
     sqlx::query("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, 'dev')").bind(&PROJECT_ENV_KEY).execute(&mut admin).await.map(|result| result.rows_affected())?;
     for package in ["consumer", "integration"] {
-        sqlx::query("INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;
+        sqlx::query("INSERT INTO catalog.packages ( project_env_key,package_id,package_version,artifact_digest) VALUES ( $1,$2,'1.0.0',$3)").bind(&PROJECT_ENV_KEY).bind(&package).bind(&format!("sha256:{}", "a".repeat(64))).execute(&mut admin).await.map(|result| result.rows_affected())?;
     }
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,

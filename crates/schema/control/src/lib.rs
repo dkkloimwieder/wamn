@@ -1,15 +1,9 @@
-//! Pure package-migration, release, and project-schema reconciliation decisions.
-//!
-//! Application structure comes only from strict package manifests plus ordered
-//! package-owned migration bytes. This crate has no legacy catalog model or DDL
-//! compiler dependency and performs no filesystem, database, clock, or network
-//! I/O. Effect shells execute each returned plan in one database transaction.
+//! Package inputs, SQLx migration sources, and remaining schema lifecycle declarations.
 
 pub mod exposure;
 pub mod migrations;
 mod model;
 mod package_migrations;
-pub mod physical_schema;
 mod replica_identity;
 mod run_plane;
 pub mod sql;
@@ -17,12 +11,8 @@ pub mod sql;
 pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route};
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{
-    AppliedPackage, CdcExcludedRelation, ManagedModel, MigrationOutcome, MigrationSource,
-    PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL, PACKAGE_MANIFEST_PATH,
-    PACKAGE_MIGRATION_DRIFT_REFUSAL, PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
-    PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory, PackageMigrationError,
-    PackageMigrationErrorType, PackageMigrationPlan, PendingMigration, RecordedMigration,
-    plan_package_migrations, validate_package_schema_source,
+    AppliedPackage, CdcExcludedRelation, ManagedModel, MigrationSource, PackageDirectory,
+    PackageMigrationPlan, package_metadata, validate_package_schema_source,
 };
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,

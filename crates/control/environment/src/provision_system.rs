@@ -16,15 +16,17 @@ use anyhow::Context as _;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
-use wamn_control_provision::schema_migrations::MigrationDatabase;
+use sqlx::migrate::Migration;
+use wamn_control_provision::migrations::MigrationDatabase;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
-use wamn_schema_control::MigrationSource;
 
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
 pub struct ProvisionSystemRequest {
     /// Superuser URL of the system database.
     pub system_database_url: String,
+    /// The platform migration login's actual credential for explicit PostgreSQL access.
+    pub migration_database_url: Option<String>,
     /// The email domain of the platform principal rows.
     pub platform_domain: String,
 }
@@ -38,8 +40,19 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
 
     let result = async {
+        let migration_input = match request.migration_database_url.as_deref() {
+            Some(input) => input.to_owned(),
+            None => {
+                crate::provision_project_env::workload::provision_platform_migration(
+                    &request.system_database_url,
+                    MigrationDatabase::System,
+                )
+                .await?
+            }
+        };
         initialize_system(
             &mut client,
+            &migration_input,
             &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
         )
         .await?;
@@ -213,26 +226,17 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
 /// Existing initialization never runs pending files on platform reapply.
 pub async fn initialize_system(
     admin: &mut Client,
-    sources: &[MigrationSource],
+    migration_input: &str,
+    sources: &[Migration],
 ) -> anyhow::Result<()> {
     if install_control_store(admin).await? {
-        sqlx::raw_sql("SET ROLE wamn_system")
-            .execute(&mut *admin)
-            .await
-            .map(drop)?;
-        let result = crate::platform_migrations::apply_reported(
-            admin,
+        let mut migration = wamn_postgres::connect(migration_input).await?;
+        crate::platform_migrations::apply_reported(
+            &mut migration,
             crate::platform_migrations::MigrationTarget::System,
             sources,
-            None,
         )
-        .await;
-        let reset = sqlx::raw_sql("RESET ROLE")
-            .execute(&mut *admin)
-            .await
-            .map(drop);
-        result?;
-        reset?;
+        .await?;
     }
     Ok(())
 }

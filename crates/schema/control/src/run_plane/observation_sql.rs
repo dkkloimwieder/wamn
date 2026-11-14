@@ -24,7 +24,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
        FROM information_schema.table_privileges \
       WHERE grantee IN ('PUBLIC', 'wamn_app') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('packages', 'package_migrations', 'releases', \
+              ('packages', 'releases', \
                'connection_requirement', 'release_connection', \
                'connection_binding')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
@@ -47,7 +47,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'releases', \
+              ('packages', 'releases', \
                'connection_requirement', 'release_connection', \
                'connection_binding')) \
           OR (namespace.nspname = $1 \
@@ -71,7 +71,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'releases', \
+              ('packages', 'releases', \
                'connection_requirement', 'release_connection', \
                'connection_binding')) \
           OR (namespace.nspname = $1 \
@@ -92,7 +92,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'releases', \
+              ('packages', 'releases', \
                'connection_requirement', 'release_connection', \
                'connection_binding')) \
           OR (namespace.nspname = $1 \

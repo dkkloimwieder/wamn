@@ -1,4 +1,4 @@
-use super::{NAME_BYTE_LIMIT, PhysicalSchemaError, RelationColumn};
+use super::{NAME_BYTE_LIMIT, RelationColumn};
 use std::fmt::Write as _;
 
 /// The `CREATE OR REPLACE FUNCTION` text of the stamp function of one relation.
@@ -61,8 +61,7 @@ BEGIN
 {unchanged}    END IF;
     RETURN NEW;
 END
-$stamp$;
-REVOKE ALL ON FUNCTION wamn_history.{name}() FROM PUBLIC;"
+$stamp$;"
     )
 }
 
@@ -182,8 +181,7 @@ BEGIN
     END IF;
     RETURN NULL;
 END
-$log$;
-REVOKE ALL ON FUNCTION wamn_history.{name}() FROM PUBLIC;"
+$log$;"
     )
 }
 
@@ -202,29 +200,19 @@ pub fn changed_test(columns: &[&str]) -> String {
     format!("({})", tests.join("\n            OR "))
 }
 
-/// The body that PostgreSQL stores for a generated function: the text between
-/// its two dollar-quote tags.
-pub fn function_body<'a>(statement: &'a str, tag: &str) -> &'a str {
-    let start = statement.find(tag).map_or(0, |start| start + tag.len());
-    let end = statement[start..]
-        .find(tag)
-        .map_or(statement.len(), |end| start + end);
-    &statement[start..end]
-}
-
 /// The name of the generated function of one relation, refused at 64 bytes or more.
 pub fn generated_function_name(
     schema: &str,
     relation: &str,
     suffix: &str,
-) -> Result<String, PhysicalSchemaError> {
+) -> anyhow::Result<String> {
     let name = format!("{schema}__{relation}_{suffix}");
     if name.len() >= NAME_BYTE_LIMIT {
-        return Err(PhysicalSchemaError::invalid(format!(
+        return Err(anyhow::anyhow!(
             "record-history-function-name-too-long: wamn_history.{name} has {} bytes; limit is {}",
             name.len(),
             NAME_BYTE_LIMIT - 1
-        )));
+        ));
     }
     Ok(name)
 }

@@ -12,7 +12,7 @@ test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-p
 [dependencies]
 pg_query = "=6.2.1"
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true

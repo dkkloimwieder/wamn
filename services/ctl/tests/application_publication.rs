@@ -95,12 +95,6 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
         root.join("migrations/0001_initial.sql"),
         output.join("migrations/0001_initial.sql"),
     )?;
-    wamn_test_infrastructure::fixture_digest::write_physical_schema(
-        &root,
-        serde_json::from_value(json!({"item": [
-            {"name": "id", "primary_key": true, "timestamptz": false}
-        ]}))?,
-    )?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let mut record = build_record::read(&output)?;
     record.outputs.components.push(BuildComponent {

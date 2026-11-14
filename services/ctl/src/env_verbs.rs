@@ -86,6 +86,9 @@ pub struct SchemaApplyArgs {
 
 #[derive(Debug, Args)]
 pub struct ProjectSchemaArgs {
+    /// The project's restricted platform migration connection.
+    #[arg(long, hide_env_values = true)]
+    pub migration_database_url: String,
     pub file: PathBuf,
     pub database: PathBuf,
     #[arg(long)]
@@ -400,9 +403,9 @@ async fn project_schema(
         &document,
         environment::sql::ProjectSchemaRequest {
             expected: &expected,
-            admin_url: &std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?,
+            migration_database_url: &args.migration_database_url,
             sources: &wamn_environment_control::platform_migrations::embedded_sources(
-                wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+                wamn_control_provision::migrations::MigrationDatabase::Project,
             ),
             apply,
             resolution,

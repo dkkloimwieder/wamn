@@ -621,3 +621,52 @@ async fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
         assert!(generate_package(&request).await.is_err());
     }
 }
+
+/// A declaration-only change appends a history migration without changing released checksums.
+#[tokio::test(flavor = "current_thread")]
+async fn history_changes_append_immutable_versions_and_execute_during_build() -> anyhow::Result<()>
+{
+    let database = wamn_test_postgres::database();
+    let workspace = Workspace::new("history-versions");
+    let package = workspace.package();
+    let output = workspace.root.join("target/wamn");
+    let request = BuildRequest::new(&package, &output, database.url());
+    generate_package(&request).await?;
+    let directory = package_output(&output, wamn_fixture_package::PACKAGE_ID);
+    let original = sqlx::migrate::Migrator::new(directory.join("history")).await?;
+    generate_package(&request).await?;
+    let repeated = sqlx::migrate::Migrator::new(directory.join("history")).await?;
+    assert!(
+        original
+            .iter()
+            .map(|migration| (&migration.version, &migration.checksum))
+            .eq(repeated
+                .iter()
+                .map(|migration| (&migration.version, &migration.checksum)))
+    );
+    let path = package.join("wamn.k");
+    let source = fs::read_to_string(&path)?;
+    fs::write(
+        path,
+        source.replacen("retention = \"P30D\"", "retention = \"unlimited\"", 1),
+    )?;
+    generate_package(&request).await?;
+    let changed = sqlx::migrate::Migrator::new(directory.join("history")).await?;
+    for released in original.iter() {
+        assert!(
+            changed
+                .iter()
+                .any(|migration| migration.version == released.version
+                    && migration.checksum == released.checksum)
+        );
+    }
+    let previous = original.iter().last().unwrap().version;
+    let authored = sqlx::migrate::Migrator::new(directory.join("migrations")).await?;
+    let highest_authored = authored
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap();
+    assert!(changed.iter().last().unwrap().version > previous.max(highest_authored));
+    Ok(())
+}

@@ -55,7 +55,7 @@ pub async fn prepare(
                 platform,
                 document,
                 &crate::platform_migrations::embedded_sources(
-                    wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+                    wamn_control_provision::migrations::MigrationDatabase::Project,
                 ),
             )
             .await?,
@@ -78,7 +78,7 @@ pub async fn prepare_retained(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -89,7 +89,7 @@ pub async fn prepare_retained_with_migrations(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
-    migrations: &[wamn_schema_control::MigrationSource],
+    migrations: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<()> {
     let state = schema::state(platform, document).await?;
     ensure!(
@@ -167,7 +167,7 @@ async fn prepare_inputs(
 async fn recorded_substrate(
     platform: &Platform,
     document: &EnvironmentDocument,
-    sources: &[wamn_schema_control::MigrationSource],
+    sources: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<crate::platform_migrations::ProjectReset> {
     let url = ensure::project_url(platform, &document.triple()).await?;
     let mut project = analyse::connect_project(&url).await?;
@@ -178,13 +178,13 @@ async fn recorded_substrate(
 pub(crate) async fn migration_sources(
     system: &mut sqlx::PgConnection,
     triple: &wamn_registry::Triple,
-    sources: &[wamn_schema_control::MigrationSource],
-) -> anyhow::Result<Option<Vec<wamn_schema_control::MigrationSource>>> {
+    sources: &[sqlx::migrate::Migration],
+) -> anyhow::Result<Option<Vec<sqlx::migrate::Migration>>> {
     let pending = registry::pending_database(system, triple).await?;
     pending
         .map(|pending| {
             let pending: Pending = serde_json::from_value(pending)?;
-            pending.inputs.substrate.sources(sources.to_vec())
+            pending.inputs.substrate.sources(sources)
         })
         .transpose()
 }
@@ -288,7 +288,7 @@ pub async fn validate_pending_substrate(
         .inputs
         .substrate
         .validate(&crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
         ))?;
     Ok(())
 }
@@ -305,7 +305,7 @@ pub async fn initialize(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
+            wamn_control_provision::migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -316,7 +316,7 @@ pub async fn initialize_with_migrations(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
-    migrations: &[wamn_schema_control::MigrationSource],
+    migrations: &[sqlx::migrate::Migration],
 ) -> anyhow::Result<()> {
     let pending = read_pending(platform, document).await?;
     pending.inputs.substrate.validate(migrations)?;
@@ -374,6 +374,12 @@ pub async fn initialize_with_migrations(
     for index in order {
         let candidate = &candidates[index];
         apply_package::apply_package(apply_package::ApplyPackageRequest {
+            migration_database_url: wamn_control_provision::migration::configuration(
+                &project_url,
+                &document.org,
+                &document.project,
+                &document.env,
+            )?,
             component_source: platform.component_source()?,
             package: candidate.root.clone(),
             changes: changes.clone(),

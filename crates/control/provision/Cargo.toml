@@ -15,7 +15,7 @@ test-util = ["dep:wamn-test-postgres"]
 [dependencies]
 anyhow.workspace = true
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
 wamn-compiler = { workspace = true }
 wamn-digest.workspace = true
