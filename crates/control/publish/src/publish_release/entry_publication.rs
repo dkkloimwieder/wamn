@@ -64,16 +64,13 @@ pub(super) async fn publish(
             candidates.push((application, source.pull_verified(application).await?));
         }
     }
-    let entry = super::compose_covering_entry(
-        published,
-        &candidates
-            .iter()
-            .map(|(application, bytes)| (*application, bytes.as_slice()))
-            .collect::<Vec<_>>(),
-        &route,
-        applications,
-        application,
-    )?;
+    let candidates = candidates
+        .iter()
+        .map(|(application, bytes)| (*application, bytes.as_slice()))
+        .collect::<Vec<_>>();
+    let (member, bytes) =
+        super::application_member(published, &candidates, applications, application)?;
+    let entry = super::compose_application(member, bytes, &route)?;
     // The entry lives beside the members, under the component artifact base.
     let repository = format!(
         "{}/{}",

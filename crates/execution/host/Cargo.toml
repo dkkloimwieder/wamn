@@ -68,7 +68,7 @@ reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true, features = ["ops", "test-util"] }
 wamn-test-infrastructure = { workspace = true }

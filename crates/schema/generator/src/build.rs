@@ -52,8 +52,8 @@ pub struct BuildRequest {
     /// Allow dev composition with a built base that differs from its authored pin.
     /// Publication builds must leave this false.
     pub allow_stale_base_pins: bool,
-    /// Content digest selecting an immutable development prerelease.
-    pub development_digest: Option<String>,
+    /// Exact development version supplied by the publication owner.
+    pub development_version: Option<String>,
 }
 
 impl BuildRequest {
@@ -71,7 +71,7 @@ impl BuildRequest {
             output_root: output_root.to_owned(),
             database_url: database_url.to_owned(),
             allow_stale_base_pins: false,
-            development_digest: None,
+            development_version: None,
         }
     }
 }
@@ -104,22 +104,8 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     let package_root = source.path();
     let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)
         .context("parse the authored manifest")?;
-    if let Some(digest) = &request.development_digest {
-        let hex = digest
-            .strip_prefix("sha256:")
-            .context("development content digest must use sha256")?;
-        ensure!(
-            hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "invalid development content digest"
-        );
-        let version = authored["package"]["version"]
-            .as_str()
-            .context("authored package version")?;
-        let base = version
-            .split(['-', '+'])
-            .next()
-            .context("authored package version")?;
-        authored["package"]["version"] = format!("{base}-dev.h{}", &hex[..12]).into();
+    if let Some(version) = &request.development_version {
+        authored["package"]["version"] = version.as_str().into();
         if let Some(dependencies) = authored
             .get_mut("base_dependencies")
             .and_then(Value::as_object_mut)
@@ -169,7 +155,7 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     // Generated migrations are durable source inputs, not a rebuildable current recipe.
     // Never overwrite an earlier version, including during a repeated build.
     // Development coordinates do not add generated SQL to the authored history.
-    if request.development_digest.is_none() {
+    if request.development_version.is_none() {
         for (relative, bytes) in files.iter().filter(|(path, _)| path.starts_with("history")) {
             let path = request.package_root.join(relative);
             fs::create_dir_all(path.parent().context("history migration parent")?)?;

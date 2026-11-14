@@ -8,7 +8,7 @@ use serde_json::json;
 use wamn_catalog::{AdmittedComponent, HostRouteSet, ServingComponent, ServingManifest};
 use wamn_engine::artifact_source::local_component_path;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
-use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
+use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub(super) const OPERATION: &str = "file-fixture:document/signed-read@0.1.0";
@@ -68,7 +68,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
             std::fs::write(path, file.bytes())?;
         }
     }
-    let declaration = wamn_package_control::component_declaration::render_palette_declaration(
+    let declaration = wamn_publish::component_declaration::render_palette_declaration(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../control/environment/tests/support/file_package/publication/components/signed-read.json.in",
         ),
@@ -100,7 +100,7 @@ pub(super) fn signed_read_fixture(project_env_key: &str) -> anyhow::Result<Signe
         local_component_path(scratch.path(), &component.component_digest)?,
         bytes,
     )?;
-    let route = wamn_release_control::publish_release::package_route(
+    let route = wamn_publish::publish_release::package_route(
         &BTreeMap::from([("file_fixture".into(), package.as_path())]),
         "file_fixture",
         "signed_read",

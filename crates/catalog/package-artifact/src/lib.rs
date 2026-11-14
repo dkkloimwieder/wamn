@@ -9,8 +9,8 @@
 //! layers. Publish, wiring authorship and the management condition read component
 //! facts through it, so they read them the same way.
 //!
-//! `wamn-package-control` packs and pushes package artifacts with [`Repository`]. A
-//! deployed service may depend on this crate, never on `wamn-package-control`.
+//! `wamn-publish` packs and pushes package artifacts with [`Repository`]. A
+//! deployed service may depend on this crate, never on `wamn-publish`.
 //!
 //! The crate also owns the registry credential ([`registry_credentials`]) and
 //! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,

@@ -11,12 +11,12 @@ mod support;
 
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
-use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_release};
+use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
 struct Fixture {
     args: PublishReleaseRequest,
     roots: Vec<std::path::PathBuf>,
-    admissions: Vec<wamn_package_control::component_admission::ComponentAdmission>,
+    admissions: Vec<wamn_publish::component_admission::ComponentAdmission>,
     documents: Vec<(ComponentPackageCoordinate, WiringDocument)>,
 }
 

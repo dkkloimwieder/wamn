@@ -12,8 +12,8 @@ use wamn_compiler::{
     build_record,
 };
 use wamn_environment::environment::document::EnvironmentDocument;
-use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
-use wamn_release_control::publish_release::{
+use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
+use wamn_publish::publish_release::{
     EntryPublicationInputs, PublishReleaseRequest, publish_release,
 };
 
@@ -121,11 +121,15 @@ async fn build(
     let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
         let mut request = BuildRequest::new(root, &default_output_root(root), database_url);
-        if development {
-            request.development_digest = Some(content_digest(root)?);
+        let digest = development.then(|| content_digest(root)).transpose()?;
+        if let Some(digest) = &digest {
+            request.development_version = Some(wamn_publish::development::version(
+                &read_package_manifest(root)?.package.version,
+                digest,
+            )?);
         }
         let record = build_package(&request).await?;
-        if let Some(digest) = request.development_digest {
+        if let Some(digest) = digest {
             ensure!(
                 digest == content_digest(root)?,
                 "source changed during development build; retry"
@@ -391,7 +395,7 @@ mod tests {
     -> anyhow::Result<()> {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         std::fs::create_dir_all(scratch.path().join("generated"))?;
-        let manifest = wamn_package_control::test_support::source_manifest();
+        let manifest = wamn_publish::test_support::source_manifest();
         std::fs::write(
             scratch.path().join("generated/wamn.json"),
             serde_json::to_vec(&manifest)?,

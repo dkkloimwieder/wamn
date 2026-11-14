@@ -174,11 +174,20 @@ mod tests {
         artifact_fixture(&second, true);
         let packed = pack(&first.join("dist"), "1.2.3").unwrap();
         let other = pack(&second.join("dist"), "1.2.3").unwrap();
-        assert_eq!(packed.digest, other.digest);
+        assert_eq!(
+            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(other.digest.to_string()).unwrap()
+        );
         std::fs::write(second.join("dist/index.html"), "changed").unwrap();
         assert_ne!(
-            packed.digest,
-            pack(&second.join("dist"), "1.2.3").unwrap().digest
+            wamn_catalog::ArtifactHash::parse(packed.digest.to_string()).unwrap(),
+            wamn_catalog::ArtifactHash::parse(
+                pack(&second.join("dist"), "1.2.3")
+                    .unwrap()
+                    .digest
+                    .to_string()
+            )
+            .unwrap()
         );
         std::fs::write(second.join("dist/config.json"), "org data").unwrap();
         assert!(pack(&second.join("dist"), "1.2.3").is_err());

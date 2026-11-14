@@ -21,7 +21,7 @@ const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 fn package_version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let manifest: serde_json::Value =
-            serde_json::from_slice(&wamn_package_control::test_support::fixture_manifest())
+            serde_json::from_slice(&crate::test_support::fixture_manifest())
                 .expect("the compiled fixture manifest is JSON");
         manifest["package"]["version"]
             .as_str()
@@ -46,10 +46,8 @@ struct PackageInput {
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
     let base = format!("{}@{}", wamn_fixture_package::PACKAGE_ID, package_version());
-    wamn_package_control::component_declaration::authored_base_digests(
-        &wamn_fixture_package::overlay_root(),
-    )
-    .expect("the overlay manifest authors its base digest")[base.as_str()]
+    crate::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
+        .expect("the overlay manifest authors its base digest")[base.as_str()]
     .to_string()
 }
 
@@ -87,12 +85,11 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
     for input in inputs {
-        let base_digests =
-            wamn_package_control::component_declaration::authored_base_digests(&input.root)
-                .unwrap_or_else(|error| {
-                    panic!("read {}@{} base pins: {error}", input.id, input.version)
-                });
-        let declaration = wamn_package_control::component_declaration::render_package_declaration(
+        let base_digests = crate::component_declaration::authored_base_digests(&input.root)
+            .unwrap_or_else(|error| {
+                panic!("read {}@{} base pins: {error}", input.id, input.version)
+            });
+        let declaration = crate::component_declaration::render_package_declaration(
             &input.root,
             input.component,
             PROJECT_ENV_KEY,

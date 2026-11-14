@@ -1,6 +1,6 @@
 [package]
-name = "wamn-package-control"
-description = "Package control operations."
+name = "wamn-publish"
+description = "Immutable package and release publication."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ default = []
 test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-package-artifact/test-util"]
 
 [dependencies]
+wash-runtime = { workspace = true, features = ["washlet"] }
 chrono = { workspace = true, features = ["clock"] }
 pg_query = "=6.2.1"
 wamn-postgres.workspace = true
@@ -47,6 +48,7 @@ wamn-fixture-package = { workspace = true, optional = true }
 wamn-test-infrastructure = { workspace = true, optional = true }
 
 [dev-dependencies]
+wat = "=1.254.2"
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-component-artifact = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }

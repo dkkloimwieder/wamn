@@ -24,7 +24,7 @@ use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
 };
-use wamn_package_control::integration;
+use wamn_publish::integration;
 use wash_runtime::{
     engine::{ctx::SharedCtx, workload::ResolvedWorkload},
     host::{
@@ -178,12 +178,11 @@ impl Application {
             repository.join("apps/target/wamn/modbus_reader/components/modbus_reader.wasm"),
         )?;
         let engine = wamn_engine::build_engine(&[])?;
-        let mut declaration =
-            wamn_package_control::component_declaration::render_package_declaration(
-                &package,
-                "modbus_reader",
-                "acme--dev--one",
-            )?;
+        let mut declaration = wamn_publish::component_declaration::render_package_declaration(
+            &package,
+            "modbus_reader",
+            "acme--dev--one",
+        )?;
         declaration["target"]["package-version"] = json!("0.1.0");
         let operation = declaration["operations"]
             .as_object()

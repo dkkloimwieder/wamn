@@ -12,8 +12,8 @@ use wamn_compiler::manifest::PackageManifest;
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_package_control::package_artifact::{OpenedPackage, PackageSource, open_package_source};
 use wamn_postgres::connect;
+use wamn_publish::package_artifact::{OpenedPackage, PackageSource, open_package_source};
 
 /// Initialize absent package baselines in dependency order, without selecting a release.
 /// Existing baselines keep their SQL records even when the selected version changes.
@@ -129,10 +129,7 @@ pub async fn materialize_application_principals(
     let applications = packages
         .iter()
         .filter(|package| {
-            wamn_release_control::publish_release::composes_integration(
-                package,
-                &manifest.components,
-            )
+            wamn_publish::publish_release::composes_integration(package, &manifest.components)
         })
         .collect::<Vec<_>>();
     if applications.is_empty() {
@@ -224,7 +221,7 @@ pub async fn write_runtime_grants(
         .map(|package| (package.package.id.as_str(), package))
         .collect();
     for package in packages.iter().filter(|package| {
-        wamn_release_control::publish_release::composes_integration(package, &manifest.components)
+        wamn_publish::publish_release::composes_integration(package, &manifest.components)
     }) {
         let subject =
             wamn_platform_identity::application_subject(project_env_key, &package.package.id)?;
@@ -253,7 +250,7 @@ pub async fn write_runtime_grants(
             owned,
             "application role {role} is missing, authored, or shared; run env initialize or resolve its ownership"
         );
-        for permission in wamn_release_control::publish_release::application_dependency_permissions(
+        for permission in wamn_publish::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {
@@ -509,7 +506,7 @@ mod tests {
 
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
-        let mut base = wamn_package_control::test_support::source_manifest();
+        let mut base = wamn_publish::test_support::source_manifest();
         base.package.id = "base".into();
         base.sequences = serde_json::from_value(serde_json::json!({
             "order": {"pattern": "PO-{seq:po}"}

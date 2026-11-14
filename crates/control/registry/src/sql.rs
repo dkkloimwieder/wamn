@@ -436,7 +436,7 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ: &str = "SELECT instance_
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
     "DELETE FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/control/package/src/integration.rs::publish registry statement.
+/// crates/control/publish/src/integration.rs::publish registry statement.
 pub const CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH: &str =
     "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)";
 

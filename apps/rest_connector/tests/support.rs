@@ -4,12 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::ComponentPackageCoordinate;
-use wamn_package_control::component_admission::{
+use wamn_publish::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
-use wamn_package_control::component_declaration::{
-    render_package_declaration, render_palette_declaration,
-};
+use wamn_publish::component_declaration::{render_package_declaration, render_palette_declaration};
 
 pub fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")

@@ -21,7 +21,7 @@ Run `cargo xtask --help` from the repository root. The `justfile` calls these co
 | `bench/pg-minimum/gcp.sh` | `cargo xtask bench-pg-minimum` |
 | Package builds | `cargo xtask build-package`, `cargo xtask host-route-clients`, `cargo xtask install-kcl`, `cargo xtask guest-rustflags` |
 | Benchmark result scripts | `cargo xtask bench-result`, `bench-pg-result`, `bench-app-result`, `bench-database-delta`, `bench-profile-summary`, `bench-name-guests` |
-| Installers for Helm, OpenTofu, and wash | `mise install` |
+| Installers for Helm, OpenTofu, wash, and cargo-deny | `mise install` |
 
 BuildKit imports and exports the image caches. The build command no longer hashes input files, copies old image tags, scans processes, or submits Cloud Build jobs.
 A failed publication stops at that step. Earlier successful pushes remain published.
@@ -37,4 +37,4 @@ Platform builds publish palette components once and write their artifact pins an
 
 `cargo xtask repo-lint` runs repository policy checks directly in xtask.
 `deny.toml` keeps the single-version rules for Wasmtime and async-nats.
-The command also runs `cargo deny check bans`, which needs cargo-deny on `PATH`.
+The command also runs `cargo deny check bans`. `mise install` provisions the pinned cargo-deny binary.

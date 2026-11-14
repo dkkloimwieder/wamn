@@ -41,7 +41,7 @@ wamn-catalog = { workspace = true }
 # `wamn build` calls the two-pass package build.
 wamn-compiler = { workspace = true }
 # The control operations that the verbs call.
-wamn-package-control = { workspace = true }
+wamn-publish = { workspace = true }
 wamn-release-control = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-platform-install.workspace = true

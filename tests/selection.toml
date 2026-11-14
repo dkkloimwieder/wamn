@@ -29,14 +29,14 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:wasmtime_source_identity", tier="contract" },
-  { workspace="root", package="wamn-package-control", target="lib:wamn_package_control", tier="live-postgres" },
-  { workspace="root", package="wamn-release-control", target="lib:wamn_release_control", tier="live-postgres" },
+  { workspace="root", package="wamn-publish", target="lib:wamn_publish", tier="live-postgres" },
+  { workspace="root", package="wamn-release-control", target="lib:wamn_release_control", tier="contract" },
   { workspace="root", package="wamn-environment", target="lib:wamn_environment", tier="live-nats" },
   { workspace="root", package="wamn-dev", target="lib:wamn_dev", tier="contract" },
   { workspace="root", package="wamn-environment", target="test:app_generation_isolation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:application_activation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:environment_delete_live", tier="live-postgres" },
-  { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
+  { workspace="root", package="wamn-publish", target="test:application_composition", tier="contract" },
   { workspace="root", package="wamn-environment", target="test:migrations_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:capture_gap_live", tier="kind" },
   { workspace="root", package="wamn-environment", target="test:connection_binding_live", tier="live-postgres" },
@@ -49,12 +49,12 @@ targets = [
   { workspace="root", package="wamn-environment", target="test:environment_lock_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:environment_render", tier="contract" },
   { workspace="root", package="wamn-environment", target="test:files_live", tier="live-postgres" },
-  { workspace="root", package="wamn-package-control", target="test:integration_artifact", tier="live-postgres" },
+  { workspace="root", package="wamn-publish", target="test:integration_artifact", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:integration_principal_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:integration_restart_live", tier="live-nats" },
   { workspace="root", package="wamn-environment", target="test:invite_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:netsuite_publication", tier="live-postgres" },
-  { workspace="root", package="wamn-package-control", target="test:package_artifact_live", tier="live-postgres" },
+  { workspace="root", package="wamn-publish", target="test:package_artifact_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:platform_grants_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:provision_system_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment", target="test:prune_record_history_live", tier="live-postgres" },
@@ -455,7 +455,7 @@ target = ["test:rest_connector_publication"]
 prerequisites = ["rest-connector"]
 
 [[preparation]]
-packages = ["wamn-package-control"]
+packages = ["wamn-publish"]
 target = ["test:package_artifact_live"]
 prerequisites = ["publication-applications"]
 
@@ -472,14 +472,9 @@ prerequisites = ["jsonata"]
 # Preparation follows selected executable targets. Exact or filtered suites name their own inputs.
 
 [[preparation]]
-packages = ["wamn-package-control"]
-target = ["lib:wamn_package_control"]
-prerequisites = ["fixture", "nats", "authored-applications"]
-
-[[preparation]]
-packages = ["wamn-release-control"]
-target = ["lib:wamn_release_control"]
-prerequisites = ["fixture-components"]
+packages = ["wamn-publish"]
+target = ["lib:wamn_publish"]
+prerequisites = ["fixture", "nats", "authored-applications", "fixture-components"]
 
 [[preparation]]
 packages = ["wamn-environment"]
@@ -507,7 +502,7 @@ target = ["test:edge_bundle"]
 prerequisites = ["edge", "http-route"]
 
 [[preparation]]
-packages = ["wamn-release-control"]
+packages = ["wamn-publish"]
 target = ["test:application_composition"]
 prerequisites = ["http-route"]
 

@@ -16,12 +16,11 @@ use wamn_engine::artifact_source::local_component_path;
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_registry::project_env_key;
 
-use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
-use wamn_package_control::component_declaration::{
-    authored_base_digests, render_package_declaration,
-};
-use wamn_release_control::publish_release::{
-    PublishReleaseRequest, assemble_release, compose_pinned_application, compose_release_entry,
+use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
+use wamn_publish::component_declaration::{authored_base_digests, render_package_declaration};
+use wamn_publish::publish_release::{
+    ComposedApplication, PublishReleaseRequest, application_member, assemble_release,
+    compose_application,
 };
 
 /// The environment coordinate of the box: the edge configuration's `[target]`.
@@ -89,17 +88,17 @@ pub fn write_package(
         std::slice::from_ref(&admission),
         &[],
     )?;
-    let entry = compose_release_entry(
+    let (member, application_bytes) = application_member(
         &assembled.published,
-        std::slice::from_ref(&admission),
-        &fs::read(ingress)?,
+        &[(admission.facts(), admission.bytes())],
         &request.applications,
         None,
     )?;
+    let entry = compose_application(member, application_bytes, &fs::read(ingress)?)?;
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.components,
-        entry.application(),
+        &entry,
         |digest| {
             ensure!(
                 digest == admission.component_digest(),
@@ -107,7 +106,6 @@ pub fn write_package(
             );
             fs::read(bytes).with_context(|| format!("read {}", bytes.display()))
         },
-        ingress,
         out,
     )
 }
@@ -115,9 +113,8 @@ pub fn write_package(
 fn write_bundle(
     manifest_bytes: &[u8],
     facts: &[AdmittedComponent],
-    application: &wamn_catalog::ServingEntryMember,
+    entry: &ComposedApplication,
     read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
-    ingress: &Path,
     out: &Path,
 ) -> anyhow::Result<String> {
     let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
@@ -141,7 +138,6 @@ fn write_bundle(
 
     let components = serde_json::to_vec(facts).context("encode the facts")?;
     let grants = serde_json::to_vec(&grants).context("encode the grants")?;
-    let route = fs::read(ingress).with_context(|| format!("read {}", ingress.display()))?;
     let mut bodies = Vec::with_capacity(facts.len());
     for component in facts {
         let digest = &component.component_digest;
@@ -152,17 +148,6 @@ fn write_bundle(
         );
         bodies.push(bytes);
     }
-    let (application, bytes) = facts
-        .iter()
-        .zip(&bodies)
-        .find(|(fact, _)| {
-            fact.target.package_id == application.package_id
-                && fact.component == application.component
-                && fact.component_digest == application.digest
-        })
-        .context("edge release has no named application member")?;
-    let entry =
-        compose_pinned_application(application, bytes, &route).context("compose the edge entry")?;
     let ingress_bytes = entry.bytes();
 
     fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;

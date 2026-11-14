@@ -227,7 +227,7 @@ fn package(
     std::fs::write(root.join("wamn.k"), authored)?;
     std::fs::write(root.join("generated/wamn.json"), &bytes)?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
-    let packed = wamn_package_control::package_artifact::pack_package(&root)?;
+    let packed = wamn_publish::package_artifact::pack_package(&root)?;
     let tag = packed.tag();
     artifact(
         objects,

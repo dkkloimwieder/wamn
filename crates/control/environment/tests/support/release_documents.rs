@@ -5,7 +5,7 @@ use wamn_environment::environment::{
     self,
     document::{DeclaredRelease, EnvironmentDocument},
 };
-use wamn_release_control::publish_release::compose_application;
+use wamn_publish::publish_release::compose_application;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -161,8 +161,8 @@ pub fn fixture_http_entry(
     work: &Path,
     repository: &Path,
 ) -> anyhow::Result<(
-    wamn_package_control::component_admission::ComponentAdmission,
-    wamn_release_control::publish_release::ComposedApplication,
+    wamn_publish::component_admission::ComponentAdmission,
+    wamn_publish::publish_release::ComposedApplication,
 )> {
     let package = repository.join("apps").join(PACKAGE);
     let output = wamn_compiler::output_root(&package);
@@ -173,15 +173,15 @@ pub fn fixture_http_entry(
         .iter()
         .find(|component| component.name == "device")
         .context("the fixture build contains its device component")?;
-    let declaration = wamn_package_control::component_declaration::render_package_declaration(
+    let declaration = wamn_publish::component_declaration::render_package_declaration(
         &package,
         "device",
         &wamn_registry::project_env_key(ORG, PROJECT, "http"),
     )?;
     let declaration_path = work.join("device-declaration.json");
     std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
-    let admission = wamn_package_control::component_admission::admit_component(
-        wamn_package_control::component_admission::AdmitComponentRequest {
+    let admission = wamn_publish::component_admission::admit_component(
+        wamn_publish::component_admission::AdmitComponentRequest {
             package,
             component_bytes: output.join(&component.path),
             declaration: declaration_path,
@@ -195,14 +195,7 @@ pub fn fixture_http_entry(
     );
     let route = std::fs::read(&route_path)
         .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .context("the HTTP route guest has a digest pin")?
-    );
-    let entry = compose_application(&admission, &route, &pin)?;
+    let entry = compose_application(admission.facts(), admission.bytes(), &route)?;
     Ok((admission, entry))
 }
 

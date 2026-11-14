@@ -29,7 +29,7 @@ mod native_files {
             database.url(),
         ))
         .await?;
-        let published = wamn_release_control::publish_release::assemble_release(
+        let published = wamn_publish::publish_release::assemble_release(
             &release_request()?,
             &[package],
             &admissions,

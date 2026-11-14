@@ -16,7 +16,7 @@ use wamn_catalog::package_schema::{AppliedPackage, PackageDirectory};
 pub struct Candidate {
     pub root: PackageRoot,
     pub directory: PackageDirectory,
-    _artifact: Option<wamn_package_control::package_artifact::OpenedPackage>,
+    _artifact: Option<wamn_publish::package_artifact::OpenedPackage>,
 }
 impl Candidate {
     pub fn source(root: PackageRoot) -> anyhow::Result<Self> {
@@ -195,7 +195,7 @@ pub async fn plan(
         let metadata = wamn_catalog::package_schema::package_metadata(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
         let migrator = wamn_compiler::migrations::migrator(
-            &wamn_package_control::package_source::migration_root(&candidate.root.path),
+            &wamn_publish::package_source::migration_root(&candidate.root.path),
         )
         .await?;
         let migrations = if let Some(client) = &mut client {
@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn reset_validates_selected_sources_without_document_membership() -> anyhow::Result<()> {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-        let manifest = wamn_package_control::test_support::source_manifest();
+        let manifest = wamn_publish::test_support::source_manifest();
         std::fs::create_dir_all(scratch.path().join("generated"))?;
         std::fs::write(
             scratch.path().join("generated/wamn.json"),

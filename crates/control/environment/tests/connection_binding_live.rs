@@ -89,7 +89,7 @@ async fn provision_project(project: &mut Client, project_url: &str) {
     .map(drop)
     .unwrap();
     let source =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../package/tests/fixtures/connection_binding");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../publish/tests/fixtures/connection_binding");
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let package = scratch.path().join("package");
     std::fs::create_dir_all(package.join("migrations")).unwrap();
@@ -750,7 +750,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     postgres
         .set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)
         .unwrap();
-    let facts = ConnectionFacts::new(
+    let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
@@ -758,7 +758,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         ENVIRONMENT,
-    );
+    ));
     let wiring = WiringDocument::new(
         "store_label",
         1,
@@ -801,15 +801,19 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         closure: ConnectionExecutionClosure::Released,
         effects: None,
     };
+    wamn_postgres_capability::invocation::bind_test_context(
+        &postgres,
+        COMPONENT_ID,
+        Arc::clone(&facts),
+        Arc::new(release),
+    );
     postgres
         .bind_invocation(COMPONENT_ID, invocation.clone())
         .unwrap();
-    let snapshot = resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
-        .await
-        .unwrap();
+    let snapshot = resolve(&postgres, COMPONENT_ID, "labels").await.unwrap();
     assert!(binding::resolve(&snapshot, BlobstoreProvider::S3).is_ok());
     assert!(
-        resolve(&postgres, &facts, &release, COMPONENT_ID, "undeclared")
+        resolve(&postgres, COMPONENT_ID, "undeclared")
             .await
             .is_err()
     );
@@ -869,9 +873,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
             .bind_invocation(COMPONENT_ID, invocation.clone())
             .unwrap();
         assert_eq!(
-            resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
-                .await
-                .is_ok(),
+            resolve(&postgres, COMPONENT_ID, "labels").await.is_ok(),
             accepted
         );
     }
@@ -881,9 +883,5 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let conflicting = facts.env_connections().await.unwrap().connections["http-read"];
     sqlx::query("UPDATE catalog.connection_binding SET connection_id=$4 WHERE project_env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id='nested_origin' AND name='labels'")
         .bind(PROJECT_ENV_KEY).bind(&digest).bind(DIGEST).bind(conflicting).execute(&mut project).await.unwrap();
-    assert!(
-        resolve(&postgres, &facts, &release, COMPONENT_ID, "labels")
-            .await
-            .is_err()
-    );
+    assert!(resolve(&postgres, COMPONENT_ID, "labels").await.is_err());
 }

@@ -186,12 +186,12 @@ impl wamn_execution_host::ControlExecution for Execution {
                         .credentials(base.registry())
                         .await?,
                 );
-                wamn_package_control::integration::record(
+                wamn_publish::integration::record(
                     &registry,
                     &self.system_database,
                     &request.code,
                     &request.digest,
-                    &wamn_package_control::integration::Publication {
+                    &wamn_publish::integration::Publication {
                         version: request.version,
                         parameter_schema: request.parameter_schema,
                         operations: request.operations,

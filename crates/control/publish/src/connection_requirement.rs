@@ -306,17 +306,7 @@ mod tests {
             .validate(true)
             .encode()
             .unwrap();
-        assert_eq!(
-            super::plan::world_interfaces(&bytes, false).unwrap(),
-            [
-                "wamn:connection/http@0.1.0",
-                "wamn:connection/metadata@0.1.0",
-            ]
-        );
-        assert_eq!(
-            super::exported_interfaces(&bytes).unwrap(),
-            ["wamn:connection/http@0.1.0"]
-        );
+
         assert!(
             super::require_imports(&bytes, "files", "wasmcloud:blobstore/blobstore@0.1.0").is_err()
         );

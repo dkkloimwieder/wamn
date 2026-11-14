@@ -13,7 +13,7 @@ pub async fn build_fixture(
     database_url: &str,
 ) -> anyhow::Result<(
     PathBuf,
-    Vec<wamn_package_control::component_admission::ComponentAdmission>,
+    Vec<wamn_publish::component_admission::ComponentAdmission>,
 )> {
     use wamn_compiler::build::generate_package;
     use wamn_compiler::{
@@ -78,7 +78,7 @@ pub async fn build_fixture(
     for name in ["fixture", "blob-put"] {
         let (declaration, platform_packages) = if name == "fixture" {
             (
-                wamn_package_control::component_declaration::render_package_declaration(
+                wamn_publish::component_declaration::render_package_declaration(
                     &package,
                     "fixture",
                     &coordinate.project_env_key,
@@ -87,13 +87,12 @@ pub async fn build_fixture(
             )
         } else {
             let template = palette.join("declaration.json.in");
-            let declaration =
-                wamn_package_control::component_declaration::render_palette_declaration(
-                    &template,
-                    &coordinate,
-                    None,
-                )?;
-            let packages = wamn_package_control::component_declaration::declared_platform_packages(
+            let declaration = wamn_publish::component_declaration::render_palette_declaration(
+                &template,
+                &coordinate,
+                None,
+            )?;
+            let packages = wamn_publish::component_declaration::declared_platform_packages(
                 &template,
                 &declaration,
             )?;
@@ -101,8 +100,8 @@ pub async fn build_fixture(
         };
         let declaration_path = work.join(format!("file-{name}-declaration.json"));
         std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
-        admissions.push(wamn_package_control::component_admission::admit_component(
-            wamn_package_control::component_admission::AdmitComponentRequest {
+        admissions.push(wamn_publish::component_admission::admit_component(
+            wamn_publish::component_admission::AdmitComponentRequest {
                 package: package.clone(),
                 component_bytes: output.join(format!("components/{name}.wasm")),
                 declaration: declaration_path,
@@ -113,28 +112,25 @@ pub async fn build_fixture(
     }
     Ok((package, admissions))
 }
-pub fn release_request()
--> anyhow::Result<wamn_release_control::publish_release::PublishReleaseRequest> {
-    Ok(
-        wamn_release_control::publish_release::PublishReleaseRequest {
-            applications: [(
-                "files".into(),
-                wamn_catalog::ApplicationDefinition {
-                    packages: ["file_fixture".into()].into(),
-                    connections: BTreeMap::new(),
-                },
-            )]
-            .into(),
-            application: None,
-            org: ORG.into(),
-            project: PROJECT.into(),
-            environment: "files".into(),
-            packages: vec![wamn_catalog::PackageCoordinate::new(
-                "file_fixture",
-                "0.1.0",
-            )?],
-        },
-    )
+pub fn release_request() -> anyhow::Result<wamn_publish::publish_release::PublishReleaseRequest> {
+    Ok(wamn_publish::publish_release::PublishReleaseRequest {
+        applications: [(
+            "files".into(),
+            wamn_catalog::ApplicationDefinition {
+                packages: ["file_fixture".into()].into(),
+                connections: BTreeMap::new(),
+            },
+        )]
+        .into(),
+        application: None,
+        org: ORG.into(),
+        project: PROJECT.into(),
+        environment: "files".into(),
+        packages: vec![wamn_catalog::PackageCoordinate::new(
+            "file_fixture",
+            "0.1.0",
+        )?],
+    })
 }
 async fn run(kubeconfig: &Path, program: &str, args: &[&str]) -> anyhow::Result<String> {
     let output = tokio::process::Command::new(program)

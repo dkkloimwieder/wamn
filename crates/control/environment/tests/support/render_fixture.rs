@@ -7,10 +7,6 @@ use serde_json::Value;
 use wamn_release_control::release_chart::{self, ImageSet};
 #[path = "render_values.rs"]
 mod render_values;
-#[expect(
-    unused_imports,
-    reason = "Chart tests share these inputs through this fixture."
-)]
 pub use render_values::{EventIdentity, HostValuesInput, RenderedHostValues};
 use render_values::{host_defaults, kubernetes_documents};
 use wamn_test_infrastructure::scratch::ScratchRoot;

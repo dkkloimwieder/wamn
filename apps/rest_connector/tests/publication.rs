@@ -6,7 +6,7 @@ use serde_json::json;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
-use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_release};
+use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
 #[tokio::test]
 async fn both_applications_publish_with_exact_dependencies_and_private_state() -> anyhow::Result<()>
@@ -134,7 +134,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
 async fn composed_sql_uses_released_schemas(
     roots: &[std::path::PathBuf],
     release: &wamn_catalog::ServingManifest,
-    admissions: &[wamn_package_control::component_admission::ComponentAdmission],
+    admissions: &[wamn_publish::component_admission::ComponentAdmission],
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();

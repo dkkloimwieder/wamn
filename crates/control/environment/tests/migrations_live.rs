@@ -354,11 +354,11 @@ async fn reset_preserves_platform_schemas_and_cdc_and_reapplies_package_sql() ->
     .await?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let root = scratch.path().join("package");
-    wamn_package_control::test_support::copy_schema_fixture(&root);
+    wamn_publish::test_support::copy_schema_fixture(&root);
     let directory = apply_package::read_package_directory(&root)?;
     let metadata = wamn_catalog::package_schema::package_metadata(&directory)?;
     let apply = || apply_package::ApplyPackageRequest {
-        package: wamn_package_control::package_artifact::fixture_package_root(&root).unwrap(),
+        package: wamn_publish::package_artifact::fixture_package_root(&root).unwrap(),
         component_source: None,
         changes: wamn_broker::Publisher::default(),
         database_url: database.url().to_owned(),
