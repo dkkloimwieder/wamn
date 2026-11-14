@@ -20,11 +20,11 @@ struct Component;
 export!(Component);
 
 use exports::rest_consumer_fixture::item::record as contract;
-mod codec {
+mod operation {
     use super::contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/rest_consumer_fixture/wit/item_record_codec.rs"
+        "/../../target/wamn/rest_consumer_fixture/wit/item_record_operation.rs"
     ));
 }
 #[expect(
@@ -47,12 +47,12 @@ struct Item {
 
 fn items(value: &str) -> Result<Vec<Item>, contract::RecordError> {
     let items: Vec<Item> = serde_json::from_str(value)
-        .map_err(|_| codec::map_error("invalid_input", |_| Some("value.items".into())))?;
+        .map_err(|_| operation::map_error("invalid_input", |_| Some("value.items".into())))?;
     if items
         .iter()
         .any(|item| item.key.is_empty() || item.name.is_empty())
     {
-        return Err(codec::map_error("invalid_input", |_| {
+        return Err(operation::map_error("invalid_input", |_| {
             Some("value.items".into())
         }));
     }
@@ -65,7 +65,7 @@ async fn handle(
 ) -> Result<contract::RecordResult, contract::RecordError> {
     use wamn_postgres_statements::StatementErrorType;
     let mut keys = Vec::new();
-    for item in items(&request.items)? {
+    for item in items(&request.items.encoded_json)? {
         let row = statements::record_item(
             transaction,
             item.key.clone(),
@@ -80,15 +80,17 @@ async fn handle(
                 StatementErrorType::StatementTimeout => "timeout",
                 _ => "internal_error",
             };
-            codec::map_error(code, |_| None)
+            operation::map_error(code, |_| None)
         })?;
         keys.push(row.map_or(item.key, |row| row.key));
     }
     Ok(contract::RecordResult {
-        keys: serde_json::json!(keys).to_string(),
+        keys: wamn::node::types::JsonValue {
+            encoded_json: serde_json::json!(keys).to_string(),
+        },
     })
 }
-codec::export_operation!(Component, contract, wamn::node::types, handle, codec);
+operation::export_operation!(Component, contract, wamn::node::types, handle, operation);
 
 #[cfg(test)]
 mod tests {

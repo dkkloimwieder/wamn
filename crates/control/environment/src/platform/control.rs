@@ -241,7 +241,7 @@ pub(super) fn service_objects(
     document: &ClusterDocument,
     image: &str,
 ) -> anyhow::Result<Vec<Value>> {
-    let image = component_image(document, image)?;
+    let _ = image;
     let source = std::fs::read_to_string(payload.join("control-service.yaml"))?;
     let mut objects = serde_yaml::Deserializer::from_str(&source)
         .map(Value::deserialize)
@@ -249,31 +249,11 @@ pub(super) fn service_objects(
     let name = wamn_registry::name::control_resource(&document.org);
     for object in &mut objects {
         object["metadata"]["name"] = wamn_registry::name::resource_suffix(&name, "http").into();
-        if object["kind"] == "WorkloadDeployment" {
-            let spec = &mut object["spec"]["template"]["spec"];
-            spec["hostSelector"]["hostgroup"] = name.clone().into();
-            spec["kubernetes"]["service"]["name"] =
-                wamn_registry::name::resource_suffix(&name, "http").into();
-            spec["hostInterfaces"][0]["config"]["host"] =
-                document.route_hosts.control.clone().into();
-            spec["components"][0]["image"] = image.as_ref().into();
+        if object["kind"] == "Service" {
+            object["spec"]["selector"]["wasmcloud.com/hostgroup"] = name.clone().into();
         }
     }
     Ok(objects)
-}
-
-fn component_image<'a>(
-    document: &ClusterDocument,
-    image: &'a str,
-) -> anyhow::Result<std::borrow::Cow<'a, str>> {
-    if document.provider == Provider::Kind {
-        let (_, path) = image
-            .split_once('/')
-            .context("HTTP image has no OCI authority")?;
-        Ok(format!("{}/{path}", super::resources::POD_REGISTRY).into())
-    } else {
-        Ok(image.into())
-    }
 }
 
 pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyhow::Result<Value> {
@@ -636,10 +616,5 @@ mod tests {
                 .unwrap()
                 .contains(&json!("--allow-insecure-registries"))
         );
-        let component = format!(
-            "registry.example/components/http:build@sha256:{}",
-            "b".repeat(64)
-        );
-        assert_eq!(component_image(&cloud, &component).unwrap(), component);
     }
 }

@@ -402,13 +402,8 @@ fn compose_verified_application(
         wamn_digest::bytes_sha256(route_bytes) == route_digest,
         "route layer bytes differ from pinned digest {route_digest}"
     );
-    let bytes = wamn_component_composer::compose_application(
-        route_bytes.to_vec(),
-        application_bytes.to_vec(),
-    )
-    .context("compose the route layer with the admitted application")?;
-    wamn_engine::statement_instances::statement_instances(&bytes)
-        .context("validate composed application statement ownership")?;
+    wamn_component_composer::validate_application_member(application_bytes)?;
+    let bytes = route_bytes.to_vec();
     let digest = wamn_digest::bytes_sha256(&bytes);
     let application_digests = application_digests(application, application_bytes)?;
     Ok(ComposedApplication {

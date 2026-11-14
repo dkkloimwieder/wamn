@@ -1,9 +1,8 @@
-# The published application includes the pinned HTTP route guest.
+# The route component invokes the application through the host.
 # Publish the release as docs/operations/deployment.md describes.
 # Set image to composed-entry.reference from that release's serving manifest.
-# Replace the example SQL import names with the application's statement instances.
-# The entry calls base operations inside the component and uses router-delivery
-# for host routes and wiring attachments. Each request uses a fresh Store.
+# Set wamn.http.routes to the route data supplied by publication.
+# Each request uses a fresh store. The host serves platform endpoints natively.
 ---
 apiVersion: v1
 kind: Service
@@ -57,23 +56,14 @@ spec:
           package: flow-http-routing
           version: "0.1.0"
           interfaces: [routing]
-        - namespace: wamn
-          package: router-delivery
-          version: "0.4.0"
-          interfaces: [delivery]
+        - namespace: wasi
+          package: config
+          version: "0.2.0-rc.1"
+          interfaces: [store]
         - namespace: wamn
           package: operation
           version: "0.1.0"
           interfaces: [operation]
-        - namespace: wamn
-          package: postgres
-          version: "0.4.0"
-          interfaces: [statements]
-        - namespace: wamn
-          package: postgres
-          version: "0.4.0"
-          name: sql-0
-          interfaces: [statements]
       components:
         - name: flow-http
           image: wamn-registry.platform.svc.cluster.local:5000/wamn/components/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -82,6 +72,7 @@ spec:
           localResources:
             allowedIpNameLookups: []
             config:
+              wamn.http.routes: "[]"
               wamn.project_env_key: "00000000-0000-0000-0000-000000000001"
               wamn.catalog: "default"
               wamn.environment: "poc"

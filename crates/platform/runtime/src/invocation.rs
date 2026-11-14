@@ -18,6 +18,7 @@ pub(crate) struct Authority {
     pub causation: Option<Causation>,
     pub invocation: Option<ConnectionInvocation>,
     pub transaction: Option<OperationTransaction>,
+    pub wal_position: Option<String>,
     pub class: Option<wamn_run_state::AuthorityClass>,
     pub statements: crate::plugins::wamn_postgres::statements::StatementScope,
 }

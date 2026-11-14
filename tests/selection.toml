@@ -20,14 +20,12 @@ targets = [
   { workspace="root", package="wamn-cdc-reader", target="test:event_reader_live", tier="live-nats" },
   { workspace="root", package="wamn-component-composer", target="lib:wamn_component_composer", tier="contract" },
   { workspace="root", package="wamn-component-policy", target="lib:wamn_component_policy", tier="contract" },
-  { workspace="root", package="wamn-component-virtualizer", target="bin:wamn-component-virtualizer", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="lib:wamn_conformance_tests", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:capability_registry", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:chart_seam_governance", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:component_export_index", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:package_build", tier="live-postgres" },
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:test_tiers", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:wasmtime_source_identity", tier="contract" },
@@ -285,11 +283,6 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
   WAMN_RELEASE_MANIFEST_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
   WAMN_RELEASE_MANIFEST_DIGEST = "Digest of the operator-selected published release."
   WAMN_ROUTE_HOST = "Route host of the operator-selected development environment."
-  WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
-  WAMN_STD_VIRTUALIZATION_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
-  WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM = "Exact component bytes selected by the operator for an artifact comparison."
-  WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY = "Receiving directory of the operator-selected virtualization comparison."
-  WAMN_STD_VIRTUALIZATION_SENTINEL = "Sentinel value for the operator-selected virtualization comparison."
   WAMN_TEST_CLUSTER = "Disposable platform that the operator deployed for a focused kind case."
   WAMN_TEST_OWNER_PASSWORD = "Owner password of the operator-deployed disposable platform."
   WAMN_TIMINGS_ROOT = "Operator-selected directory for browser evidence."
@@ -301,7 +294,7 @@ workspaces = ["root", "apps", "no-std"]
 
 [[rules]]
 # Host and materializer bindings read these shared interfaces.
-inputs = ['^wit/(wamn-router-delivery-0\.4|wamn-application-dispatch)/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
+inputs = ['^wit/wamn-router-delivery-0\.4/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
 workspaces = ["root", "apps"]
 
 [[rules]]
@@ -338,7 +331,7 @@ commands = [["pnpm", "install", "--offline"]]
 
 [[preparation]]
 id = "application-components"
-outputs = {WAMN_APPLICATION_COMPONENTS = "{target}/virtualized/std-empty-environment"}
+outputs = {WAMN_APPLICATION_COMPONENTS = "{target}/wasm32-wasip2/release"}
 applications = ["apps/wamn_receiving", "apps/client_acme_receiving", "apps/wamn_wms"]
 prerequisites = ["web-install"]
 

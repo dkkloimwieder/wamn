@@ -6,11 +6,11 @@ use crate::detail;
 mod list {
     use super::{Connection, detail, widget_maker};
     use crate::exports::platform_fixture::widget_maker::list as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/platform_fixture/wit/widget_maker_list_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_maker_list_operation.rs"
         ));
     }
 
@@ -23,21 +23,21 @@ mod list {
             .map(|rows| contract::ListResult {
                 rows: rows
                     .into_iter()
-                    .map(|row| codec::row!(row, contract::ListRow))
+                    .map(|row| operation::row!(row, contract::ListRow))
                     .collect(),
             })
             .map_err(|error| {
-                codec::map_error(error.error_type().literal(), |key| {
+                operation::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget_maker.list", key)
                 })
             })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         Connection::new(),
         handle,
-        codec
+        operation
     );
 }

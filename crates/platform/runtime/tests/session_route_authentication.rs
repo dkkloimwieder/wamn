@@ -18,9 +18,7 @@ use sha2::{Digest as _, Sha256};
 
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
-use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
-};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, FlowHttpRouting};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, SessionRouteAuthentication,
@@ -244,10 +242,9 @@ fn routing(
     modes: &[&str],
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
-        FlowHttpRouting::new(Some(load_release(modes)?), RouteInFlightLimit::default())
-            .with_authenticator(Arc::new(
-                PlatformRouteAuthenticator::default().with_session_authentication(authentication),
-            )),
+        FlowHttpRouting::new(Some(load_release(modes)?)).with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_session_authentication(authentication),
+        )),
     )
 }
 
@@ -459,17 +456,16 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     .await?;
     assert_eq!(granted.rows_added, 1, "the unserved reference is stored");
     let serving = load_release_serving(&["session"], &[READ, WRITE, APPROVE])?;
-    let later = FlowHttpRouting::new(Some(Arc::clone(&serving)), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-                SessionRouteAuthentication::new(
-                    verifier,
-                    identity_reader,
-                    permission_reader(url.as_str())?,
-                    PROJECT,
-                ),
-            )),
-        ));
+    let later = FlowHttpRouting::new(Some(Arc::clone(&serving))).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(
+                verifier,
+                identity_reader,
+                permission_reader(url.as_str())?,
+                PROJECT,
+            ),
+        )),
+    ));
     assert!(
         accepted(&later, &first).await.permits(APPROVE),
         "the stored reference holds once a release that serves it loads"

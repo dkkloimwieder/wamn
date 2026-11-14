@@ -3289,8 +3289,11 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
             .await
             .unwrap();
         assert!(
-            with_wal
-                .wal_position
+            pg.scopes
+                .read::<crate::invocation::Authority, _>("settings", |record| record
+                    .wal_position
+                    .clone())
+                .flatten()
                 .as_deref()
                 .is_some_and(|position| position.contains('/'))
         );

@@ -84,8 +84,6 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
         None,
     );
     assert_eq!(finish[0]["value"]["due"], due);
-    let command = super::finish_codec::decode(&finish.to_string()).unwrap();
-    assert_eq!(command[0].input.as_ref().unwrap().due, due);
 }
 
 #[test]

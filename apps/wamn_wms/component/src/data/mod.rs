@@ -7,7 +7,7 @@
 //! then `adjust`, `merge` and `split`), the
 //! `inventory.aggregate` projection, and the generated model operations in
 //! [`generated`], which are generated whole. Every
-//! command runs in the transaction its generated codec holds for the write
+//! command runs in the transaction its generated operation holds for the write
 //! log, takes each new id from its insert's `RETURNING`, and locks more than
 //! one row of a table in the order the database shares.
 

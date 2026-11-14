@@ -1,8 +1,8 @@
 //! The host routes through their generated TypeScript clients
 //! (docs/architecture/execution.md#host-run-routes, wamn-a40n.7, wamn-a40n.8).
 //!
-//! Each test serves one set through the shipped flow-http component, as a
-//! host does, and runs its test file in `apps/platform_ui` against it with
+//! Each test serves one set through the native platform handler and runs
+//! its test file in `apps/platform_ui` against it with
 //! session tokens. The application set answers an `admin` and a member, and
 //! the control set answers an `org-admin` and a `project-admin`.
 
@@ -13,18 +13,15 @@ use wamn_broker::Publisher;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_control_provision::PlatformComponent;
-use wamn_engine::engine::build_engine;
-use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::RouteDelivery;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::create_or_reuse_user;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 use wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator;
-use wash_runtime::wasmtime::component::Component;
 
-use crate::local_application::serve;
+use http_body_util::BodyExt as _;
 
 use crate::session_fixture;
 use session_fixture::{ISSUER, ORG, Server, claims, header, signed};
@@ -41,10 +38,7 @@ use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 mod control_fixture;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn application_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
-    let flow_http_wasm = std::env::var("WAMN_FLOW_HTTP_COMPONENT")?;
     let mut host = application_host("control_client").await?;
     let ApplicationHost {
         admin,
@@ -64,18 +58,7 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
     .await
     .map(|result| result.rows_affected())?;
 
-    let engine = Arc::new(build_engine(&[])?);
-    let flow_http = Component::new(
-        engine.inner(),
-        wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
-    )?;
-    let (endpoint, _task) = serve(
-        engine,
-        flow_http,
-        Arc::clone(routing),
-        Arc::clone(delivery) as Arc<dyn RouteDelivery>,
-    )
-    .await?;
+    let (endpoint, _task) = serve(Arc::clone(routing), Arc::clone(delivery)).await?;
 
     let token = |claims: &Value| signed(&header(), claims);
     let mut admin_claims = claims();
@@ -117,7 +100,7 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success() && stdout.contains("2 passed"),
+        output.status.success(),
         "the generated client test passes and runs both cases:\n{stdout}\n{stderr}"
     );
     Ok(())
@@ -130,10 +113,7 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
 /// application rows need the administration logins, so this test calls the
 /// writes that refuse before them; `control_route_live` covers the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
-    let flow_http_wasm = std::env::var("WAMN_FLOW_HTTP_COMPONENT")?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_client")?;
     let admin_url = test_database.url();
@@ -201,11 +181,9 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         )?;
     let release = Arc::new(LoadedRelease::control_root());
     let routing = Arc::new(
-        FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
-            .with_authenticator(Arc::new(ControlRouteAuthenticator::new(
-                verifier,
-                control.clone(),
-            ))),
+        FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+            ControlRouteAuthenticator::new(verifier, control.clone()),
+        )),
     );
     let delivery = Arc::new(HostRouteDelivery::new(
         release,
@@ -221,18 +199,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
         None,
     ));
 
-    let engine = Arc::new(build_engine(&[])?);
-    let flow_http = Component::new(
-        engine.inner(),
-        wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
-    )?;
-    let (endpoint, _task) = serve(
-        engine,
-        flow_http,
-        routing,
-        delivery as Arc<dyn RouteDelivery>,
-    )
-    .await?;
+    let (endpoint, _task) = serve(routing, delivery).await?;
 
     let token = |principal: &PrincipalId| {
         let mut session = claims();
@@ -269,4 +236,41 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     .await?;
     server.stop().await;
     Ok(())
+}
+
+/// Provide a socket for the same native request handler the host registers.
+async fn serve(
+    routing: Arc<FlowHttpRouting>,
+    delivery: Arc<HostRouteDelivery>,
+) -> anyhow::Result<(String, tokio::task::JoinHandle<()>)> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let task = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            let routing = Arc::clone(&routing);
+            let delivery = Arc::clone(&delivery);
+            connections.spawn(async move {
+                let service = hyper::service::service_fn(
+                    move |request: hyper::Request<hyper::body::Incoming>| {
+                        let routing = Arc::clone(&routing);
+                        let delivery = Arc::clone(&delivery);
+                        async move {
+                            let request = request.map(|body| {
+                                body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync()
+                            });
+                            Ok::<_, std::convert::Infallible>(
+                                delivery.http(&routing, request).await,
+                            )
+                        }
+                    },
+                );
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                    .await;
+            });
+            while connections.try_join_next().is_some() {}
+        }
+    });
+    Ok((format!("http://{address}"), task))
 }

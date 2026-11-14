@@ -187,7 +187,9 @@ fn code_workload(digest: &str, bytes: Vec<u8>, resources: LocalResources) -> Wor
             local_resources: resources,
             ..Component::default()
         }],
-        host_interfaces: vec![WitInterface::from(BOUND)],
+        host_interfaces: std::iter::once(WitInterface::from(BOUND))
+            .chain(crate::operation::ambient_cli::EmptyCli.world().imports)
+            .collect(),
         annotations: HashMap::new(),
         service: None,
         volumes: Vec::new(),
@@ -287,7 +289,8 @@ impl Integration {
         .await
         .context("join connection linking")??;
         let binding: Arc<dyn HostPlugin> = Arc::new(binding);
-        let plugins = HashMap::from([(binding.id(), binding)]);
+        let empty_cli: Arc<dyn HostPlugin> = Arc::new(crate::operation::ambient_cli::EmptyCli);
+        let plugins = HashMap::from([(binding.id(), binding), (empty_cli.id(), empty_cli)]);
         let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
         let workload = unresolved
             .resolve(

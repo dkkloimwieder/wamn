@@ -1,14 +1,14 @@
 //! Generated handlers and the generated component world.
 //!
 //! Each model with generated operations gets `generated/component/<model>.rs`:
-//! one module for each operation, with its codec, the `handle` function that
+//! one module for each operation, with its validation, the `handle` function that
 //! calls the generated data function, and its export. The package gets
 //! `generated/component/mod.rs`, which declares each model module, and the
 //! world `generated/wit/world.wit`, which imports the statements and exports
 //! every generated operation.
 //!
 //! A component includes the modules in a `mod generated` that names its data
-//! crate's generated module as `data`. Each operation's codec and handler are
+//! crate's generated module as `data`. Each operation's validation and handler are
 //! visible in the crate, so a component test can call them. Its authored world, in
 //! `component/wit/authored.wit`, includes the generated world. The authored
 //! world must include it, not the other way round: an authored export names a
@@ -75,6 +75,7 @@ pub(super) fn emit_model_component(
             operation,
             compiled.feed,
             compiled.shape.key,
+            &compiled.shape,
         );
         let state_argument = if action.changes_records() {
             "transaction"
@@ -94,9 +95,9 @@ pub(super) fn emit_model_component(
              #[allow(unused_imports)]\n\
              use super::{{Connection, Error, Transaction, model}};\n\
              use crate::exports::{namespace}::{package}::{name} as contract;\n\
-             pub(crate) mod codec {{\n\
+             pub(crate) mod operation {{\n\
              use super::contract;\n\
-             include!(\"../wit/{model_name}_{name}_codec.rs\");\n\
+             include!(\"../wit/{model_name}_{name}_operation.rs\");\n\
              }}\n\n\
              /// Override this action or call `default_handle` from the override.\n\
              pub trait Action {{\n\
@@ -111,7 +112,7 @@ pub(super) fn emit_model_component(
              pub(crate) async fn handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
              <crate::Component as Action>::run({state_argument}, request).await\n\
              }}\n\
-             codec::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, codec);\n\
+             operation::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, operation);\n\
              }}\n"
         )
         .expect("writing to a String cannot fail");
@@ -126,7 +127,8 @@ pub(super) fn emit_model_component(
     )
 }
 
-const REFUSE: &str = ".map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))";
+const REFUSE: &str =
+    ".map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))";
 
 /// The state parameter and the body of one handler.
 fn handler(
@@ -135,6 +137,7 @@ fn handler(
     operation: &OperationDeclaration,
     feed: bool,
     key: crate::key::KeyType,
+    shape: &super::operations::ModelShape<'_>,
 ) -> (&'static str, String) {
     let id = if key == crate::key::KeyType::Uuid {
         "&request.id"
@@ -154,51 +157,84 @@ fn handler(
         CrudAction::Get => (
             connection,
             format!(
-                "model::get(connection, {id}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
+                "model::get(connection, {id}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n"
             ),
         ),
         CrudAction::Create => {
             let arguments = std::iter::once("&request.id".to_owned())
                 .filter(|_| key == crate::key::KeyType::Uuid)
-                .chain(
-                    operation
-                        .writable_fields
-                        .iter()
-                        .map(|field| format!("request.{}.flatten()", member_name(field))),
-                )
+                .chain(operation.writable_fields.iter().map(|field| {
+                    let json = shape.column(field).is_some_and(|column| {
+                        column.column_type() == wamn_scalar::SqlValueType::Json
+                    });
+                    format!(
+                        "request.{}.flatten(){}",
+                        member_name(field),
+                        if json {
+                            ".map(|value| value.encoded_json)"
+                        } else {
+                            ""
+                        }
+                    )
+                }))
                 .collect::<Vec<_>>()
                 .join(", ");
             (
                 transaction,
                 format!(
-                    "model::create(transaction, {arguments}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
+                    "model::create(transaction, {arguments}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n"
                 ),
             )
         }
         CrudAction::Update => {
             let mut arguments = format!("{id}, {}", revision());
             for field in &operation.writable_fields {
-                write!(arguments, ", request.change.{}", member_name(field))
-                    .expect("writing to a String cannot fail");
+                let json = shape
+                    .column(field)
+                    .is_some_and(|column| column.column_type() == wamn_scalar::SqlValueType::Json);
+                write!(
+                    arguments,
+                    ", request.change.{}{}",
+                    member_name(field),
+                    if json {
+                        ".map(|value| value.map(|value| value.encoded_json))"
+                    } else {
+                        ""
+                    }
+                )
+                .expect("writing to a String cannot fail");
             }
             (
                 transaction,
                 format!(
-                    "model::update(transaction, {arguments}).await.map(|row| codec::row!(row, contract::{contract}Result)){REFUSE}\n"
+                    "model::update(transaction, {arguments}).await.map(|row| operation::row!(row, contract::{contract}Result)){REFUSE}\n"
                 ),
             )
         }
         CrudAction::Delete => (
             transaction,
             format!(
-                "model::delete(transaction, {id}, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
+                "model::delete(transaction, {id}, {}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n",
                 revision()
             ),
         ),
         CrudAction::Query => {
             let mut members = String::new();
             for filter in &operation.filters {
-                let value = if matches!(filter.match_mode, FilterMatch::Range) {
+                let json = shape
+                    .column(&filter.field)
+                    .is_some_and(|column| column.column_type() == wamn_scalar::SqlValueType::Json);
+                let value = if json && matches!(filter.match_mode, FilterMatch::Range) {
+                    format!(
+                        "request.{}.map(|range| model::Range {{ min: range.min.map(|value| value.encoded_json), max: range.max.map(|value| value.encoded_json) }})",
+                        member_name(&filter.field)
+                    )
+                } else if json && !matches!(filter.match_mode, FilterMatch::IsNull) {
+                    format!(
+                        "request.{}.map(|values| values.into_iter().map(|value| value.encoded_json).collect())",
+                        member_name(&filter.field)
+                    )
+                } else if matches!(filter.match_mode, FilterMatch::Range) {
                     format!(
                         "request.{}.map(|range| model::Range {{ min: range.min, max: range.max }})",
                         member_name(&filter.field)
@@ -225,9 +261,9 @@ fn handler(
                 "let input = model::QueryInput {{\n\
                  {members}\
                  cursor: request.cursor,\n\
-                 limit: request.limit.expect(\"the codec fills the default limit\"),\n\
+                 limit: i64::from(request.limit.expect(\"the operation fills the default limit\")),\n\
                  }};\n\
-                 let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));\n"
+                 let refuse = |error: Error| operation::map_error(error.literal(), |key| error.detail(key));\n"
             );
             // A request with the feed part reads the changes since its
             // cursor; one without it reads a page and its feed cursor.
@@ -242,14 +278,14 @@ fn handler(
                      if let Some(part) = request.feed {{\n\
                      let part = model::FeedInput {{\n\
                      cursor: part.cursor,\n\
-                     limit: part.limit.expect(\"the codec fills the default limit\"),\n\
+                     limit: i64::from(part.limit.expect(\"the operation fills the default limit\")),\n\
                      }};\n\
                      let changes = model::changes(connection, input, part).await.map_err(refuse)?;\n\
                      return Ok(contract::{contract}Result::Changes(contract::{contract}Changes {{\n\
                      rows: changes.rows.into_iter().map(|change| contract::{contract}Change {{\n\
                      id: {change_id},\n\
                      row_version: change.row_version,\n\
-                     data: change.data.map(|row| codec::row!(row, contract::{contract}Row)),\n\
+                     data: change.data.map(|row| operation::row!(row, contract::{contract}Row)),\n\
                      }}).collect(),\n\
                      next_cursor: changes.next_cursor,\n\
                      complete: changes.complete,\n\
@@ -259,7 +295,7 @@ fn handler(
                      let cursor = page.feed_cursor().map(str::to_owned).ok_or(contract::{contract}Error::InternalError)?;\n\
                      let (rows, next_cursor) = page.into_parts();\n\
                      Ok(contract::{contract}Result::Page(contract::{contract}Page {{\n\
-                     item: rows.into_iter().map(|row| codec::row!(row, contract::{contract}Row)).collect(),\n\
+                     item: rows.into_iter().map(|row| operation::row!(row, contract::{contract}Row)).collect(),\n\
                      next_cursor,\n\
                      cursor,\n\
                      }}))\n"
@@ -269,7 +305,7 @@ fn handler(
                     "{input}\
                      let (rows, next_cursor) = model::query(connection, input).await.map_err(refuse)?.into_parts();\n\
                      Ok(contract::{contract}Result {{\n\
-                     item: rows.into_iter().map(|row| codec::row!(row, contract::{contract}Row)).collect(),\n\
+                     item: rows.into_iter().map(|row| operation::row!(row, contract::{contract}Row)).collect(),\n\
                      next_cursor,\n\
                      }})\n"
                 )

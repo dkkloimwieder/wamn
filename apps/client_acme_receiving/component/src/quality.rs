@@ -7,21 +7,21 @@ use super::exports::client_acme_receiving::quality::{
 use super::{AccessError, NodeError, access_detail, private_node_error};
 use crate::data::operation;
 
-pub(super) mod detail_codec {
+pub(super) mod detail_operation {
     use super::detail_contract as contract;
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/client_acme_receiving/wit/quality_load_purchase_order_detail_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_load_purchase_order_detail_operation.rs"
     ));
 }
 
-pub(super) mod approve_codec {
+pub(super) mod approve_operation {
     use super::approve_contract as contract;
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/client_acme_receiving/wit/quality_approve_inspection_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_approve_inspection_operation.rs"
     ));
 }
 
@@ -34,7 +34,7 @@ pub(super) async fn handle_detail(
 > {
     operation::quality_load_purchase_order_detail(connection, &request.purchase_order_id)
         .await
-        .map(|row| detail_codec::row!(row, detail_contract::LoadPurchaseOrderDetailResult))
+        .map(|row| detail_operation::row!(row, detail_contract::LoadPurchaseOrderDetailResult))
         .map_err(|error| detail_error(&error, &request.purchase_order_id))
 }
 
@@ -48,7 +48,7 @@ pub(super) async fn handle_approve(
         request.expected_row_version,
     )
     .await
-    .map(|row| approve_codec::row!(row, approve_contract::ApproveInspectionResult))
+    .map(|row| approve_operation::row!(row, approve_contract::ApproveInspectionResult))
     .map_err(|error| approve_error(&error, &request.receipt_id, request.expected_row_version))
 }
 
@@ -63,7 +63,7 @@ pub(super) async fn handle_create(
 }
 
 fn detail_error(error: &AccessError, id: &str) -> detail_contract::LoadPurchaseOrderDetailError {
-    detail_codec::map_error(error.error_type().literal(), |key| {
+    detail_operation::map_error(error.error_type().literal(), |key| {
         access_detail(
             error,
             key,
@@ -79,7 +79,7 @@ fn approve_error(
     id: &str,
     expected: i32,
 ) -> approve_contract::ApproveInspectionError {
-    approve_codec::map_error(error.error_type().literal(), |key| {
+    approve_operation::map_error(error.error_type().literal(), |key| {
         access_detail(
             error,
             key,

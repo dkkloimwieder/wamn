@@ -698,7 +698,7 @@ pub(crate) mod tests {
         PAT_AUTHENTICATION_MODE, PackageCoordinate, ServingAttachment, ServingComponent,
         ServingManifest, ServingRelease,
     };
-    use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
+    use wamn_engine::flow_http_routing::FlowHttpRouting;
     use wamn_engine::release_manifest::LoadedRelease;
 
     use super::*;
@@ -789,7 +789,7 @@ pub(crate) mod tests {
             ),
         )
         .expect("fixture manifest loads");
-        FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())
+        FlowHttpRouting::new(Some(Arc::new(release)))
             .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
     }
 

@@ -43,7 +43,6 @@ wamn-fixture-package = { workspace = true }
 wamn-compiler = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
-wasi-virt = { workspace = true }
 wasmparser = { workspace = true }
 wat = "=1.254.2"
 wit-parser = { workspace = true }

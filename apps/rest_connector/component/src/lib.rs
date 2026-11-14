@@ -28,18 +28,18 @@ use wamn_integration::{
 struct Component;
 export!(Component);
 
-mod finish_codec {
+mod finish_operation {
     use super::finish as contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/rest_connector/wit/sync_finish_codec.rs"
+        "/../../target/wamn/rest_connector/wit/sync_finish_operation.rs"
     ));
 }
-mod pushed_codec {
+mod pushed_operation {
     use super::pushed as contract;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/rest_connector/wit/sync_pushed_codec.rs"
+        "/../../target/wamn/rest_connector/wit/sync_pushed_operation.rs"
     ));
 }
 
@@ -114,7 +114,7 @@ impl exports::wamn::node::async_handler::Guest for Component {
             _ => base_failure(&format!("checkpoint read failed: {error:?}")),
         })?;
         Ok(Emission {
-            payload: json!({"due": due, "last_synced_at": checkpoint(value.value)?}).to_string(),
+            payload: json!({"due": due, "last_synced_at": checkpoint(value.value.map(|value| value.encoded_json))?}).to_string(),
             port: None,
         })
     }
@@ -137,10 +137,10 @@ impl finish::Guest for Component {
         context: NodeContext,
         input: Vec<finish::FinishItem>,
     ) -> Result<Vec<finish::FinishOutcome>, NodeError> {
-        finish_codec::validate(&input).map_err(|error| invalid(error.context()))?;
+        finish_operation::validate(&input).map_err(|error| invalid(error.context()))?;
         let due = completed_due(&input)?;
         let mut failure = None;
-        let rows = finish_codec::run(input, &mut failure, async |failure, _request| {
+        let rows = finish_operation::run(input, &mut failure, async |failure, _request| {
             let rows = write::run(
                 context.clone(),
                 vec![write::WriteItem {
@@ -148,7 +148,9 @@ impl finish::Guest for Component {
                     input: Ok(write::WriteRequest {
                         idempotency_key: context.delivery_id.clone(),
                         key: "last_synced_at".into(),
-                        value: json!(due).to_string(),
+                        value: wamn::node::types::JsonValue {
+                            encoded_json: json!(due).to_string(),
+                        },
                     }),
                 }],
             )
@@ -173,15 +175,6 @@ impl finish::Guest for Component {
             None => Ok(rows),
         }
     }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = finish_codec::decode(&input).map_err(|error| invalid(error.context()))?;
-        let rows = <Self as finish::Guest>::run(context, input).await?;
-        Ok(Emission {
-            payload: finish_codec::encode(&rows),
-            port: None,
-        })
-    }
 }
 
 impl pushed::Guest for Component {
@@ -189,8 +182,8 @@ impl pushed::Guest for Component {
         context: NodeContext,
         input: Vec<pushed::PushedItem>,
     ) -> Result<Vec<pushed::PushedOutcome>, NodeError> {
-        pushed_codec::validate(&input).map_err(|error| invalid(error.context()))?;
-        Ok(pushed_codec::run(input, &mut (), async |(), request| {
+        pushed_operation::validate(&input).map_err(|error| invalid(error.context()))?;
+        Ok(pushed_operation::run(input, &mut (), async |(), request| {
             let rows = append::run(
                 context.clone(),
                 vec![append::AppendItem {
@@ -219,15 +212,6 @@ impl pushed::Guest for Component {
             })
         })
         .await)
-    }
-
-    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = pushed_codec::decode(&input).map_err(|error| invalid(error.context()))?;
-        let rows = <Self as pushed::Guest>::run(context, input).await?;
-        Ok(Emission {
-            payload: pushed_codec::encode(&rows),
-            port: None,
-        })
     }
 }
 
@@ -283,9 +267,6 @@ mod tests {
                 mapped[0]["value"]["items"].as_array().unwrap().len(),
                 items.as_array().unwrap().len()
             );
-            let results = json!([{"request_id": mapped[0]["request_id"], "value": {"keys": []}}]);
-            let input = finish_codec::decode(&results.to_string()).unwrap();
-            assert_eq!(completed_due(&input).unwrap(), due);
         }
     }
 
@@ -299,21 +280,49 @@ mod tests {
     }
 
     #[test]
-    fn every_consumer_result_must_succeed_before_the_checkpoint_write() {
-        let due = "2026-10-21T12:00:00Z";
-        let success = json!({"request_id": due, "value": {"keys": ["1"]}});
-        let empty = json!({"request_id": due, "value": {"keys": []}});
-        let refused = json!({"request_id": due, "error": {"code": "retry"}});
-        let accepted = |rows: Value| {
-            finish_codec::decode(&rows.to_string()).is_ok_and(|input| completed_due(&input).is_ok())
+    fn failed_consumer_inputs_refuse_before_the_checkpoint_write() {
+        use std::future::Future as _;
+        use std::task::{Context, Poll, Waker};
+        let success = || finish::FinishItem {
+            request_id: "2026-10-21T12:00:00Z".into(),
+            input: Ok(finish::FinishRequest {
+                keys: wamn::node::types::JsonValue {
+                    encoded_json: "[]".into(),
+                },
+            }),
         };
-        assert!(accepted(json!([success])));
-        assert!(accepted(json!([empty])));
-        assert!(!accepted(json!([refused])));
-        assert!(!accepted(json!([success, refused])));
-        assert!(!accepted(json!([])));
-        assert!(!accepted(
-            json!([{"request_id": "other", "value": {"keys": []}}])
-        ));
+        let refused = || finish::FinishItem {
+            request_id: "2026-10-21T12:00:00Z".into(),
+            input: Err(finish::InvalidInputDetail {
+                field: "input".into(),
+            }),
+        };
+        for input in [
+            vec![refused()],
+            vec![success(), refused()],
+            Vec::new(),
+            vec![finish::FinishItem {
+                request_id: "other".into(),
+                ..success()
+            }],
+        ] {
+            let context = NodeContext {
+                wiring_id: String::new(),
+                wiring_version: 0,
+                node_id: String::new(),
+                delivery_id: String::new(),
+                input_port: None,
+                occurrence: 0,
+                traceparent: None,
+                tracestate: None,
+                deadline_ms: None,
+                config: "null".into(),
+            };
+            let call = <Component as finish::Guest>::run(context, input);
+            assert!(matches!(
+                std::pin::pin!(call).poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(NodeError::InvalidInput(_)))
+            ));
+        }
     }
 }

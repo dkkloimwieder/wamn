@@ -476,3 +476,130 @@ impl RouteDelivery for HostRouteDelivery {
         }
     }
 }
+
+impl HostRouteDelivery {
+    /// Serve a platform endpoint through native ingress.
+    pub async fn http(
+        &self,
+        routing: &wamn_engine::flow_http_routing::FlowHttpRouting,
+        request: hyper::Request<wasmtime_wasi_http::WasiBody>,
+    ) -> hyper::Response<wasmtime_wasi_http::WasiBody> {
+        use http_body_util::BodyExt as _;
+        let answer = |status: u16, body: Value| {
+            let body = http_body_util::Full::new(bytes::Bytes::from(body.to_string()))
+                .map_err(|never| match never {})
+                .boxed_unsync();
+            let mut response = hyper::Response::new(body);
+            *response.status_mut() =
+                hyper::StatusCode::from_u16(status).expect("native HTTP status");
+            response.headers_mut().insert(
+                "content-type",
+                hyper::header::HeaderValue::from_static("application/json"),
+            );
+            response.headers_mut().insert(
+                "cache-control",
+                hyper::header::HeaderValue::from_static("no-store"),
+            );
+            response
+        };
+        let Some((id, attachment)) = self
+            .release
+            .manifest()
+            .host_routes
+            .iter()
+            .flat_map(|set| set.attachments())
+            .find(|(_, attachment)| {
+                attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
+            })
+        else {
+            return answer(404, json!({"error":{"code":"route-not-found"}}));
+        };
+        if attachment.route.type_.http_method() != request.method().as_str() {
+            return answer(405, json!({"error":{"code":"method-not-allowed"}}));
+        }
+        let headers = request
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| wamn_engine::flow_http_routing::Header {
+                        name: name.to_string(),
+                        value: value.to_owned(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let query = request.uri().query().unwrap_or_default().to_owned();
+        let read = attachment.route.type_.is_read();
+        let maximum = attachment.definition["raw-body-bytes"]["maximum"]
+            .as_u64()
+            .unwrap_or(1024 * 1024);
+        let mut body = request.into_body();
+        let mut bytes = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let Ok(frame) = frame else {
+                return answer(400, json!({"error":{"code":"invalid-body"}}));
+            };
+            if let Ok(data) = frame.into_data() {
+                if bytes.len().saturating_add(data.len()) as u64 > maximum {
+                    return answer(413, json!({"error":{"code":"body-too-large"}}));
+                }
+                bytes.extend_from_slice(&data);
+            }
+        }
+        let caller = match routing.authenticate(id, &headers, &bytes).await {
+            Ok(caller) => caller,
+            Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
+        };
+        let payload = if read {
+            let parsed = wamn_catalog::read_query::decode_read_query(&query);
+            match parsed {
+                Ok(input) => json!([input]),
+                Err(_) => return answer(400, json!({"error":{"code":"invalid-query"}})),
+            }
+        } else {
+            match serde_json::from_slice::<Value>(&bytes) {
+                Ok(input) => input,
+                Err(_) => return answer(400, json!({"error":{"code":"malformed-json"}})),
+            }
+        };
+        if let Some(schema) = attachment.definition.get("input-schema") {
+            let mut schemas = boon::Schemas::new();
+            let mut compiler = boon::Compiler::new();
+            let location = "https://wamn.invalid/platform-input";
+            let valid = compiler.add_resource(location, schema.clone()).is_ok()
+                && compiler
+                    .compile(location, &mut schemas)
+                    .is_ok_and(|index| schemas.validate(&payload, index).is_ok());
+            if !valid {
+                return answer(400, json!({"error":{"code":"invalid-input"}}));
+            }
+        }
+        let report = self
+            .deliver(
+                DeliveryRequest {
+                    source: Source::Attachment(id.to_owned()),
+                    caller: None,
+                    delivery_id: uuid::Uuid::new_v4().to_string(),
+                    payload: payload.to_string(),
+                    trace: None,
+                    parent_causation: None,
+                    if_none_match: None,
+                },
+                caller,
+            )
+            .await;
+        match report.outcome {
+            Ok(DeliveryOutcome::Respond(body)) => match serde_json::from_str(&body) {
+                Ok(body) => answer(200, body),
+                Err(_) => answer(503, json!({"error":{"code":"execution-failed"}})),
+            },
+            Err(
+                DeliveryError::PermissionDenied { .. }
+                | DeliveryError::FreshCredentialRequired { .. },
+            ) => answer(403, json!({"error":{"code":"permission-denied"}})),
+            _ => answer(503, json!({"error":{"code":"execution-failed"}})),
+        }
+    }
+}

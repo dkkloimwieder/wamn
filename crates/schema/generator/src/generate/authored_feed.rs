@@ -341,9 +341,18 @@ fn emit_component(
         .fold(String::new(), |mut inputs, field| {
             write!(
                 inputs,
-                "{}: request.{},",
+                "{}: request.{}{},",
                 member(&field.name),
-                crate::manifest::binding_identifier(&field.name).expect("validated input")
+                crate::manifest::binding_identifier(&field.name).expect("validated input"),
+                if field.ty == SqlValueType::Json {
+                    if field.nullable {
+                        ".map(|value| value.encoded_json)"
+                    } else {
+                        ".encoded_json"
+                    }
+                } else {
+                    ""
+                }
             )
             .expect("writing to a String cannot fail");
             inputs
@@ -358,17 +367,17 @@ fn emit_component(
 use super::data::{stem} as model;
 use wamn_postgres_statements::Connection;
 use crate::exports::{namespace}::{group}::{local_module} as contract;
-pub(crate) mod codec {{ use super::contract; include!("../wit/{stem}_codec.rs"); }}
+pub(crate) mod operation {{ use super::contract; include!("../wit/{stem}_operation.rs"); }}
 pub(crate) async fn handle(connection: &mut Connection, request: contract::{ty}Request) -> Result<contract::{ty}Result, contract::{ty}Error> {{
     let input = model::Input {{ {inputs} }};
-    let part = request.feed.map(|part| model::FeedInput {{ cursor: part.cursor, limit: part.limit.unwrap_or(100) }});
-    let output = model::read(connection, input, part).await.map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))?;
+    let part = request.feed.map(|part| model::FeedInput {{ cursor: part.cursor, limit: i64::from(part.limit.unwrap_or(100)) }});
+    let output = model::read(connection, input, part).await.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))?;
     Ok(match output {{
-        model::Output::Page {{ rows, cursor }} => contract::{ty}Result::Page(contract::{ty}Page {{ item: rows.into_iter().map(|row| codec::row!(row, contract::{ty}Row)).collect(), next_cursor: None, cursor }}),
-        model::Output::Changes(changes) => contract::{ty}Result::Changes(contract::{ty}Changes {{ rows: changes.rows.into_iter().map(|change| contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| codec::row!(row, contract::{ty}Row)) }}).collect(), next_cursor: changes.next_cursor, complete: changes.complete }}),
+        model::Output::Page {{ rows, cursor }} => contract::{ty}Result::Page(contract::{ty}Page {{ item: rows.into_iter().map(|row| operation::row!(row, contract::{ty}Row)).collect(), next_cursor: None, cursor }}),
+        model::Output::Changes(changes) => contract::{ty}Result::Changes(contract::{ty}Changes {{ rows: changes.rows.into_iter().map(|change| contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| operation::row!(row, contract::{ty}Row)) }}).collect(), next_cursor: changes.next_cursor, complete: changes.complete }}),
     }})
 }}
-codec::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, codec);
+operation::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, operation);
 "#
     );
     insert_bytes(

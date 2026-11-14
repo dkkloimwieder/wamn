@@ -5,11 +5,9 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use serde::Deserialize as _;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use wamn_control_provision::WorkloadRoleFamily;
-use wash_runtime::washlet::types::v2;
 
 use wamn_environment_control::provision_project_env::write_secret_json;
 
@@ -53,48 +51,8 @@ pub(super) async fn start(
         WorkloadRoleFamily::Control,
     )
     .await?;
-    let local = root.join("control-artifacts");
-    std::fs::create_dir_all(&local)?;
-    let bytes =
-        wamn_component_composer::compose_control_entry(std::fs::read(&args.flow_http_component)?)?;
-    let digest = wamn_digest::bytes_sha256(&bytes);
-    let entry_path = wamn_engine::artifact_source::local_component_path(&local, &digest)?;
-    std::fs::write(&entry_path, bytes)?;
-    // Read the deployed interfaces instead of defining another HTTP contract.
-    let deployment = serde_yaml::Deserializer::from_str(include_str!(
-        "../../../../../deploy/platform/control-service.yaml"
-    ))
-    .map(serde_json::Value::deserialize)
-    .collect::<Result<Vec<_>, _>>()?;
-    let spec = &deployment[1]["spec"]["template"]["spec"];
-    let mut interfaces: Vec<v2::WitInterface> =
-        serde_json::from_value(spec["hostInterfaces"].clone())?;
     let route_host = "control.wamn.localhost";
-    for interface in &mut interfaces {
-        if interface.namespace == "wasi" && interface.package == "http" {
-            interface
-                .config
-                .insert("host".to_owned(), route_host.to_owned());
-        }
-    }
-    let workload = v2::WorkloadStartRequest {
-        workload_id: "wamn-dev-control-http".to_owned(),
-        workload: Some(v2::Workload {
-            namespace: "hosts".to_owned(),
-            name: "flow-http".to_owned(),
-            wit_world: Some(v2::WitWorld {
-                host_interfaces: interfaces,
-                components: vec![v2::Component {
-                    name: "flow-http".to_owned(),
-                    image: format!("file:{}", entry_path.canonicalize()?.display()),
-                    image_pull_policy: v2::ImagePullPolicy::Never.into(),
-                    ..Default::default()
-                }],
-            }),
-            ..Default::default()
-        }),
-    };
-    std::fs::write(local.join("flow-http.json"), serde_json::to_vec(&workload)?)?;
+    let local = root.join("control-artifacts");
     let administration = root.join("control-administration");
     std::fs::create_dir_all(&administration)?;
     super::up::write_private(
@@ -140,6 +98,7 @@ pub(super) async fn start(
             "WAMN_OAUTH_ENCRYPTION": r#"{"provider":"local"}"#,
             "WAMN_OAUTH_KEY_FILE": oauth_key,
             "WAMN_CONTROL_URL": control_url,
+            "WAMN_CONTROL_PUBLIC_ORIGIN": format!("http://{route_host}"),
             "WASH_HOST_MAX_GUEST_MEMORY": group["resources"]["limits"]["memory"],
             "WAMN_SESSION_ISSUER": issuer.endpoint,
             "WAMN_SESSION_JWKS_CA": issuer.server_ca,

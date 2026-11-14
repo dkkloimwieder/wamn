@@ -13,6 +13,7 @@ pub mod file_route;
 mod host_route;
 pub mod oauth_callback;
 mod operation;
+pub mod platform_http;
 mod read_cache;
 mod readiness;
 mod route;

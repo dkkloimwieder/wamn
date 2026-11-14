@@ -35,7 +35,7 @@ use wash_runtime::{
     types::{Component, Workload},
     wasmtime::{
         Store,
-        component::{TypedFunc, Val},
+        component::{Func, Val},
     },
     wit::WitInterface,
 };
@@ -46,13 +46,9 @@ mod local_registry;
 #[path = "support/exclusive_resources.rs"]
 mod exclusive_resources;
 
-mod node {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../../../wit/wamn-node", world: "node", wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-use node::wamn::node::types::{Emission, NodeContext, NodeError};
-type Run = TypedFunc<(NodeContext, String), (Result<Emission, NodeError>,)>;
+use wamn_engine::operation::node_types::{self, Emission, NodeContext, NodeError};
+use wamn_engine::operation::{json as operation_json, native_call::context_value};
+type Run = Func;
 
 async fn read_register(instance: &Integration, interface: &str, unit: u8) -> anyhow::Result<u16> {
     let result = instance
@@ -249,9 +245,11 @@ impl Application {
             .get_export_index(&mut store, None, &operation)
             .context("handler missing")?;
         let run = instance
-            .get_export_index(&mut store, Some(&interface), "run-json")
+            .get_export_index(&mut store, Some(&interface), "run")
             .context("run missing")?;
-        let run = instance.get_typed_func(&mut store, run)?;
+        let run = instance
+            .get_func(&mut store, run)
+            .context("typed run is not a function")?;
         Ok(Self {
             store,
             run,
@@ -278,12 +276,24 @@ impl Application {
             deadline_ms: Some(5000),
             config: config.to_string(),
         };
-        let input = json!([{"request_id":"live", "value":{"address":7}}]).to_string();
+        let input = json!([{"request_id":"live", "value":{"address":7}}]);
+        let ty = self
+            .run
+            .ty(&self.store)
+            .params()
+            .nth(1)
+            .context("reader has no input")?
+            .1;
+        let arguments = [context_value(context), operation_json::input(&ty, &input)?];
+        let mut results = [Val::Bool(false)];
         let run = self.run;
-        let (result,) = self
-            .store
-            .run_concurrent(async |accessor| run.call_concurrent(accessor, (context, input)).await)
+        self.store
+            .run_concurrent(async |accessor| {
+                run.call_concurrent(accessor, &arguments, &mut results)
+                    .await
+            })
             .await??;
+        let result = operation_json::emission(&results[0])?;
         let mut emission = match result {
             Ok(emission) => emission,
             Err(error) => return Ok(Err(error)),
@@ -298,12 +308,10 @@ impl Application {
                 error["code"] == "unavailable",
                 "unexpected reader error: {error}"
             );
-            return Ok(Err(NodeError::Retryable(
-                node::wamn::node::types::ErrorDetail {
-                    message: "unavailable".into(),
-                    code: Some("unavailable".into()),
-                },
-            )));
+            return Ok(Err(NodeError::Retryable(node_types::ErrorDetail {
+                message: "unavailable".into(),
+                code: Some("unavailable".into()),
+            })));
         }
         emission.payload = rows[0]["value"]["register"]
             .as_i64()

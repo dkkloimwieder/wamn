@@ -126,25 +126,27 @@ struct Adapter {
     reason = "the adapter fixture implements the async guest backend"
 )]
 impl Backend for Adapter {
-    type RoutePermit = ();
     type AuthenticatedCaller = AuthenticatedCaller;
 
     fn routes(&mut self, _: &str, _: &str) -> Result<Vec<RouteDefinition>, ProviderError> {
         Ok(vec![RouteDefinition {
             attachment_id: "orders".into(),
-            host: "api.example.test".into(),
             path: "/orders".into(),
             method: "POST".into(),
-            mappings: vec![],
             body_limit: 1024,
-            mapped_limit: 1024,
             cache_control: None,
+            sealed_operation_id: "orders:order/create@1.0.0".into(),
+            idempotency_rule: Some("request_id".into()),
+            etag_inputs: None,
+            operation_deadline_ms: 30_000,
+            read_limits: None,
+            auth_policy: json!({"modes":["signature"]}),
         }])
     }
 
     async fn authenticate(
         &mut self,
-        attachment_id: &str,
+        route: &RouteDefinition,
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, http_route::AuthRejection> {
@@ -153,24 +155,20 @@ impl Backend for Adapter {
             .map(|h| (h.name.as_str(), h.value.as_str()))
             .collect::<Vec<_>>();
         self.routing
-            .authenticate_request_for_test(attachment_id, &headers, body)
+            .authenticate_request_for_test(&route.attachment_id, &headers, body)
             .await
             .map_err(|(status, code)| http_route::AuthRejection { status, code })
     }
 
-    fn validate_input(&mut self, _: &str, _: &str) -> Result<(), SchemaInvalid> {
+    fn validate_input(&mut self, _: &RouteDefinition, _: &str) -> Result<(), SchemaInvalid> {
         Ok(())
     }
 
-    fn try_acquire_route(&mut self, _: &str) -> Result<Option<()>, ProviderError> {
-        Ok(Some(()))
-    }
-
-    fn new_delivery_id(&mut self) -> String {
-        "delivery".into()
-    }
-
-    async fn deliver(&mut self, request: DeliveryRequest<AuthenticatedCaller>) -> DeliveryReport {
+    async fn deliver(
+        &mut self,
+        _route: &RouteDefinition,
+        request: DeliveryRequest<AuthenticatedCaller>,
+    ) -> DeliveryReport {
         if let Some(caller) = &request.caller {
             assert_eq!(caller.credential_type(), CredentialType::Connection);
             assert!(caller.active_role().is_none());
@@ -178,7 +176,6 @@ impl Backend for Adapter {
         self.delivered.push(request.payload);
         DeliveryReport {
             outcome: Ok(http_route::DeliveryOutcome::Respond("null".into())),
-            deadline_adjustments: vec![],
             etag: None,
         }
     }

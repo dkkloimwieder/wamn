@@ -56,24 +56,8 @@ pub async fn build_fixture(
         .module(&module)?
         .validate(true)
         .encode()?;
-    // Match wamn build: remove the ambient WASI CLI imports of the raw std guest.
-    let target =
-        repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
-    let blob = work.join("blob-put.wasm");
-    run(
-        kubeconfig,
-        &target
-            .join("debug/wamn-component-virtualizer")
-            .to_string_lossy(),
-        &[
-            "--input",
-            &std::env::var(COMPONENT_INPUT).context(COMPONENT_INPUT)?,
-            "--output",
-            &blob.to_string_lossy(),
-        ],
-    )
-    .await?;
-    let components = [("fixture", fixture), ("blob-put", std::fs::read(blob)?)];
+    let blob = std::fs::read(std::env::var(COMPONENT_INPUT).context(COMPONENT_INPUT)?)?;
+    let components = [("fixture", fixture), ("blob-put", blob)];
     std::fs::create_dir_all(output.join("components"))?;
     for (name, bytes) in components {
         let path = format!("components/{name}.wasm");

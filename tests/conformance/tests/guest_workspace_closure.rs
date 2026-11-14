@@ -60,11 +60,11 @@ fn no_guest_workspace_declares_a_dependency_outside_itself() {
     }
 }
 
-/// Directories holding one checkout's virtualized guest artifacts.
+/// Directories holding one checkout's guest artifacts.
 const REPRO_A_ENV: &str = "WAMN_DIGEST_REPRO_A";
 const REPRO_B_ENV: &str = "WAMN_DIGEST_REPRO_B";
 
-fn virtualized_digests(directory: &Path) -> Vec<(String, String)> {
+fn guest_digests(directory: &Path) -> Vec<(String, String)> {
     let entries = fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
     let mut digests = Vec::new();
@@ -120,11 +120,11 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
         "the two artifact directories must come from different checkouts"
     );
 
-    let first = virtualized_digests(Path::new(&a));
-    let second = virtualized_digests(Path::new(&b));
+    let first = guest_digests(Path::new(&a));
+    let second = guest_digests(Path::new(&b));
     assert!(
         !first.is_empty(),
-        "{a} holds no virtualized guest artifacts, so this compares no guest artifacts"
+        "{a} holds no guest artifacts, so this compares no guest artifacts"
     );
     assert_eq!(
         first, second,

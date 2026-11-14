@@ -6,11 +6,11 @@ use crate::detail;
 mod archive {
     use super::{Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::archive as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/platform_fixture/wit/widget_archive_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_archive_operation.rs"
         ));
     }
 
@@ -20,30 +20,30 @@ mod archive {
     ) -> Result<contract::ArchiveResult, contract::ArchiveError> {
         widget::archive(transaction, &request.id, request.expected_edit_version)
             .await
-            .map(|row| codec::row!(row, contract::ArchiveResult))
+            .map(|row| operation::row!(row, contract::ArchiveResult))
             .map_err(|error| {
-                codec::map_error(error.error_type().literal(), |key| {
+                operation::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.archive", key)
                 })
             })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }
 
 mod list {
     use super::{Connection, detail, widget};
     use crate::exports::platform_fixture::widget::list as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/platform_fixture/wit/widget_list_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_list_operation.rs"
         ));
     }
 
@@ -58,33 +58,33 @@ mod list {
             .map(|rows| contract::ListResult {
                 rows: rows
                     .into_iter()
-                    .map(|row| codec::row!(row, contract::ListRow))
+                    .map(|row| operation::row!(row, contract::ListRow))
                     .collect(),
             })
             .map_err(|error| {
-                codec::map_error(error.error_type().literal(), |key| {
+                operation::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.list", key)
                 })
             })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         Connection::new(),
         handle,
-        codec
+        operation
     );
 }
 
 mod record_batch {
     use super::{Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::record_batch as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/platform_fixture/wit/widget_record_batch_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_record_batch_operation.rs"
         ));
     }
 
@@ -110,18 +110,18 @@ mod record_batch {
         };
         widget::record_batch(transaction, &batch)
             .await
-            .map(|row| codec::row!(row, contract::RecordBatchResult))
+            .map(|row| operation::row!(row, contract::RecordBatchResult))
             .map_err(|error| {
-                codec::map_error(error.error_type().literal(), |key| {
+                operation::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.record_batch", key)
                 })
             })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }

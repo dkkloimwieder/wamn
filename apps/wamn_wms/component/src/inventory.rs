@@ -14,11 +14,11 @@ fn detail(error: &AccessError, key: &str) -> Option<String> {
 mod adjust {
     use super::{detail, inventory_adjust};
     use crate::exports::wamn_wms::inventory::adjust as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_wms/wit/inventory_adjust_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_adjust_operation.rs"
         ));
     }
 
@@ -46,25 +46,27 @@ mod adjust {
             packaging_status: value.packaging_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
+        .map_err(|error| {
+            operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }
 
 mod aggregate {
     use super::{detail, inventory_aggregate};
     use crate::exports::wamn_wms::inventory::aggregate as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_wms/wit/inventory_aggregate_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_aggregate_operation.rs"
         ));
     }
 
@@ -75,7 +77,7 @@ mod aggregate {
         let rows = inventory_aggregate::execute(connection)
             .await
             .map_err(|error| {
-                codec::map_error(error.error_type().literal(), |key| detail(&error, key))
+                operation::map_error(error.error_type().literal(), |key| detail(&error, key))
             })?;
         let rows = rows
             .into_iter()
@@ -96,24 +98,24 @@ mod aggregate {
             .collect::<Result<_, contract::AggregateError>>()?;
         Ok(contract::AggregateResult { rows })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         wamn_postgres_statements::Connection::new(),
         handle,
-        codec
+        operation
     );
 }
 
 mod merge {
     use super::{detail, inventory_merge};
     use crate::exports::wamn_wms::inventory::merge as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_wms/wit/inventory_merge_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_merge_operation.rs"
         ));
     }
 
@@ -138,25 +140,27 @@ mod merge {
             target_status: value.target_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
+        .map_err(|error| {
+            operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }
 
 mod move_ {
     use super::{detail, inventory_move};
     use crate::exports::wamn_wms::inventory::move_ as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_wms/wit/inventory_move_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_move_operation.rs"
         ));
     }
 
@@ -179,25 +183,27 @@ mod move_ {
             location_id: value.location_id,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
+        .map_err(|error| {
+            operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }
 
 mod split {
     use super::{detail, inventory_split};
     use crate::exports::wamn_wms::inventory::split as contract;
-    mod codec {
+    mod operation {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_wms/wit/inventory_split_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_split_operation.rs"
         ));
     }
 
@@ -227,13 +233,15 @@ mod split {
             source_status: value.source_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
+        .map_err(|error| {
+            operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
     }
-    codec::export_operation!(
+    operation::export_operation!(
         crate::Component,
         contract,
         crate::wamn::node::types,
         handle,
-        codec
+        operation
     );
 }

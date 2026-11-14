@@ -41,6 +41,12 @@ interface types {
   /// as one JSON array in a single invocation, so batching needs no arm here.
   type json = string;
 
+  /// A JSON column or field. The distinct record carries its meaning across WIT.
+  /// encoded-json contains one complete JSON value, including a JSON null.
+  record json-value {
+    encoded-json: string,
+  }
+
   /// Everything the router knows that a node invocation may need.
   ///
   /// Deliberately carries no secrets and no run history. Credential generations

@@ -1,4 +1,4 @@
-//! Calls the application inside the composed component.
+//! Calls the typed application through host invocation authority.
 
 use std::collections::HashSet;
 
@@ -6,15 +6,14 @@ use serde_json::{Value, json};
 
 use crate::entry_response::{refusal, resolved, uncertain, with_request_id};
 
-use super::bindings::wamn::flow_http_routing::routing::{
-    AuthenticatedCaller, EtagType, RouteDefinition,
-};
+use super::bindings::wamn::flow_http_routing::routing::AuthenticatedCaller;
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
-use super::bindings::wamn::{application_dispatch::dispatch, operation::operation};
+use super::bindings::wamn::operation::operation;
 use super::{
     DeliveryError, DeliveryFailure, DeliveryFailureType, DeliveryOutcome, DeliveryReport,
     DeliveryRequest,
 };
+use crate::route_data::{EtagType, RouteDefinition};
 
 pub(super) fn validate_read_limits(
     route: &RouteDefinition,
@@ -63,11 +62,7 @@ pub(super) async fn deliver(
 ) -> DeliveryReport {
     let mut etag = None;
     let outcome = execute(route, &request, &mut etag).await;
-    DeliveryReport {
-        outcome,
-        etag,
-        deadline_adjustments: Vec::new(),
-    }
+    DeliveryReport { outcome, etag }
 }
 
 fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String> {
@@ -93,17 +88,11 @@ async fn execute(
 ) -> Result<DeliveryOutcome, DeliveryError> {
     let deadline = super::bindings::wasi::clocks::monotonic_clock::now()
         .saturating_add(route.operation_deadline_ms.saturating_mul(1_000_000));
-    let operation_id = route
-        .sealed_operation_id
-        .as_ref()
-        .ok_or(DeliveryError::InvalidRequest)?;
+    let operation_id = &route.sealed_operation_id;
     let caller = request.caller.as_ref();
     let mut input: Value =
         serde_json::from_str(&request.payload).map_err(|_| DeliveryError::InvalidPayload)?;
     let Some(key_field) = route.idempotency_rule.as_deref() else {
-        if let Some(refusal) = limit_refusal(&input, CEILING) {
-            return Ok(DeliveryOutcome::Respond(refusal));
-        }
         operation::authorize(caller, operation_id.clone())
             .await
             .map_err(|error| boundary(&error, operation_id))?;
@@ -144,7 +133,11 @@ async fn execute(
                 if matches_tag(request, etag.as_deref()) {
                     return Ok(DeliveryOutcome::NotModified);
                 }
-                return Ok(DeliveryOutcome::Respond(result.to_string()));
+                return Ok(DeliveryOutcome::Respond(
+                    operation::sign_result(result.to_string())
+                        .await
+                        .map_err(|_| DeliveryError::ExecutionFailed)?,
+                ));
             }
             Err(error) => {
                 operation::finish_read()
@@ -202,7 +195,7 @@ async fn execute(
         );
         let body = match begun {
             Ok(operation::Begun::Finished(body)) => {
-                answers.push(with_request_id(body, request_id)?);
+                answers.push(signed_answer(body, request_id).await?);
                 continue;
             }
             Err(operation::Refusal::Conflict) => refusal(
@@ -277,9 +270,26 @@ async fn execute(
                 }
             }
         };
-        answers.push(with_request_id(body.to_string(), request_id)?);
+        answers.push(signed_answer(body.to_string(), request_id).await?);
     }
     Ok(DeliveryOutcome::Respond(format!("[{}]", answers.join(","))))
+}
+
+async fn signed_answer(body: String, request_id: &str) -> Result<String, DeliveryError> {
+    let body = with_request_id(body, request_id)?;
+    let value: Value = serde_json::from_str(&body).map_err(|_| DeliveryError::ExecutionFailed)?;
+    if value.get("value").is_none() {
+        return Ok(body);
+    }
+    let signed = operation::sign_result(format!("[{body}]"))
+        .await
+        .map_err(|_| DeliveryError::ExecutionFailed)?;
+    let mut values: Vec<Value> =
+        serde_json::from_str(&signed).map_err(|_| DeliveryError::ExecutionFailed)?;
+    if values.len() != 1 {
+        return Err(DeliveryError::ExecutionFailed);
+    }
+    Ok(values.remove(0).to_string())
 }
 
 fn commit_failure(error: operation::Refusal, intent: &str) -> Value {
@@ -380,11 +390,13 @@ async fn read_call(
             })
         })
     };
-    if dispatch::is_read(id) {
-        let (emission, position) = dispatch::read(id.to_owned(), context, input, want_wal).await?;
-        return decode(&emission.payload).map(|value| (value, position));
-    }
-    decode(&dispatch::run(id.to_owned(), context, input).await?.payload).map(|value| (value, None))
+    let emission = operation::invoke(id.to_owned(), context, input).await?;
+    let position = if want_wal {
+        operation::wal_position().await.ok()
+    } else {
+        None
+    };
+    decode(&emission.payload).map(|value| (value, position))
 }
 
 fn boundary(error: &operation::Refusal, id: &str) -> DeliveryError {
@@ -459,22 +471,4 @@ fn remove(value: &mut Value, path: &[&str]) {
             }
         }
     }
-}
-
-/// The platform ceiling of the rows one read returns, which bounds the memory
-/// of its page (owner ruling of 2026-10-23, `wamn-cg5e4`).
-const CEILING: u32 = 50_000;
-
-/// The refusal of a read whose limit is above `maximum`, or `None`.
-fn limit_refusal(payload: &Value, maximum: u32) -> Option<String> {
-    let limit = payload.get(0)?.get("limit")?.as_i64()?;
-    (limit > i64::from(maximum)).then(|| {
-        json!([{
-            "error": {"code": "invalid_input", "detail": {
-                "field": "limit", "minimum": "1",
-                "maximum": maximum.to_string(), "observed": limit.to_string(),
-            }},
-        }])
-        .to_string()
-    })
 }

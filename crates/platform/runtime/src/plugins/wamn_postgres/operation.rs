@@ -61,6 +61,7 @@ pub(super) struct OperationWorkload {
     identity: SessionIdentity,
     operations: BTreeMap<String, OperationAuthority>,
     members: PreparedStatementMembers,
+    invoker: std::sync::RwLock<Option<std::sync::Weak<dyn OperationInvoker>>>,
 }
 
 #[derive(Debug)]
@@ -73,7 +74,50 @@ struct OperationAuthority {
     transaction: bool,
 }
 
+/// The application host calls typed exports while borrowing route authority.
+#[async_trait::async_trait]
+pub trait OperationInvoker: Send + Sync + std::fmt::Debug {
+    async fn invoke(
+        &self,
+        authority: Arc<AuthorizedInvocation>,
+        operation: String,
+        context: wamn_engine::operation::node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<
+        Result<
+            wamn_engine::operation::node_types::Emission,
+            wamn_engine::operation::node_types::NodeError,
+        >,
+    >;
+    async fn sign_result(
+        &self,
+        authority: Arc<AuthorizedInvocation>,
+        operation: String,
+        payload: String,
+    ) -> anyhow::Result<String>;
+}
+
 impl WamnPostgres {
+    /// Attach the resident application host to its HTTP workload.
+    pub fn bind_operation_invoker(
+        &self,
+        workload: &str,
+        invoker: std::sync::Weak<dyn OperationInvoker>,
+    ) -> anyhow::Result<()> {
+        let workloads = self
+            .operation_workloads
+            .read()
+            .expect("operation workloads lock poisoned");
+        let entry = workloads
+            .get(workload)
+            .context("operation workload is not bound")?;
+        *entry
+            .invoker
+            .write()
+            .expect("operation invoker lock poisoned") = Some(invoker);
+        Ok(())
+    }
+
     /// Record the host-selected entry reference and released SQL ownership.
     pub fn bind_operation_workload(
         &self,
@@ -204,6 +248,7 @@ impl WamnPostgres {
                 identity,
                 operations,
                 members: Self::prepare_statement_members(members),
+                invoker: std::sync::RwLock::default(),
             }),
         );
         Ok(())
@@ -402,6 +447,92 @@ impl HasData for PostgresOperation {
 }
 
 impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
+    async fn invoke(
+        accessor: &Accessor<T, Self>,
+        operation: String,
+        context: wamn_engine::operation::node_types::NodeContext,
+        input: String,
+    ) -> wash_runtime::wasmtime::Result<
+        Result<
+            wamn_engine::operation::node_types::Emission,
+            wamn_engine::operation::node_types::NodeError,
+        >,
+    > {
+        let store = accessor
+            .with(|mut access| state(access.get().table).cloned())
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
+        let (authority, invoker) = {
+            let current = store.open.lock().await;
+            let open = current
+                .as_ref()
+                .filter(|open| !open.settled && open.operation == operation)
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation authority differs"))?;
+            let workloads = open
+                .postgres
+                .operation_workloads
+                .read()
+                .expect("operation workloads lock poisoned");
+            let workload = workloads
+                .get(store.workload.as_ref())
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation workload missing"))?;
+            let invoker = workload
+                .invoker
+                .read()
+                .expect("operation invoker lock poisoned")
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation invoker missing"))?;
+            (Arc::clone(&open.authority), invoker)
+        };
+        invoker
+            .invoke(authority, operation, context, input)
+            .await
+            .map_err(wash_runtime::wasmtime::Error::from_anyhow)
+    }
+
+    async fn sign_result(
+        accessor: &Accessor<T, Self>,
+        payload: String,
+    ) -> wash_runtime::wasmtime::Result<Result<String, wamn_engine::operation::node_types::NodeError>>
+    {
+        let store = accessor
+            .with(|mut access| state(access.get().table).cloned())
+            .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
+        let (authority, operation, invoker) = {
+            let current = store.open.lock().await;
+            let open = current
+                .as_ref()
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation is not authorized"))?;
+            let workloads = open
+                .postgres
+                .operation_workloads
+                .read()
+                .expect("operation workloads lock poisoned");
+            let entry = workloads
+                .get(store.workload.as_ref())
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation workload missing"))?;
+            let invoker = entry
+                .invoker
+                .read()
+                .expect("operation invoker lock poisoned")
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| wash_runtime::wasmtime::Error::msg("operation invoker missing"))?;
+            (Arc::clone(&open.authority), open.operation.clone(), invoker)
+        };
+        Ok(invoker
+            .sign_result(authority, operation, payload)
+            .await
+            .map_err(|error| {
+                wamn_engine::operation::node_types::NodeError::Terminal(
+                    wamn_engine::operation::node_types::ErrorDetail {
+                        code: Some("internal_error".into()),
+                        message: error.to_string(),
+                    },
+                )
+            }))
+    }
+
     async fn finish_read(
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
@@ -438,10 +569,14 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         if open.settled {
             return Ok(Err(Refusal::NotBegun));
         }
-        let Some(transaction) = open.transaction() else {
-            return Ok(Err(Refusal::NotBegun));
-        };
-        Ok(transaction.wal_position().await.map_err(Refusal::Postgres))
+        Ok(open
+            .postgres
+            .scopes
+            .read::<crate::invocation::Authority, _>(open.scope(), |record| {
+                record.wal_position.clone()
+            })
+            .flatten()
+            .ok_or(Refusal::NotBegun))
     }
 
     async fn rollback(

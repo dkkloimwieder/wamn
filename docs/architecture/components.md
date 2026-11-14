@@ -27,7 +27,7 @@ The component's complete admitted facts remain separate from its compiled bytes.
 After native resolution, the host replaces each application's linker with one built from its declared imports.
 It then binds declared capabilities before preparing dispatch, including components that match no native plugin interface.
 An undeclared import refuses at instantiation, and the error names that import.
-Platform workloads and the composed platform HTTP entry retain their native linkers.
+Platform workloads and the separate HTTP route component use their native linkers.
 Synchronous palette nodes export `wamn:node/handler`.
 Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
 Application operations use their package interfaces and can await asynchronous capabilities.
@@ -42,13 +42,13 @@ The [capability rules](capabilities.md) govern imported authority, and [naming](
 
 The receipt operation uses typed WIT calls between Acme and Receiving.
 Receiving and Acme each expose a typed purchase-order update interface in their own package.
-The application model generates these WIT contracts, Rust bindings, and JSON conversion code.
+The application model generates these WIT contracts, Rust bindings, and typed validation.
 Receipt and update share generation for envelope bounds, correlation tests, exact integer encoding, and declared error details.
 Update inputs distinguish an omitted field, explicit null, and a value.
 The application still decides whether a field accepts null.
 Receiving permits `supplier_id`; Acme permits `acme_inspection_required` and `acme_quality_status`.
 Each update uses its existing SQL and permissions. Acme's update does not call Receiving's update.
-The generated `run-json` adapter serves HTTP and dynamic routing, while the composed receipt call uses the typed `run` function.
+Every application operation exports typed `run`. The host converts HTTP JSON using that export's WIT type.
 Admission refuses resource handles in this operation boundary because those handles belong to one store.
 
 An overlay package pins each base by digest in `base_dependencies`.
@@ -57,7 +57,7 @@ A composed component also exports the interfaces of its members. The host routes
 Each export carries its own statements, and the host begins a transaction for an export whose admitted operation declares one ([data access](data-access.md#inputs-queries-and-transactions)).
 Each member that imports `wamn:postgres/statements` gets its own outer import, named by its position: `sql-0`, `sql-1`.
 Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.
-The composer emits a separate instance type for each import, so resource ownership remains distinct when the route layer wraps an overlay.
+The composer emits a separate instance type for each import, so each member retains its resource ownership.
 A custom section of the composed component, `wamn:statement-instances`, records the digest of the member that each import was made for.
 Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member.
 Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.
@@ -72,66 +72,27 @@ Publication uses WAMN-owned OCI media types and retains the component configurat
 The host compares bytes and artifact layout with the admitted facts before native loading.
 A generic component pull cannot discard that configuration and still satisfy the publication contract.
 
-## Application HTTP composition
+## Application HTTP invocation
 
-`publish_release::compose_application` builds an HTTP component from an admitted application and pinned platform route bytes.
-The application can already contain its admitted bases.
-The function refuses route bytes that differ from the supplied digest.
-The composer refuses any member that imports the `wamn:operation` package, with any interface or version.
-It also refuses any member that exports `wasi:http/handler`.
-Both rules include nested members and labelled imports.
-Only the platform route layer supplies the HTTP handler.
+Publication selects the admitted application and verifies the pinned HTTP route component.
+It publishes the route component separately from application bytes.
+The existing `composed-entry` record identifies that route artifact and its application members.
+The host loads each admitted application from its own artifact.
+Overlays retain their build-time composition with their bases and their statement labels.
 
-The composer embeds both inputs unchanged and connects matching route imports to application exports.
-The result exports `wasi:http/handler@0.3.0` and the application's exports.
-It preserves each named SQL import and its original member digest.
-An application with one direct statements import receives a named instance of its own.
-The result's SHA-256 digest covers both inputs, and two compositions of identical inputs produce identical bytes.
+Publication supplies the route table through `wasi:config`, under `wamn.http.routes`.
+The table includes paths, methods, accepted credentials, read limits, cache rules and the release digest.
+The route component matches each method and path exactly.
+It calls `wamn:operation.invoke` with JSON, and the host calls the application's typed `run` export.
+The two components use separate stores, so the application call does not re-enter the route component.
+Generated typed exports validate input before calling an application override.
+The host retains the WAL position with the read authority.
 
-Publish composes the entry when the release has an HTTP attachment.
-The `applications` map in `environment.k` names the packages of each application.
-Publish uses the selected application, or the sole application when the map contains one.
-Exactly one released component in those packages must cover every route.
-Publish refuses when none covers the routes or when multiple members cover them.
-The ambiguity error names each covering package and component.
-Component size and statement count do not select a member.
-It pushes the entry to the `entries` repository under the component artifact base.
-It records `manifest.composed_entry` before it hashes the release.
-The format 11 record holds the entry reference, route digest, resolved `application`, and embedded `members`.
-The `application` field names its package, component, and original digest.
-Runtime binding and chart rendering use that stored identity.
-The members keep their original digests for SQL and dependency authority.
+Platform endpoints use native ingress handlers under `/wamn_control/`.
+They keep their authentication, CSRF checks, operation grants and body limits.
+Control runs no HTTP guest.
+The composer refuses application imports of `wamn:operation` and application exports of `wasi:http/handler`.
 
-The host pulls the entry that the record names and loads it in place of the member components.
-The entry serves every route and runs each wiring node of its members.
-The workload that starts the entry must set `poolSize` to 0.
-The edge serves the same entry from its release bundle.
-A release with no composed entry loads each member component.
-
-
-Owner ruling, 2026-10-21: publication records the composed HTTP entry in format 11.
-The `composed-entry` record names the entry reference, the pinned route digest, and the application member identities.
-Owner ruling, 2026-10-23: a deployed entry records `entries@sha256:<manifest-digest>`.
-That path is relative to the component artifact base.
-Each host joins the path with its configured base, the same base it resolves members against.
-The release chart renders the http Workload image as the host group's `WAMN_COMPONENT_ARTIFACT_BASE` joined with the path.
-The manifest never names a registry, so a copy of the release keeps its digest.
-A copy of a release copies the entry by its manifest digest beside the members.
-The catalog refuses an absolute or tagged entry reference.
-The record carries no entry byte digest.
-Each member retains its package, component name, and original digest for SQL authority and dependency pins.
-Publication admits and composes the bytes. The host records each start reference before the runtime pulls, verifies, and compiles the component.
-The binding callback makes sure that the reference is the release's entry path under a valid component artifact base. It does not hash the entry.
-Local publication names an absolute `file:` reference to its existing digest-named artifact file.
-Local loading retains the file loader's byte verification. Entry binding uses the same reference comparison as deployed binding.
-Owner ruling, 2026-10-26: format 11 retains the required `composed-entry.application` field.
-The field names the application by `package-id`, `component`, and `digest`.
-Publish resolves this member from the selected application’s packages in `environment.k`.
-Exactly one member must cover every route. No covering member or multiple covering members cause a typed refusal.
-The named application must belong to `composed-entry.members`.
-Runtime binding and chart rendering use this identity to select the application’s SQL imports.
-The reader refuses a composed entry without `application` with an error that names the missing field.
-The format number requires no republication.
 
 ## Guest build identity
 
@@ -140,15 +101,10 @@ The build tool selects guests from Cargo metadata and application declarations.
 Each guest receives its own Cargo invocation.
 Combining unrelated guests can change dependency features and therefore compiled bytes.
 
-Standard-library guests target `wasm32-wasip2` and pass through the pinned WASI virtualizer before admission.
-Its fixed profile supplies an empty environment, denies stdio and exit, passes clocks, and removes unused virtualization.
-It does not run `wasm-opt`.
-The resulting component must satisfy the ordinary import policy without an exemption.
+Standard-library guests target `wasm32-wasip2`.
+The build preserves their WASI imports, and admission applies the ordinary capability policy.
+The host supplies an empty application environment. Guest bytes are never rewritten.
 Existing `no_std` guests keep their separate workspace.
-
-The virtualizer can change imported WASI versions.
-Its revision and adapter digest stay exact, and the versions that it emits must be in the families of the [capability declaration](capabilities.md#import-admission).
-The [native alignment owner](native-alignment.md) records why this build step remains.
 The operations pages own build commands and artifact comparisons.
 
 ## Shared label renderer

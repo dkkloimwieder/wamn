@@ -284,7 +284,7 @@ pub(crate) fn result_schema(description: &OperationDescription) -> Value {
         }});
         value = json!({"oneOf": [value, changes]});
     }
-    // Several constraints can report one refusal. Its codec has one variant,
+    // Several constraints can report one refusal. Its operation has one variant,
     // so publish one alternative with the shared required detail members.
     let mut refusals = BTreeMap::<&str, (BTreeSet<&str>, serde_json::Map<String, Value>)>::new();
     for case in description.errors["cases"].as_array().into_iter().flatten() {

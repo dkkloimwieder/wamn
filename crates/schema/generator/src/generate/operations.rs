@@ -32,6 +32,7 @@ pub(super) struct ModelOperation<'a> {
     pub refusals:
         BTreeMap<crate::manifest::AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     pub revision: Option<SqlValueType>,
+    pub guarded_fields: BTreeMap<String, String>,
 }
 
 /// Physical request field facts shared by the guest renderers.
@@ -40,7 +41,6 @@ pub(super) struct ModelShape<'a> {
     pub columns: &'a [super::Column],
     pub key: crate::key::KeyType,
     pub generated_id: bool,
-    pub guarded: BTreeMap<CrudAction, Vec<super::wit::GuardedField>>,
 }
 
 impl ModelShape<'_> {
@@ -132,16 +132,6 @@ pub(super) fn emit_model(
             columns: table.columns(),
             key: crate::key::key_type(table)?,
             generated_id: crate::key::database_generated(table),
-            guarded: model
-                .operations
-                .iter()
-                .map(|(action, operation)| {
-                    (
-                        *action,
-                        super::wit::guarded_fields(table, *action, operation),
-                    )
-                })
-                .collect(),
         },
         operations: compiled,
         api,
@@ -826,7 +816,22 @@ fn describe_model_operation<'a>(
         });
     }
     let result = crud_result_contract(manifest, model, table, action, operation.result, &columns);
-    let refusals = super::operation_error_details(catalog, table, action, operation, model);
+    let mut refusals = super::operation_error_details(catalog, table, action, operation, model);
+    let guarded_fields = operation_constraints(catalog, table, action, operation, model)
+        .into_iter()
+        .filter_map(|constraint| {
+            let field = constraint_field(constraint, action, operation)?;
+            let detail = refusals
+                .get_mut(&constraint_error_code(constraint.constraint_type()))
+                .expect("constraint refusal is declared");
+            if !detail.required.contains(&OperationErrorDetailKey::Field)
+                && !detail.optional.contains(&OperationErrorDetailKey::Field)
+            {
+                detail.optional.push(OperationErrorDetailKey::Field);
+            }
+            Some((constraint.name().to_owned(), field))
+        })
+        .collect();
     let revision = operation
         .revision_field
         .as_deref()
@@ -837,6 +842,7 @@ fn describe_model_operation<'a>(
         result,
         refusals,
         revision,
+        guarded_fields,
     };
     let description = super::OperationDescription {
         operation: operation_contract,
@@ -1211,7 +1217,6 @@ fn error_contract(
             }),
         ));
     }
-    let mut guarded = BTreeSet::new();
     for constraint in operation_constraints(catalog, table, action, operation, model) {
         let code = constraint_error_code(constraint.constraint_type());
         cases.push((
@@ -1222,11 +1227,6 @@ fn error_contract(
                 "constraint": constraint.name(),
             }),
         ));
-        // A refusal of a constraint that guards one written field names that
-        // field, as an invalid input does, so a client marks its control.
-        if constraint_field(constraint, action, operation).is_some() {
-            guarded.insert(constraint.name().to_owned());
-        }
     }
     for exclusion in operation_exclusions(table, action, operation) {
         cases.push((
@@ -1244,7 +1244,7 @@ fn error_contract(
             let mut detail = refusals[&code].clone();
             if case["constraint"]
                 .as_str()
-                .is_some_and(|name| guarded.contains(name))
+                .is_some_and(|name| facts.guarded_fields.contains_key(name))
             {
                 detail
                     .optional

@@ -14,7 +14,7 @@ use wamn_catalog::{
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialType, FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteInFlightLimit,
+    AuthenticatedCaller, CredentialType, FLOW_HTTP_ROUTING_ID, FlowHttpRouting,
 };
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
 use wash_runtime::engine::ctx::SharedCtx;
@@ -333,10 +333,7 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
         ),
         (
             FLOW_HTTP_ROUTING_ID,
-            Arc::new(FlowHttpRouting::new(
-                Some(release),
-                RouteInFlightLimit::default(),
-            )) as Arc<dyn HostPlugin>,
+            Arc::new(FlowHttpRouting::new(Some(release))) as Arc<dyn HostPlugin>,
         ),
     ]);
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());

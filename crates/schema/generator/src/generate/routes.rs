@@ -190,7 +190,7 @@ fn members<'a>(contract: &'a Value, name: &str) -> impl Iterator<Item = &'a Valu
         .flatten()
 }
 
-/// The JSON form of one contract type, as the generated codec reads it.
+/// The JSON form of one contract type, as the generated operation reads it.
 pub(crate) fn scalar(ty: &str) -> Value {
     match ty {
         "uuid" => json!({"type": "string", "pattern": UUID_PATTERN}),

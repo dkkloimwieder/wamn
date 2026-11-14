@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryError, DeliveryOutcome, DeliveryRequest, RouteDelivery, Source,
@@ -194,17 +194,16 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         &login(admin_url, &administration)?,
         None,
     )?;
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-                SessionRouteAuthentication::new(
-                    verifier,
-                    identity_reader,
-                    Arc::clone(&postgres_credentials),
-                    PROJECT,
-                ),
-            )),
-        ));
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(
+                verifier,
+                identity_reader,
+                Arc::clone(&postgres_credentials),
+                PROJECT,
+            ),
+        )),
+    ));
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),
         HostRouteHandlers::Application {
@@ -817,13 +816,12 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             keys, ORG, &audience, 1000,
         )?;
     let release = Arc::new(LoadedRelease::control_root());
-    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
-        .with_authenticator(Arc::new(
-            wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
-                verifier,
-                control.clone(),
-            ),
-        ));
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release))).with_authenticator(Arc::new(
+        wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
+            verifier,
+            control.clone(),
+        ),
+    ));
     let delivery = HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {

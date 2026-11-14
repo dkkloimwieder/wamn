@@ -52,8 +52,6 @@ runtime-operator:
         value: "16"
       - name: WAMN_PG_PLATFORM_POOL_MAX
         value: "8"
-      - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
-        value: "64"
       - name: WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT
         value: "65536"
       - name: WASMTIME_POOLING_TABLE_KEEP_RESIDENT

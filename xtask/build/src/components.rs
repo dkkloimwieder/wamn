@@ -1,4 +1,4 @@
-//! Cargo compilation, byte validation, virtualization and overlay composition.
+//! Cargo compilation, byte validation and overlay composition.
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,8 +15,6 @@ use wamn_digest::bytes_sha256;
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
 const GUEST_TARGET: &str = "wasm32-wasip2";
-/// Packages still needing virtualization until the typed invocation switch.
-pub(crate) const VIRTUALIZED: &[&str] = &["blob-put", "jsonata-expression"];
 
 /// One guest crate to build.
 struct Guest {
@@ -31,9 +29,7 @@ struct Guest {
 /// One built guest.
 struct Built {
     /// The Cargo package name.
-    package: String,
-    /// The release output: the raw guest, then the virtualized one when the
-    /// allowlist names the package.
+    /// The built guest.
     file: PathBuf,
 }
 
@@ -73,7 +69,6 @@ pub(crate) async fn compile_components(
             },
         )
         .await?;
-        let built = virtualize(&repository, built).await?;
         let bytes = fs::read(&built.file)?;
         let bytes = wamn_component_composer::compose(
             bytes,
@@ -140,11 +135,6 @@ pub async fn build_guest(
         target_directory: target_directory.map(Path::to_owned),
     };
     let built = compile_guest(repository, &rustflags, &guest).await?;
-    let built = if VIRTUALIZED.contains(&built.package.as_str()) {
-        virtualize(repository, built).await?
-    } else {
-        built
-    };
     Ok(built.file)
 }
 
@@ -206,10 +196,7 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
         &file,
         selected.manifest_path.as_std_path(),
     )?;
-    Ok(Built {
-        package: guest.package.clone(),
-        file,
-    })
+    Ok(Built { file })
 }
 
 /// A built guest carries no local path, and it matches the pin beside its
@@ -258,48 +245,6 @@ fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Pa
         );
     }
     Ok(())
-}
-
-/// Virtualize application components while the old invocation interface survives.
-async fn virtualize(repository: &Path, built: Built) -> Result<Built> {
-    let file_name = built.file.file_name().context("guest has no filename")?;
-    let output = built
-        .file
-        .parent()
-        .context("guest has no directory")?
-        .join("virtualized")
-        .join(file_name);
-    fs::create_dir_all(
-        output
-            .parent()
-            .context("virtualized output has no directory")?,
-    )?;
-    let result = Command::new("cargo")
-        .current_dir(repository)
-        .args([
-            "run",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-component-virtualizer",
-            "--",
-            "--input",
-        ])
-        .arg(&built.file)
-        .arg("--output")
-        .arg(&output)
-        .output()
-        .await?;
-    ensure!(
-        result.status.success(),
-        "virtualize {}: {}",
-        built.package,
-        String::from_utf8_lossy(&result.stderr)
-    );
-    Ok(Built {
-        package: built.package,
-        file: output,
-    })
 }
 
 /// Resolve built base components and enforce authored pins unless the dev request permits drift.
